@@ -375,3 +375,24 @@ def test_the_camera_is_not_reset_on_every_redraw(qt_app):
     w = MainWindow(built())
     solved(w)
     assert not w.viewport._first_render, "首帧之后就不该再自动摆相机了"
+
+
+def test_selection_dependent_buttons_are_disabled_until_something_is_picked(qt_app):
+    """必须先选中的按钮，没选中时要置灰。
+
+    原来它们永远可点，点了只在状态栏闪一句五秒后消失的提示——用户看到的是
+    "点了没反应"，这正是"很多功能都是摆设"那类抱怨的来源。前置条件应该看得见。
+    """
+    w = MainWindow()
+    load = w.actions_by_name["create_load"]
+    bc = w.actions_by_name["create_bc"]
+    assert not load.isEnabled() and not bc.isEnabled()
+    assert "请先" in load.toolTip()
+
+    w._on_picked("node", 1)
+    assert load.isEnabled() and bc.isEnabled(), "选中节点后两个都可用"
+
+    w._on_picked("member", 1)
+    assert load.isEnabled(), "杆件可以施加载荷"
+    assert not bc.isEnabled(), "边界条件只能加在节点上"
+    assert "节点" in bc.toolTip()

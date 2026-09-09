@@ -325,6 +325,7 @@ class MainWindow(QMainWindow):
         sc_esc.activated.connect(self.cancel_interaction)
 
         # 常用的几个留成属性，代码里读起来顺一点
+        self._sync_selection_actions()
         self.act_new = self.actions_by_name["new"]
         self.act_solve = self.actions_by_name["solve"]
         self.act_generate = self.actions_by_name["frame"]
@@ -1232,6 +1233,7 @@ class MainWindow(QMainWindow):
         if result.ok:
             self._selected_kind = None
             self._selected_id = None
+            self._sync_selection_actions()
             self.viewport.set_selection(None, None)
             self.bc.set_selection(None, None)
             self.properties.clear()
@@ -1254,6 +1256,7 @@ class MainWindow(QMainWindow):
     def _on_picked(self, kind: str, ident: int) -> None:
         self._selected_kind = kind
         self._selected_id = ident
+        self._sync_selection_actions()
         self._describe_selection(kind, ident)
         # **选中就显示属性。** 这一步是把"拾取"这条路走完：
         # 之前点中一根杆只能看到它多长，改不了
@@ -1706,6 +1709,31 @@ class MainWindow(QMainWindow):
             return
         self.set_prompt(f"已设置节点 {nid} 边界条件：{fix}")
         self._after_manual_edit(f"节点 {nid} 边界条件已更新：{fix}")
+
+    # 这些命令必须先在视口里选中对象才有意义。
+    # 键是命令名，值是它接受的选择类型。
+    _NEEDS_SELECTION = {
+        "create_load": ("node", "member"),
+        "create_bc": ("node",),
+    }
+
+    def _sync_selection_actions(self) -> None:
+        """按当前选择开关那些"必须先选中"的按钮。
+
+        原来这些按钮永远可点，点了只在状态栏闪一句五秒后消失的提示。
+        用户看到的是"点了没反应"——这正是"很多功能都是摆设"那类抱怨的来源。
+        **前置条件应该看得见**：不满足就置灰，并把原因写进 tooltip。
+        """
+        kind = getattr(self, "_selected_kind", None)
+        for name, accepted in self._NEEDS_SELECTION.items():
+            action = self.actions_by_name.get(name)
+            if action is None:
+                continue
+            allowed = kind in accepted
+            action.setEnabled(allowed)
+            what = "节点或杆件" if len(accepted) > 1 else "节点"
+            action.setToolTip(action.text() if allowed
+                              else f"请先在视口中选中一个{what}")
 
     def create_load(self) -> None:
         """Abaqus 式：选中对象，创建载荷。"""
