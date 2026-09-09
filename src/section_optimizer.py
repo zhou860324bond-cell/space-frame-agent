@@ -18,7 +18,6 @@
 - `material_cost` — 材料成本（最小化，重量 × 单价）
 
 **约束**（可多选，不满足的解被排除）：
-- `max_stress` — 最大应力不超过许用值
 - `max_displacement_limit` — 最大位移不超过限值
 - `min_section_area` — 截面面积不小于最小值
 
@@ -35,7 +34,7 @@ opt = SectionOptimizer(
         "flange_width": (0.15, 0.3, 4),
     },
     objectives=["weight", "max_displacement"],
-    constraints={"max_stress": 215e6},  # Pa
+    constraints={"max_displacement_limit": 0.02},   # m
 )
 result = opt.grid_search()
 print(result.best)          # 最优解（单目标时）
@@ -55,7 +54,28 @@ from typing import Any, Callable
 import numpy as np
 
 from agent import Session
+from internal_forces import max_centerline_displacement
 import sections as sec
+
+
+# 中心线挠度的采样密度。用 21 个点做两次梯形积分，跨中挠度约差 0.4%；
+# 优化要拿这个数直接和限值比大小，采样不足会系统性地低估。
+_DISPLACEMENT_STATIONS = 101
+
+
+def _worst_centerline_displacement(frame, sol) -> float:
+    """全工况下杆件中心线的最大合位移。
+
+    **不能只取节点位移**：一根按单个单元离散的梁，两端节点位移可以很小，
+    跨中挠度却是控制量。查询、绘图和金标准 8~10 都用中心线恢复，
+    优化器必须用同一把尺子，否则会把一个偏小的截面判成满足位移限值。
+    """
+    worst = 0.0
+    for name in sol.all_results():
+        got = max_centerline_displacement(frame, sol, name,
+                                          stations=_DISPLACEMENT_STATIONS)
+        worst = max(worst, float(got["value"]))
+    return worst
 
 
 @dataclass
@@ -106,7 +126,7 @@ class SectionOptimizer:
     """
 
     SUPPORTED_OBJECTIVES = ("weight", "max_displacement", "material_cost")
-    SUPPORTED_CONSTRAINTS = ("max_stress", "max_displacement_limit", "min_section_area")
+    SUPPORTED_CONSTRAINTS = ("max_displacement_limit", "min_section_area")
 
     def __init__(
         self,
@@ -139,6 +159,11 @@ class SectionOptimizer:
             if obj not in self.SUPPORTED_OBJECTIVES:
                 raise ValueError(f"不支持的目标 {obj!r}，支持: {self.SUPPORTED_OBJECTIVES}")
         for con in self._constraints:
+            if con == "max_stress":
+                raise NotImplementedError(
+                    "max_stress 约束尚未实现：截面只存 A/Iy/Iz/J，没有截面模量，"
+                    "算不出弯曲应力。此前的实现恒为满足，会把超应力的截面判成可行，"
+                    "所以现在明确拒绝，而不是给出一个假结论。")
             if con not in self.SUPPORTED_CONSTRAINTS:
                 raise ValueError(f"不支持的约束 {con!r}，支持: {self.SUPPORTED_CONSTRAINTS}")
 
@@ -235,13 +260,7 @@ class SectionOptimizer:
                 out["material_cost"] = weight * self._unit_cost
 
         if "max_displacement" in self._objectives:
-            worst = 0.0
-            for name, res in sol.all_results().items():
-                for nid in frame.order():
-                    dofs = frame.node_dofs(nid)
-                    mag = float(np.linalg.norm(res.U[dofs[:3]]))
-                    worst = max(worst, mag)
-            out["max_displacement"] = worst
+            out["max_displacement"] = _worst_centerline_displacement(frame, sol)
 
         return out
 
@@ -251,31 +270,10 @@ class SectionOptimizer:
         frame = session.frame
         sol = session.solution
 
-        if "max_stress" in self._constraints:
-            allowable = self._constraints["max_stress"]
-            max_stress = 0.0
-            for name, res in sol.all_results().items():
-                for mid, m in frame.members.items():
-                    # 简化：用轴力/面积估算应力
-                    area = section.get("A", 1.0)
-                    for s in self._model.get("sections", []):
-                        if s.get("name") == m.section:
-                            area = s.get("A", area)
-                            break
-                    # 轴力在结果里的位置取决于实现，这里用简化估算
-                    # 实际项目中应该从 member_forces 里读
-                    pass
-            out["max_stress"] = max_stress <= allowable
-
         if "max_displacement_limit" in self._constraints:
             limit = self._constraints["max_displacement_limit"]
-            worst = 0.0
-            for name, res in sol.all_results().items():
-                for nid in frame.order():
-                    dofs = frame.node_dofs(nid)
-                    mag = float(np.linalg.norm(res.U[dofs[:3]]))
-                    worst = max(worst, mag)
-            out["max_displacement_limit"] = worst <= limit
+            out["max_displacement_limit"] = (
+                _worst_centerline_displacement(frame, sol) <= limit)
 
         if "min_section_area" in self._constraints:
             min_area = self._constraints["min_section_area"]

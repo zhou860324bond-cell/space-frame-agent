@@ -291,6 +291,10 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
             errors.append(f"[结构] {loc}: {e.message}")
     except ImportError:
         errors.append("[提示] 未安装 jsonschema，跳过结构校验")
+    except AttributeError:
+        # 装着 4.20 以前的 jsonschema：没有 Draft202012Validator。直接抛异常
+        # 会把"依赖过旧"伪装成一整片校验失败，这里降级并说清真正的原因。
+        errors.append("[提示] jsonschema 版本过低（需 >=4.20），跳过结构校验")
     if any(x.startswith("[结构]") for x in errors):
         return errors
 
@@ -370,6 +374,10 @@ def validate_definitions(materials: list[dict[str, Any]],
                 errors.append(f"[结构] {key}/{loc}: {error.message}")
     except ImportError:
         errors.append("[提示] 未安装 jsonschema，跳过结构校验")
+    except AttributeError:
+        # 装着 4.20 以前的 jsonschema：没有 Draft202012Validator。直接抛异常
+        # 会把"依赖过旧"伪装成一整片校验失败，这里降级并说清真正的原因。
+        errors.append("[提示] jsonschema 版本过低（需 >=4.20），跳过结构校验")
 
     for label, values in (("材料", materials), ("截面", sections)):
         names = [str(item.get("name", "")).strip() for item in values

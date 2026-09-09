@@ -259,3 +259,92 @@ def test_evaluation_point_fields():
     assert pt.objectives["weight"] == 100.0
     assert pt.feasible is True
     assert pt.error == ""
+
+
+# ------------------------------------- 回归：位移口径必须含跨中挠度
+
+def _simply_supported_one_element() -> dict:
+    """单跨简支梁，**只离散成一个单元**。
+
+    两端都是支座，所以全部节点平动位移恒等于零；控制量完全在跨中。
+    这正是"只看节点位移"会漏掉的情形——旧实现在这个模型上算出的
+    最大位移是 0，任何位移限值都满足。
+    """
+    return {
+        "units": "N-m-Pa",
+        "materials": [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0}],
+        "sections": [{"name": "BEAM", "A": 0.04, "Iy": 1.3333e-4,
+                      "Iz": 1.3333e-4, "J": 2.2e-4}],
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": 6.0, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2,
+                     "section": "BEAM", "material": "Q355"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                     {"node": 2, "fix": [0, 1, 1, 0, 0, 0]}],
+        "load_cases": [{"name": "DL", "member_loads": [
+            {"member": 1, "w": [0, 0, -10e3]}]}],
+    }
+
+
+def test_nodal_displacement_alone_is_zero_on_this_model():
+    """先钉住前提：这个模型的节点平动位移确实全是零。
+
+    如果哪天模型改了、节点位移不再为零，下面那条回归测试就失去意义，
+    应该由这条先失败来提醒。
+    """
+    import numpy as np
+    from agent import Session
+
+    session = Session()
+    session.set_model(model=_simply_supported_one_element())
+    assert session.solve_model().ok
+    frame, sol = session.frame, session.solution
+    worst_nodal = max(
+        float(np.linalg.norm(res.U[frame.node_dofs(nid)[:3]]))
+        for res in sol.all_results().values()
+        for nid in frame.order())
+    assert worst_nodal == pytest.approx(0.0, abs=1e-12)
+
+
+def test_displacement_limit_uses_centerline_not_nodes():
+    """位移约束必须按跨中挠度判定，不能只看节点。
+
+    5wL⁴/(384EIz)：h=0.2 时约 6.1 mm，远超 1 mm 限值，必须判为不可行。
+    旧实现只取节点位移（恒为 0），会把它判成可行。
+    """
+    opt = SectionOptimizer(
+        model=_simply_supported_one_element(),
+        section_name="BEAM", section_type="矩形",
+        variables={"width": [0.2], "height": [0.2]},
+        objectives=["weight"],
+        constraints={"max_displacement_limit": 1e-3},   # 1 mm
+    )
+    result = opt.grid_search()
+    point = result.evaluations[0]
+    assert point.error == "", point.error
+    assert point.constraints["max_displacement_limit"] is False
+    assert point.feasible is False
+
+
+def test_centerline_displacement_objective_is_not_zero():
+    """位移目标同样不能是节点口径，否则这个模型上恒等于 0。"""
+    opt = SectionOptimizer(
+        model=_simply_supported_one_element(),
+        section_name="BEAM", section_type="矩形",
+        variables={"width": [0.2], "height": [0.2]},
+        objectives=["max_displacement"],
+    )
+    result = opt.grid_search()
+    value = result.evaluations[0].objectives["max_displacement"]
+    assert value == pytest.approx(6.14e-3, rel=5e-2)
+
+
+def test_max_stress_constraint_is_refused_not_faked():
+    """应力约束未实现时必须明确拒绝，不能返回一个恒为满足的假结论。"""
+    with pytest.raises(NotImplementedError, match="max_stress"):
+        SectionOptimizer(
+            model=_make_model(), section_name="BEAM",
+            section_type="工字形 / H 型钢",
+            variables={"height": (0.3, 0.6, 3)},
+            constraints={"max_stress": 215e6},
+        )
