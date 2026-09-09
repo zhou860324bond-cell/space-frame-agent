@@ -286,3 +286,37 @@ def test_vision_calls_have_a_bounded_timeout():
     source = inspect.getsource(SketchParser._get_client)
     assert "timeout=REQUEST_TIMEOUT_SECONDS" in source
     assert "max_retries=0" in source
+
+
+def test_default_provider_follows_available_credentials(monkeypatch):
+    """默认提供商必须选一个真的有密钥的。
+
+    下拉框原来固定停在第一项 openai，而多数机器上只配了 deepseek.key。
+    打开面板点识别必然报"缺少 API 密钥"，用户以为识别功能坏了——
+    首次就注定失败的默认值不是中立，是坑。
+    """
+    from desktop.sketch_panel import _provider_with_credentials
+    import credentials
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(credentials, "load_api_key", lambda *a, **k: "k")
+    assert _provider_with_credentials() == "deepseek"
+
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    assert _provider_with_credentials() == "openai"
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(credentials, "load_api_key", lambda *a, **k: None)
+    assert _provider_with_credentials() == "openai", "都没有时保持原默认"
+
+
+def test_prompt_pins_a_node_numbering_order():
+    """编号顺序必须写死在提示词里。
+
+    视觉模型给的 id 本来是任意的，人没法把"识别出的 3 号"和图上某个节点对上。
+    定死"先按 v 从大到小分层、同层按 u 从小到大"之后，编号才可核对。
+    """
+    from sketch_parser import V2_SKETCH_SYSTEM_PROMPT as prompt
+    assert "v 从大到小" in prompt and "u 从小到大" in prompt
+    assert "fixed / pinned / roller" in prompt, "支座类型要给模型枚举清楚"

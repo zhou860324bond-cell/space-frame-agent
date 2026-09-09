@@ -23,6 +23,27 @@ from .image_preprocess_widget import ImagePreprocessWidget
 from .issue_panel import IssuePanel
 
 
+def _provider_with_credentials(default: str = "openai") -> str:
+    """默认选一个**真的有密钥**的提供商。
+
+    下拉框原来固定停在第一项 openai，而多数机器上只配了 deepseek.key。
+    于是打开面板点识别，必然是"缺少 API 密钥"——用户以为是识别功能坏了，
+    实际只是选错了提供商。首次就注定失败的默认值不是中立，是坑。
+    """
+    import os
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    try:
+        from credentials import load_api_key
+        if load_api_key():
+            return "deepseek"
+    except Exception:                       # 读密钥失败不该拖垮面板构造
+        pass
+    return default
+
+
 class SketchPanel(QWidget):
     """手绘草图识别面板。"""
 
@@ -70,6 +91,7 @@ class SketchPanel(QWidget):
         cfg_row = QHBoxLayout()
         self.cmb_provider = QComboBox()
         self.cmb_provider.addItems(["openai", "anthropic", "deepseek"])
+        self.cmb_provider.setCurrentText(_provider_with_credentials())
         self.cmb_provider.setToolTip("多模态 LLM 提供商")
         self.txt_model = QLineEdit("gpt-4o")
         self.txt_model.setPlaceholderText("模型名")
