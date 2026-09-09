@@ -1,0 +1,86 @@
+{
+  "fixture": "deterministic-corpus-v2",
+  "prediction": {
+    "height_px": 96,
+    "image_id": "seed_20_photo_gable",
+    "intersections": [],
+    "issues": [],
+    "loads": [],
+    "members": [
+      {
+        "i": 1,
+        "id": 1,
+        "j": 2
+      },
+      {
+        "i": 2,
+        "id": 2,
+        "j": 3
+      },
+      {
+        "i": 3,
+        "id": 3,
+        "j": 4
+      },
+      {
+        "i": 4,
+        "id": 4,
+        "j": 5
+      }
+    ],
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.12598425196850394,
+          0.8421052631578947
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.12598425196850394,
+          0.4421052631578947
+        ]
+      },
+      {
+        "id": 3,
+        "point": [
+          0.5039370078740157,
+          0.14736842105263157
+        ]
+      },
+      {
+        "id": 4,
+        "point": [
+          0.8818897637795275,
+          0.4421052631578947
+        ]
+      },
+      {
+        "id": 5,
+        "point": [
+          0.8818897637795275,
+          0.8421052631578947
+        ]
+      }
+    ],
+    "scale": {
+      "length_per_pixel": 0.05,
+      "status": "confirmed",
+      "unit": "m/px"
+    },
+    "supports": [],
+    "width_px": 128
+  },
+  "redaction": {
+    "credentials": "removed",
+    "user_metadata": "removed"
+  },
+  "request_fingerprint": {
+    "model": "deterministic-corpus-v2",
+    "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+    "provider": "fixture",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672"
+  }
+}

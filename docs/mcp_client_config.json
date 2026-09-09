@@ -1,0 +1,49 @@
+{
+  "_comment": "空间刚架智能计算 Agent — MCP Server 客户端配置模板。把 mcpServers 下的 spatial-frame 节点复制到你的 MCP 客户端配置里即可。支持 stdio（本地进程）和 sse（远程 HTTP）两种传输。",
+
+  "mcpServers": {
+    "spatial-frame": {
+      "_comment": "方式一：stdio 本地进程。客户端直接启动 python 进程，适合本机使用。需要把 command/args 里的路径改成你本机的实际路径。",
+      "command": "C:\\Users\\86318\\Desktop\\agent开发\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "mcp_server"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Users\\86318\\Desktop\\agent开发\\src",
+        "PYTHONUTF8": "1"
+      }
+    },
+
+    "spatial-frame-sse": {
+      "_comment": "方式二：SSE 远程 HTTP。先在服务器上启动 MCP Server（python -m mcp_server --transport sse --port 8765），然后客户端连这个 URL。适合多机共享或容器部署。",
+      "url": "http://localhost:8765/sse"
+    }
+  },
+
+  "_usage": {
+    "启动_server": {
+      "stdio": "python -m mcp_server（默认 stdio，由客户端管理进程生命周期）",
+      "sse": "python -m mcp_server --transport sse --host 0.0.0.0 --port 8765",
+      "streamable_http": "python -m mcp_server --transport streamable-http --port 8765"
+    },
+    "可用工具": [
+      "solve_frame — 一站式：自然语言/JSON → 建模 → 求解 → 自校验 → 出结果",
+      "validate_frame — 只校验模型合法性，不求解",
+      "query_result — 查询已求解模型的位移/反力/内力/模态/屈曲",
+      "diagnose_supports — 支座约束不足诊断，找出刚体机构模态",
+      "modal_analysis — 自振频率与振型",
+      "buckling_analysis — 线性屈曲荷载因子与失稳模态",
+      "detect_silent_failures — 8 项静默失败检测（约束不足/位移异常/反力为零/刚度奇异等）",
+      "list_capsules — 列出历史实验胶囊",
+      "get_capsule — 读取某个胶囊的完整输入与结果",
+      "diff_capsules — 对比两个胶囊的输入差异与结果变化"
+    ],
+    "注意事项": [
+      "大模型只产结构，不产数值——所有位移/内力/反力均由确定性求解器计算",
+      "solve_frame 会自动跑静默失败检测并保存实验胶囊到 capsules/ 目录",
+      "Abaqus 对标是可选功能：本机装了 Abaqus 才能用，没有也不影响自研求解器",
+      "桌面端需要 OpenGL；无显卡环境请用网页端（run_gui.bat）或 MCP Server"
+    ]
+  }
+}

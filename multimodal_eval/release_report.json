@@ -1,0 +1,112 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "manifest": "manifest.json",
+  "gate_cases": 30,
+  "evaluated_image_ids": [
+    "seed_01_portal",
+    "seed_02_gable",
+    "seed_03_t_joint",
+    "seed_04_x_cross",
+    "seed_05_missing_scale",
+    "seed_06_skewed",
+    "seed_07_supports",
+    "seed_08_load",
+    "seed_09_clear_portal",
+    "seed_10_clear_gable",
+    "seed_11_hand_portal",
+    "seed_12_hand_gable",
+    "seed_13_missing_beam",
+    "seed_14_missing_portal",
+    "seed_15_x_cross",
+    "seed_16_t_joint",
+    "seed_17_blur_support",
+    "seed_18_blur_load",
+    "seed_19_photo_portal",
+    "seed_20_photo_gable",
+    "seed_21_skew_left",
+    "seed_22_skew_right",
+    "seed_23_support_fixed",
+    "seed_24_support_mixed",
+    "seed_25_nodal_load",
+    "seed_26_member_load",
+    "seed_27_clear_two_bay",
+    "seed_28_clear_brace",
+    "seed_29_noisy_missing",
+    "seed_30_hand_x"
+  ],
+  "metrics": {
+    "node_f1": 1.0,
+    "member_f1": 1.0,
+    "clear_node_f1": 1.0,
+    "clear_member_f1": 1.0,
+    "intersection_accuracy": 1.0,
+    "support_f1": 1.0,
+    "load_f1": 1.0,
+    "load_numeric_unit_accuracy": 1.0,
+    "scale_accuracy": 1.0,
+    "issue_recall": 1.0,
+    "issue_false_positives": 0
+  },
+  "counts": {
+    "nodes": {
+      "tp": 121,
+      "fp": 0,
+      "fn": 0
+    },
+    "members": {
+      "tp": 87,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_nodes": {
+      "tp": 43,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_members": {
+      "tp": 34,
+      "fp": 0,
+      "fn": 0
+    },
+    "supports": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 0
+    },
+    "loads": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0
+    },
+    "issues": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0
+    },
+    "intersections": {
+      "correct": 5,
+      "wrong": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "scale": {
+      "correct": 26,
+      "total": 26
+    },
+    "load_numeric": {
+      "correct": 4,
+      "total": 4
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [],
+  "passed": true
+}

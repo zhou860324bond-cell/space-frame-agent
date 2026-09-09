@@ -1,0 +1,20 @@
+{
+  "format": "space-frame-provider-smoke/v1",
+  "generated_at": "2026-09-08T15:57:23.668145+00:00",
+  "image_id": "seed_01_portal",
+  "excluded_from_offline_gate": true,
+  "results": [
+    {
+      "provider": "openai",
+      "status": "SKIPPED_NO_CREDENTIALS"
+    },
+    {
+      "provider": "anthropic",
+      "status": "SKIPPED_NO_CREDENTIALS"
+    },
+    {
+      "provider": "deepseek",
+      "status": "SKIPPED_NO_CREDENTIALS"
+    }
+  ]
+}

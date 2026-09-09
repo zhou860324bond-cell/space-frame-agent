@@ -1,0 +1,55 @@
+{
+  "height_px": 96,
+  "image_id": "seed_05_missing_scale",
+  "intersections": [],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "loads": [],
+  "members": [
+    {
+      "i": 1,
+      "id": 1,
+      "j": 2
+    },
+    {
+      "i": 2,
+      "id": 2,
+      "j": 3
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.14173228346456693,
+        0.8
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.14173228346456693,
+        0.25263157894736843
+      ]
+    },
+    {
+      "id": 3,
+      "point": [
+        0.8346456692913385,
+        0.25263157894736843
+      ]
+    }
+  ],
+  "scale": {
+    "length_per_pixel": null,
+    "status": "unknown"
+  },
+  "supports": [],
+  "width_px": 128
+}

@@ -1,0 +1,797 @@
+"""三维视口部件。
+
+**薄。** 所有几何和标量都在 `scene.py` 里算好，这里只负责把网格塞进渲染器、
+管好演员的增删、以及相机。逻辑越少越好——因为这一层是最难自动测的。
+
+一个视口负责四种显示模式，切换时整个场景重建（刚架规模小，重建比
+增量维护简单可靠得多）：
+
+* 模型     —— 几何 + 支座 + 荷载符号，求解前就能看
+* 分析网格 —— 物理构件编译后的单元与切分节点，只读预览
+* 变形     —— 变形后的管 + 未变形轮廓
+* 云图     —— 按某个内力分量着色
+* 模态/屈曲 —— 振型或失稳模态
+"""
+
+from __future__ import annotations
+
+import os
+
+import numpy as np
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+from . import scene, theme
+
+# 无头环境（QT_QPA_PLATFORM=offscreen）里没有可用的 OpenGL：VTK 建不出
+# shader，一渲染就在 C++ 层 abort——**Python 抓不住这种崩溃**。
+#
+# 这不是在掩盖失败。渲染本来就不是这一层的逻辑：几何和标量在 `scene.py`
+# 里算好并逐条验过，视口只负责把网格塞进渲染器。所以无头时**照常维护状态**
+# （选中了谁、要不要标注），只跳过真正画的那一步——
+# 逻辑照测，像素交给有 GL 的机器。
+CAN_RENDER = os.environ.get("QT_QPA_PLATFORM", "") != "offscreen"
+
+
+class _NullCamera:
+    def zoom(self, _factor) -> None:
+        pass
+
+
+class _NullPlotter:
+    """离屏测试占位器。
+
+    仅仅“不调用 render”还不够：QtInteractor 自带定时器，会在
+    QApplication.processEvents() 时自行 render，仍可能在 VTK C++ 层崩溃。
+    无头环境因此根本不创建 VTK 窗口，状态与业务逻辑照常测试。
+    """
+
+    def __init__(self, parent=None):
+        self.interactor = QWidget(parent)
+        self.camera = _NullCamera()
+        self.camera_position = None
+
+    def __getattr__(self, _name):
+        return lambda *args, **kwargs: None
+
+    def screenshot(self, _path=None, return_img=False):
+        if return_img:
+            return np.zeros((1, 1, 3), dtype=np.uint8)
+        return None
+
+
+class Viewport(QWidget):
+    """PyVista 渲染器的宿主。
+
+    除了画，还负责两件和"在哪"有关的事：**拾取**和**编号标注**。
+    这两样加起来才让"节点 17 缺少约束"这类信息在三维视图里变得可定位。
+    """
+
+    # 拾取到了什么：("node" | "member", 编号)
+    picked = Signal(str, int)
+    # 人工建模：创建了节点 / 创建了杆件
+    node_created = Signal(float, float, float)   # x, y, z
+    member_created = Signal(int, int)             # node_i, node_j
+    # 建节点时点击位置落在已有节点上，吸附过去、不重复建，发它提示编号
+    node_snapped = Signal(int)
+    # 在视口里按了 Esc，请求退出当前建模/拾取模式
+    escape_pressed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        if CAN_RENDER:
+            from pyvistaqt import QtInteractor
+            self.plotter = QtInteractor(self)
+        else:
+            self.plotter = _NullPlotter(self)
+        layout.addWidget(self.plotter.interactor)
+
+        if CAN_RENDER:
+            self.plotter.set_background(theme.VIEWPORT_BG)
+            self.plotter.add_axes(color=theme.INK_MUTED)
+        self._first_render = True
+
+        # 左下角坐标系指示器
+        from .axis_indicator import AxisIndicator
+        self.axis_indicator = AxisIndicator(self)
+        self.axis_indicator.move(10, self.height() - self.axis_indicator.height() - 10)
+        self.axis_indicator.show()
+        self.axis_indicator.raise_()
+
+        # 拾取状态。**过滤器是必须的**：三维视图里点一下，
+        # 你不说清楚要选什么类型，用户就得靠反复试来猜自己选中了谁
+        self.pick_mode: str | None = None      # None / "node" / "member"
+        self.selection: tuple[str, int] | None = None
+        self.show_labels = False
+        self._frame = None                     # 最近一次画的 frame，拾取要用
+
+        # 人工建模状态
+        self.model_mode: str | None = None     # None / "node" / "member"
+        self._pending_node: int | None = None   # 杆件创建时的第一个节点
+
+        # 精确建模：工作平面 + 网格捕捉 + 已有节点吸附。
+        # 直接在三维视图里点，深度由相机决定、节点会"飘"；把点先投影到选定
+        # 工作平面、再按间距取整、靠近已有节点就吸附，坐标才可控、可复现。
+        self.work_plane: str = "XY"   # "XY"(z=常数) / "XZ"(y=常数) / "YZ"(x=常数)
+        self.work_offset: float = 0.0
+        self.snap_size: float = 0.0   # 工作平面内网格捕捉间距，0=关闭
+        self._node_snap_ratio = 0.06  # 已有节点吸附半径=模型尺寸×该比例
+
+        # 视口外观状态
+        self.bg_theme: str = "dark"            # 背景主题；"__custom__" 表示自定义
+        self.custom_bg = None                  # 自定义背景：str=纯色，(mode,base,second)=渐变
+        self.show_grid_floor: bool = False     # 网格地面
+        self.show_axes_widget: bool = True     # 坐标轴指示器
+
+        # 左上角模式徽章：进入建模/拾取模式时提示当前模式、工作平面、捕捉
+        self.mode_badge = QLabel("", self)
+        self.mode_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.mode_badge.setVisible(False)
+        self.mode_badge.setStyleSheet(
+            f"QLabel{{background:{theme.ACCENT_DIM}; color:#ffffff; "
+            f"border:1px solid {theme.ACCENT}; border-radius:3px; "
+            f"padding:4px 10px; font-size:9pt; font-weight:600;}}")
+
+    # --- 视口外观 ---
+
+    # 背景主题。值有两种形态：
+    #   "#rrggbb"                              —— 纯色
+    #   (mode, base, second)                   —— 渐变
+    # 其中 mode 取 "vertical" / "horizontal" / "radial" / "corner"，
+    # base/second 的取色位置对齐 pyvista 的调用约定：
+    #   vertical:   base=底端色,   second=顶端色
+    #   horizontal: base=左端色,   second=右端色
+    #   radial:     base=中心色,   second=边缘色
+    #   corner:     base=中心色,   second=对角色
+    BG_THEMES = {
+        # —— 纯色 · 深色 ——
+        "dark":     "#1b2027",                          # 经典深色
+        "ink":      "#0f1115",                          # 墨黑
+        "charcoal": "#2b2f36",                          # 炭灰
+        "navy":     "#16202e",                          # 藏青
+        # —— 渐变 · 深色（Abaqus 式柔和过渡）——
+        "deep":        ("vertical",   "#14181e", "#2a3644"),  # 深蓝·垂直
+        "midnight":    ("vertical",   "#0a0e14", "#1f2a3a"),  # 午夜·垂直
+        "teal":        ("vertical",   "#141d24", "#2d4a5a"),  # 青蓝·垂直
+        "plum":        ("vertical",   "#15111a", "#332a3f"),  # 暮紫·垂直
+        "horizon":     ("horizontal", "#12161c", "#29405c"),  # 钢蓝·水平
+        "spotlight":   ("radial",     "#33425a", "#0d1117"),  # 聚光·径向
+        "corner_glow": ("corner",     "#2b3a4e", "#0b0e13"),  # 对角晕染
+        # —— 渐变 · 浅色 ——
+        "abaqus":   ("vertical",   "#e3eaf2", "#aec4dc"),     # Abaqus 经典蓝灰
+        # —— 纯色 · 浅色 ——
+        "light":    "#e8ebef",                          # 浅灰
+        "white":    "#ffffff",                          # 纯白（出图用）
+        "paper":    "#f5f3ee",                          # 米白
+        "sky":      "#dfe7ef",                          # 浅蓝
+    }
+
+    # 渐变方向 -> pyvista set_background 的关键字
+    _GRAD_MODE_KW = {
+        "vertical": "top",
+        "horizontal": "right",
+        "radial": "side",
+        "corner": "corner",
+    }
+    GRAD_MODES = (("vertical", "垂直（上→下）"),
+                  ("horizontal", "水平（左→右）"),
+                  ("radial", "径向（中心→四周）"),
+                  ("corner", "对角（中心→角）"))
+
+    # 明确的浅色预设（自定义背景另按亮度判断）
+    _LIGHT_THEMES = ("light", "white", "paper", "sky", "abaqus")
+
+    def set_background_theme(self, name: str) -> None:
+        """切换预设视口背景主题。"""
+        if name not in self.BG_THEMES:
+            return
+        self.bg_theme = name
+        self.custom_bg = None
+        self._apply_current_background()
+
+    def set_custom_solid(self, hexc: str) -> None:
+        """自定义纯色背景。"""
+        self.custom_bg = hexc
+        self.bg_theme = "__custom__"
+        self._apply_current_background()
+
+    def set_custom_gradient(self, c1: str, c2: str,
+                            mode: str = "vertical") -> None:
+        """自定义渐变背景。
+
+        c1/c2 按用户直觉给色：vertical 时 c1=顶、c2=底；horizontal 时
+        c1=左、c2=右；radial/corner 时 c1=中心、c2=边缘/对角。
+        """
+        if mode not in self._GRAD_MODE_KW:
+            mode = "vertical"
+        if mode == "vertical":
+            value = (mode, c2, c1)      # 内部 base=底, second=顶
+        else:
+            value = (mode, c1, c2)
+        self.custom_bg = value
+        self.bg_theme = "__custom__"
+        self._apply_current_background()
+
+    # 向后兼容旧调用名
+    def set_custom_background(self, top: str, bottom: str | None = None) -> None:
+        if bottom:
+            self.set_custom_gradient(top, bottom, "vertical")
+        else:
+            self.set_custom_solid(top)
+
+    def apply_background_value(self, value) -> None:
+        """直接应用一个背景值（纯色 str 或 (mode, base, second) 渐变），
+        并标记为自定义——弹窗里"保留配色、只换渐变方向"时复用。"""
+        self.custom_bg = value
+        self.bg_theme = "__custom__"
+        self._apply_current_background()
+
+    def _apply_current_background(self) -> None:
+        """按当前状态把背景、坐标轴颜色、网格地面一次性刷到渲染器。"""
+        if not CAN_RENDER:
+            return
+        if self.bg_theme == "__custom__" and self.custom_bg is not None:
+            value = self.custom_bg
+        else:
+            value = self.BG_THEMES.get(self.bg_theme, theme.VIEWPORT_BG)
+        self._apply_bg_value(value)
+        # 背景变了，坐标轴和网格地面颜色要跟着变，浅色底上画白轴看不见
+        self._refresh_axes_color()
+        self._refresh_grid_floor()
+        self.plotter.render()
+
+    def _apply_bg_value(self, value) -> None:
+        """把 纯色字符串 或 (mode, base, second) 渐变应用到渲染器。"""
+        if isinstance(value, tuple) and len(value) == 3:
+            mode, base, second = value
+            kw = self._GRAD_MODE_KW.get(mode, "top")
+            # set_background 的纯色分支会自动关闭上一次的渐变
+            self.plotter.set_background(base, **{kw: second})
+        else:
+            self.plotter.set_background(value)
+
+    def _is_light_bg(self) -> bool:
+        if self.bg_theme == "__custom__":
+            return self._value_is_light(self.custom_bg)
+        return self._value_is_light(self.BG_THEMES.get(self.bg_theme))
+
+    @classmethod
+    def _value_is_light(cls, value) -> bool:
+        """判断一个背景值整体是否偏浅：渐变取两端平均亮度。"""
+        if value is None:
+            return False
+        if isinstance(value, tuple):
+            colors = [value[1], value[2]]
+            lums = [cls._hex_lum(c) for c in colors]
+            return sum(lums) / len(lums) > 160
+        return cls._hex_is_light(value)
+
+    @staticmethod
+    def _hex_lum(hexc: str) -> float:
+        try:
+            c = QColor(hexc)
+            return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _hex_is_light(hexc: str) -> bool:
+        """按相对亮度判断一个十六进制颜色是不是浅色（自定义背景时用）。"""
+        return Viewport._hex_lum(hexc) > 160
+
+    def _refresh_axes_color(self) -> None:
+        """坐标轴颜色随背景明暗调整。"""
+        if not CAN_RENDER:
+            return
+        try:
+            axes_color = "#333333" if self._is_light_bg() else theme.INK_MUTED
+            self.plotter.add_axes(color=axes_color)
+        except Exception:
+            pass
+
+    def toggle_grid_floor(self, on: bool) -> None:
+        """显示/隐藏 z=0 网格地面。"""
+        self.show_grid_floor = bool(on)
+        if not CAN_RENDER:
+            return
+        self.plotter.remove_actor("_grid_floor", reset_camera=False)
+        self._refresh_grid_floor()
+        self.plotter.render()
+
+    def _refresh_grid_floor(self) -> None:
+        """按当前状态和背景重画网格地面。"""
+        if not CAN_RENDER or not self.show_grid_floor:
+            return
+        try:
+            import pyvista as pv
+            # 地面范围跟着模型走，没有模型就给一个默认 20×20
+            half = 10.0
+            if self._frame is not None:
+                coords = np.asarray(self._frame.get("coordinates") or [])
+                if coords.size:
+                    span = max(
+                        float(np.ptp(coords[:, 0])),
+                        float(np.ptp(coords[:, 1])), 1.0)
+                    half = max(span * 0.8, 10.0)
+                    cx = float(np.mean(coords[:, 0]))
+                    cy = float(np.mean(coords[:, 1]))
+                else:
+                    cx = cy = 0.0
+            else:
+                cx = cy = 0.0
+            plane = pv.Plane(center=(cx, cy, 0),
+                             direction=(0, 0, 1),
+                             i_size=half * 2, j_size=half * 2,
+                             i_resolution=int(max(half, 1)),
+                             j_resolution=int(max(half, 1)))
+            line_color = "#bbbbbb" if self._is_light_bg() else "#3a424e"
+            fill_color = "#dfe3e8" if self._is_light_bg() else "#161a20"
+            self.plotter.add_mesh(
+                plane, color=fill_color, opacity=0.35,
+                show_edges=True, edge_color=line_color,
+                name="_grid_floor", reset_camera=False)
+        except Exception:
+            pass
+
+    # --- 基础 ---
+
+    def resizeEvent(self, event):
+        """窗口大小变化时，更新坐标系指示器位置。"""
+        super().resizeEvent(event)
+        if hasattr(self, 'axis_indicator'):
+            self.axis_indicator.move(
+                10,
+                self.height() - self.axis_indicator.height() - 10
+            )
+            self.axis_indicator.raise_()
+
+    def clear(self) -> None:
+        if not CAN_RENDER:
+            return
+        self.plotter.clear()
+        # 按当前主题/自定义颜色恢复背景
+        self._apply_current_background()
+
+    # --- 标注与选择 ---
+
+    def _decorate(self, frame) -> None:
+        """编号标注 + 选中高亮。**每种显示模式画完都要调一次**，
+        否则切到云图选中就没了，用户会以为选择被清掉了。"""
+        self._frame = frame
+        if frame is None or not CAN_RENDER:
+            return
+        # 模型范围变了，网格地面跟着重算大小
+        if self.show_grid_floor:
+            self.plotter.remove_actor("_grid_floor", reset_camera=False)
+            self._refresh_grid_floor()
+        if self.show_labels:
+            pts, txt = scene.node_labels(frame)
+            self.plotter.add_point_labels(
+                pts, txt, name="_node_labels", font_size=10,
+                text_color=theme.INK, shape=None, always_visible=True,
+                show_points=False)
+            pts, txt = scene.member_labels(frame)
+            self.plotter.add_point_labels(
+                pts, txt, name="_member_labels", font_size=10,
+                text_color=theme.ACCENT, shape=None, always_visible=True,
+                show_points=False)
+        if self.selection:
+            kind, ident = self.selection
+            if kind == "member":
+                mesh = scene.highlight_members(frame, [ident])
+                if mesh.n_cells:
+                    self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
+                                          name="_selection", opacity=0.85)
+            else:
+                mesh = scene.highlight_nodes(frame, [ident])
+                if mesh.n_points:
+                    self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
+                                          name="_selection", point_size=16,
+                                          render_points_as_spheres=True)
+
+    def set_selection(self, kind: str | None, ident: int | None) -> None:
+        self.selection = (kind, ident) if kind and ident is not None else None
+        if self._frame is not None and CAN_RENDER:
+            self.plotter.remove_actor("_selection", reset_camera=False)
+            self._decorate(self._frame)
+            self.plotter.render()
+
+    def set_labels(self, on: bool) -> None:
+        self.show_labels = bool(on)
+        if self._frame is not None and CAN_RENDER:
+            for name in ("_node_labels", "_member_labels"):
+                self.plotter.remove_actor(name, reset_camera=False)
+            self._decorate(self._frame)
+            self.plotter.render()
+
+    # --- 精确建模：工作平面 / 网格捕捉 / 已有节点吸附 ---
+
+    # (代号, 说明, 被固定的坐标轴)
+    WORK_PLANES = (("XY", "XY 水平面（z=常数）", "z"),
+                   ("XZ", "XZ 竖直面（y=常数）", "y"),
+                   ("YZ", "YZ 竖直面（x=常数）", "x"))
+
+    def set_work_plane(self, plane: str, offset: float | None = None) -> None:
+        if plane in ("XY", "XZ", "YZ"):
+            self.work_plane = plane
+        if offset is not None:
+            try:
+                self.work_offset = float(offset)
+            except (TypeError, ValueError):
+                pass
+        self._update_mode_badge()
+
+    def set_work_offset(self, offset: float) -> None:
+        try:
+            self.work_offset = float(offset)
+        except (TypeError, ValueError):
+            return
+        self._update_mode_badge()
+
+    def set_snap_size(self, size: float) -> None:
+        try:
+            size = float(size)
+        except (TypeError, ValueError):
+            size = 0.0
+        self.snap_size = max(0.0, size)
+        self._update_mode_badge()
+
+    def _plane_axis(self) -> int:
+        # 工作平面固定的是哪根轴：XY->z(2), XZ->y(1), YZ->x(0)
+        return {"XY": 2, "XZ": 1, "YZ": 0}[self.work_plane]
+
+    def _project_to_work_plane(self, pt) -> np.ndarray:
+        out = np.asarray(pt, dtype=float).copy()
+        out[self._plane_axis()] = self.work_offset
+        return out
+
+    def _snap_point(self, pt) -> np.ndarray:
+        """先压到工作平面，再在平面内按捕捉间距取整。"""
+        out = np.asarray(pt, dtype=float).copy()
+        fixed = self._plane_axis()
+        out[fixed] = self.work_offset
+        if self.snap_size > 0:
+            for i in range(3):
+                if i != fixed:
+                    out[i] = round(out[i] / self.snap_size) * self.snap_size
+        return out
+
+    def _snap_to_existing_node(self, pt):
+        """吸附半径内已有节点则返回其编号，否则 None（避免重复节点）。"""
+        if self._frame is None:
+            return None
+        try:
+            size = scene.model_size(self._frame) or 1.0
+        except Exception:                      # noqa: BLE001
+            size = 1.0
+        limit = self._node_snap_ratio * size
+        best, best_d = None, float("inf")
+        for nid in self._frame.order():
+            d = float(np.linalg.norm(pt - self._frame.nodes[nid].xyz))
+            if d < best_d:
+                best, best_d = nid, d
+        return best if best_d <= limit else None
+
+    def _update_mode_badge(self) -> None:
+        """左上角模式徽章：当前模式 + 工作平面 + 捕捉，给明确的操作反馈。"""
+        if self.model_mode:
+            name = {"node": "建节点", "member": "建杆件"}.get(self.model_mode, "")
+        elif self.pick_mode:
+            name = {"node": "选择节点", "member": "选择杆件"}.get(self.pick_mode, "")
+        else:
+            self.mode_badge.setVisible(False)
+            return
+        ax_char = {"XY": "z", "XZ": "y", "YZ": "x"}[self.work_plane]
+        bits = [name,
+                f"工作平面 {self.work_plane}（{ax_char}={self.work_offset:g}）"]
+        if self.snap_size > 0:
+            bits.append(f"网格捕捉 {self.snap_size:g}")
+        bits.append("Esc 退出")
+        self.mode_badge.setText("　｜　".join(bits))
+        self.mode_badge.adjustSize()
+        self.mode_badge.move(12, 12)
+        self.mode_badge.setVisible(True)
+        self.mode_badge.raise_()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.escape_pressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def set_pick_mode(self, mode: str | None) -> None:
+        """设定拾取过滤器。传 None 关闭拾取，回到纯看图。"""
+        self.pick_mode = mode
+        try:
+            self.plotter.disable_picking()
+        except Exception:                      # noqa: BLE001
+            pass                               # 本来就没开过，不是错误
+        if mode is None:
+            self._update_mode_badge()
+            return
+        try:
+            self.plotter.enable_point_picking(
+                callback=self._on_pick, show_message=False,
+                show_point=False, use_picker=True, left_clicking=True)
+        except Exception:                      # noqa: BLE001
+            # 无头环境没有交互器。**不能因此崩** —— 拾取只是锦上添花，
+            # 画图和求解不该被它拖累
+            pass
+        self._update_mode_badge()
+
+    def set_model_mode(self, mode: str | None) -> None:
+        """设定人工建模模式。None 关闭，"node" 点击创建节点，"member" 点击两节点创建杆件。"""
+        self.model_mode = mode
+        self._pending_node = None
+        self.pick_mode = None  # 建模模式和拾取模式互斥
+        try:
+            self.plotter.disable_picking()
+        except Exception:
+            pass
+        if mode is None:
+            self._update_mode_badge()
+            return
+        try:
+            self.plotter.enable_point_picking(
+                callback=self._on_pick, show_message=False,
+                show_point=False, use_picker=True, left_clicking=True,
+                # 空模型没有可拾取网格。建节点时仍要允许在当前相机焦平面
+                # 上取世界坐标，否则第一个节点永远点不出来。
+                pickable_window=(mode == "node"))
+        except Exception:
+            pass
+        self._update_mode_badge()
+
+    def _on_pick(self, point, *_args) -> None:
+        """拾取回调。建模模式下创建节点/杆件，普通模式下选中对象。"""
+        if point is None:
+            return
+        pt = np.asarray(point, dtype=float)
+
+        # 人工建模：节点模式 —— 投影到工作平面、网格捕捉、吸附已有节点后创建
+        if self.model_mode == "node":
+            snapped = self._snap_point(pt)
+            existing = self._snap_to_existing_node(snapped)
+            if existing is not None:
+                # 点在了已有节点附近：不重复建，直接吸附并提示
+                self.set_selection("node", existing)
+                self.node_snapped.emit(existing)
+                return
+            self.node_created.emit(float(snapped[0]),
+                                   float(snapped[1]),
+                                   float(snapped[2]))
+            return
+
+        # 首个节点尚未建立时，没有可供选择的对象；但节点创建模式仍应可用。
+        if self._frame is None:
+            return
+
+        # 人工建模：杆件模式 —— 点击第一个节点，再点击第二个节点创建杆件。
+        # 用比普通选择略宽的容差，更容易点中要连接的节点。
+        if self.model_mode == "member":
+            found = scene.nearest(self._frame, pt, "node", tolerance=0.14)
+            if found is None:
+                return
+            if self._pending_node is None:
+                self._pending_node = found
+                self.set_selection("node", found)
+            else:
+                if found != self._pending_node:
+                    self.member_created.emit(self._pending_node, found)
+                self._pending_node = None
+                self.set_selection(None, None)
+            return
+
+        # 普通拾取模式
+        if self.pick_mode is None:
+            return
+        found = scene.nearest(self._frame, pt, self.pick_mode)
+        if found is None:
+            return
+        self.set_selection(self.pick_mode, found)
+        self.picked.emit(self.pick_mode, found)
+
+    def _fit(self) -> None:
+        """首次显示时摆好相机；之后保持用户转过的视角。
+
+        每次重画都重置相机的话，改一个参数就把视角弹回去，用起来很恼火。
+        """
+        if self._first_render:
+            self.plotter.camera_position = "iso"
+            self.plotter.camera.zoom(1.3)
+            self._first_render = False
+
+    def reset_camera(self) -> None:
+        if not CAN_RENDER:
+            return
+        self.plotter.camera_position = "iso"
+        self.plotter.camera.zoom(1.3)
+        self.plotter.render()
+
+    def set_view(self, name: str) -> None:
+        """标准视角。CAE 里这几个按钮是必备的。"""
+        if not CAN_RENDER:
+            return
+        getattr(self.plotter, f"view_{name}", self.plotter.view_isometric)()
+        self.plotter.render()
+
+    # --- 显示模式 ---
+
+    def show_model(self, frame, case: str | None = None,
+                   supports: bool = True, loads: bool = True) -> dict:
+        """求解前的模型视图。"""
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return {"render_skipped": "QT_QPA_PLATFORM=offscreen"}
+        self.clear()
+        info: dict = {}
+        tubes = scene.member_tubes(frame)
+        if tubes.n_points:          # 早期只有节点、还没杆件时管子为空，空 mesh 不能画
+            self.plotter.add_mesh(tubes, color=theme.MEMBER, smooth_shading=True)
+        links = scene.rigid_link_polylines(frame)
+        if links.n_points:
+            self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
+        self.plotter.add_mesh(scene.node_points(frame), color=theme.INK,
+                              point_size=6, render_points_as_spheres=True)
+        hinges = scene.hinge_glyphs(frame)
+        if hinges.n_points:
+            self.plotter.add_mesh(hinges, color=theme.HINGE)
+        if supports:
+            glyphs = scene.support_glyphs(frame)
+            for mesh in glyphs.values():
+                self.plotter.add_mesh(mesh, color=theme.SUPPORT)
+            info["supports"] = {k: 1 for k in glyphs}
+        if loads and case:
+            arrows = scene.load_arrows(frame, case)
+            for label, mesh in arrows.items():
+                color = theme.ACCENT if label in {"节点力矩", "给定位移", "给定转角"} \
+                    else theme.LOAD
+                self.plotter.add_mesh(mesh, color=color)
+            info["loads"] = list(arrows)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+        return info
+
+    def show_analysis_mesh(self, frame, preview: dict) -> None:
+        """显示求解器实际消费的分析单元，同时保留物理构件轮廓。"""
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return
+        self.clear()
+        self.plotter.add_mesh(scene.member_polylines(frame),
+                              color=theme.REFERENCE, line_width=2)
+        analysis = scene.analysis_mesh_polylines(frame, preview)
+        if analysis.n_cells:
+            radius = max(scene.model_size(frame) * scene.TUBE_RATIO * 0.65, 1e-9)
+            self.plotter.add_mesh(analysis.tube(radius=radius),
+                                  color=theme.ACCENT, smooth_shading=True)
+        self.plotter.add_mesh(scene.node_points(frame), color=theme.INK,
+                              point_size=7, render_points_as_spheres=True)
+        splits = scene.analysis_split_points(preview)
+        if splits.n_points:
+            self.plotter.add_mesh(splits, color=theme.HINGE, point_size=15,
+                                  render_points_as_spheres=True)
+            labels = [f"切分节点 {int(node_id)}"
+                      for node_id in splits.point_data["node"]]
+            self.plotter.add_point_labels(
+                splits.points, labels, font_size=10, text_color=theme.HINGE,
+                shape=None, show_points=False, always_visible=True)
+        summary = (f"物理杆件 {preview.get('physical_members', 0)}  →  "
+                   f"分析杆段 {preview.get('analysis_elements', 0)}\n"
+                   f"切分节点 {preview.get('split_nodes', 0)}")
+        self.plotter.add_text(summary, position="upper_left",
+                              color=theme.INK, font_size=10)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+
+    def show_deformed(self, frame, solution, case: str, scale: float,
+                      overlay: bool = True, supports: bool = True) -> None:
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return
+        self.clear()
+        if overlay:
+            # 未变形轮廓画成细线而不是管：它是参照物，不该和主体抢注意力
+            self.plotter.add_mesh(scene.member_polylines(frame),
+                                  color=theme.REFERENCE, line_width=1.5)
+        tubes = scene.member_tubes(frame, solution, case, scale=scale)
+        self.plotter.add_mesh(tubes, color=theme.MEMBER, smooth_shading=True)
+        links = scene.rigid_link_polylines(frame, solution, case, scale)
+        if links.n_points:
+            self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
+        self.plotter.add_mesh(
+            scene.displaced_node_points(frame, solution[case].U, scale),
+            color=theme.MEMBER, point_size=8, render_points_as_spheres=True)
+        if supports:
+            for mesh in scene.support_glyphs(frame).values():
+                self.plotter.add_mesh(mesh, color=theme.SUPPORT)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+
+    def show_contour(self, frame, solution, case: str, component: str,
+                     scale: float = 0.0, title: str | None = None) -> tuple:
+        """内力云图。合量从零起，有符号局部分量关于零对称。"""
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return (0.0, 0.0)
+        self.clear()
+        tubes = scene.member_tubes(frame, solution, case, scale=scale,
+                                   scalars=component)
+        # 云图和二维内力图都用工程显示单位，避免 MM 模型把 N·mm 标成 N·m。
+        from units import of as unit_system
+        system = unit_system(frame)
+        scalar_scale = (system.moment_scale if component in {"T", "My", "Mz", "M"}
+                        else system.force_scale)
+        tubes[component] = tubes[component] * scalar_scale
+        clim = scene.contour_clim(tubes, component)
+        cmap = (theme.SEQUENTIAL if component in {"V", "M"}
+                else theme.DIVERGING)
+        self.plotter.add_mesh(
+            tubes, scalars=component, cmap=cmap, clim=clim,
+            smooth_shading=True,
+            scalar_bar_args=dict(
+                title=title or component, color=theme.INK_MUTED,
+                title_font_size=13, label_font_size=11, n_labels=5,
+                width=0.30, height=0.045, position_x=0.66, position_y=0.03))
+        for mesh in scene.support_glyphs(frame).values():
+            self.plotter.add_mesh(mesh, color=theme.SUPPORT)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+        return clim
+
+    def show_mode(self, frame, shapes: np.ndarray, mode: int,
+                  label: str = "") -> None:
+        """振型 / 失稳模态。振型无量纲，按模型尺寸定一个好看的放大倍数。"""
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return
+        self.clear()
+        phi = shapes[:, mode]
+        # 转角是弧度、平移是长度，不能把两者混在一起取 max；应按梁形函数
+        # 恢复后的中心线平移定显示比例，否则转角占优的振型会几乎看不见。
+        scale = scene.auto_mode_scale(frame, shapes, mode)
+        self.plotter.add_mesh(scene.member_polylines(frame),
+                              color=theme.REFERENCE, line_width=1.5)
+        self.plotter.add_mesh(
+            scene.mode_shape_tubes(frame, shapes, mode, scale),
+            color=theme.HIGHLIGHT, smooth_shading=True)
+        links = scene.rigid_link_polylines(
+            frame, scale=scale, mode_vector=phi)
+        if links.n_points:
+            self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
+        self.plotter.add_mesh(
+            scene.displaced_node_points(frame, phi, scale),
+            color=theme.HIGHLIGHT, point_size=8, render_points_as_spheres=True)
+        if label:
+            self.plotter.add_text(label, position="upper_left",
+                                  color=theme.INK, font_size=10)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+
+    def shutdown(self) -> None:
+        """关掉渲染窗口。**关窗口时必须调**——VTK 的 render window 不显式
+        finalize，进程退出时会崩在析构里。调用方只是点了个关闭，
+        不该看到"程序已停止工作"。"""
+        try:
+            self.plotter.close()
+        except Exception:                       # noqa: BLE001
+            pass
+
+    def screenshot(self, path: str) -> str:
+        self.plotter.screenshot(path)
+        return path

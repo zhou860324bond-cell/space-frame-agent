@@ -1,0 +1,16 @@
+numpy>=2.0
+matplotlib>=3.8
+scipy>=1.13
+jsonschema>=4.20
+pytest>=8.0
+# 图形界面：
+streamlit>=1.40
+plotly>=5.20
+# 只有接真实大模型时才需要，离线测试与演示不用装：
+# openai>=1.40
+python-docx        # 出 Word 报告；只出 Markdown 的话不需要
+Pillow>=10         # 多模态图片 EXIF、裁剪和 90° 旋转
+# 桌面端（PySide6 + PyVista）。约 400 MB；只用网页版的话不必装：
+# PySide6>=6.6
+# pyvista>=0.44
+# pyvistaqt>=0.11

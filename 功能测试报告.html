@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>空间刚架智能计算 Agent — 功能测试报告</title>
+<style>
+  :root {
+    --ok: #2e7d5b;
+    --ok-bg: #e8f5ef;
+    --warn: #b8860b;
+    --warn-bg: #fdf6e3;
+    --bad: #c0392b;
+    --bad-bg: #fdecea;
+    --ink: #1f2933;
+    --sub: #52606d;
+    --line: #e4e7eb;
+    --card: #ffffff;
+    --bg: #f5f7fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; background: var(--bg); color: var(--ink); line-height: 1.7; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 60px; }
+  header { text-align: center; padding: 28px 16px 12px; }
+  header h1 { font-size: 26px; margin: 0 0 6px; }
+  header .meta { color: var(--sub); font-size: 13px; }
+  .verdict { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 22px 0 8px; }
+  .vcard { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 20px; text-align: center; min-width: 150px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .vcard .num { font-size: 24px; font-weight: 700; }
+  .vcard .lbl { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  h2 { font-size: 19px; margin: 34px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--line); }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-size: 13px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #eef1f4; font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .tag.ok { background: var(--ok-bg); color: var(--ok); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .tag.bad { background: var(--bad-bg); color: var(--bad); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .card.bad { border-left: 4px solid var(--bad); }
+  .card.warn { border-left: 4px solid var(--warn); }
+  .card.ok { border-left: 4px solid var(--ok); }
+  ul { margin: 8px 0 8px 20px; padding: 0; }
+  li { margin: 4px 0; }
+  code { background: #eef1f4; padding: 1px 6px; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; }
+  .bar-row { display: flex; align-items: center; margin: 7px 0; font-size: 12px; }
+  .bar-lbl { width: 190px; text-align: right; padding-right: 10px; color: var(--sub); flex-shrink: 0; }
+  .bar-track { flex: 1; background: #eef1f4; border-radius: 5px; height: 16px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 5px; }
+  .bar-val { width: 70px; padding-left: 8px; font-weight: 600; }
+  .note { font-size: 12px; color: var(--sub); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } .bar-lbl { width: 140px; } }
+  footer { text-align: center; color: var(--sub); font-size: 12px; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>空间刚架智能计算 Agent — 功能测试报告</h1>
+  <div class="meta">测试日期 2026-09-03 · Python 3.12.4 · Win11 · 虚拟环境 .venv · 本机装有 Abaqus（E:\SIMULIA）</div>
+</header>
+
+<div class="verdict">
+  <div class="vcard"><div class="num" style="color:var(--ok)">核心求解</div><div class="lbl">570/572 单元测试通过 · 解析解机器精度命中</div></div>
+  <div class="vcard"><div class="num" style="color:var(--ok)">Abaqus 对标</div><div class="lbl">B33 误差 1e-6 ~ 1e-5 · 理论一致</div></div>
+  <div class="vcard"><div class="num" style="color:var(--warn)">大模型评测</div><div class="lbl">13/14 通过（93%）</div></div>
+  <div class="vcard"><div class="num" style="color:var(--bad)">桌面端</div><div class="lbl">真实启动失败（OpenGL）</div></div>
+</div>
+
+<h2>一、结论摘要</h2>
+<div class="card ok">
+  <b>核心功能正常且数值质量极高。</b> 求解内核、Agent 工具链、多工况组合、Abaqus 对标、屈曲/模态/截面扫描/报告生成均验证通过；简支梁解析解 <code>PL³/48EI</code> 机器精度命中（8.465608465608467 mm）。<br><br>
+  <b>三个硬伤需要处理：</b> ① 完整 pytest 套件在本机 PyVista 渲染处崩溃（access violation），跑不完 710 测试；② 桌面端真实启动因 VTK 初始化 OpenGL 失败而不可用（doctor 自检却误报"离屏正常"）；③ 3 个单元测试失败（2 个与"Abaqus 假设"相关，1 个期望值写错）。另有：真实大模型评测 13/14，简支梁集中力题 A01 稳定失败。
+</div>
+
+<h2>二、测试结果总览</h2>
+<table>
+  <tr><th>模块</th><th>测试方法</th><th>结果</th><th>证据 / 备注</th></tr>
+  <tr><td>核心求解单元测试</td><td>pytest（非 Qt 组）</td><td><span class="tag ok">570 / 572</span></td><td>2 失败均为测试自身问题（见第四节）</td></tr>
+  <tr><td>网页 GUI 测试</td><td>pytest test_gui.py</td><td><span class="tag ok">39 / 40</span></td><td>1 失败 = 假设"无 Abaqus"而本机有</td></tr>
+  <tr><td>完整 pytest 套件</td><td>pytest 全量</td><td><span class="tag bad">进程崩溃</span></td><td>~27% 处 PyVista 渲染 access violation，多次复现</td></tr>
+  <tr><td>真实大模型评测</td><td>evalset 14 题</td><td><span class="tag warn">13 / 14（93%）</span></td><td>A01 简支梁集中力稳定失败（实得 0.0）</td></tr>
+  <tr><td>解析解验证</td><td>手建简支梁</td><td><span class="tag ok">机器精度</span></td><td>8.465608465608467 = PL³/48EI，逐位一致</td></tr>
+  <tr><td>Abaqus B33 对标</td><td>5 算例（真实 Abaqus 结果）</td><td><span class="tag ok">误差 1e-6~1e-5</span></td><td>同为 Euler-Bernoulli，理论一致</td></tr>
+  <tr><td>Abaqus B31 对比</td><td>5 算例</td><td><span class="tag ok">符合预期</span></td><td>剪切变形格式差异（portal 15.3%）如文档所述</td></tr>
+  <tr><td>多工况示例</td><td>run_json.py</td><td><span class="tag ok">通过</span></td><td>3 工况 3 组合，平衡校核全部通过</td></tr>
+  <tr><td>Agent 离线演示</td><td>agent_demo.py</td><td><span class="tag ok">通过</span></td><td>求解失败→诊断→补约束→重算闭环完整</td></tr>
+  <tr><td>高级功能演示</td><td>demo_portal.py</td><td><span class="tag ok">通过</span></td><td>屈曲 λ=31.14、模态、Iz 扫描、Word 报告生成</td></tr>
+  <tr><td>桌面端自检</td><td>--doctor</td><td><span class="tag ok">7 项全过</span></td><td>含"离屏渲染正常"（但见下方）</td></tr>
+  <tr><td>桌面端真实启动</td><td>python -m desktop.app</td><td><span class="tag bad">失败</span></td><td>VTK 无法获取有效 OpenGL 像素格式，进程退出</td></tr>
+  <tr><td>网页端启动</td><td>streamlit headless</td><td><span class="tag ok">正常</span></td><td>端口监听正常，无报错</td></tr>
+  <tr><td>Abaqus 对标自检</td><td>compare.py --selftest</td><td><span class="tag ok">通过</span></td><td>误差恒 0；放大 1% 精确得 9.90e-3</td></tr>
+</table>
+
+<div class="card">
+  <div style="font-weight:600;margin-bottom:10px;">通过率可视化（%）：</div>
+  <div class="bar-row"><div class="bar-lbl">核心求解单元测试</div><div class="bar-track"><div class="bar-fill" style="width:99.7%;background:#2e7d5b"></div></div><div class="bar-val">99.7%</div></div>
+  <div class="bar-row"><div class="bar-lbl">网页 GUI 测试</div><div class="bar-track"><div class="bar-fill" style="width:97.5%;background:#3a9d7a"></div></div><div class="bar-val">97.5%</div></div>
+  <div class="bar-row"><div class="bar-lbl">真实大模型评测</div><div class="bar-track"><div class="bar-fill" style="width:92.9%;background:#d9a13b"></div></div><div class="bar-val">92.9%</div></div>
+  <div class="bar-row"><div class="bar-lbl">Abaqus B33 对标</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:#2e7d5b"></div></div><div class="bar-val">100%</div></div>
+  <div class="bar-row"><div class="bar-lbl">Abaqus B31 对比</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:#2e7d5b"></div></div><div class="bar-val">100%</div></div>
+  <div class="bar-row"><div class="bar-lbl">桌面端自检 doctor</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:#2e7d5b"></div></div><div class="bar-val">100%</div></div>
+  <div class="bar-row"><div class="bar-lbl">网页端启动 / 示例</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:#2e7d5b"></div></div><div class="bar-val">100%</div></div>
+  <div class="bar-row"><div class="bar-lbl">桌面端真实启动</div><div class="bar-track"><div class="bar-fill" style="width:0%;background:#c0392b"></div></div><div class="bar-val">0%</div></div>
+  <div class="note">说明：核心求解 570/572 通过率 99.7%，评测 13/14 通过率 92.9%，其余模块按"是否正常"计 0/100%。</div>
+</div>
+
+<h2>三、发现的优点</h2>
+<div class="card">
+  <ul>
+    <li><b>数值正确性极高。</b> 解析解机器精度命中；Abaqus B33 五算例全场误差 1e-6~1e-5，工程上可视为精确。弱轴弯曲（857mm）与强轴（42.9mm）分开验证，截面主轴方向无错误。</li>
+    <li><b>架构原则清晰且被遵守。</b> "大模型只产结构、不产数值"通过离线演示得到验证——每个数字都来自工具返回值，调用链在面板中摊开展示，自证可溯源。</li>
+    <li><b>自修复闭环真实可用。</b> agent_demo 完整展示"求解失败→奇异诊断→补约束→重算→平衡校核通过"的 8 轮闭环，是工程上最亮眼的能力。</li>
+    <li><b>功能覆盖面广且有深度。</b> 多工况/组合、静力凝聚释放、屈曲、模态、截面参数扫描、命名集合、支撑/抽柱/换截面算子、Word 报告生成，demo_portal 一次跑通全链路。</li>
+    <li><b>测试设计有方法论。</b> 评分器读会话状态而非回复文本；Abaqus 对标选 B33（苹果对苹果）并主动展示 B31 格式差异；健壮性测试写不变量而非"多跑几次"；对 UTF-8 控制台、Qt 绑定、奇异不报错等坑有系统性处理。</li>
+    <li><b>文档质量高。</b> README 与各模块 docstring 把"为什么这么做"讲透（如局部坐标系参考向量、内力回算、空集合静默等），工程可读性很强。</li>
+    <li><b>双界面策略务实。</b> 网页版功能等价且在本机正常可用；桌面端代码结构完整、自检项全面，OpenGL 问题属环境性。</li>
+  </ul>
+</div>
+
+<h2>四、发现的问题与改进建议</h2>
+
+<div class="card bad">
+  <h3 style="margin-top:0">问题 1（严重）· 完整测试套件在 PyVista 渲染处崩溃</h3>
+  <p>全量 pytest 在约 27% 处、桌面端渲染相关测试在 <code>viewport.show_deformed → add_mesh → reset_camera → render</code> 路径上抛 <b>Windows access violation</b>，进程直接被带崩，多次复现（单独跑一个测试文件也崩）。本机无有效 OpenGL（见问题 2），但 <code>conftest.py</code> 只处理了"窗口未关闭导致析构崩溃"，没有拦截渲染期崩溃，也没有做无 GL 环境隔离。</p>
+  <p><b>建议：</b>桌面端渲染测试统一加 <code>@pytest.mark.skipif(无可用GL)</code> 或自检失败即 skip；把渲染调用包进 try/except 或子进程隔离，绝不允许一个测试把整个 pytest 进程带崩。README 声称"710 测试全绿"在本机当前状态下不成立。</p>
+</div>
+
+<div class="card bad">
+  <h3 style="margin-top:0">问题 2（严重）· doctor 自检与实际启动不一致，桌面端打不开</h3>
+  <p><code>--doctor</code> 报告"OpenGL 离屏渲染正常"，但真实 <code>python -m desktop.app</code> 启动时 VTK 报 <code>failed to get valid pixel format</code> / <code>Failed to initialize OpenGL functions!</code> 并退出。即：<b>自检没覆盖真实渲染路径</b>（离屏上下文 ≠ Win32 窗口上下文），用户按 README 提示"自检通过就是能开"会被误导。</p>
+  <p><b>建议：</b>把 doctor 的 OpenGL 检查升级为创建真实 RenderWindow 并渲染一个 mesh（正好复现崩溃路径），OpenGL 失败时明确报"桌面端不可用，请用网页版"，而不是报"正常"。这在 README 已有预案（无 GL 用网页版），只是检测没落到点。</p>
+</div>
+
+<div class="card warn">
+  <h3 style="margin-top:0">问题 3（中等）· 3 个单元测试失败，其中 2 个与 Abaqus 环境假设有关</h3>
+  <ul>
+    <li><code>test_compare_solvers.py::test_comparison_says_which_side_failed</code> — monkeypatch 把 <code>abaqus_available</code> 置 False，但 <code>solve()</code> 内部实际调用 <code>find_abaqus()</code>（patch 错函数）。本机装有 Abaqus，于是测试真的去跑了一次 Abaqus 作业并成功，<code>assert not r.ok</code> 落空。这是测试 bug，同时暴露 <code>solve()</code> 绕过 <code>abaqus_available()</code> 的口径不一致。</li>
+    <li><code>test_gui.py::test_comparison_tab_degrades_gracefully_without_abaqus</code> — 假设无 Abaqus 时的降级提示，本机有 Abaqus 故提示不出现。测试应自动探测（<code>find_abaqus() is None</code> 才断言降级文案），而非写死假设。</li>
+    <li><code>test_drawing.py::test_drawing_a_two_bay_frame_takes_no_redundant_clicks</code> — 期望 6 根杆，实际画出 5 根（左柱/左梁/中柱/右梁/右柱，无重合节点，结构完全正确）。<b>是期望值写错了（应为 5）</b>，不是功能 bug。</li>
+  </ul>
+  <p><b>建议：</b>降级类测试统一改为"真实探测环境"再断言；补一个"patch <code>find_abaqus</code>"的用例覆盖 <code>solve()</code> 的失败路径；修正 test_drawing 期望值。</p>
+</div>
+
+<div class="card warn">
+  <h3 style="margin-top:0">问题 4（中等）· 真实大模型评测 13/14，A01 简支梁集中力稳定失败</h3>
+  <p>14 题评测通过 13（93%）。<b>A01</b>"单跨 8m 简支梁跨中 50kN 集中力"两次运行均得 <code>max_displacement_mm = 0.0</code>（期望 8.4656 mm）——大模型建出的模型位移为零。已排除求解器问题：手动同参数建模，求解器精确命中 8.465608465608467 mm。同类的 A02 悬臂梁、A03 简支梁均布荷载均通过，独 A01（集中力 + 未明确梁轴向）失败。</p>
+  <p><b>建议：</b>① 在系统提示/工具说明中明确"简支梁请先说明轴向与荷载平面"；② 评估 A01 题目本身对模型的表述苛刻程度（未给梁方向），必要时补方向；③ 将 A01 列为回归样例；④ README"14 题六类全过"应更新为当前 13/14 或注明达标环境。</p>
+</div>
+
+<div class="card warn">
+  <h3 style="margin-top:0">问题 5（轻微）· 若干工程细节</h3>
+  <ul>
+    <li><code>examples/run_json.py</code> 等源码存在 <code>SyntaxWarning: invalid escape sequence '\p'</code>，建议统一为 raw string 清理。</li>
+    <li>评测/示例运行会直接覆盖 <code>evalset/report.md</code>、<code>benchmark_*.md</code> 等报告文件（本次测试即覆盖了 report.md 的历史成绩单，已通过全量重跑恢复为 14 题成绩）。建议默认写时间戳副本或用 <code>run_repeat.py</code> 归档，防止误覆盖。</li>
+    <li>崩溃后留下无法用普通权限终止的 python 残留进程（CPU 占用 0，重启后自然消失），与 VTK 崩溃相关，建议排查窗口/线程收尾。</li>
+    <li>README 顶部"710 个测试全绿"与历史 <code>run_log.txt</code>（早期仅 41 个测试、agent_demo 曾崩在 UTF-8）需要与新环境对齐，避免口径不一致。</li>
+  </ul>
+</div>
+
+<h2>五、测试覆盖范围与说明</h2>
+<div class="card">
+  <ul>
+    <li><b>已覆盖</b>：核心求解、Agent 工具链（离线）、多工况、解析解、Abaqus B33/B31 对标（利用本机既有 .odb/.dat 真实结果）、屈曲/模态/扫描/报告、网页端启动、桌面端自检与真实启动、大模型真实评测 14 题。</li>
+    <li><b>未覆盖</b>：完整 710 测试因崩溃未跑完（非 Qt 的 570 项已全验）；桌面端真实交互（画图/按钮/视口）因 OpenGL 不可用无法 GUI 自动化验证；Abaqus 实时重跑全部 10 个作业（既有结果已足够支撑对标结论）。</li>
+    <li><b>副产物</b>：重新生成了 <code>abaqus_bench/inp/</code> 的 10 个 .inp 与 <code>benchmark_B33/B31.md</code>（内容与既有结果一致）；<code>evalset/report.md</code> 已恢复为全量 14 题成绩单（13/14）。</li>
+  </ul>
+</div>
+
+<footer>本报告由功能测试脚本实测生成 · 所有数字来自真实运行结果（pytest / 求解器 / Abaqus .dat / 大模型评测），未使用估算值</footer>
+
+</div>
+</body>
+</html>

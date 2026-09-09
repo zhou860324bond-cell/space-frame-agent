@@ -1,0 +1,67 @@
+{
+  "height_px": 96,
+  "image_id": "seed_14_missing_portal",
+  "intersections": [],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "loads": [],
+  "members": [
+    {
+      "i": 1,
+      "id": 1,
+      "j": 2
+    },
+    {
+      "i": 2,
+      "id": 2,
+      "j": 3
+    },
+    {
+      "i": 3,
+      "id": 3,
+      "j": 4
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.15748031496062992,
+        0.8421052631578947
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.15748031496062992,
+        0.21052631578947367
+      ]
+    },
+    {
+      "id": 3,
+      "point": [
+        0.8503937007874016,
+        0.21052631578947367
+      ]
+    },
+    {
+      "id": 4,
+      "point": [
+        0.8503937007874016,
+        0.8421052631578947
+      ]
+    }
+  ],
+  "scale": {
+    "length_per_pixel": null,
+    "status": "unknown"
+  },
+  "supports": [],
+  "width_px": 128
+}

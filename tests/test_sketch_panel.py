@@ -1,0 +1,242 @@
+"""桌面端多模态草图面板的轻量接线测试。"""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+pytest.importorskip("PySide6", reason="未安装 PySide6，跳过桌面端测试")
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QPixmap  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+
+from agent import Session  # noqa: E402
+from desktop.sketch_panel import SketchPanel  # noqa: E402
+from recognition_draft import DRAFT_FORMAT, RecognitionDraft  # noqa: E402
+from sketch_parser import ParseResult  # noqa: E402
+
+
+class IdleRunner:
+    busy = False
+
+
+@pytest.fixture(scope="module")
+def qt_app():
+    yield QApplication.instance() or QApplication([])
+
+
+@pytest.mark.parametrize(("provider", "model"), [
+    ("openai", "gpt-4o"),
+    ("anthropic", "claude-3-5-sonnet-20241022"),
+    ("deepseek", "deepseek-vl"),
+])
+def test_provider_switch_sets_a_matching_vision_model(qt_app, provider, model):
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.cmb_provider.setCurrentText(provider)
+    assert panel.txt_model.text() == model
+
+
+def test_advanced_recognition_settings_are_collapsed_by_default(qt_app):
+    panel = SketchPanel(Session(), IdleRunner())
+
+    assert panel.settings_widget.isHidden()
+    panel.btn_settings.setChecked(True)
+    assert not panel.settings_widget.isHidden()
+
+
+def recognition_payload(scale="confirmed"):
+    return {
+        "format": DRAFT_FORMAT,
+        "scale": {"status": scale, "evidence": ""},
+        "model": {
+            "units": "N-m-Pa", "materials": [], "sections": [],
+            "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                      {"id": 2, "x": 2, "y": 0, "z": 0}],
+            "members": [{"id": 7, "i": 1, "j": 2}],
+            "supports": [], "load_cases": [],
+        },
+        "entities": [], "questions": ["请确认是否没有支座"], "warnings": [],
+    }
+
+
+def confirm_questions(panel):
+    for row in range(panel.lst_questions.count()):
+        panel.lst_questions.item(row).setCheckState(Qt.CheckState.Checked)
+
+
+def test_recognized_model_requires_explicit_confirmation_before_loading(qt_app):
+    session = Session()
+    panel = SketchPanel(session, IdleRunner())
+    draft = RecognitionDraft.from_payload(recognition_payload())
+
+    panel._on_recognized(ParseResult(
+        model=draft.model, draft=draft, success=True, attempts=1))
+
+    assert panel.chk_confirm.isEnabled()
+    assert panel.txt_result.isHidden()
+    assert not panel.btn_details.isHidden()
+    assert not panel.btn_load.isEnabled()
+    assert not session.model
+
+    panel.chk_confirm.setChecked(True)
+    assert not panel.btn_load.isEnabled()
+    confirm_questions(panel)
+    assert panel.btn_load.isEnabled()
+    panel._load_model()
+
+    assert len(session.model["nodes"]) == 2
+    assert session.model["members"][0]["section"] == ""
+    assert len(session.history) == 1
+    assert "几何草稿" in panel.lbl_status.text()
+
+
+def test_unknown_scale_must_be_calibrated_before_loading(qt_app):
+    panel = SketchPanel(Session(), IdleRunner())
+    draft = RecognitionDraft.from_payload(recognition_payload("unknown"))
+    panel._on_recognized(ParseResult(
+        model=draft.model, draft=draft, success=True, attempts=1))
+    panel.chk_confirm.setChecked(True)
+    confirm_questions(panel)
+
+    assert not panel.btn_load.isEnabled()
+    assert not panel.scale_widget.isHidden()
+
+    panel.spn_reference_length.setValue(6.0)
+    panel._apply_scale()
+
+    assert not panel.btn_load.isEnabled()
+    panel.chk_confirm.setChecked(True)
+    assert panel.btn_load.isEnabled()
+    assert panel._result_draft.model["nodes"][1]["x"] == pytest.approx(6.0)
+
+
+def test_recognized_entities_are_drawn_over_the_source_image(qt_app, tmp_path):
+    path = tmp_path / "drawing.png"
+    source = QPixmap(120, 80)
+    source.fill(Qt.GlobalColor.white)
+    assert source.save(str(path))
+    data = recognition_payload()
+    data["entities"] = [
+        {"kind": "member", "id": 7, "confidence": 0.9,
+         "image_geometry": {"line": [[0.1, 0.5], [0.9, 0.5]]}},
+        {"kind": "node", "id": 1, "confidence": 0.9,
+         "image_geometry": {"point": [0.1, 0.5]}},
+        {"kind": "support", "id": "S1", "confidence": None,
+         "image_geometry": {"bbox": [0.05, 0.55, 0.2, 0.85]}},
+    ]
+    draft = RecognitionDraft.from_payload(data, source_image=path)
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._image_path = str(path)
+
+    panel._show_overlay(draft)
+
+    rendered = panel.lbl_image.pixmap().toImage()
+    coloured = sum(
+        1 for y in range(rendered.height()) for x in range(rendered.width())
+        if rendered.pixelColor(x, y) != QColor(Qt.GlobalColor.white))
+    assert coloured > 20
+
+
+def test_member_editor_adds_and_removes_members(qt_app):
+    data = recognition_payload()
+    data["model"]["nodes"].append({"id": 3, "x": 2, "y": 0, "z": 2})
+    data["model"]["members"].append({"id": 8, "i": 2, "j": 3})
+    draft = RecognitionDraft.from_payload(data)
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._on_recognized(ParseResult(
+        model=draft.model, draft=draft, success=True, attempts=1))
+
+    panel.cmb_member_i.setCurrentIndex(panel.cmb_member_i.findData(1))
+    panel.cmb_member_j.setCurrentIndex(panel.cmb_member_j.findData(3))
+    panel._add_member()
+
+    added = max(member["id"] for member in draft.model["members"])
+    assert any({member["i"], member["j"]} == {1, 3}
+               for member in draft.model["members"])
+    panel.cmb_remove_member.setCurrentIndex(panel.cmb_remove_member.findData(added))
+    panel._remove_member()
+    assert all(member["id"] != added for member in draft.model["members"])
+
+
+def test_node_can_be_dragged_on_the_image_overlay(qt_app, tmp_path):
+    path = tmp_path / "drag.png"
+    source = QPixmap(200, 120)
+    source.fill(Qt.GlobalColor.white)
+    assert source.save(str(path))
+    data = recognition_payload()
+    data["entities"] = [
+        {"kind": "node", "id": 1, "confidence": 0.9,
+         "image_geometry": {"point": [0.1, 0.5]}},
+        {"kind": "node", "id": 2, "confidence": 0.9,
+         "image_geometry": {"point": [0.9, 0.5]}},
+        {"kind": "member", "id": 7, "confidence": 0.9,
+         "image_geometry": {"line": [[0.1, 0.5], [0.9, 0.5]]}},
+    ]
+    draft = RecognitionDraft.from_payload(data, source_image=path)
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.resize(500, 700)
+    panel._image_path = str(path)
+    panel._on_recognized(ParseResult(
+        model=draft.model, draft=draft, success=True, attempts=1))
+    panel.show()
+    qt_app.processEvents()
+
+    pixmap = panel.lbl_image.pixmap()
+    left = (panel.lbl_image.width() - pixmap.width()) / 2
+    top = (panel.lbl_image.height() - pixmap.height()) / 2
+    start = QPoint(int(left + 0.9 * pixmap.width()), int(top + 0.5 * pixmap.height()))
+    end = QPoint(int(left + 0.7 * pixmap.width()), int(top + 0.3 * pixmap.height()))
+    QTest.mousePress(panel.lbl_image, Qt.MouseButton.LeftButton, pos=start)
+    QTest.mouseMove(panel.lbl_image, pos=end)
+    QTest.mouseRelease(panel.lbl_image, Qt.MouseButton.LeftButton, pos=end)
+
+    assert draft._image_point(draft._node_entity(2)) == pytest.approx((0.7, 0.3), abs=0.02)
+    assert not panel.chk_confirm.isChecked()
+
+
+def test_support_and_nodal_load_editor_updates_the_recognition_draft(qt_app):
+    data = recognition_payload()
+    data["questions"] = ["请确认支座类型", "请确认荷载数值"]
+    data["entities"] = [
+        {"kind": "node", "id": 1, "confidence": 0.9,
+         "image_geometry": {"point": [0.1, 0.5]}},
+        {"kind": "node", "id": 2, "confidence": 0.9,
+         "image_geometry": {"point": [0.9, 0.5]}},
+    ]
+    draft = RecognitionDraft.from_payload(data)
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._on_recognized(ParseResult(
+        model=draft.model, draft=draft, success=True, attempts=1))
+
+    assert panel.boundary_widget.isHidden()
+    panel.btn_boundaries.setChecked(True)
+    panel.cmb_support_node.setCurrentIndex(panel.cmb_support_node.findData(1))
+    panel.cmb_support_type.setCurrentIndex(1)
+    panel.txt_support_name.setText("BC-Pin")
+    panel._apply_support_edit()
+
+    assert draft.model["supports"] == [{
+        "node": 1, "fix": [1, 1, 1, 0, 0, 0], "name": "BC-Pin"}]
+    assert panel.lst_questions.item(0).checkState() == Qt.CheckState.Checked
+
+    panel.txt_new_case.setText("Wind")
+    panel._add_load_case_edit()
+    panel.cmb_load_node.setCurrentIndex(panel.cmb_load_node.findData(2))
+    panel.cmb_load_name.setEditText("P1")
+    panel.load_spins[2].setValue(-1000.0)
+    panel._apply_nodal_load_edit()
+
+    entry = draft.model["load_cases"][0]["nodal_loads"][0]
+    assert entry == {"name": "P1", "node": 2,
+                     "load": [0.0, 0.0, -1000.0, 0.0, 0.0, 0.0]}
+    assert panel.lst_questions.item(1).checkState() == Qt.CheckState.Checked
+
+    panel._remove_nodal_load_edit()
+    assert draft.model["load_cases"][0]["nodal_loads"] == []
+    panel.cmb_support_node.setCurrentIndex(panel.cmb_support_node.findData(1))
+    panel._remove_support_edit()
+    assert draft.model["supports"] == []

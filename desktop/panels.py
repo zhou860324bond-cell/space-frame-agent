@@ -1,0 +1,165 @@
+"""两个停靠面板：建模过程时间线、结果表。
+
+放在一起是因为它们回答的是同一类问题——**"这个状态/这个数字是从哪来的"**。
+时间线回答"模型怎么变成现在这样"，结果表回答"这个数字出现在哪根杆、哪个工况"。
+
+两个面板都**只显示和转发，不算不改**。点了哪一行由主窗口决定怎么办。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel,
+                               QListWidget, QListWidgetItem, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
+
+from . import theme
+
+STEP_INDEX = Qt.ItemDataRole.UserRole + 1
+LOCATE = Qt.ItemDataRole.UserRole + 2
+
+
+class TimelinePanel(QWidget):
+    """建模过程时间线。
+
+    数据一直都在（`BuildHistory` 每步都存了深拷贝快照），但之前界面上
+    只有模型树里孤零零一行"建模过程（3 步）"，点不开——**存了却不给看，
+    等于没存**。
+
+    点任意一行就跳回那一步的模型。这也是"可追溯"这个说法在界面上的兑现处：
+    与其在报告里写一句"过程可追溯"，不如让人自己拖一遍。
+    """
+
+    goto_step = Signal(int)          # 列表下标；-1 表示回到空模型
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(6, 6, 6, 6)
+        box.setSpacing(4)
+
+        self.hint = QLabel("双击任意一步，可回退至该步骤对应的模型状态")
+        self.hint.setProperty("panel", "hint")
+        self.hint.setWordWrap(True)
+        box.addWidget(self.hint)
+
+        self.list = QListWidget(self)
+        self.list.setAlternatingRowColors(False)
+        self.list.setWordWrap(True)          # 摘要长了折行，不要横向滚动条
+        self.list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setMinimumHeight(150)      # 和模型树并排时不至于被挤成两行
+        self.list.itemDoubleClicked.connect(self._on_activate)
+        box.addWidget(self.list, 1)
+
+    def _on_activate(self, item: QListWidgetItem) -> None:
+        self.goto_step.emit(int(item.data(STEP_INDEX)))
+
+    def rebuild(self, history) -> None:
+        self.list.clear()
+        head = QListWidgetItem("0　（空模型）")
+        head.setData(STEP_INDEX, -1)
+        self.list.addItem(head)
+
+        for k in range(len(history)):
+            step = history[k]
+            mark = "✗" if not step.ok else " "
+            item = QListWidgetItem(
+                f"{step.index + 1}　{mark} {step.summary}\n     {step.changed}")
+            item.setData(STEP_INDEX, k)
+            if not step.ok:
+                item.setForeground(Qt.GlobalColor.gray)
+                item.setToolTip(step.error or "该操作未通过校验")
+            self.list.addItem(item)
+
+        # 当前所在的那一步高亮，并滚动到可见处——**用户得看得出自己在哪**，
+        # 撤销几步之后如果列表没有任何反应，会以为撤销没生效
+        row = history.cursor + 1
+        if 0 <= row < self.list.count():
+            self.list.setCurrentRow(row)
+            self.list.scrollToItem(self.list.item(row))
+        n = len(history)
+        self.hint.setText(
+            f"共 {n} 步，当前位于第 {history.cursor + 1} 步。双击可跳转。"
+            if n else "尚无建模操作记录。")
+
+
+class ResultPanel(QWidget):
+    """结果表。
+
+    这块原来是弹一个消息框、把 JSON 塞进"详细信息"里——那是给开发者看的。
+    工程结果该是表：能扫、能排序、能点一行就在视口里定位到那根杆。
+
+    **每一列都带单位**，而且位置列写坐标不写编号——编号规则是生成器定的，
+    用户并不知道，光给"杆件 27"等于没说。
+    """
+
+    locate = Signal(str, int)        # ("member" | "node", 编号)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(6, 6, 6, 6)
+        box.setSpacing(4)
+
+        self.caption = QLabel("尚无分析结果")
+        self.caption.setProperty("panel", "hint")
+        self.caption.setWordWrap(True)
+        box.addWidget(self.caption)
+
+        self.table = QTableWidget(self)
+        self.table.setSortingEnabled(True)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.itemSelectionChanged.connect(self._on_select)
+        box.addWidget(self.table, 1)
+
+    def _on_select(self) -> None:
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            return
+        item = self.table.item(rows[0].row(), 0)
+        target = item.data(LOCATE) if item else None
+        if target:
+            self.locate.emit(target[0], int(target[1]))
+
+    def show_rows(self, title: str, columns: list[str],
+                  rows: list[list[Any]],
+                  locators: list[tuple[str, int] | None] | None = None) -> None:
+        """填表。`locators[i]` 说明第 i 行对应视口里的哪个对象，可为 None。"""
+        self.table.setSortingEnabled(False)     # 填的过程中排序会打乱行序
+        self.table.clear()
+        self.table.setColumnCount(len(columns))
+        self.table.setHorizontalHeaderLabels(columns)
+        self.table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, value in enumerate(row):
+                cell = QTableWidgetItem()
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    # 数值列存成数值再显示，**否则排序会按字符串排**，
+                    # "9" 会排在 "10" 后面
+                    cell.setData(Qt.ItemDataRole.DisplayRole, value)
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignRight
+                                          | Qt.AlignmentFlag.AlignVCenter)
+                else:
+                    cell.setText("" if value is None else str(value))
+                if c == 0 and locators and r < len(locators) and locators[r]:
+                    cell.setData(LOCATE, locators[r])
+                self.table.setItem(r, c, cell)
+        self.table.setSortingEnabled(True)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.caption.setText(title)
+
+    def show_message(self, title: str, text: str) -> None:
+        """没有表可给的时候（比如报错），也要在同一个地方说话，
+        不要一会儿弹窗一会儿面板。"""
+        self.table.clear()
+        self.table.setRowCount(0)
+        self.table.setColumnCount(0)
+        self.caption.setText(f"{title}\n{text}")

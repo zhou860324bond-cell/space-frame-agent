@@ -1,0 +1,605 @@
+{
+  "cases": [
+    {
+      "gate": true,
+      "ground_truth_hash": "970e9de69eddfc2deda683ab86c537e4cbf7f71af593a200e9f64bcd3a7cb18f",
+      "ground_truth_path": "ground_truth/seed_01_portal.json",
+      "image_hash": "710ef6b5f3a591eee3b41c70a2e8630eae16cc3cdd406a151857b43a2307fef6",
+      "image_id": "seed_01_portal",
+      "image_path": "images/seed_01_portal.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_01_portal.json",
+      "response_hash": "8fa14d80f2ca5fbd79ba98e74c49e0ce8b49dea4b74d113c8091e5379b804c8d",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "portal"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "e0a170092cfc49a94d1255ed81b6d4579f55fc3b9eaca62022a88988a8896f78",
+      "ground_truth_path": "ground_truth/seed_02_gable.json",
+      "image_hash": "46d9b259ce7638a883ea85db87887138ec6063cc634a4ab321cf268e435050c4",
+      "image_id": "seed_02_gable",
+      "image_path": "images/seed_02_gable.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_02_gable.json",
+      "response_hash": "4fc1a0b2b6d79c425100372c0e48ee15f9d083e63435ea6fce01cab6177bb5dd",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "gable"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "74b1d148a278acf3a48a1f35d4dbd4d839000e249b392f5bb1a6dbdc5c806fe6",
+      "ground_truth_path": "ground_truth/seed_03_t_joint.json",
+      "image_hash": "cce7b6b00743065a762ee3345dd6beaff845241a8ebd30561f5dcb2bbc801f75",
+      "image_id": "seed_03_t_joint",
+      "image_path": "images/seed_03_t_joint.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_03_t_joint.json",
+      "response_hash": "8fe51aee8712d9c9e3a162bd6254dfd2454d08202f6a7ea244237753285d3228",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "intersection",
+        "t_joint"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "3b1a5175614f04e4ff40eaef1ca4e556c945c7be570302ab030f4bcf6d7c4d7b",
+      "ground_truth_path": "ground_truth/seed_04_x_cross.json",
+      "image_hash": "0c06d877c85c46c5b657e4253ea2673ae43bac6c00aeee5b60016579708e32f4",
+      "image_id": "seed_04_x_cross",
+      "image_path": "images/seed_04_x_cross.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_04_x_cross.json",
+      "response_hash": "71e5785516259e237aeb099bc5ee59ff325f7d5013f0ad4e5fbcec19554549bc",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "intersection",
+        "x_cross"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "860c7cee4dcf29f6841c639c625b81ccb6f35d5204bb81a64b7a37e444a5fb32",
+      "ground_truth_path": "ground_truth/seed_05_missing_scale.json",
+      "image_hash": "4d5c0d31ab37a6b649bb757f233592342df895910f6465faac20a1045c7fe9f1",
+      "image_id": "seed_05_missing_scale",
+      "image_path": "images/seed_05_missing_scale.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_05_missing_scale.json",
+      "response_hash": "3ab5a3a3e53886f53b37ce101fd7d6035e92d75b55dc3c2f4e28445de96fe1a7",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "missing_dimension"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "655c582d77941396b3e9a9d345f302f2da77b9ebc05cd696c8c031760292e8f9",
+      "ground_truth_path": "ground_truth/seed_06_skewed.json",
+      "image_hash": "746f625632e9822638462ca2230fc4c67205c1509aa65b9c08e8d5577a51c2de",
+      "image_id": "seed_06_skewed",
+      "image_path": "images/seed_06_skewed.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_06_skewed.json",
+      "response_hash": "1e8236c5156d5fc83f34839d93d7ef5cca412f8eea39e782001ce27648b945cd",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "skewed"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "113b845c90de6ab71beb15a0c8ff75e0ac3704d214a4d69d61b46bf16793997e",
+      "ground_truth_path": "ground_truth/seed_07_supports.json",
+      "image_hash": "30a8e7100d44192ad5602c836f25f5aa658c4b4ae5348fc3905512170dc24528",
+      "image_id": "seed_07_supports",
+      "image_path": "images/seed_07_supports.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_07_supports.json",
+      "response_hash": "f24e701924e0956da6b5ec864c9a80b51ff29e4c234f29e3db76466e72956eb5",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "supports"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "5c3558d19962652d56166b3413bfa45303698ab4f9f3a8ffbd39ddb15139cefc",
+      "ground_truth_path": "ground_truth/seed_08_load.json",
+      "image_hash": "a86e73be19e07664bcce50a3184d98bdf93d2ca4ee3ef01fcdd2f8144ca90c13",
+      "image_id": "seed_08_load",
+      "image_path": "images/seed_08_load.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_08_load.json",
+      "response_hash": "42ce40d434a30293fee3f15b3ae79e60b74c820618ce772dcc70140bf7edb92d",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "load"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "69a24b2f62d954ed071fca75a26d836cd27eb1b4e9612725ddbccf4bd6d8d4a2",
+      "ground_truth_path": "ground_truth/seed_09_clear_portal.json",
+      "image_hash": "af644b38d19d177678ae2ca59af4a29599184166976ec806eb2c245e2bdfcc71",
+      "image_id": "seed_09_clear_portal",
+      "image_path": "images/seed_09_clear_portal.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_09_clear_portal.json",
+      "response_hash": "d174b9c41d8fc7d405f170bfeeeb3c9a06b259c1a1eef43e9bf2bdd17f7ac51c",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "portal"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "a4c47953e004471198f38a3aee7909d0817e3dd1e853b1b525a99f9a520e2075",
+      "ground_truth_path": "ground_truth/seed_10_clear_gable.json",
+      "image_hash": "7596d968b36a0a765aa71bede3ea2831761ebb8e36c6dba8ee0ebf0d5eb51eca",
+      "image_id": "seed_10_clear_gable",
+      "image_path": "images/seed_10_clear_gable.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_10_clear_gable.json",
+      "response_hash": "f76bda61e5b8ad98d5ecdcda1ece2828599624e517048c1d70593144930e77c4",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "gable"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "207b9a2474e4f6605c86c458c4511fc5497a05c3a9a631b65a06e662c352a8ac",
+      "ground_truth_path": "ground_truth/seed_11_hand_portal.json",
+      "image_hash": "f4bc791dd9e8c379e72bc4abef83bd5aedcaa8a209113d5d74e63416d8e6e130",
+      "image_id": "seed_11_hand_portal",
+      "image_path": "images/seed_11_hand_portal.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_11_hand_portal.json",
+      "response_hash": "f159e1d82568bb043f33577b78fa0f9d89c3acb23575c613890cdc45f1161a3b",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "handdrawn"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "f14690fb75ad18b0a55b2cc1d07aa9d43e14cbe5b3823b7d4d262fbedfa23ca2",
+      "ground_truth_path": "ground_truth/seed_12_hand_gable.json",
+      "image_hash": "3714be9932c7e99080fc22ea068350495b50a027c9b891dabafc2fdeb7f659db",
+      "image_id": "seed_12_hand_gable",
+      "image_path": "images/seed_12_hand_gable.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_12_hand_gable.json",
+      "response_hash": "c5fcf37d3a2c0974358c60a0b8c6421c331b00c2d7551163322e1d1656cb5559",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "handdrawn"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "e27777c8d908699b99d246322fcae355e527e82cf4e59e0d817ba41a5277e379",
+      "ground_truth_path": "ground_truth/seed_13_missing_beam.json",
+      "image_hash": "99b69f26dd80e303aa4814ce8e890736a91c220567b94cb67295c1afc8cedfa5",
+      "image_id": "seed_13_missing_beam",
+      "image_path": "images/seed_13_missing_beam.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_13_missing_beam.json",
+      "response_hash": "ced4cd4efdf88b2d61b3e6ce50b77e2968883c22c160bd8ba3b404d20dd92109",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "missing_dimension"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "1c057c242d7f35b7ceee0a116bb3b1b201c00eea28c95ff95df16e0e5596e09d",
+      "ground_truth_path": "ground_truth/seed_14_missing_portal.json",
+      "image_hash": "d72e364e47b241a27b639ce8f74a1c9c539d614e096f26f62e95f8cbf3ed739d",
+      "image_id": "seed_14_missing_portal",
+      "image_path": "images/seed_14_missing_portal.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_14_missing_portal.json",
+      "response_hash": "b26304aec3ea85e5c463b3bf87faeb7a101af71c87ca8459537154fc79c21922",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "missing_dimension"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "f92e0cdc18bef4c6aa32d3b6dde41e88fe648176254b3e96ec1c976cabea54a3",
+      "ground_truth_path": "ground_truth/seed_15_x_cross.json",
+      "image_hash": "282a1defdd610f6ddd1c5d5e65f7ce6131c9ec3446ede84c4aee7926258f0222",
+      "image_id": "seed_15_x_cross",
+      "image_path": "images/seed_15_x_cross.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_15_x_cross.json",
+      "response_hash": "347c718c4029e47570423de19e7962d4c417c4c010d6c5c262624ece5e6b021c",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "intersection",
+        "x_cross"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "87ee054d2bc35b2f6c7dbbd57f2fb52baf701bc10b0a6161cffe6104c6d09fc5",
+      "ground_truth_path": "ground_truth/seed_16_t_joint.json",
+      "image_hash": "5ffa61516885ee94b2aed250d35201ca46bed159cb23a19c42a16bf7bcab804f",
+      "image_id": "seed_16_t_joint",
+      "image_path": "images/seed_16_t_joint.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_16_t_joint.json",
+      "response_hash": "18f06b98f697c8b085c67f6caba5150551b76f3bc0a0003ced3c47c7d8794665",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "intersection",
+        "t_joint"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "2c7bf3c515e1ff2d83c6cf2e8eb0154924c018de6e43368fb94609c2c6f1d6be",
+      "ground_truth_path": "ground_truth/seed_17_blur_support.json",
+      "image_hash": "f3c89b056af8ab5924a4293092b49b4657965efe0d1ce1510369ebbd31f3edd8",
+      "image_id": "seed_17_blur_support",
+      "image_path": "images/seed_17_blur_support.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_17_blur_support.json",
+      "response_hash": "d98bdcba9999132a544afbd118f0dbb2f83c9c78dc63895e7da37b3082111a61",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "blurred_symbol",
+        "supports"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "97b49408971d59c2bd618584e1d88670a023849a14231f9a05495b95b3497be9",
+      "ground_truth_path": "ground_truth/seed_18_blur_load.json",
+      "image_hash": "f3c89b056af8ab5924a4293092b49b4657965efe0d1ce1510369ebbd31f3edd8",
+      "image_id": "seed_18_blur_load",
+      "image_path": "images/seed_18_blur_load.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_18_blur_load.json",
+      "response_hash": "82b92aba66b797cf1b78b07888a075c3e3697c977bc87ef0c85c54a901ad93df",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "blurred_symbol",
+        "load"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "3665c0b309d3e3d682cf49b3fdbabffdff8d2bd41ba859feda4f97c7dff397eb",
+      "ground_truth_path": "ground_truth/seed_19_photo_portal.json",
+      "image_hash": "e00724489eeebc1ed1ca45cc620d904f15a597fe8b3cda1a0da1ee8d874b2414",
+      "image_id": "seed_19_photo_portal",
+      "image_path": "images/seed_19_photo_portal.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_19_photo_portal.json",
+      "response_hash": "fa69fc2bac7e9c5a724f038db2df1e39aae00c09f340513944ce88e759b21d8e",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "photo_noise"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "8a0ae0f88a2da193c3a94bc003bdda6028a0dbfdba3f3cf8b86e1e2b85cfb55b",
+      "ground_truth_path": "ground_truth/seed_20_photo_gable.json",
+      "image_hash": "4597ea3d14f13e27b4d4f4bd1f6a52c06758dbf3b9ce726c1f2ead114d2fea65",
+      "image_id": "seed_20_photo_gable",
+      "image_path": "images/seed_20_photo_gable.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_20_photo_gable.json",
+      "response_hash": "d8c5cdf74b9f51cce8ad2993bb648e26c416897f5f355d693adf3c9d09003d59",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "photo_noise"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "0fcd42dc7793432471937fde1b1a31aa15dd9140a4c59360d790792297e0491a",
+      "ground_truth_path": "ground_truth/seed_21_skew_left.json",
+      "image_hash": "e8353e8b9298de10e32ddafaa455d3f8c3ba108bf9298f2ab2cb9ce1ca30c084",
+      "image_id": "seed_21_skew_left",
+      "image_path": "images/seed_21_skew_left.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_21_skew_left.json",
+      "response_hash": "b955d4a28d773d15b9b8aebb8ca80e39c7dcbc43620068d9df3029eba4535f36",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "skewed"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "48288e64416be9d76251cd43726a0c2338997e68319763412f73d1c3830c3759",
+      "ground_truth_path": "ground_truth/seed_22_skew_right.json",
+      "image_hash": "03329713b80b220bf883487843079567ee51d8360f9c45845ee44a864594ab50",
+      "image_id": "seed_22_skew_right",
+      "image_path": "images/seed_22_skew_right.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_22_skew_right.json",
+      "response_hash": "8e116255fe272bd1278bc94eb097c077557189b5921612e20ec1f0e45c83874d",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "skewed"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "0f00dd22b0b9801a136af3511ff7d1cbd2a8c30ede93e103b6a9d43e7c4cc157",
+      "ground_truth_path": "ground_truth/seed_23_support_fixed.json",
+      "image_hash": "f950e198ad924a6419b375133b4a5fe8e1c65afd0f59dcf9e3e1a28914984a41",
+      "image_id": "seed_23_support_fixed",
+      "image_path": "images/seed_23_support_fixed.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_23_support_fixed.json",
+      "response_hash": "047d50c72f0cfefb49f43f26b6a6b891cdfc10da540243835220c0f47e6cf8cd",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "supports"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "d901f04030b91d81a51f769d48903169a2f9ece22563d9655c0d19952136b646",
+      "ground_truth_path": "ground_truth/seed_24_support_mixed.json",
+      "image_hash": "181ac5069430534eaaab5e10324e3206b4a56a069bc6876ea79be02ffa730fcd",
+      "image_id": "seed_24_support_mixed",
+      "image_path": "images/seed_24_support_mixed.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_24_support_mixed.json",
+      "response_hash": "bc89a7542dbaabd876150a703d99977bffd1d49b362d2b065b42d991ba4e3ab2",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "supports"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "b25e653280cdc6f72fcf1625cc900c36843fa8837d704c5e8635228f00e839c2",
+      "ground_truth_path": "ground_truth/seed_25_nodal_load.json",
+      "image_hash": "0a91ac2c1e5b47c1cae7c4692d83443141ee4c4b5a7f9d430311aa64e5820448",
+      "image_id": "seed_25_nodal_load",
+      "image_path": "images/seed_25_nodal_load.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_25_nodal_load.json",
+      "response_hash": "d5e4edc3fe0e4110e1c809d0b3009009e22e1edf358b2bf520cf1b469c90a865",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "load"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "9c8757db8053d0f066ceb7172e99a9f37c1bc88308ade2ae90d258857a56b4dd",
+      "ground_truth_path": "ground_truth/seed_26_member_load.json",
+      "image_hash": "710ef6b5f3a591eee3b41c70a2e8630eae16cc3cdd406a151857b43a2307fef6",
+      "image_id": "seed_26_member_load",
+      "image_path": "images/seed_26_member_load.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_26_member_load.json",
+      "response_hash": "207ce57745901d521cbe729fa3e4fe19db18b16dd512f5f8d91a74acf063e646",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "load"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "83209712d8d7989fba8c43057e8bcabd75fc1330c2940bd4c67a076540f5e0a9",
+      "ground_truth_path": "ground_truth/seed_27_clear_two_bay.json",
+      "image_hash": "c387a1daead3b3350c2f66f5b33d80adfd6549983d85e2a7e89ca319e9188ae6",
+      "image_id": "seed_27_clear_two_bay",
+      "image_path": "images/seed_27_clear_two_bay.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_27_clear_two_bay.json",
+      "response_hash": "7695899534570efa9293a9f4dbbcf0f39b07c6191c5eecd0ec9d830c2d0f015c",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "multi_bay"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "afafb0893be7cbccb32748636758a7748923576ac5aec0cfd6961a5cf7b6fcdb",
+      "ground_truth_path": "ground_truth/seed_28_clear_brace.json",
+      "image_hash": "cefcd22aa7346ce4b0b3456d70cfd1bb1b32d5bdfe58bde179958d13d010a6c0",
+      "image_id": "seed_28_clear_brace",
+      "image_path": "images/seed_28_clear_brace.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_28_clear_brace.json",
+      "response_hash": "5a86c87b659317c9a7ea116c5b2727349219005d302c1ad16bc3d2e8efbff386",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "clear",
+        "braced"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "db63b41191983284d7445a5f724db97290bde281a41359de4fc1bb6cd2b148dc",
+      "ground_truth_path": "ground_truth/seed_29_noisy_missing.json",
+      "image_hash": "48160965f63a866509d6290a818ea1e1bd7f8d620f21967d1a6e7024686284ad",
+      "image_id": "seed_29_noisy_missing",
+      "image_path": "images/seed_29_noisy_missing.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_29_noisy_missing.json",
+      "response_hash": "08005ec5c62cdf5aa0eee8e31f886ee6df7029408098bde3b9094054d413b739",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "photo_noise",
+        "missing_dimension"
+      ]
+    },
+    {
+      "gate": true,
+      "ground_truth_hash": "8da2f8367560147e1ce978b32ed41580ca272687ff69de38491628e984ced15f",
+      "ground_truth_path": "ground_truth/seed_30_hand_x.json",
+      "image_hash": "ee8c16b7e63707d26e549b25e8e72a3502ed3f77994389d9db644f966bdd706f",
+      "image_id": "seed_30_hand_x",
+      "image_path": "images/seed_30_hand_x.png",
+      "license": "CC0-1.0",
+      "model": "deterministic-corpus-v2",
+      "prompt_hash": "ad9104464bb992b8354926b4059d49dd92db252680814b3e3ea96103e95873f1",
+      "provider": "fixture",
+      "response_fixture_path": "responses/seed_30_hand_x.json",
+      "response_hash": "f9e9993817aa42369dd81b6a6917b74a38f1cb8e10d7c0469a33998802528983",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "source": "project-generated-original",
+      "subset_labels": [
+        "difficult",
+        "handdrawn",
+        "intersection",
+        "x_cross"
+      ]
+    }
+  ],
+  "format": "space-frame-multimodal-eval/v1"
+}

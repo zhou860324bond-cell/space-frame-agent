@@ -1,0 +1,38 @@
+__pycache__/
+.venv/
+.pytest_cache/
+.pytest*/
+.pytest*.xml
+.multimodal_tmp/
+results/
+capsules/
+learning_traces/
+*.log
+run_log.txt
+*.config.json
+deepseek.key
+*.key
+.env
+
+# Private real-world multimodal acceptance data (keep only the workflow skeleton)
+multimodal_eval/real_world_cases/images/*
+!multimodal_eval/real_world_cases/images/.gitkeep
+multimodal_eval/real_world_cases/ground_truth/*
+!multimodal_eval/real_world_cases/ground_truth/.gitkeep
+multimodal_eval/real_world_cases/metadata/*
+!multimodal_eval/real_world_cases/metadata/.gitkeep
+multimodal_eval/real_world_cases/responses/*
+!multimodal_eval/real_world_cases/responses/.gitkeep
+multimodal_eval/real_world_cases/manifest.json
+
+# Pytest scratch screenshots at repo root
+.pytest-*.png
+
+# Abaqus run artifacts (regenerable from .inp; .dat text results are kept)
+abaqus_bench/inp/*.odb
+abaqus_bench/inp/*.sim
+abaqus_bench/inp/*.prt
+abaqus_bench/inp/*.com
+abaqus_bench/inp/*.msg
+abaqus_bench/inp/*.sta
+abaqus_bench/inp/*.log
