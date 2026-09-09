@@ -51,6 +51,10 @@ def test_offline_manifest_gate_scores_every_required_target_and_passes():
 def test_missing_credentials_are_explicit_skips_and_never_enter_offline_gate(monkeypatch):
     for env_var in PROVIDERS.values():
         monkeypatch.delenv(env_var, raising=False)
+    # 也要挡掉密钥文件回退，否则这条测试的结果取决于跑它的机器上有没有
+    # deepseek.key——在 CI 上过、在开发者机器上挂，是最消耗信任的那种不稳定。
+    import credentials
+    monkeypatch.setattr(credentials, "load_api_key", lambda *a, **k: None)
     report = run()
     assert report["excluded_from_offline_gate"] is True
     assert {item["provider"] for item in report["results"]} == set(PROVIDERS)

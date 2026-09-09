@@ -294,7 +294,21 @@ def test_from_env_deepseek(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
     parser = SketchParser.from_env("deepseek")
     assert parser._api_key == "deepseek-key"
-    assert parser._model == "deepseek-vl"
+    # DeepSeek 平台上没有 deepseek-vl（那是开源权重名）。官方文档里可接收
+    # 图片的模型是 deepseek-v4-flash-vision-exp；用错名字报的是 model not
+    # found，很容易被误读成"多模态没跑通"。
+    assert parser._model == "deepseek-v4-flash-vision-exp"
+
+
+def test_from_env_deepseek_falls_back_to_the_key_file(monkeypatch, tmp_path):
+    """环境变量没有时要读仓库根目录的 deepseek.key。
+
+    此前只看环境变量，本地明明放了密钥文件，冒烟测试仍报无凭据。
+    """
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    import credentials
+    monkeypatch.setattr(credentials, "load_api_key", lambda *a, **k: "from-file")
+    assert SketchParser.from_env("deepseek")._api_key == "from-file"
 
 
 def test_from_env_keeps_the_requested_model(monkeypatch):

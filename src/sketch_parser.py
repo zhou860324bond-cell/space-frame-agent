@@ -171,10 +171,15 @@ class SketchParser:
 
     @staticmethod
     def _default_model(provider: str) -> str:
+        # DeepSeek 平台上**没有** deepseek-vl（那是开源权重的名字，不是 API 上的
+        # 模型）。官方文档列出的可接收图片的模型是 deepseek-v4-flash-vision-exp，
+        # 走标准 OpenAI 兼容的 chat/completions，content 用块数组 + base64 data URL。
+        # 用错名字的表现是 model not found，而不是识别不准，很容易被误读成
+        # "多模态没跑通"。
         return {
             "openai": "gpt-4o",
             "anthropic": "claude-3-5-sonnet-20241022",
-            "deepseek": "deepseek-vl",
+            "deepseek": "deepseek-v4-flash-vision-exp",
         }.get(provider, "gpt-4o")
 
     @staticmethod
@@ -448,5 +453,11 @@ class SketchParser:
         }.get(provider, "OPENAI_API_KEY")
         import os
         api_key = os.environ.get(env_var, "")
+        if not api_key and provider == "deepseek":
+            # 项目自带 credentials.load_api_key()，会读仓库根目录的
+            # deepseek.key。此前只看环境变量，于是本地明明有密钥文件，
+            # 冒烟测试仍然报 SKIPPED_NO_CREDENTIALS。
+            from credentials import load_api_key
+            api_key = load_api_key() or ""
         return cls(provider=provider, api_key=api_key, model=model,
                    base_url=base_url)

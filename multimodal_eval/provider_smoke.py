@@ -20,11 +20,23 @@ PROVIDERS = {
 }
 
 
+def _has_credentials(provider: str, env_var: str) -> bool:
+    """有没有密钥。DeepSeek 额外认仓库根目录的 deepseek.key——项目自带
+    credentials.load_api_key() 就是读它的，只看环境变量会让本地明明配了
+    密钥的机器一直报 SKIPPED_NO_CREDENTIALS。"""
+    if os.environ.get(env_var):
+        return True
+    if provider == "deepseek":
+        from credentials import load_api_key
+        return bool(load_api_key())
+    return False
+
+
 def run(*, online: bool = False) -> dict:
     image = ROOT / "images" / "seed_01_portal.png"
     results = []
     for provider, env_var in PROVIDERS.items():
-        if not os.environ.get(env_var):
+        if not _has_credentials(provider, env_var):
             results.append({"provider": provider,
                             "status": "SKIPPED_NO_CREDENTIALS"})
             continue
