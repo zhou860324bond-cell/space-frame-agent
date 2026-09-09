@@ -48,7 +48,13 @@ REFERENCE = V.VIEWPORT_REFERENCE
 VIEWPORT_INK = V.VIEWPORT_INK
 VIEWPORT_INK_MUTED = V.VIEWPORT_INK_MUTED
 SUPPORT = V.VIEWPORT_INK_MUTED
-LOAD = V.VIEWPORT_HIGH
+# 荷载分两族上色：力（橙）与 力矩/给定位移（青）。
+# 四类各给一色跑不过 validate_palette.js 的 all-pairs 档——文档写明超过三槽
+# 就该换编码方式。所以集中力与分布荷载同色，靠**形状**（单支箭头 vs 一排箭头）
+# 和**数值标注**区分；这两样比第四种颜色可靠得多。
+# 取值来自已验证的暗色分类色序：蓝(杆件) / 橙 / 青，三者 all-pairs 全部通过。
+LOAD = "#d95926"
+LOAD_MOMENT = "#199e70"
 HINGE = "#ffb454"
 DRAFT_SUPPORT = "#2f9e68"
 

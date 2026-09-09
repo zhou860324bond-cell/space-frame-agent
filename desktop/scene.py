@@ -555,3 +555,54 @@ def mode_shape_tubes(frame, shapes: np.ndarray, mode: int, scale: float,
     merged = (blocks[0].merge(blocks[1:], merge_points=False)
               if len(blocks) > 1 else blocks[0])
     return merged.tube(radius=r, n_sides=12)
+
+
+def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list]:
+    """每个荷载的标注点与文字（含数值和单位）。
+
+    **类型不该只靠颜色分。** 四类荷载用四种颜色，跑 validate_palette.js 的
+    all-pairs 最严档必然不合格（文档写明超过三槽就该换编码方式）；而且颜色
+    只回答"这是哪一类"，回答不了"多大"——工程师真正要看的是后者。
+    直接把数值标在旁边，类型和大小一次说清，比任何配色方案都直接。
+
+    文字用 ASCII：VTK 有自己的字体引擎，默认字体没有中文字形。
+    """
+    from frame3d import span_loads_of
+    from span_loads import POINT
+    from units import of as unit_system
+
+    load_case = frame.load_cases.get(case)
+    if load_case is None:
+        return [], []
+    system = unit_system(frame)
+    span = 0.045 * (size or model_size(frame))
+    points: list = []
+    texts: list[str] = []
+
+    def add(point, magnitude: float, unit: str) -> None:
+        if abs(magnitude) <= 0.0:
+            return
+        points.append(np.asarray(point, dtype=float) + np.array([0.0, 0.0, span]))
+        texts.append(f"{magnitude:.3g} {unit}")
+
+    for node_id, load in load_case.nodal_loads.items():
+        if node_id not in frame.nodes:
+            continue
+        p = frame.nodes[node_id].xyz
+        force = float(np.linalg.norm(np.asarray(load[:3], dtype=float)))
+        add(p, force * system.force_scale, system.force_unit)
+        moment = float(np.linalg.norm(np.asarray(load[3:], dtype=float)))
+        add(p, moment * system.moment_scale, system.moment_unit)
+
+    for member_id, member in frame.members.items():
+        pi, pj = member_endpoints(frame, member)
+        for load in span_loads_of(load_case, member_id):
+            magnitude = float(np.linalg.norm(np.asarray(load.w1[:3], dtype=float)))
+            if load.kind == POINT:
+                length = float(np.linalg.norm(pj - pi)) or 1.0
+                where = pi + (float(load.a) / length) * (pj - pi)
+                add(where, magnitude * system.force_scale, system.force_unit)
+            else:
+                add(0.5 * (pi + pj), magnitude * system.line_load_scale,
+                    system.line_load_unit)
+    return points, texts

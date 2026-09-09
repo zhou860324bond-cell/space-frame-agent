@@ -695,10 +695,20 @@ class Viewport(QWidget):
         if loads and case:
             arrows = scene.load_arrows(frame, case)
             for label, mesh in arrows.items():
-                color = theme.ACCENT if label in {"节点力矩", "给定位移", "给定转角"} \
-                    else theme.LOAD
+                color = (theme.LOAD_MOMENT
+                         if label in {"节点力矩", "给定位移", "给定转角"}
+                         else theme.LOAD)
                 self.plotter.add_mesh(mesh, color=color)
                 legend.append((_LEGEND_TEXT.get(label, label), color))
+            # **数值直接标在旁边。** 四类荷载用四种颜色跑不过 all-pairs 校验，
+            # 而且颜色只回答"哪一类"、回答不了"多大"——后者才是工程师要看的。
+            points, texts = scene.load_labels(frame, case)
+            if points:
+                self.plotter.add_point_labels(
+                    # 文字用文字色，不用系列色：标注是说明，不是又一个分类。
+                    # 力矩标成橙色而箭头是绿色，本身就自相矛盾。
+                    points, texts, font_size=11, text_color=theme.VIEWPORT_INK,
+                    shape=None, always_visible=True, show_points=False)
             info["loads"] = list(arrows)
         self._add_legend(legend)
         self._decorate(frame)
