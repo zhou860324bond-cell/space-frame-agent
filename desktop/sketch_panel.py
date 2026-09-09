@@ -91,7 +91,6 @@ class SketchPanel(QWidget):
         cfg_row = QHBoxLayout()
         self.cmb_provider = QComboBox()
         self.cmb_provider.addItems(["openai", "anthropic", "deepseek"])
-        self.cmb_provider.setCurrentText(_provider_with_credentials())
         self.cmb_provider.setToolTip("多模态 LLM 提供商")
         self.txt_model = QLineEdit("gpt-4o")
         self.txt_model.setPlaceholderText("模型名")
@@ -107,6 +106,13 @@ class SketchPanel(QWidget):
         cfg_row.addWidget(self.txt_model)
         settings_layout.addLayout(cfg_row)
         self.cmb_provider.currentTextChanged.connect(self._set_provider_defaults)
+        # **必须在信号接好之后再选**：setCurrentText 早于 connect 的话，
+        # _set_provider_defaults 根本不会被触发，模型名会一直停在构造时写死的
+        # "gpt-4o"。于是提供商是 deepseek、模型名是 gpt-4o，DeepSeek 直接
+        # 400 invalid_request_error——实测就是这么failed的。
+        # 再显式同步一次，防止选中项恰好等于当前项时信号不发。
+        self.cmb_provider.setCurrentText(_provider_with_credentials())
+        self._set_provider_defaults(self.cmb_provider.currentText())
 
         key_row = QHBoxLayout()
         key_row.addWidget(QLabel("密钥"))

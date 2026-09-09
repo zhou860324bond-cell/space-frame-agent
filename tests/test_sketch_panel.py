@@ -320,3 +320,23 @@ def test_prompt_pins_a_node_numbering_order():
     from sketch_parser import V2_SKETCH_SYSTEM_PROMPT as prompt
     assert "v 从大到小" in prompt and "u 从小到大" in prompt
     assert "fixed / pinned / roller" in prompt, "支座类型要给模型枚举清楚"
+
+
+def test_panel_opens_with_a_model_name_matching_the_preselected_provider(qt_app, monkeypatch):
+    """开面板时提供商和模型名必须是一致的一对。
+
+    实测事故：预选写在 currentTextChanged.connect 之前，信号没接上，
+    模型名一直停在构造时写死的 "gpt-4o"。于是提供商是 deepseek、模型名是
+    gpt-4o，DeepSeek 返回 400 invalid_request_error——用户看到的又是
+    "识别失败"，而真正的原因是两个控件不同步。
+    """
+    import credentials
+    from sketch_parser import SketchParser
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(credentials, "load_api_key", lambda *a, **k: "k")
+
+    panel = SketchPanel(Session(), IdleRunner())
+    provider = panel.cmb_provider.currentText()
+    assert provider == "deepseek"
+    assert panel.txt_model.text() == SketchParser._default_model(provider)
