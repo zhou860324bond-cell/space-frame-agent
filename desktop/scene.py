@@ -37,7 +37,7 @@ from viz_symbols import classify_support, model_size            # noqa: E402
 TUBE_RATIO = 0.011
 # 支座符号比管子大，但不该大到反客为主。原值 0.020 是管半径的五倍，
 # 加上近白的颜色，支座成了画面上最抢眼的东西。
-SYMBOL_RATIO = 0.013
+SYMBOL_RATIO = 0.017    # 0.013 实测太小，柱脚分不出固接/铰接/滚动
 # 每根杆件沿长度取几个点。云图和变形都靠它，取太少弯矩渐变会变成折线
 STATIONS = 21
 # 挠度积分的分辨率。画形状 21 个点就够，但做两次梯形积分不够——

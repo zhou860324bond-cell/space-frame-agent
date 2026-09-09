@@ -42,6 +42,11 @@ HIGHLIGHT = V.VIEWPORT_HIGHLIGHT
 REFERENCE = V.VIEWPORT_REFERENCE
 # 支座不能用正文墨色：那是全视口最亮的颜色，配上比杆件粗好几倍的符号，
 # 会让十几个支座方块成为画面主体，真正要看的结果反而最细。降到次级灰。
+# 深色视口专用的墨色。原来这里的文字、节点、坐标轴都用浅色主题的 INK
+# (#17212b) 和 INK_MUTED，画在 #1b2027 的视口上几乎隐形——节点标记就是这么
+# 消失的。视口和面板是两套底色，前景色必须各用各的。
+VIEWPORT_INK = V.VIEWPORT_INK
+VIEWPORT_INK_MUTED = V.VIEWPORT_INK_MUTED
 SUPPORT = V.VIEWPORT_INK_MUTED
 LOAD = V.VIEWPORT_HIGH
 HINGE = "#ffb454"

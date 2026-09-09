@@ -128,12 +128,20 @@ def main() -> None:
     session = build()
     frame, solution = session.frame, session.solution
 
-    # 1. 模型视图：杆件管 + 支座符号
+    # 1. 模型视图：杆件管 + 节点 + 铰 + 支座 + 荷载，与 viewport.show_model 一致
     p = plotter()
-    tubes = scene.member_tubes(frame)
-    p.add_mesh(tubes, color=theme.MEMBER, smooth_shading=True)
+    p.add_mesh(scene.member_tubes(frame), color=theme.MEMBER, smooth_shading=True)
+    p.add_mesh(scene.node_points(frame), color=theme.INK,
+               point_size=6, render_points_as_spheres=True)
+    hinges = scene.hinge_glyphs(frame)
+    if hinges.n_points:
+        p.add_mesh(hinges, color=theme.HINGE)
     for mesh in scene.support_glyphs(frame).values():
         p.add_mesh(mesh, color=theme.SUPPORT)
+    for label, mesh in scene.load_arrows(frame, "D").items():
+        color = (theme.ACCENT if label in {"节点力矩", "给定位移", "给定转角"}
+                 else theme.LOAD)
+        p.add_mesh(mesh, color=color)
     shot(p, "vp_model.png")
 
     # 2. 合弯矩云图：顺序色标，从零起

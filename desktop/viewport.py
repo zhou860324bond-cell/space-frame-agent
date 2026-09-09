@@ -61,6 +61,23 @@ class _NullPlotter:
         return None
 
 
+# 视口图例的文字。**必须是 ASCII**：VTK 用自己的字体引擎，默认字体没有中文
+# 字形——实测中文图例渲染成三个小点，色标那边也栽过同一个坑。要显示中文得给
+# VTK 单独加载字体文件，那是另一件事；在此之前，英文术语比一排方块可读。
+_LEGEND_TEXT = {
+    "杆件": "Member",
+    "杆端铰": "Hinge",
+    "固接": "Support: fixed",
+    "铰接": "Support: pinned",
+    "部分约束": "Support: partial",
+    "节点荷载": "Nodal force",
+    "节点力矩": "Nodal moment",
+    "杆间荷载": "Span load",
+    "给定位移": "Prescribed disp.",
+    "给定转角": "Prescribed rot.",
+}
+
+
 class Viewport(QWidget):
     """PyVista 渲染器的宿主。
 
@@ -92,7 +109,7 @@ class Viewport(QWidget):
 
         if CAN_RENDER:
             self.plotter.set_background(theme.VIEWPORT_BG)
-            self.plotter.add_axes(color=theme.INK_MUTED)
+            self.plotter.add_axes(color=theme.VIEWPORT_INK_MUTED)
         self._first_render = True
 
         # 左下角坐标系指示器
@@ -372,7 +389,7 @@ class Viewport(QWidget):
             pts, txt = scene.node_labels(frame)
             self.plotter.add_point_labels(
                 pts, txt, name="_node_labels", font_size=10,
-                text_color=theme.INK, shape=None, always_visible=True,
+                text_color=theme.VIEWPORT_INK, shape=None, always_visible=True,
                 show_points=False)
             pts, txt = scene.member_labels(frame)
             self.plotter.add_point_labels(
@@ -622,6 +639,26 @@ class Viewport(QWidget):
 
     # --- 显示模式 ---
 
+    def _add_legend(self, entries: list) -> None:
+        """在视口角上列出画了哪些东西。
+
+        支座和荷载靠形状区分，但形状是要学的；没有图例，用户只能猜那个小锥子
+        是铰接还是滚动。**符号系统必须自带说明**，否则它只是好看，不是可读。
+        条目为空时不画——一个空框比没有框更碍事。
+        """
+        if not entries:
+            return
+        try:
+            self.plotter.add_legend(
+                labels=[[label, color] for label, color in entries],
+                bcolor=theme.VIEWPORT_BG, border=False,
+                # 尺寸压到刚好够读：0.20/0.045 那一档实测把左上角的梁盖住了，
+                # 图例挡住它要解释的东西，等于没有。
+                size=(0.115, min(0.24, 0.024 * len(entries))),
+                loc="upper left", face="none", font_family="arial")
+        except Exception:      # 图例画不出来不该让整个视口刷新失败
+            pass
+
     def show_model(self, frame, case: str | None = None,
                    supports: bool = True, loads: bool = True) -> dict:
         """求解前的模型视图。"""
@@ -637,8 +674,8 @@ class Viewport(QWidget):
         links = scene.rigid_link_polylines(frame)
         if links.n_points:
             self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
-        self.plotter.add_mesh(scene.node_points(frame), color=theme.INK,
-                              point_size=6, render_points_as_spheres=True)
+        self.plotter.add_mesh(scene.node_points(frame), color=theme.VIEWPORT_INK,
+                              point_size=7, render_points_as_spheres=True)
         hinges = scene.hinge_glyphs(frame)
         if hinges.n_points:
             self.plotter.add_mesh(hinges, color=theme.HINGE)
@@ -647,13 +684,23 @@ class Viewport(QWidget):
             for mesh in glyphs.values():
                 self.plotter.add_mesh(mesh, color=theme.SUPPORT)
             info["supports"] = {k: 1 for k in glyphs}
+        legend: list[tuple[str, str]] = []
+        if tubes.n_points:
+            legend.append((_LEGEND_TEXT["杆件"], theme.MEMBER))
+        if hinges.n_points:
+            legend.append((_LEGEND_TEXT["杆端铰"], theme.HINGE))
+        if supports:
+            legend += [(_LEGEND_TEXT.get(kind, kind), theme.SUPPORT)
+                       for kind in info.get("supports", {})]
         if loads and case:
             arrows = scene.load_arrows(frame, case)
             for label, mesh in arrows.items():
                 color = theme.ACCENT if label in {"节点力矩", "给定位移", "给定转角"} \
                     else theme.LOAD
                 self.plotter.add_mesh(mesh, color=color)
+                legend.append((_LEGEND_TEXT.get(label, label), color))
             info["loads"] = list(arrows)
+        self._add_legend(legend)
         self._decorate(frame)
         self._fit()
         self.plotter.render()
@@ -673,7 +720,7 @@ class Viewport(QWidget):
             radius = max(scene.model_size(frame) * scene.TUBE_RATIO * 0.65, 1e-9)
             self.plotter.add_mesh(analysis.tube(radius=radius),
                                   color=theme.ACCENT, smooth_shading=True)
-        self.plotter.add_mesh(scene.node_points(frame), color=theme.INK,
+        self.plotter.add_mesh(scene.node_points(frame), color=theme.VIEWPORT_INK,
                               point_size=7, render_points_as_spheres=True)
         splits = scene.analysis_split_points(preview)
         if splits.n_points:
@@ -688,7 +735,7 @@ class Viewport(QWidget):
                    f"分析杆段 {preview.get('analysis_elements', 0)}\n"
                    f"切分节点 {preview.get('split_nodes', 0)}")
         self.plotter.add_text(summary, position="upper_left",
-                              color=theme.INK, font_size=10)
+                              color=theme.VIEWPORT_INK, font_size=10)
         self._decorate(frame)
         self._fit()
         self.plotter.render()
@@ -749,7 +796,7 @@ class Viewport(QWidget):
             tubes, scalars=component, cmap=cmap, clim=clim,
             smooth_shading=True,
             scalar_bar_args=dict(
-                title=bar_title, color=theme.INK_MUTED,
+                title=bar_title, color=theme.VIEWPORT_INK_MUTED,
                 title_font_size=13, label_font_size=11, n_labels=5,
                 width=0.30, height=0.045, position_x=0.66, position_y=0.03))
         for mesh in scene.support_glyphs(frame).values():
@@ -785,7 +832,7 @@ class Viewport(QWidget):
             color=theme.HIGHLIGHT, point_size=8, render_points_as_spheres=True)
         if label:
             self.plotter.add_text(label, position="upper_left",
-                                  color=theme.INK, font_size=10)
+                                  color=theme.VIEWPORT_INK, font_size=10)
         self._decorate(frame)
         self._fit()
         self.plotter.render()
