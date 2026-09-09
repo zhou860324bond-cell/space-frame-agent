@@ -117,7 +117,11 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
     "nodes":  [{"id": 1, "u": 0.12, "v": 0.83}],
     "members":[{"id": 1, "i": 1, "j": 2}],
     "supports":[{"node": 1, "kind": "fixed"}],
-    "load_cases":[]
+    "load_cases":[{"name": "D",
+      "nodal_loads":[{"node": 7, "name": "P1", "value": 30, "unit": "kN",
+                      "direction": [1, 0, 0]}],
+      "member_loads":[{"member": 7, "name": "q1", "value": 18, "unit": "kN/m",
+                       "direction": [0, 0, -1]}]}]
   },
   "entities":  [{"id": "E1", "kind": "member", "member": 1, "confidence": 0.9,
                  "image_geometry": {"line": [[0.12,0.83],[0.12,0.18]]}}],
@@ -144,9 +148,13 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
    三角形是铰接，三角形下面带滚轴（小圆）是滚动。认出来写进
    image_model.supports，kind 取 fixed / pinned / roller；
    看不清是哪一类就写进 issues，但不要漏掉这个节点有支座这件事。
-6. 只写图里有证据的东西。不得补材料、截面、默认支座、默认荷载或默认尺寸。
+6. **荷载照抄图上的数字和单位，不要自己换算。** value 写图上标的数值、
+   unit 写图上标的单位（kN、kN/m、kN·m）、direction 写箭头指向的单位向量
+   （向下是 [0,0,-1]，向右是 [1,0,0]）。换算成求解器单位是代码的事。
+   图上没写数值的荷载，只写进 issues，不要凭箭头长短猜大小。
+7. 只写图里有证据的东西。不得补材料、截面、默认支座、默认荷载或默认尺寸。
    看不清、拿不准的一律写进 issues，不要猜。
-7. 图上没有可靠尺寸时，坐标只保持相对比例，并在 issues 里要求用户标定；
+8. 图上没有可靠尺寸时，坐标只保持相对比例，并在 issues 里要求用户标定；
    绝不能把相对坐标当成米。
 """
 
@@ -229,11 +237,61 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
     payload["issues"] = [_as_issue(item, index)
                          for index, item in enumerate(payload["issues"], 1)]
     image_model = payload.get("image_model")
-    if isinstance(image_model, dict) and isinstance(image_model.get("supports"), list):
-        image_model["supports"] = [_as_support(item)
-                                   for item in image_model["supports"]
-                                   if isinstance(item, dict)]
+    if isinstance(image_model, dict):
+        if isinstance(image_model.get("supports"), list):
+            image_model["supports"] = [_as_support(item)
+                                       for item in image_model["supports"]
+                                       if isinstance(item, dict)]
+        for case in image_model.get("load_cases") or []:
+            if isinstance(case, dict):
+                _convert_case_loads(case)
     return payload
+
+
+# 图上写的单位 → 模型单位（N-m-Pa）的倍数。
+_UNIT_FACTORS = {"n": 1.0, "kn": 1e3, "n/m": 1.0, "kn/m": 1e3,
+                 "n·m": 1.0, "n.m": 1.0, "nm": 1.0,
+                 "kn·m": 1e3, "kn.m": 1e3, "knm": 1e3}
+
+
+def _convert_case_loads(case: dict) -> None:
+    """把 value + unit + direction 换算成求解器要的分量向量。
+
+    **让模型照抄图上的数字和单位，换算交给代码。** 图上写 "18 kN/m"，
+    模型报 value=18 / unit="kN/m" / direction=[0,0,-1]，代码算出
+    w=[0,0,-18000]。反过来让模型直接吐 -18000，等于让它做单位换算——
+    那是算术，不是观察，正好踩中"大模型只产结构，不产数值"这条线。
+
+    已经给了 load / w 向量的条目不动，模型偶尔会两种都给。
+    """
+    def factor(unit: Any) -> float | None:
+        return _UNIT_FACTORS.get(str(unit or "").strip().lower().replace(" ", ""))
+
+    def vector(item: dict, size: int) -> list[float] | None:
+        scale = factor(item.get("unit"))
+        direction = item.get("direction")
+        value = item.get("value")
+        if scale is None or not isinstance(direction, (list, tuple)):
+            return None
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        out = [0.0] * size
+        for index in range(min(size, len(direction))):
+            component = direction[index]
+            if isinstance(component, (int, float)) and not isinstance(component, bool):
+                out[index] = float(value) * scale * float(component)
+        return out
+
+    for item in case.get("nodal_loads") or []:
+        if isinstance(item, dict) and not isinstance(item.get("load"), (list, tuple)):
+            got = vector(item, 6)
+            if got is not None:
+                item["load"] = got
+    for item in case.get("member_loads") or []:
+        if isinstance(item, dict) and not isinstance(item.get("w"), (list, tuple)):
+            got = vector(item, 3)
+            if got is not None:
+                item["w"] = got
 
 
 # 支座类型 → 六自由度约束掩码。让模型判"这是铰接"，让代码写掩码：

@@ -431,3 +431,40 @@ def test_supports_kind_is_translated_into_a_fix_mask():
     # 每一条都要能被界面直接消费：六个 0/1，classify_support 就是这么读的
     for mask in masks:
         assert len(mask) == 6 and all(v in (0, 1) for v in mask)
+
+
+def test_loads_are_converted_from_drawing_units_by_code():
+    """模型照抄图上的数字和单位，换算交给代码。
+
+    图上写 "18 kN/m"，模型报 value=18 / unit="kN/m" / direction=[0,0,-1]，
+    代码算出 w=[0,0,-18000]。反过来让模型直接吐 -18000，等于让它做单位换算——
+    那是算术不是观察，正好踩中"大模型只产结构，不产数值"这条线。
+    """
+    from sketch_parser import _fill_bookkeeping
+    out = _fill_bookkeeping({"image_model": {"load_cases": [{
+        "name": "D",
+        "nodal_loads": [{"node": 7, "value": 30, "unit": "kN",
+                         "direction": [1, 0, 0]}],
+        "member_loads": [
+            {"member": 7, "value": 18, "unit": "kN/m", "direction": [0, 0, -1]},
+            {"member": 8, "w": [0, 0, -12000]},          # 已给向量的不动
+            {"member": 9, "value": 5, "unit": "喵"},      # 认不出的单位不瞎猜
+        ]}]}}, "h", "a.png")
+    case = out["image_model"]["load_cases"][0]
+    assert case["nodal_loads"][0]["load"] == [30000.0, 0, 0, 0, 0, 0]
+    member_loads = case["member_loads"]
+    assert member_loads[0]["w"] == [0.0, 0.0, -18000.0]
+    assert member_loads[1]["w"] == [0, 0, -12000], "已给向量的不许被覆盖"
+    assert "w" not in member_loads[2], "单位认不出时宁可不给，也不能猜一个数出来"
+
+
+def test_prompt_shows_how_to_express_a_load():
+    """提示词必须给出荷载的具体写法。
+
+    上一版 load_cases 的示例是空数组，模型认出了 18 kN/m 也不知道往哪写，
+    荷载就此丢失——识别成功了，模型里却一个荷载都没有。
+    """
+    from sketch_parser import V2_SKETCH_SYSTEM_PROMPT as prompt
+    assert '"nodal_loads"' in prompt and '"member_loads"' in prompt
+    assert '"unit"' in prompt and '"direction"' in prompt
+    assert "不要自己换算" in prompt
