@@ -2081,8 +2081,12 @@ class MainWindow(QMainWindow):
         """窗口显示时，确保浮动按钮在最上层并位置正确。"""
         super().showEvent(event)
         if not getattr(self, "_initial_workspace_sized", False):
-            self.resizeDocks([self.tree_dock], [250], Qt.Orientation.Horizontal)
-            self.resizeDocks([self.chat_dock], [380], Qt.Orientation.Horizontal)
+            # 实测 1680x1000 窗口下，顶部五条横带吃掉 257px（26% 高），
+            # 左右停靠区 250+380=630px（38% 宽）——三维视口只剩不到一半窗口。
+            # 空项目时模型树里全是"（0）"，右侧对话区也大片空白，
+            # 却占着最贵的横向空间。**默认宽度按"够用"取，不按"能塞下"取。**
+            self.resizeDocks([self.tree_dock], [200], Qt.Orientation.Horizontal)
+            self.resizeDocks([self.chat_dock], [330], Qt.Orientation.Horizontal)
             self._initial_workspace_sized = True
         self._update_agent_button_pos()
         self._position_empty_state()
