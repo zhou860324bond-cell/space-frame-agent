@@ -141,6 +141,12 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
 """
 
 
+# 单次视觉调用的超时（秒）。视觉模型读一张大图并吐出完整草稿，几十秒是正常的；
+# 但没有上限就等于没有反馈——SDK 默认 600 秒 × 3 次重试，界面会像死掉一样。
+# 设成有限值之后，慢就是慢、断就是断，两者在错误信息里分得开。
+REQUEST_TIMEOUT_SECONDS = 90.0
+
+
 @dataclass
 class ParseResult:
     """草图解析结果。"""
@@ -286,7 +292,14 @@ class SketchParser:
                     raise RuntimeError(
                         "缺少 openai 依赖。请执行 pip install -r requirements-multimodal.txt"
                     ) from exc
-                self._client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+                # **必须显式给超时和重试次数。** openai SDK 默认超时 600 秒、
+                # 自动重试 2 次，最坏情况一次识别会静默阻塞半小时；界面上只有
+                # 一句"正在识别"，用户分不出"还在跑"和"已经死了"。
+                # 本项目自己有修复重试循环，SDK 层不需要再重试一遍。
+                self._client = OpenAI(api_key=self._api_key,
+                                      base_url=self._base_url,
+                                      timeout=REQUEST_TIMEOUT_SECONDS,
+                                      max_retries=0)
             elif self._provider == "anthropic":
                 try:
                     import anthropic
@@ -294,7 +307,9 @@ class SketchParser:
                     raise RuntimeError(
                         "缺少 anthropic 依赖。请执行 pip install -r requirements-multimodal.txt"
                     ) from exc
-                self._client = anthropic.Anthropic(api_key=self._api_key)
+                self._client = anthropic.Anthropic(
+                    api_key=self._api_key,
+                    timeout=REQUEST_TIMEOUT_SECONDS, max_retries=0)
         return self._client
 
     @staticmethod

@@ -255,3 +255,34 @@ def test_panel_model_defaults_come_from_the_parser(qt_app):
     for provider in ("openai", "anthropic", "deepseek"):
         panel.cmb_provider.setCurrentText(provider)
         assert panel.txt_model.text() == SketchParser._default_model(provider), provider
+
+
+def test_recognition_shows_elapsed_time(qt_app):
+    """识别期间界面必须动起来。
+
+    原来只有一句静止的"正在识别"。视觉模型读大图几十秒是正常的，但界面毫无
+    变化时，"还在跑"和"已经死了"看起来一模一样——用户只能猜，然后去点关闭。
+    """
+    from sketch_parser import REQUEST_TIMEOUT_SECONDS
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._start_elapsed_ticker()
+    text = panel.lbl_status.text()
+    assert "已用" in text and "1s" in text
+    assert str(int(REQUEST_TIMEOUT_SECONDS)) in text, "要让用户知道上限是多少"
+    panel._stop_elapsed_ticker()
+    assert not panel._elapsed_timer.isActive()
+
+
+def test_vision_calls_have_a_bounded_timeout():
+    """必须显式限定单次调用时长。
+
+    openai SDK 默认 600 秒超时并自动重试 2 次，最坏情况一次识别静默阻塞
+    半小时——用户看到的就是"卡住了"。项目自己有修复重试循环，SDK 层不该再重试。
+    """
+    from sketch_parser import REQUEST_TIMEOUT_SECONDS
+    assert 10.0 <= REQUEST_TIMEOUT_SECONDS <= 300.0
+    import inspect
+    from sketch_parser import SketchParser
+    source = inspect.getsource(SketchParser._get_client)
+    assert "timeout=REQUEST_TIMEOUT_SECONDS" in source
+    assert "max_retries=0" in source

@@ -40,6 +40,8 @@ class SketchPanel(QWidget):
         self._result_draft = None
         self._v2_draft: dict | None = None
         self._v2_state = None
+        self._elapsed_timer = None
+        self._elapsed = 0
         self._v2_node_reuse: dict[int, int] = {}
         self._highlight_refs: set[str] = set()
         self._drag_node_id: int | None = None
@@ -576,7 +578,7 @@ class SketchPanel(QWidget):
         self.btn_details.setChecked(False)
         self.btn_details.setVisible(False)
         self.txt_result.clear()
-        self.lbl_status.setText("多模态 LLM 正在识别草图结构……")
+        self._start_elapsed_ticker()
 
         provider = self.cmb_provider.currentText()
         model = self.txt_model.text().strip()
@@ -602,7 +604,39 @@ class SketchPanel(QWidget):
 
         self.runner.submit(_job, on_done=self._on_recognized, on_failed=self._on_failed)
 
+    def _start_elapsed_ticker(self) -> None:
+        """识别期间每秒刷新已用时。
+
+        原来只有一句静止的"正在识别"。视觉模型读一张大图几十秒是正常的，
+        但没有任何变化的界面里，"还在跑"和"已经死了"看起来一模一样——
+        用户只能猜，然后去点关闭。一个秒表就能把这两件事分开。
+        """
+        from sketch_parser import REQUEST_TIMEOUT_SECONDS
+        self._elapsed = 0
+        self._timeout_hint = int(REQUEST_TIMEOUT_SECONDS)
+
+        def tick():
+            self._elapsed += 1
+            self.lbl_status.setText(
+                f"多模态 LLM 正在识别…… 已用 {self._elapsed}s"
+                f"（单次调用上限 {self._timeout_hint}s）")
+
+        if self._elapsed_timer is None:
+            from PySide6.QtCore import QTimer
+            self._elapsed_timer = QTimer(self)
+            self._elapsed_timer.timeout.connect(tick)
+        else:
+            self._elapsed_timer.timeout.disconnect()
+            self._elapsed_timer.timeout.connect(tick)
+        tick()
+        self._elapsed_timer.start(1000)
+
+    def _stop_elapsed_ticker(self) -> None:
+        if self._elapsed_timer is not None:
+            self._elapsed_timer.stop()
+
     def _on_recognized(self, result):
+        self._stop_elapsed_ticker()
         self.btn_recognize.setEnabled(True)
         self.btn_pick.setEnabled(True)
         if result.success:
@@ -720,6 +754,7 @@ class SketchPanel(QWidget):
                            "resolution": None, "resolved_by": None})
             open_keys.add(key)
     def _on_failed(self, exc_type, msg):
+        self._stop_elapsed_ticker()
         self.btn_recognize.setEnabled(True)
         self.btn_pick.setEnabled(True)
         self.lbl_status.setText(f"❌ 调用失败：{exc_type}: {msg}")
