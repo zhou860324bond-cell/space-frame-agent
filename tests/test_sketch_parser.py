@@ -374,3 +374,35 @@ def test_v2_prompt_shows_the_shape_it_demands():
     assert '"u":' in prompt and '"v":' in prompt, "必须写明归一化 u/v 坐标"
     assert "不是图片的元信息" in prompt
     assert "最小单元" in prompt, "必须说明跨层的柱要拆成多根杆件"
+
+
+def test_issues_are_normalised_into_objects():
+    """issues 必须规整成对象，模型给字符串也不能让界面崩。
+
+    v2 的 issue 带 category/severity/entity_refs/status，界面会去读这些字段。
+    模型很容易只吐一句话——那样 item.get(...) 直接
+    AttributeError: 'str' object has no attribute 'get'，整个面板崩掉。
+    **模型输出的形状永远不可信，消费前必须规整。**
+    """
+    from sketch_parser import _fill_bookkeeping
+    out = _fill_bookkeeping(
+        {"issues": ["支座看不清", {"message": "x", "status": "weird"}]},
+        "h", "a.png")
+    assert all(isinstance(item, dict) for item in out["issues"])
+    first, second = out["issues"]
+    assert first["message"] == "支座看不清"
+    assert first["status"] == "open" and first["entity_refs"] == []
+    assert second["status"] == "open", "非法状态要落回 open，不能原样带进界面"
+    # 界面就是这样读的，规整之后不能再抛
+    assert {(i.get("category"), tuple(i.get("entity_refs") or []))
+            for i in out["issues"] if i.get("status") == "open"}
+
+
+def test_prompt_shows_issues_as_objects_not_strings():
+    """提示词里的 issues 示例必须是对象。
+
+    上一版写成了字符串数组，模型照做，界面立刻崩——提示词里的示例就是契约。
+    """
+    from sketch_parser import V2_SKETCH_SYSTEM_PROMPT as prompt
+    assert '"category"' in prompt and '"entity_refs"' in prompt
+    assert '"issues":    ["' not in prompt, "不能再是字符串数组"

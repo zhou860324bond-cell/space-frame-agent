@@ -123,7 +123,10 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
                  "image_geometry": {"line": [[0.12,0.83],[0.12,0.18]]}}],
   "dimensions":[{"id": "D1", "text": "6000", "unit": "mm",
                  "image_geometry": {"line": [[0.12,0.95],[0.5,0.95]]}}],
-  "issues":    ["需要用户确认的问题"]
+  "issues":    [{"id": "I1", "category": "low_confidence",
+                 "severity": "blocking", "entity_refs": ["node:3"],
+                 "message": "左下角支座符号被尺寸线压住，看不清是固接还是铰接",
+                 "status": "open"}]
 }
 
 关键约定，写错会被直接拒绝：
@@ -223,7 +226,30 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
         "evidence_ids": []})
     for key in ("entities", "dimensions", "intersections", "issues"):
         payload.setdefault(key, [])
+    payload["issues"] = [_as_issue(item, index)
+                         for index, item in enumerate(payload["issues"], 1)]
     return payload
+
+
+def _as_issue(item: Any, index: int) -> dict:
+    """把 issues 里的元素规整成对象。
+
+    v2 的 issue 是带 category/severity/entity_refs/status 的对象，界面会去读
+    这些字段。模型很容易只吐一句话——那样 `item.get(...)` 直接
+    AttributeError: 'str' object has no attribute 'get'，整个面板崩掉。
+    **模型输出的形状永远不可信，消费前必须规整**，这比在提示词里多写一句更可靠。
+    """
+    skeleton = {"id": f"I{index}", "category": "low_confidence",
+                "severity": "blocking", "entity_refs": [], "message": "",
+                "status": "open", "resolution": None, "resolved_by": None}
+    if isinstance(item, dict):
+        got = {**skeleton, **item}
+        got["entity_refs"] = list(got.get("entity_refs") or [])
+        got["message"] = str(got.get("message") or "")
+        if got.get("status") not in ("open", "resolved"):
+            got["status"] = "open"
+        return got
+    return {**skeleton, "message": str(item)}
 
 
 @dataclass
