@@ -109,7 +109,13 @@ class ModelTree(QTreeWidget):
         kinds: dict[str, list[int]] = {}
         for entry in model.get("supports") or []:
             from viz_symbols import classify_support
-            k = f"{entry.get('name') or '未命名'} · {classify_support(entry['fix'])}"
+            # 用 get 而不是 []：一条缺 fix 的支座（例如识别草稿只给了 kind）
+            # 不该让整棵模型树重建失败，那会连带整个界面刷新一起崩。
+            mask = entry.get("fix")
+            kind = (classify_support(mask)
+                    if isinstance(mask, (list, tuple)) and len(mask) == 6
+                    else "约束未知")
+            k = f"{entry.get('name') or '未命名'} · {kind}"
             kinds.setdefault(k, []).append(int(entry["node"]))
         for k, nodes in kinds.items():
             group = self._child(sup, f"{k} × {len(nodes)}")

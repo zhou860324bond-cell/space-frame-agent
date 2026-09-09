@@ -228,7 +228,41 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
         payload.setdefault(key, [])
     payload["issues"] = [_as_issue(item, index)
                          for index, item in enumerate(payload["issues"], 1)]
+    image_model = payload.get("image_model")
+    if isinstance(image_model, dict) and isinstance(image_model.get("supports"), list):
+        image_model["supports"] = [_as_support(item)
+                                   for item in image_model["supports"]
+                                   if isinstance(item, dict)]
     return payload
+
+
+# 支座类型 → 六自由度约束掩码。让模型判"这是铰接"，让代码写掩码：
+# 认符号是视觉活，把它翻译成 [1,1,1,0,0,0] 是编码活，混在一起两头都做不好。
+_SUPPORT_MASKS = {
+    "fixed":  (1, 1, 1, 1, 1, 1),
+    "pinned": (1, 1, 1, 0, 0, 0),
+    "roller": (0, 1, 1, 0, 0, 0),      # 竖向支承，沿 x 可滑动；面外由 y 约束
+}
+
+
+def _as_support(item: dict) -> dict:
+    """把识别出的支座补成项目的规范形状。
+
+    模型按提示词给的是 {"node": 1, "kind": "pinned"}——对视觉模型来说，
+    判断"三角形=铰接"远比直接吐出 [1,1,1,0,0,0] 可靠。但项目里所有消费方
+    （模型树、求解器、校验）读的都是 fix 掩码，缺了它 model_tree 会
+    KeyError: 'fix' 并把整棵树的重建带崩。缺什么补什么，在这里补掉。
+    """
+    got = dict(item)
+    if not isinstance(got.get("fix"), (list, tuple)) or len(got.get("fix") or []) != 6:
+        kind = str(got.get("kind") or "").strip().lower()
+        got["fix"] = list(_SUPPORT_MASKS.get(kind, _SUPPORT_MASKS["pinned"]))
+        if kind not in _SUPPORT_MASKS:
+            # 认不出类型时按铰接保守处理，并留下痕迹让人来确认
+            got.setdefault("name", "待确认支座")
+    else:
+        got["fix"] = [int(bool(v)) for v in got["fix"]]
+    return got
 
 
 def _as_issue(item: Any, index: int) -> dict:

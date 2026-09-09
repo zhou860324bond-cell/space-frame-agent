@@ -406,3 +406,28 @@ def test_prompt_shows_issues_as_objects_not_strings():
     from sketch_parser import V2_SKETCH_SYSTEM_PROMPT as prompt
     assert '"category"' in prompt and '"entity_refs"' in prompt
     assert '"issues":    ["' not in prompt, "不能再是字符串数组"
+
+
+def test_supports_kind_is_translated_into_a_fix_mask():
+    """模型给 kind，代码给掩码。
+
+    认符号是视觉活（"三角形=铰接"），把它翻成 [1,1,1,0,0,0] 是编码活。
+    项目里所有消费方读的都是 fix；缺了它 model_tree 会 KeyError: 'fix'，
+    并把整棵树的重建、连带整个界面刷新一起带崩——实测就是这么崩的。
+    """
+    from sketch_parser import _fill_bookkeeping
+    out = _fill_bookkeeping({"image_model": {"supports": [
+        {"node": 1, "kind": "fixed"}, {"node": 2, "kind": "pinned"},
+        {"node": 3, "kind": "roller"}, {"node": 4, "kind": "看不清"},
+        {"node": 5, "fix": [1, 0, 1, 0, 0, 0]},
+    ]}}, "h", "a.png")
+    masks = [s["fix"] for s in out["image_model"]["supports"]]
+    assert masks[0] == [1, 1, 1, 1, 1, 1]
+    assert masks[1] == [1, 1, 1, 0, 0, 0]
+    assert masks[2] == [0, 1, 1, 0, 0, 0]
+    assert masks[3] == [1, 1, 1, 0, 0, 0], "认不出类型时按铰接保守处理"
+    assert out["image_model"]["supports"][3]["name"] == "待确认支座"
+    assert masks[4] == [1, 0, 1, 0, 0, 0], "已经给了 fix 的不许被覆盖"
+    # 每一条都要能被界面直接消费：六个 0/1，classify_support 就是这么读的
+    for mask in masks:
+        assert len(mask) == 6 and all(v in (0, 1) for v in mask)
