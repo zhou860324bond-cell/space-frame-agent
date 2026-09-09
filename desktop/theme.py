@@ -48,7 +48,18 @@ HINGE = "#ffb454"
 DRAFT_SUPPORT = "#2f9e68"
 
 DIVERGING = "coolwarm"
-SEQUENTIAL = V.VIEWPORT_SEQUENTIAL
+# 锚点色。**不要直接当 cmap 传给 add_mesh**：PyVista 会把颜色列表理解成
+# ListedColormap，只有 6 级，云图渲染出来是台阶不是渐变（已实测）。
+# 需要色标时调 sequential_cmap()。
+SEQUENTIAL_ANCHORS = V.VIEWPORT_SEQUENTIAL
+
+
+def sequential_cmap(steps: int = 256):
+    """由锚点色插值出的连续顺序色标。matplotlib 在这里才导入——
+    theme 被整个桌面端引用，不该为了一个色标把它变重。"""
+    from matplotlib.colors import LinearSegmentedColormap
+    return LinearSegmentedColormap.from_list(
+        "viewport_sequential", SEQUENTIAL_ANCHORS, N=steps)
 
 # 小圆角只用于区分可交互表面，不做消费产品式大胶囊。
 RADIUS_SM = "4px"

@@ -172,8 +172,29 @@ def test_spatial_bending_magnitude_is_axis_invariant_and_nonnegative():
     line = scene.member_polylines(s.frame, s.solution, "D", scalars="M")
     values = np.asarray(line["M"])
     assert np.all(values >= 0.0)
-    lo, hi = scene.contour_clim(line, "M")
+    lo, hi = scene.contour_clim(line, "M", percentile=None)
     assert lo == 0.0 and hi == pytest.approx(values.max())
+
+
+def test_contour_clim_clips_to_a_percentile_by_default():
+    """默认按分位裁剪上限，并且能报告自己裁过——不裁的话重尾分布下
+    绝大多数构件会挤在色带最底端，云图等于没有信息。"""
+    s = portal()
+    line = scene.member_polylines(s.frame, s.solution, "D", scalars="M")
+    values = np.asarray(line["M"])
+    lo, hi = scene.contour_clim(line, "M")
+    assert lo == 0.0
+    assert hi == pytest.approx(np.percentile(values, scene.CONTOUR_PERCENTILE))
+    assert hi < values.max()
+    assert scene.clim_is_clipped(line, "M", (lo, hi)) is True
+
+
+def test_full_range_is_not_reported_as_clipped():
+    """满量程时不得挂"已裁剪"的标——那会在图上写下一句不成立的说明。"""
+    s = portal()
+    line = scene.member_polylines(s.frame, s.solution, "D", scalars="M")
+    clim = scene.contour_clim(line, "M", percentile=None)
+    assert scene.clim_is_clipped(line, "M", clim) is False
 
 
 def test_signed_components_still_use_a_symmetric_colour_range():
@@ -246,7 +267,11 @@ def test_support_glyphs_are_classified_and_placed():
     glyphs = scene.support_glyphs(s.frame)
     assert set(glyphs) == {"铰接"}, "门式刚架柱脚是铰接"
     bounds = np.array(glyphs["铰接"].bounds).reshape(3, 2)
-    assert bounds[2, 1] <= 1e-9, "符号画在节点下方"
+    # 容差按符号尺寸取，不用绝对 1e-9：锥面是多边形离散的，顶点位置带
+    # 与半径同量级的舍入，符号一改小这条就会以 6e-9 这种量级失败，
+    # 而它想守的其实是"画在节点下方"，不是某个绝对精度。
+    tolerance = 1e-6 * scene.model_size(s.frame)
+    assert bounds[2, 1] <= tolerance, "符号画在节点下方"
 
 
 def test_out_of_plane_restraints_do_not_get_a_glyph():

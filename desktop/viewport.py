@@ -736,13 +736,20 @@ class Viewport(QWidget):
                         else system.force_scale)
         tubes[component] = tubes[component] * scalar_scale
         clim = scene.contour_clim(tubes, component)
-        cmap = (theme.SEQUENTIAL if component in {"V", "M"}
+        cmap = (theme.sequential_cmap() if component in {"V", "M"}
                 else theme.DIVERGING)
+        # 色标被分位裁剪时**必须写在图上**：这是对显示的人为压缩，
+        # 不写就成了静默近似。峰值仍由标题和查询如实给出。
+        # 披露文字用 ASCII：VTK 的色标用自己的字体引擎，默认字体没有中文
+        # 字形（实测中文会渲染成方块）。写成方块等于没披露。
+        bar_title = title or component
+        if scene.clim_is_clipped(tubes, component, clim):
+            bar_title = f"{bar_title}  [clip p{scene.CONTOUR_PERCENTILE:.0f}]"
         self.plotter.add_mesh(
             tubes, scalars=component, cmap=cmap, clim=clim,
             smooth_shading=True,
             scalar_bar_args=dict(
-                title=title or component, color=theme.INK_MUTED,
+                title=bar_title, color=theme.INK_MUTED,
                 title_font_size=13, label_font_size=11, n_labels=5,
                 width=0.30, height=0.045, position_x=0.66, position_y=0.03))
         for mesh in scene.support_glyphs(frame).values():

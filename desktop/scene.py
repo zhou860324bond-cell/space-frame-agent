@@ -295,7 +295,40 @@ def load_arrows(frame, case: str, size: float | None = None,
     return out
 
 
-def symmetric_clim(mesh: pv.PolyData, name: str) -> tuple[float, float]:
+# 云图色标的默认分位上限。
+#
+# 刚架的内力分布是重尾的：实测一个两层两跨框架的合弯矩，**55% 的样点落在
+# 色带最底下的 20%**，而色带上半段只服务约 1% 的结构（p95 只有峰值的 46%）。
+# 满量程画出来，绝大多数构件是同一个颜色，云图等于没有信息。
+#
+# 所以默认按分位裁剪。**这是对显示的一次人为压缩，必须写在图上**——
+# 调用方拿 clim_is_clipped() 判断后，把"上限取 pXX，超出饱和"标进色标标题。
+# 峰值本身不受影响，仍由标题、查询和 Result DB 如实给出。
+# 传 percentile=None 恢复满量程。
+CONTOUR_PERCENTILE = 95.0
+
+
+def _bound(values: np.ndarray, percentile: float | None) -> float:
+    magnitude = np.abs(np.asarray(values, dtype=float))
+    if magnitude.size == 0:
+        return 0.0
+    if percentile is None:
+        return float(magnitude.max())
+    return float(np.percentile(magnitude, percentile))
+
+
+def clim_is_clipped(mesh: pv.PolyData, name: str,
+                    clim: tuple[float, float]) -> bool:
+    """色标上限是否低于真实峰值——即图上是否有被饱和掉的部分。"""
+    values = np.abs(np.asarray(mesh[name], dtype=float))
+    if not values.size:
+        return False
+    return float(values.max()) > max(abs(clim[0]), abs(clim[1])) * (1.0 + 1e-9)
+
+
+def symmetric_clim(mesh: pv.PolyData, name: str,
+                   percentile: float | None = CONTOUR_PERCENTILE
+                   ) -> tuple[float, float]:
     """发散色标的取值范围必须**关于零对称**。
 
     否则全受压的结构里，最大值（最轻的压力，接近 0）会落在红色端——
@@ -304,22 +337,24 @@ def symmetric_clim(mesh: pv.PolyData, name: str) -> tuple[float, float]:
 
     全零时给一个 ±1 的兜底范围，免得 VTK 拿到零跨度的 clim。
     """
-    values = np.asarray(mesh[name], dtype=float)
-    peak = float(np.abs(values).max())
+    peak = _bound(mesh[name], percentile)
     return (-peak, peak) if peak > 0 else (-1.0, 1.0)
 
 
-def contour_clim(mesh: pv.PolyData, name: str) -> tuple[float, float]:
+def contour_clim(mesh: pv.PolyData, name: str,
+                 percentile: float | None = CONTOUR_PERCENTILE
+                 ) -> tuple[float, float]:
     """按结果物理含义给色标范围。
 
     N/Vy/Vz/T/My/Mz 是有符号局部分量，要用关于零对称的发散色标；
     V/M 是合量，天然非负，范围应从 0 开始。把合量也画成 ±peak 会浪费
     一半色带，还暗示一个并不存在的正负号。
+
+    上限默认取分位数而不是峰值，理由见 CONTOUR_PERCENTILE。
     """
     if name not in {"V", "M"}:
-        return symmetric_clim(mesh, name)
-    values = np.asarray(mesh[name], dtype=float)
-    peak = float(values.max(initial=0.0))
+        return symmetric_clim(mesh, name, percentile)
+    peak = _bound(mesh[name], percentile)
     return (0.0, peak) if peak > 0 else (0.0, 1.0)
 
 

@@ -96,10 +96,31 @@ def shot(p: pv.Plotter, name: str) -> None:
     p.camera.azimuth = -35
     p.camera.elevation = 18
     p.reset_camera()
+    p.camera.zoom(1.25)              # reset_camera 留白太多；再大支座会被裁掉
     path = OUT / name
     p.screenshot(str(path))
     p.close()
     print("已输出", path)
+
+
+def _bar_title(tubes, component: str, clim, base: str) -> str:
+    """与 viewport.show_contour 同一条披露规则：裁剪了就写在色标上。"""
+    if scene.clim_is_clipped(tubes, component, clim):
+        return f"{base}  [clip p{scene.CONTOUR_PERCENTILE:.0f}]"
+    return base
+
+
+def _scaled_tubes(frame, solution, component: str):
+    """带工程显示单位的云图管。与 viewport.show_contour 同一套换算——
+    脚本若略过它，核对的就不是用户真正看到的那张图。"""
+    from units import of as unit_system
+    tubes = scene.member_tubes(frame, solution, "D", scalars=component)
+    system = unit_system(frame)
+    tubes[component] = tubes[component] * (
+        system.moment_scale if component in {"T", "My", "Mz", "M"}
+        else system.force_scale)
+    clim = scene.contour_clim(tubes, component)
+    return tubes, clim, system
 
 
 def main() -> None:
@@ -117,11 +138,12 @@ def main() -> None:
 
     # 2. 合弯矩云图：顺序色标，从零起
     p = plotter()
-    tubes = scene.member_tubes(frame, solution, "D", scalars="M")
-    clim = scene.contour_clim(tubes, "M")
-    p.add_mesh(tubes, scalars="M", cmap=theme.SEQUENTIAL, clim=clim,
+    tubes, clim, system = _scaled_tubes(frame, solution, "M")
+    p.add_mesh(tubes, scalars="M", cmap=theme.sequential_cmap(), clim=clim,
                smooth_shading=True,
-               scalar_bar_args=dict(title="M", color=theme.INK_MUTED,
+               scalar_bar_args=dict(title=_bar_title(tubes, "M", clim,
+                                                     f"|M| ({system.moment_unit})"),
+                                    color=theme.INK_MUTED,
                                     title_font_size=14, label_font_size=12,
                                     n_labels=5, width=0.30, height=0.045,
                                     position_x=0.66, position_y=0.03))
@@ -131,11 +153,12 @@ def main() -> None:
 
     # 3. 轴力云图：发散色标，关于零对称
     p = plotter()
-    tubes = scene.member_tubes(frame, solution, "D", scalars="N")
-    clim = scene.contour_clim(tubes, "N")
+    tubes, clim, system = _scaled_tubes(frame, solution, "N")
     p.add_mesh(tubes, scalars="N", cmap=theme.DIVERGING, clim=clim,
                smooth_shading=True,
-               scalar_bar_args=dict(title="N", color=theme.INK_MUTED,
+               scalar_bar_args=dict(title=_bar_title(tubes, "N", clim,
+                                                     f"N ({system.force_unit})"),
+                                    color=theme.INK_MUTED,
                                     title_font_size=14, label_font_size=12,
                                     n_labels=5, width=0.30, height=0.045,
                                     position_x=0.66, position_y=0.03))
