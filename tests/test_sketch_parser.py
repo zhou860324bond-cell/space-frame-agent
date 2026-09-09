@@ -315,3 +315,62 @@ def test_from_env_keeps_the_requested_model(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-env-key")
     parser = SketchParser.from_env("openai", model="gpt-4.1-mini")
     assert parser._model == "gpt-4.1-mini"
+
+
+# ------------------------- 真实模型响应回归（2026-09-09 实测）
+
+def _real_deepseek_response() -> dict:
+    """一次真实的 deepseek-v4-flash-vision-exp 响应。
+
+    它把柱、梁、荷载和尺寸标注都认出来了，却因为几个**簿记字段**被判不合法：
+    format 没给、source 写成了 title/type/author、work_plane 和 scale 被压成
+    字符串。这些全是代码自己知道的东西，不该让模型去凑。
+    """
+    import json
+    from pathlib import Path
+    path = Path(__file__).parent / "fixtures" / "deepseek_v2_real_response.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_bookkeeping_fields_are_filled_by_code_not_the_model():
+    """簿记字段由代码补齐后，这几条格式错误必须消失。"""
+    from sketch_parser import _fill_bookkeeping
+    from multimodal_workflow import V2_DRAFT_FORMAT, validate_v2_draft
+
+    raw = _real_deepseek_response()
+    assert "format" in str(validate_v2_draft(dict(raw)))      # 修复前确实报这个
+
+    filled = _fill_bookkeeping(raw, "the-caller-hash", "a.png")
+    errors = " ".join(validate_v2_draft(filled))
+    assert "format" not in errors
+    assert "work_plane" not in errors
+    assert "scale" not in errors
+    assert filled["format"] == V2_DRAFT_FORMAT
+    assert filled["revision"] == 0 and filled["confirmation"] is None
+
+
+def test_image_hash_is_written_by_the_caller_never_echoed_by_the_model():
+    """哈希绑定必须由代码写入。
+
+    让模型把调用方给的哈希抄回来，既没有增加任何保证，还留了抄错或自己编一个
+    的余地——真实响应里它填的就是一个对不上的哈希。代码写入是更强的绑定。
+    """
+    from sketch_parser import _fill_bookkeeping
+    raw = _real_deepseek_response()
+    filled = _fill_bookkeeping(raw, "authoritative-hash", "a.png")
+    assert filled["source"]["image_hash"] == "authoritative-hash"
+    # 模型对图纸的描述是有用线索，不该连带丢掉
+    assert filled["source"]["title"] == "两层两跨框架 立面图"
+
+
+def test_v2_prompt_shows_the_shape_it_demands():
+    """提示词必须给出显式骨架。
+
+    上一版只罗列了十二个字段名、不给结构，模型只能猜——实测它把 image_model
+    理解成了图片元信息（哈希、尺寸、分辨率），结构全塞进了 entities。
+    字段名歧义要靠提示词消除，不能靠事后纠错。
+    """
+    from sketch_parser import V2_SKETCH_SYSTEM_PROMPT as prompt
+    assert '"u":' in prompt and '"v":' in prompt, "必须写明归一化 u/v 坐标"
+    assert "不是图片的元信息" in prompt
+    assert "最小单元" in prompt, "必须说明跨层的柱要拆成多根杆件"

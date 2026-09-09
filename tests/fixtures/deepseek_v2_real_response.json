@@ -1,0 +1,244 @@
+{
+ "image_model": {
+  "image_hash": "71a7b367993d924f8834acbc5cff3c13f526b1bc7823cd88e414d79bf7de7c5a",
+  "image_format": "png",
+  "image_size": null,
+  "image_resolution": null
+ },
+ "model": null,
+ "merge_plan": null,
+ "source": {
+  "title": "两层两跨框架 立面图",
+  "type": "structural_elevation_sketch",
+  "author": null,
+  "notes": null
+ },
+ "work_plane": "proposed",
+ "scale": "unknown",
+ "entities": [
+  {
+   "id": "E1",
+   "type": "column",
+   "subtype": "rectangular_column",
+   "geometry": {
+    "x1": 125,
+    "y1": 138,
+    "x2": 138,
+    "y2": 855
+   },
+   "material": null,
+   "section_size": "unknown",
+   "support": null,
+   "label": null
+  },
+  {
+   "id": "E2",
+   "type": "column",
+   "subtype": "rectangular_column",
+   "geometry": {
+    "x1": 608,
+    "y1": 138,
+    "x2": 621,
+    "y2": 877
+   },
+   "material": null,
+   "section_size": "unknown",
+   "support": null,
+   "label": null
+  },
+  {
+   "id": "E3",
+   "type": "column",
+   "subtype": "rectangular_column",
+   "geometry": {
+    "x1": 1092,
+    "y1": 138,
+    "x2": 1105,
+    "y2": 877
+   },
+   "material": null,
+   "section_size": "unknown",
+   "support": null,
+   "label": null
+  },
+  {
+   "id": "E4",
+   "type": "beam",
+   "subtype": "rectangular_beam",
+   "geometry": {
+    "x1": 125,
+    "y1": 138,
+    "x2": 1105,
+    "y2": 152
+   },
+   "material": null,
+   "section_size": "unknown",
+   "support": null,
+   "label": null
+  },
+  {
+   "id": "E5",
+   "type": "beam",
+   "subtype": "rectangular_beam",
+   "geometry": {
+    "x1": 125,
+    "y1": 573,
+    "x2": 1105,
+    "y2": 587
+   },
+   "material": null,
+   "section_size": "unknown",
+   "support": null,
+   "label": null
+  },
+  {
+   "id": "E6",
+   "type": "load",
+   "subtype": "uniform_load",
+   "geometry": {
+    "x1": 210,
+    "y1": 90,
+    "x2": 991,
+    "y2": 105
+   },
+   "material": null,
+   "section_size": null,
+   "support": null,
+   "label": "18 kN/m"
+  },
+  {
+   "id": "E7",
+   "type": "load",
+   "subtype": "point_load",
+   "geometry": {
+    "x1": 63,
+    "y1": 140,
+    "x2": 78,
+    "y2": 155
+   },
+   "material": null,
+   "section_size": null,
+   "support": null,
+   "label": "30 kN"
+  }
+ ],
+ "dimensions": [
+  {
+   "id": "D1",
+   "type": "linear",
+   "value": 6000,
+   "unit": "mm",
+   "direction": "horizontal",
+   "start_entity": "E1",
+   "end_entity": "E2",
+   "text": "6000"
+  },
+  {
+   "id": "D2",
+   "type": "linear",
+   "value": 6000,
+   "unit": "mm",
+   "direction": "horizontal",
+   "start_entity": "E2",
+   "end_entity": "E3",
+   "text": "6000"
+  },
+  {
+   "id": "D3",
+   "type": "linear",
+   "value": 3600,
+   "unit": "mm",
+   "direction": "vertical",
+   "start_entity": "E1",
+   "end_entity": "E5",
+   "text": "3600"
+  },
+  {
+   "id": "D4",
+   "type": "linear",
+   "value": 3600,
+   "unit": "mm",
+   "direction": "vertical",
+   "start_entity": "E5",
+   "end_entity": "E4",
+   "text": "3600"
+  }
+ ],
+ "intersections": [
+  {
+   "id": "I1",
+   "type": "column_beam",
+   "entities": [
+    "E1",
+    "E4"
+   ],
+   "geometry": {
+    "x": 131,
+    "y": 145
+   }
+  },
+  {
+   "id": "I2",
+   "type": "column_beam",
+   "entities": [
+    "E2",
+    "E4"
+   ],
+   "geometry": {
+    "x": 614,
+    "y": 145
+   }
+  },
+  {
+   "id": "I3",
+   "type": "column_beam",
+   "entities": [
+    "E3",
+    "E4"
+   ],
+   "geometry": {
+    "x": 1098,
+    "y": 145
+   }
+  },
+  {
+   "id": "I4",
+   "type": "column_beam",
+   "entities": [
+    "E1",
+    "E5"
+   ],
+   "geometry": {
+    "x": 131,
+    "y": 580
+   }
+  },
+  {
+   "id": "I5",
+   "type": "column_beam",
+   "entities": [
+    "E2",
+    "E5"
+   ],
+   "geometry": {
+    "x": 614,
+    "y": 580
+   }
+  },
+  {
+   "id": "I6",
+   "type": "column_beam",
+   "entities": [
+    "E3",
+    "E5"
+   ],
+   "geometry": {
+    "x": 1098,
+    "y": 580
+   }
+  }
+ ],
+ "issues": [],
+ "revision": 0,
+ "confirmation": null
+}

@@ -107,13 +107,37 @@ entities，kind 使用 support 或 load。support 的 target.node 必须指向�
 杆件只能引用已识别节点。
 """
 
-V2_SKETCH_SYSTEM_PROMPT = f"""你是结构工程草图识别助手。只输出一个 JSON 对象，
-format 必须为 {V2_DRAFT_FORMAT}。输出必须符合多模态草稿 v2：包含 image_model、
-model、merge_plan、source、work_plane、scale、entities、dimensions、intersections、
-issues、revision、confirmation。视觉阶段只填写有图片证据的 image_model 与实体；
-model 和 merge_plan 必须为 null，revision 为 0，confirmation 为 null。
-不得补材料、截面、支座、荷载、尺寸或工程响应。未知尺度保持 unknown；工作平面只可
-proposed。source.image_hash 必须使用调用方给出的图片哈希。只输出 JSON，不要 Markdown。
+V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一个 JSON 对象，
+不要 Markdown、不要解释。
+
+**只需要输出下面这四个字段**，其余簿记字段由调用方填写，你写了也会被覆盖：
+
+{
+  "image_model": {
+    "nodes":  [{"id": 1, "u": 0.12, "v": 0.83}],
+    "members":[{"id": 1, "i": 1, "j": 2}],
+    "supports":[{"node": 1, "kind": "fixed"}],
+    "load_cases":[]
+  },
+  "entities":  [{"id": "E1", "kind": "member", "member": 1, "confidence": 0.9,
+                 "image_geometry": {"line": [[0.12,0.83],[0.12,0.18]]}}],
+  "dimensions":[{"id": "D1", "text": "6000", "unit": "mm",
+                 "image_geometry": {"line": [[0.12,0.95],[0.5,0.95]]}}],
+  "issues":    ["需要用户确认的问题"]
+}
+
+关键约定，写错会被直接拒绝：
+
+1. **image_model 是"图里那个结构"，不是图片的元信息。** 不要写图片哈希、
+   尺寸、分辨率、格式——那些调用方已经有了。这里要的是节点、杆件、支座。
+2. **节点坐标用 u/v**，取值 0~1 的归一化图片坐标，原点在左上角。不要用像素。
+3. **杆件按最小单元拆分**：一根柱子跨两层就是两根杆件，中间那个节点必须建出来；
+   一层里两跨的梁是两根杆件，不是一根。杆件只能引用已经列出的节点 id。
+4. 节点 id 与杆件 id 都是从 1 开始的正整数，各自不重复。
+5. 只写图里有证据的东西。不得补材料、截面、默认支座、默认荷载或默认尺寸。
+   看不清、拿不准的一律写进 issues，不要猜。
+6. 图上没有可靠尺寸时，坐标只保持相对比例，并在 issues 里要求用户标定；
+   绝不能把相对坐标当成米。
 """
 
 
@@ -127,6 +151,66 @@ class ParseResult:
     errors: list[str] = field(default_factory=list)
     raw_response: str = ""
     duration_ms: float = 0.0
+
+
+def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
+    """把**代码自己拥有的簿记字段**补齐，再交给校验。
+
+    模型该做的是看图，不是记账。实测 deepseek-v4-flash-vision-exp 能正确认出
+    柱、梁、荷载和尺寸标注，却在 format / source / work_plane / scale 这几个
+    字段上翻车——它把 work_plane 写成 "proposed"、scale 写成 "unknown"
+    （本该是对象），source 写成 title/type/author（本该是 original_path /
+    image_hash / preprocessing），format 干脆没给。这些全是常量或调用方已知的
+    东西，让模型去凑，只会把"能不能看懂图"的问题伪装成"格式对不对"的问题。
+
+    **image_hash 尤其不该由模型回填**：让它把调用方给的哈希抄回来，既没有
+    增加任何保证，还留了抄错或自己编一个的余地。由代码写入是更强的绑定，
+    不是更弱的——绑定的目的是"这份草稿属于这张图"，而代码才是权威。
+
+    只补簿记，不碰观察：entities / dimensions / intersections / issues /
+    image_model 一概保持模型的原样，识别得对不对仍由后续校验和人工确认判断。
+    """
+    if not isinstance(payload, dict):
+        return payload
+    payload["format"] = V2_DRAFT_FORMAT
+    payload["model"] = None
+    payload["merge_plan"] = None
+    payload["revision"] = 0
+    payload["confirmation"] = None
+
+    source = payload.get("source")
+    observed = dict(source) if isinstance(source, dict) else {}
+    observed.pop("image_hash", None)
+    payload["source"] = {
+        "original_path": source_path,
+        "image_hash": image_hash,
+        "preprocessing": {"perspective_status": "unconfirmed"},
+        # 模型对图纸的描述（标题、类型）留着，它是有用的线索，只是不能当簿记用
+        **{k: v for k, v in observed.items()
+           if k not in ("original_path", "preprocessing")},
+    }
+
+    def _as_object(value: Any, skeleton: dict) -> dict:
+        """模型常把这类对象压成一个状态字符串，按状态还原成骨架。"""
+        if isinstance(value, dict):
+            return {**skeleton, **value}
+        got = dict(skeleton)
+        if isinstance(value, str) and value:
+            got["status"] = value
+        return got
+
+    payload["work_plane"] = _as_object(payload.get("work_plane"), {
+        "status": "proposed", "plane": "XZ", "offset": 0.0,
+        "axis_mapping": {"first_axis": "X", "second_axis": "Z",
+                         "offset_axis": "Y", "image_right_sign": 1,
+                         "image_up_sign": 1}})
+    payload["scale"] = _as_object(payload.get("scale"), {
+        "status": "unknown", "length_per_pixel": None, "unit": "m/px",
+        "anchor_node": None, "anchor_coordinates_xyz": [0.0, 0.0, 0.0],
+        "evidence_ids": []})
+    for key in ("entities", "dimensions", "intersections", "issues"):
+        payload.setdefault(key, [])
+    return payload
 
 
 @dataclass
@@ -408,10 +492,8 @@ class SketchParser:
                     result.cancelled = True
                     break
                 payload = self._extract_json(raw)
+                payload = _fill_bookkeeping(payload, state.image_hash, str(image_path))
                 errors = validate_v2_draft(payload)
-                source = payload.get("source") if isinstance(payload, dict) else None
-                if (source or {}).get("image_hash") != state.image_hash:
-                    errors.append("source.image_hash 与当前派生图不一致")
                 if errors:
                     raise ValueError("；".join(errors))
                 if not state.complete_recognition(job_id, payload):
