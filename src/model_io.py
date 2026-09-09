@@ -124,7 +124,11 @@ MODEL_SCHEMA: dict[str, Any] = {
                                "Iz": {"type": "number", "exclusiveMinimum": 0},
                                "J": {"type": "number", "exclusiveMinimum": 0},
                                "Ay": {"type": "number", "exclusiveMinimum": 0},
-                               "Az": {"type": "number", "exclusiveMinimum": 0}},
+                               "Az": {"type": "number", "exclusiveMinimum": 0},
+                               # 极端纤维距离；缺省时正应力不可算，明确拒绝。
+                               "cy": {"type": "number", "exclusiveMinimum": 0},
+                               "cz": {"type": "number", "exclusiveMinimum": 0},
+                               "circular": {"type": "boolean"}},
             },
         },
         "nodes": {
@@ -251,7 +255,10 @@ def from_dict(data: dict[str, Any]) -> Frame:
         f.sections[s["name"]] = Section(
             s["name"], float(s["A"]), float(s["Iy"]), float(s["Iz"]), float(s["J"]),
             float(s["Ay"]) if s.get("Ay") is not None else None,
-            float(s["Az"]) if s.get("Az") is not None else None)
+            float(s["Az"]) if s.get("Az") is not None else None,
+            float(s["cy"]) if s.get("cy") is not None else None,
+            float(s["cz"]) if s.get("cz") is not None else None,
+            bool(s.get("circular", False)))
     for n in data["nodes"]:
         f.nodes[int(n["id"])] = Node(int(n["id"]), float(n["x"]), float(n["y"]), float(n["z"]))
     for m in data["members"]:

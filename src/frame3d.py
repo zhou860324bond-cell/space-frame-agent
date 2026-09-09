@@ -50,6 +50,11 @@ class Section:
     J: float
     Ay: float | None = None
     Az: float | None = None
+    # 极端纤维距离与圆形标志，仅用于正应力计算；由 sections.py 的 builder 给出。
+    # 直接以 A/Iy/Iz/J 定义的截面留空，此时正应力被拒绝而不是估算。
+    cy: float | None = None
+    cz: float | None = None
+    circular: bool = False
 
 
 @dataclass(frozen=True)

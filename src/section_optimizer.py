@@ -18,7 +18,10 @@
 - `material_cost` — 材料成本（最小化，重量 × 单价）
 
 **约束**（可多选，不满足的解被排除）：
-- `max_displacement_limit` — 最大位移不超过限值
+- `max_stress` — 极端纤维正应力不超过许用值。**只含轴力与双向弯矩，
+  不含剪应力和扭转剪应力**（见 stress.py）；只校核使用被优化截面的杆件；
+  截面必须由 sections.py 按尺寸生成，否则明确报错而不是估算。
+- `max_displacement_limit` — 最大位移不超过限值（按杆件中心线，含跨中挠曲）
 - `min_section_area` — 截面面积不小于最小值
 
 **用法**：
@@ -34,7 +37,8 @@ opt = SectionOptimizer(
         "flange_width": (0.15, 0.3, 4),
     },
     objectives=["weight", "max_displacement"],
-    constraints={"max_displacement_limit": 0.02},   # m
+    constraints={"max_stress": 215e6,               # Pa
+                 "max_displacement_limit": 0.02},   # m
 )
 result = opt.grid_search()
 print(result.best)          # 最优解（单目标时）
@@ -55,6 +59,7 @@ import numpy as np
 
 from agent import Session
 from internal_forces import max_centerline_displacement
+from stress import worst_normal_stress_all_cases
 import sections as sec
 
 
@@ -126,7 +131,7 @@ class SectionOptimizer:
     """
 
     SUPPORTED_OBJECTIVES = ("weight", "max_displacement", "material_cost")
-    SUPPORTED_CONSTRAINTS = ("max_displacement_limit", "min_section_area")
+    SUPPORTED_CONSTRAINTS = ("max_stress", "max_displacement_limit", "min_section_area")
 
     def __init__(
         self,
@@ -159,11 +164,6 @@ class SectionOptimizer:
             if obj not in self.SUPPORTED_OBJECTIVES:
                 raise ValueError(f"不支持的目标 {obj!r}，支持: {self.SUPPORTED_OBJECTIVES}")
         for con in self._constraints:
-            if con == "max_stress":
-                raise NotImplementedError(
-                    "max_stress 约束尚未实现：截面只存 A/Iy/Iz/J，没有截面模量，"
-                    "算不出弯曲应力。此前的实现恒为满足，会把超应力的截面判成可行，"
-                    "所以现在明确拒绝，而不是给出一个假结论。")
             if con not in self.SUPPORTED_CONSTRAINTS:
                 raise ValueError(f"不支持的约束 {con!r}，支持: {self.SUPPORTED_CONSTRAINTS}")
 
@@ -269,6 +269,17 @@ class SectionOptimizer:
         out = {}
         frame = session.frame
         sol = session.solution
+
+        if "max_stress" in self._constraints:
+            allowable = self._constraints["max_stress"]
+            # **只校核用被优化截面的那些杆件**：模型里别的截面可能是直接以
+            # A/Iy/Iz/J 给出的，没有极端纤维距离，算不出应力。把它们一起算
+            # 会整体抛 StressUnavailable；悄悄跳过则会低估最大应力。这里限定
+            # 范围，语义也更贴切——正在定尺寸的就是这一种截面。
+            targets = [mid for mid, m in frame.members.items()
+                       if m.section == self._section_name]
+            out["max_stress"] = worst_normal_stress_all_cases(
+                frame, sol, member_ids=targets) <= allowable
 
         if "max_displacement_limit" in self._constraints:
             limit = self._constraints["max_displacement_limit"]

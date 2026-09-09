@@ -339,12 +339,38 @@ def test_centerline_displacement_objective_is_not_zero():
     assert value == pytest.approx(6.14e-3, rel=5e-2)
 
 
-def test_max_stress_constraint_is_refused_not_faked():
-    """应力约束未实现时必须明确拒绝，不能返回一个恒为满足的假结论。"""
-    with pytest.raises(NotImplementedError, match="max_stress"):
-        SectionOptimizer(
-            model=_make_model(), section_name="BEAM",
-            section_type="工字形 / H 型钢",
-            variables={"height": (0.3, 0.6, 3)},
-            constraints={"max_stress": 215e6},
-        )
+def _stress_feasibility(allowable: float) -> list[bool]:
+    """在同一组截面上按给定许用应力取可行性，供下面两条测试对比。
+
+    模型里的 COL 是直接以 A/Iy/Iz/J 给出的、没有极端纤维距离的截面；
+    优化的是 BEAM。这组测试同时守住"只校核被优化截面的杆件"这条范围规则——
+    如果实现去算了 COL，就会抛 StressUnavailable 而不是给出可行性。
+    """
+    opt = SectionOptimizer(
+        model=_make_model(), section_name="BEAM", section_type="矩形",
+        variables={"width": [0.2], "height": [0.2, 0.5]},
+        objectives=["weight"],
+        constraints={"max_stress": allowable},
+    )
+    result = opt.grid_search()
+    for point in result.evaluations:
+        assert point.error == "", point.error
+    return [p.constraints["max_stress"] for p in result.evaluations]
+
+
+def test_max_stress_constraint_actually_discriminates():
+    """守旧实现的那个 bug：约束曾经恒为 True。
+
+    同一组截面换一个足够严的许用值，结果必须变——否则这个约束没在干活。
+    """
+    loose = _stress_feasibility(1e12)      # 高到谁都满足
+    tight = _stress_feasibility(1.0)       # 低到谁都不满足
+    assert all(loose)
+    assert not any(tight)
+
+
+def test_max_stress_constraint_separates_by_section_size():
+    """矮截面超应力、高截面不超：σ = 6PL/(b·h²)，随 h 单调下降。"""
+    verdicts = _stress_feasibility(2.0e7)
+    assert verdicts[0] is False            # h=0.2
+    assert verdicts[1] is True             # h=0.5

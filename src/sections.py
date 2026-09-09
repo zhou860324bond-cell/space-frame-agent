@@ -8,6 +8,16 @@
 搞反会让梁的挠度差出一个数量级。
 
 单位一律用米，与 N-m-Pa 一致。
+
+除 A/Iy/Iz/J 外，各 builder 还给出 **极端纤维距离** ``cy``/``cz``（局部 y、z 方向
+上离形心最远的材料点距离）和 ``circular`` 标志，供正应力计算使用：
+
+* 非圆截面（矩形、工字）在 (±cy, ±cz) 处确实存在材料点（矩形的角、工字的翼缘尖），
+  所以双向弯曲的极值就是两项之和，**是精确值而不是保守估计**。
+* 圆形截面在该点没有材料，极值出现在合弯矩方向上，须按平方和开方合成，
+  故单独用 ``circular`` 标出，不能套用前一条。
+
+直接以 A/Iy/Iz/J 给出的截面没有这些字段，正应力将被明确拒绝而不是估算。
 """
 
 from __future__ import annotations
@@ -51,6 +61,9 @@ def rectangle(name: str, width: float, height: float) -> dict[str, Any]:
         "Iy": h * b ** 3 / 12.0,                 # 弱轴：绕局部 y
         "Iz": b * h ** 3 / 12.0,                 # 强轴：绕局部 z
         "J": rectangle_torsion_factor(long_ / short) * short ** 3 * long_,
+        "cy": h / 2.0,                           # 角点，材料实际存在
+        "cz": b / 2.0,
+        "circular": False,
     }
 
 
@@ -76,6 +89,9 @@ def i_section(name: str, height: float, flange_width: float,
         "Iz": (b * h ** 3 - (b - tw) * hw ** 3) / 12.0,
         # 开口薄壁自由扭转：J ≈ Σ(1/3)·长边·厚³
         "J": (2.0 * b * tf ** 3 + hw * tw ** 3) / 3.0,
+        "cy": h / 2.0,                           # 翼缘外表面
+        "cz": b / 2.0,                           # 翼缘尖：(cy, cz) 处有材料
+        "circular": False,
     }
 
 
@@ -88,14 +104,16 @@ def circular_tube(name: str, outer_diameter: float, thickness: float) -> dict[st
     di = d - 2.0 * t
     inertia = math.pi * (d ** 4 - di ** 4) / 64.0
     return {"name": name, "A": math.pi * (d ** 2 - di ** 2) / 4.0,
-            "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia}
+            "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia,
+            "cy": d / 2.0, "cz": d / 2.0, "circular": True}
 
 
 def solid_circle(name: str, diameter: float) -> dict[str, Any]:
     d = _check("diameter", diameter)
     inertia = math.pi * d ** 4 / 64.0
     return {"name": name, "A": math.pi * d ** 2 / 4.0,
-            "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia}
+            "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia,
+            "cy": d / 2.0, "cz": d / 2.0, "circular": True}
 
 
 BUILDERS = {

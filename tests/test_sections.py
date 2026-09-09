@@ -78,8 +78,9 @@ def test_every_preset_builds_a_usable_section(kind):
     values = DEFAULT_DIMENSIONS[kind]
     assert len(values) == len(keys)
     s = builder("X", *values)
-    assert set(s) == {"name", "A", "Iy", "Iz", "J"}
-    assert all(s[k] > 0 for k in ("A", "Iy", "Iz", "J"))
+    assert set(s) == {"name", "A", "Iy", "Iz", "J", "cy", "cz", "circular"}
+    assert all(s[k] > 0 for k in ("A", "Iy", "Iz", "J", "cy", "cz"))
+    assert isinstance(s["circular"], bool)
 
 
 def test_computed_section_reproduces_the_cantilever_closed_form():

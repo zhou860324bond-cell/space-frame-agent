@@ -140,7 +140,11 @@ def convert_model(model: dict, to: str) -> dict:
                         "Iy": s["Iy"] * f["inertia"], "Iz": s["Iz"] * f["inertia"],
                         "J": s["J"] * f["inertia"],
                         **({"Ay": s["Ay"] * f["area"]} if "Ay" in s else {}),
-                        **({"Az": s["Az"] * f["area"]} if "Az" in s else {})}
+                        **({"Az": s["Az"] * f["area"]} if "Az" in s else {}),
+                        # 极端纤维距离是长度。漏掉这两项会让正应力差 1000 倍，
+                        # 而且只在换过单位的模型上才出现。
+                        **({"cy": s["cy"] * f["length"]} if "cy" in s else {}),
+                        **({"cz": s["cz"] * f["length"]} if "cz" in s else {})}
                        for s in model.get("sections", [])]
     out["nodes"] = [{**n, "x": n["x"] * f["length"], "y": n["y"] * f["length"],
                      "z": n["z"] * f["length"]}
