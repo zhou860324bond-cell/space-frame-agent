@@ -36,3 +36,6 @@ abaqus_bench/inp/*.com
 abaqus_bench/inp/*.msg
 abaqus_bench/inp/*.sta
 abaqus_bench/inp/*.log
+
+# Claude 交付到聊天里的输出副本，不属于项目源码
+Claude outputs/
