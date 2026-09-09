@@ -32,7 +32,8 @@ def qt_app():
 @pytest.mark.parametrize(("provider", "model"), [
     ("openai", "gpt-4o"),
     ("anthropic", "claude-3-5-sonnet-20241022"),
-    ("deepseek", "deepseek-vl"),
+    # DeepSeek 平台上没有 deepseek-vl，那是开源权重名；能接收图片的是这个。
+    ("deepseek", "deepseek-v4-flash-vision-exp"),
 ])
 def test_provider_switch_sets_a_matching_vision_model(qt_app, provider, model):
     panel = SketchPanel(Session(), IdleRunner())
@@ -240,3 +241,17 @@ def test_support_and_nodal_load_editor_updates_the_recognition_draft(qt_app):
     panel.cmb_support_node.setCurrentIndex(panel.cmb_support_node.findData(1))
     panel._remove_support_edit()
     assert draft.model["supports"] == []
+
+
+def test_panel_model_defaults_come_from_the_parser(qt_app):
+    """面板不得自带一份模型名映射。
+
+    守的是一次真实事故：面板抄了一份 defaults，DeepSeek 模型名更新后只改了
+    sketch_parser 那一处，面板继续填旧名字，每次识别都报 model not found，
+    看起来像"识别能力有问题"，实际是两份常量漂移。
+    """
+    from sketch_parser import SketchParser
+    panel = SketchPanel(Session(), IdleRunner())
+    for provider in ("openai", "anthropic", "deepseek"):
+        panel.cmb_provider.setCurrentText(provider)
+        assert panel.txt_model.text() == SketchParser._default_model(provider), provider

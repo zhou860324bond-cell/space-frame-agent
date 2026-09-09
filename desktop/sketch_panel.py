@@ -71,7 +71,9 @@ class SketchPanel(QWidget):
         self.cmb_provider.setToolTip("多模态 LLM 提供商")
         self.txt_model = QLineEdit("gpt-4o")
         self.txt_model.setPlaceholderText("模型名")
-        self.txt_model.setToolTip("多模态模型名称，如 gpt-4o / claude-3-5-sonnet / deepseek-vl")
+        self.txt_model.setToolTip(
+            "多模态模型名称，如 gpt-4o / claude-3-5-sonnet-20241022 / "
+            "deepseek-v4-flash-vision-exp")
         self.txt_key = QLineEdit()
         self.txt_key.setPlaceholderText("API 密钥（不填读环境变量）")
         self.txt_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -541,13 +543,15 @@ class SketchPanel(QWidget):
         return ""
 
     def _set_provider_defaults(self, provider: str):
-        """切换提供商时给出实际可用的视觉模型默认值。"""
-        defaults = {
-            "openai": "gpt-4o",
-            "anthropic": "claude-3-5-sonnet-20241022",
-            "deepseek": "deepseek-vl",
-        }
-        self.txt_model.setText(defaults[provider])
+        """切换提供商时给出实际可用的视觉模型默认值。
+
+        **必须问 SketchParser 要，不能在这里再抄一份。** 之前这里有一份独立的
+        映射，和 sketch_parser._default_model 各写各的；DeepSeek 的模型名更新后
+        只改了那一处，面板仍然填 deepseek-vl，于是每次识别都报 model not found，
+        表现出来像"多模态识别一直失败"。
+        """
+        from sketch_parser import SketchParser
+        self.txt_model.setText(SketchParser._default_model(provider))
 
     def _recognize(self):
         if not self._image_path or self.runner.busy:
