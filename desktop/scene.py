@@ -31,9 +31,13 @@ from frame3d import Frame, Node, Member, member_endpoints          # noqa: E402
 from modal import member_mode_displacement                        # noqa: E402
 from viz_symbols import classify_support, model_size            # noqa: E402
 
-# 管半径取模型特征尺寸的这个比例。太粗会糊成一团，太细就失去了用管子的意义
-TUBE_RATIO = 0.004
-SYMBOL_RATIO = 0.020
+# 管半径取模型特征尺寸的这个比例。太粗会糊成一团，太细就失去了用管子的意义。
+# 0.004 实测太细：十米跨的刚架管半径 4 cm，投影到屏幕只有几个像素，
+# 颜色需要面积才读得出来，云图因此几乎看不出深浅。
+TUBE_RATIO = 0.011
+# 支座符号比管子大，但不该大到反客为主。原值 0.020 是管半径的五倍，
+# 加上近白的颜色，支座成了画面上最抢眼的东西。
+SYMBOL_RATIO = 0.013
 # 每根杆件沿长度取几个点。云图和变形都靠它，取太少弯矩渐变会变成折线
 STATIONS = 21
 # 挠度积分的分辨率。画形状 21 个点就够，但做两次梯形积分不够——

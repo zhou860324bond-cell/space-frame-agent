@@ -77,3 +77,10 @@ VIEWPORT_LOW = "#5aa9ff"         # 受压
 VIEWPORT_MID = "#8d949e"         # 中性
 VIEWPORT_HIGH = "#ff6b6a"        # 受拉
 VIEWPORT_DIVERGING = [(0.0, VIEWPORT_LOW), (0.5, VIEWPORT_MID), (1.0, VIEWPORT_HIGH)]
+
+# 深底上的顺序色标。**不能直接用 viridis**：它的 0 端 #440154 与视口底色
+# #1b2027 的明度几乎相同，合弯矩从零起时，全楼低应力构件会整片溶进背景，
+# 看上去像"没画出来"。改用单一蓝相由中到亮：最暗一档取 #184f95，
+# 对深底约 2.15:1，是"仍然看得见"的下限；越亮代表量值越大，顺序语义不变。
+VIEWPORT_SEQUENTIAL = ["#184f95", "#256abf", "#3987e5",
+                       "#6da7ec", "#9ec5f4", "#cde2fb"]
