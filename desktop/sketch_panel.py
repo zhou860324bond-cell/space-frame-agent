@@ -657,7 +657,40 @@ class SketchPanel(QWidget):
         else:
             self.lbl_status.setText(f"❌ 识别失败（{result.attempts} 次尝试）")
             self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
-            self.txt_result.setPlainText("\n".join(result.errors))
+            dump = self._dump_failure(result)
+            text = "\n".join(result.errors)
+            if dump:
+                text += f"\n\n原始响应已写入：{dump}"
+            self.txt_result.setPlainText(text)
+
+    def _dump_failure(self, result) -> str:
+        """把失败的错误清单与**模型原始响应**落盘。
+
+        识别失败时界面上只有一句结论，模型到底吐了什么没人看得到，
+        于是"格式不合法"和"根本没调通"分不开，只能靠猜。原始响应可能很长
+        且含图片描述，所以写文件而不是塞进界面。
+
+        写到 .multimodal_tmp/（已被 .gitignore 忽略）。**不含密钥**——
+        密钥从不进入 SketchParser 的返回值。
+        """
+        import json
+        from datetime import datetime
+        try:
+            root = Path(__file__).resolve().parent.parent
+            out_dir = root / ".multimodal_tmp"
+            out_dir.mkdir(exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = out_dir / f"recognition_failure_{stamp}.json"
+            path.write_text(json.dumps({
+                "provider": self.cmb_provider.currentText(),
+                "model": self.txt_model.text(),
+                "attempts": getattr(result, "attempts", None),
+                "errors": list(getattr(result, "errors", []) or []),
+                "raw_responses": list(getattr(result, "raw_responses", []) or []),
+            }, ensure_ascii=False, indent=1), encoding="utf-8")
+            return path.name
+        except Exception:      # 诊断落盘失败绝不能盖住原本的识别错误
+            return ""
 
     def _add_v2_review_issues(self, draft: dict) -> None:
         issues = draft.setdefault("issues", [])
