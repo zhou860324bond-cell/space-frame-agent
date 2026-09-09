@@ -408,3 +408,62 @@ def test_envelope_reports_physical_member_and_full_length_after_split():
     assert member_result.ok
     assert member_result.payload["member"] == 101
     assert member_result.payload["length_m"] == pytest.approx(3.0)
+
+
+# --------------------------------- 编译不得制造重复传力路径
+
+def _two_spans_plus_a_spanning_member() -> dict:
+    """1-2、2-3 两跨，外加一根跨越两跨的 1-3。
+
+    三根构件两两连接不同的节点对，物理层完全合法，`validate_payload` 放行；
+    1-3 被节点 2 剖分之后才出现重复。
+    """
+    return {
+        "units": "N-m-Pa",
+        "materials": [{"name": "Steel", "E": 2.0e11, "nu": 0.3}],
+        "sections": [{"name": "S", "A": 0.01, "Iy": 1.0e-5,
+                      "Iz": 2.0e-5, "J": 5.0e-6}],
+        "nodes": [{"id": 1, "x": 0.0, "y": 0.0, "z": 0.0},
+                  {"id": 2, "x": 3.0, "y": 0.0, "z": 0.0},
+                  {"id": 3, "x": 6.0, "y": 0.0, "z": 0.0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "section": "S", "material": "Steel"},
+                    {"id": 2, "i": 2, "j": 3, "section": "S", "material": "Steel"},
+                    {"id": 3, "i": 1, "j": 3, "section": "S", "material": "Steel"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]},
+                     {"node": 3, "fix": [1, 1, 1, 1, 1, 1]}],
+        "nodal_loads": [{"node": 2, "load": [0, 0, -10e3, 0, 0, 0]}],
+    }
+
+
+def test_physical_model_alone_passes_validation():
+    """先钉住前提：重复只在编译之后出现，编译前的 IR 是合法的。
+
+    这条守的是"为什么校验必须在编译之后再跑一次"——如果哪天物理层校验
+    自己就能拦下它，下面那条测试的理由就变了，应该由这条先失败来提醒。
+    """
+    from model_io import validate_payload
+    assert validate_payload(_two_spans_plus_a_spanning_member()) == []
+
+
+def test_compilation_rejects_duplicated_load_paths():
+    """剖分产生重复传力路径时必须拒绝，并指出是哪几根物理构件。"""
+    with pytest.raises(CompilationError) as caught:
+        compile_model(_two_spans_plus_a_spanning_member())
+    text = str(caught.value)
+    assert "重复传力" in text
+    assert "物理构件 3" in text          # 跨越的那根
+    assert "1-2" in text or "2-3" in text
+
+
+def test_legitimate_split_at_a_column_base_still_compiles():
+    """对照组：柱脚落在梁跨内的剖分是想要的行为，不能被误伤。"""
+    model = _two_spans_plus_a_spanning_member()
+    model["members"] = [
+        {"id": 1, "i": 1, "j": 3, "section": "S", "material": "Steel"},
+        {"id": 2, "i": 2, "j": 4, "section": "S", "material": "Steel"},
+    ]
+    model["nodes"].append({"id": 4, "x": 3.0, "y": 0.0, "z": 3.0})
+    model["nodal_loads"] = [{"node": 4, "load": [0, 0, -10e3, 0, 0, 0]}]
+    compiled = compile_model(model)
+    assert compiled.mapping.element_ids(1) == (1, 3)     # 梁被剖分成两段
+    assert compiled.mapping.element_ids(2) == (2,)

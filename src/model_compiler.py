@@ -204,9 +204,48 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                 f"物理构件 {physical_id} 因{'和'.join(reasons)}编译为 "
                 f"{len(element_ids)} 个分析单元")
 
+    _reject_duplicate_load_paths(frame, element_to_physical)
+
     mapping = CompilationMap(
         physical_to_elements=physical_to_elements,
         element_to_physical=element_to_physical,
         generated_nodes=generated_nodes,
     )
     return CompiledModel(source, frame, mapping, tuple(diagnostics))
+
+
+def _reject_duplicate_load_paths(frame: Frame,
+                                 element_to_physical: dict[int, int]) -> None:
+    """编译产物里同一对节点不得被连接两次。
+
+    ``validate_payload`` 里已经有这条语义规则（"杆件 X 与杆件 Y 连接同一对节点"），
+    但它在 :func:`compile_model` 开头、**对编译前的物理 IR** 执行。剖分会造出
+    校验本该拦下的东西：用户画了 1-2、2-3，又画了一根跨越两跨的 1-3，三者两两
+    不同因而合法；1-3 被节点 2 剖分后，1-2 与 2-3 之间各自出现两条平行传力路径。
+
+    这种模型条件数良好、静力平衡也满足，静默失败检测一项都不会触发，
+    但刚度被成倍放大——两跨梁的实测结果是位移正好减半。所以在这里直接拒绝，
+    而不是给一个算得出、看着正常、却不是用户画的那个结构的答案。
+    """
+    seen: dict[tuple[int, int], int] = {}
+    conflicts: list[str] = []
+    for element_id in sorted(frame.members):
+        element = frame.members[element_id]
+        key = (min(element.i, element.j), max(element.i, element.j))
+        if key in seen:
+            first = element_to_physical.get(seen[key], seen[key])
+            second = element_to_physical.get(element_id, element_id)
+            if first == second:                     # 同一构件的链，不该发生
+                continue
+            conflicts.append(
+                f"物理构件 {second} 与物理构件 {first} 在节点 {key[0]}-{key[1]} 之间"
+                "重复传力")
+        else:
+            seen[key] = element_id
+    if conflicts:
+        raise CompilationError([
+            *conflicts,
+            "同一对节点之间出现了多于一条传力路径，结构刚度会被成倍放大。"
+            "通常是一根构件跨越了已经存在的构件；请删除跨越的那根，"
+            "或把它改成不与已有构件重叠",
+        ])
