@@ -68,6 +68,7 @@ def exact_factor(ends: str, load: float = P) -> float:
 
 # ------------------------------------------------- Euler 闭合解
 
+@pytest.mark.gold
 @pytest.mark.parametrize("ends", list(ENDS))
 def test_critical_factor_matches_euler(ends):
     got = buckling(column(16, ends), num_modes=2).critical
@@ -81,6 +82,7 @@ def test_eight_elements_is_within_a_tenth_of_a_percent(ends):
     assert abs(got / exact_factor(ends) - 1.0) < 1e-3
 
 
+@pytest.mark.gold
 @pytest.mark.parametrize("ends", list(ENDS))
 def test_convergence_is_monotone_from_above(ends):
     """一致几何刚度阵必然高估临界荷载，加密时单调下降。
@@ -93,6 +95,7 @@ def test_convergence_is_monotone_from_above(ends):
     assert all(a > b for a, b in zip(got, got[1:])), got
 
 
+@pytest.mark.gold
 def test_higher_modes_follow_the_square_of_the_half_wave_number():
     """两端铰接柱的各阶临界荷载之比是 1 : 4 : 9（n²π²EI/L²）。
 

@@ -79,6 +79,7 @@ CASES = {
 }
 
 
+@pytest.mark.gold
 @pytest.mark.parametrize("ends, beta", CASES.items())
 def test_fundamental_frequency_matches_the_closed_form(ends, beta):
     got = modal(bending(16, ends), 3).frequencies[0]
@@ -129,6 +130,7 @@ def test_higher_cantilever_modes():
         assert got[k] == pytest.approx(beam_frequency(beta), rel=2e-3), k
 
 
+@pytest.mark.gold
 def test_torsional_frequency():
     """扭转一维解 f₁ = (1/4L)·√(GJ / ρ·Ip)，一端固定一端自由。
 
@@ -142,6 +144,7 @@ def test_torsional_frequency():
     assert modal(f, 2).frequencies[0] == pytest.approx(exact, rel=2e-3)
 
 
+@pytest.mark.gold
 def test_axial_frequency():
     """轴向一维解 f₁ = (1/4L)·√(E/ρ)。"""
     f = _bar(12, (0, 1, 1, 1, 1, 1))       # 只留 ux

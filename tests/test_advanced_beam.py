@@ -80,6 +80,7 @@ def test_pdelta_amplifies_lateral_displacement_under_compression():
     assert second < 0.0
 
 
+@pytest.mark.gold
 def test_bilinear_axial_material_uses_incremental_return_mapping():
     f = cantilever(length=2.0)
     base = f.materials["M"]
@@ -96,3 +97,68 @@ def test_bilinear_axial_material_uses_incremental_return_mapping():
     assert result.U[f.node_dofs(2)[0]] == pytest.approx(
         2.0 * expected_strain, rel=2e-7)
     assert result.analysis["type"] == "material_nonlinear_axial_bilinear"
+
+
+# ------------------------------------- P-Δ 的精确二阶弹性解
+
+def _meshed_cantilever(n: int, length: float) -> Frame:
+    """把悬臂分成 n 个单元。几何刚度阵是近似的，验精确解必须能加密。"""
+    f = Frame()
+    for index in range(n + 1):
+        f.nodes[index + 1] = Node(index + 1, length * index / n, 0, 0)
+    f.materials["M"] = Material("M", E, NU, 7850)
+    f.sections["S"] = Section("S", 0.02, 2e-5, 4e-5, 1e-5)
+    for index in range(n):
+        f.members[index + 1] = Member(index + 1, index + 1, index + 2, "S", "M")
+    f.supports[1] = FIX
+    return f
+
+
+def _exact_pdelta_tip(axial: float, lateral: float, length: float,
+                      ei: float) -> float:
+    """悬臂柱顶同时受轴压 P 与横向力 H 时的**精确**二阶弹性挠度。
+
+        δ = H/(P·k) · ( tan(kL) − kL ),   k = √(P/EI)
+
+    P→0 时 tan(kL) − kL → (kL)³/3，退化为 HL³/(3EI)，与线性解一致。
+    这个解来自二阶微分方程本身，不是"线性解乘一个放大系数"的近似，
+    也不来自本项目的任何一段实现。
+    """
+    k = np.sqrt(axial / ei)
+    return lateral / (axial * k) * (np.tan(k * length) - k * length)
+
+
+@pytest.mark.gold
+def test_pdelta_converges_to_the_exact_second_order_solution():
+    """P-Δ 必须收敛到精确二阶解，而不只是"比线性解大"。
+
+    取 P/P_cr ≈ 0.43，二阶效应把挠度放大到 1.757 倍——量级足够大，
+    实现里少算一项也躲不过去。实测相对误差：
+    1 单元 2.3e-3、2 单元 1.7e-4、4 单元 1.1e-5、8 单元 6.8e-7、16 单元 4.3e-8。
+    """
+    length, axial, lateral = 3.0, 1.0e6, 2.0e3
+    ei = E * 4e-5
+    exact = _exact_pdelta_tip(axial, lateral, length, ei)
+
+    # 二阶效应确实显著，否则这条测试等于在验线性解
+    assert exact / (lateral * length ** 3 / (3 * ei)) > 1.5
+
+    errors = []
+    for n in (2, 4, 8):
+        f = _meshed_cantilever(n, length)
+        f.nodal_loads[n + 1] = (-axial, 0, -lateral, 0, 0, 0)
+        tip = solve_pdelta(f, increments=8).U[f.node_dofs(n + 1)[2]]
+        errors.append(abs(abs(tip) - abs(exact)) / abs(exact))
+
+    assert errors[-1] < 1e-5                       # 8 单元贴合精确解
+    assert all(a > b for a, b in zip(errors, errors[1:])), errors   # 单调收敛
+
+
+def test_pdelta_reduces_to_the_linear_solution_without_axial_force():
+    """轴力撤掉后二阶解必须退回线性解——守的是几何刚度没有被无条件叠加。"""
+    length, lateral = 3.0, 2.0e3
+    ei = E * 4e-5
+    f = _meshed_cantilever(4, length)
+    f.nodal_loads[5] = (0.0, 0, -lateral, 0, 0, 0)
+    tip = solve_pdelta(f, increments=4).U[f.node_dofs(5)[2]]
+    assert abs(tip) == pytest.approx(lateral * length ** 3 / (3 * ei), rel=1e-9)

@@ -14,7 +14,7 @@
 | 集中荷载触发自动剖分 | 通过 | `examples/beta01_demo.py`、金标准 11 |
 | 线性静力进入 Result DB | 通过 | `tests/test_result_db.py` |
 | 查询、图和报告同源 | 通过 | `tests/test_result_db.py`, `tests/test_model_compiler.py` |
-| 12 个金标准 | 通过 | `run_gold.bat` |
+| 28 个金标准 | 通过 | `run_gold.bat`（原 12 项线性静力，2026-09-09 扩展到自振、屈曲、P-Δ 与轴向塑性）|
 | 错误模型明确失败 | 通过 | 校验、奇异诊断和静默失败测试 |
 | README 与能力矩阵一致 | 通过 | `README.md`, `docs/BETA_0.1_CAPABILITY_MATRIX.md` |
 | 多模态离线发布门禁 | 通过 | 30 张 manifest 固定语料；全部门槛通过；`multimodal_eval/release_report.json` |
