@@ -418,3 +418,93 @@ def test_the_script_checks_the_job_status_before_reading_the_odb():
     assert "job.status != COMPLETED" in text
     assert "waitForCompletion" in text
     assert text.index("waitForCompletion") < text.index("openOdb(path=")
+
+
+# ------------------------------------------------- 网格尺寸
+
+def test_mesh_reference_length_comes_from_the_wall_not_the_diameter():
+    """第一次真跑就栽在这上面：默认档位按外径取，D=219 得到 55/37/24 mm，
+    而壁厚只有 8 mm。60 mm 的四面体铺不出一层 8 mm 的壁。"""
+    session = _l_joint()
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    assert sj.mesh_reference_length(spec) == pytest.approx(TUBE_T * 1000.0, rel=1e-9)
+    # 若按直径取会是 20 mm 以上，必须明显小于它
+    assert sj.mesh_reference_length(spec) < spec.arms[0].outer_diameter_mm / 10.0
+
+
+def test_a_solid_section_falls_back_to_a_fraction_of_the_diameter():
+    """实心圆没有壁，也就没有"一个单元都放不下"的问题，
+    但仍要有个有限的参考尺寸，不能返回 None 或 0。"""
+    session = _l_joint(section=S.solid_circle("R219", TUBE_D))
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    got = sj.mesh_reference_length(spec)
+    assert got == pytest.approx(TUBE_D * 1000.0 / 10.0, rel=1e-9)
+
+
+def test_the_reference_length_takes_the_thinnest_arm():
+    """一根臂网格铺坏了整个模型就坏了，所以取最严的那个。"""
+    thin = sj.JointArm(member_id=1, direction=(1.0, 0.0, 0.0),
+                       outer_diameter_mm=219.0, inner_diameter_mm=211.0,
+                       length_mm=400.0, force_n=(0.0, 0.0, 0.0),
+                       moment_nmm=(0.0, 0.0, 0.0), nominal_normal_mpa=1.0,
+                       wall_thickness_mm=4.0)
+    thick = sj.JointArm(member_id=2, direction=(0.0, 0.0, 1.0),
+                        outer_diameter_mm=219.0, inner_diameter_mm=195.0,
+                        length_mm=400.0, force_n=(0.0, 0.0, 0.0),
+                        moment_nmm=(0.0, 0.0, 0.0), nominal_normal_mpa=1.0,
+                        wall_thickness_mm=12.0)
+    spec = sj.JointSpec(node_id=1, case="LC1", material="Q355",
+                        elastic_modulus_mpa=206000.0, poisson=0.3,
+                        anchor_member=1, hotspot_radius_mm=300.0,
+                        nominal_normal_mpa=1.0, arms=(thick, thin))
+    assert sj.mesh_reference_length(spec) == pytest.approx(4.0)
+
+
+def test_arms_stay_long_enough_after_the_default_was_shortened():
+    """短臂默认从 3D 收到 2D 是为了控制单元数（按 h^-3 涨）。
+    但下限不能破：切割面必须离节点足够远。"""
+    session = _l_joint()
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    for arm in spec.arms:
+        assert arm.length_mm >= 1.5 * arm.outer_diameter_mm
+
+
+def test_the_generated_script_does_not_keep_intersection_faces():
+    """所有 cell 共用同一个截面属性，保留相贯内表面只会逼网格器去贴合
+    相贯线，多铺一批薄片单元。"""
+    session = _l_joint()
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    text = sj._script_text(spec, [8.0, 6.4, 5.2], "out.json")
+    assert "keepIntersections=OFF" in text
+
+
+def test_a_mesh_coarser_than_the_wall_is_refused_before_abaqus_is_called():
+    """壁厚方向连一个单元都放不下时，网格器只能铺退化四面体，
+    求解器**直接崩而不是报错**——实测 1837 个单元里 725 个畸变。
+
+    所以这道闸门要在调 Abaqus 之前就拦下来，别等它崩。
+    """
+    session = _l_joint()
+    with pytest.raises(sj.SolidJointError, match="超过参考尺寸"):
+        sj.run_joint_analysis(session, node_id=2,
+                              mesh_sizes_mm=[60.0, 45.0, 35.0])
+
+
+def test_the_refusal_names_the_arm_that_sets_the_limit():
+    """报"太粗了"没用，得说是哪根杆件的哪个壁厚定的这个上限。"""
+    session = _l_joint()
+    with pytest.raises(sj.SolidJointError) as caught:
+        sj.run_joint_analysis(session, node_id=2, mesh_sizes_mm=[60.0, 45.0, 35.0])
+    message = str(caught.value)
+    assert "最薄的管壁" in message and "t=8" in message
+
+
+def test_the_default_sizes_pass_their_own_guard():
+    """默认档位不能被自己的闸门拦下来。
+
+    这里没装 Abaqus，所以它最终会因为找不到 Abaqus 而失败——**恰恰是这个
+    报错**证明网格闸门已经放行了。
+    """
+    session = _l_joint()
+    with pytest.raises(sj.SolidJointError, match="找不到 Abaqus"):
+        sj.run_joint_analysis(session, node_id=2)

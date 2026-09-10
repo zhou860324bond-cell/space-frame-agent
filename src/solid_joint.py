@@ -148,6 +148,41 @@ def hot_spot_stress_linear(samples: list[tuple[float, float]],
     }
 
 
+def mesh_reference_length(spec: JointSpec) -> float:
+    """网格的参考尺寸：**由壁厚定，不由直径定**。
+
+    第一次真跑就栽在这上面。原来默认档位取外径的 1/4、1/6、1/9，对
+    D=219、t=8 的圆管就是 54.7 / 36.5 / 24.3 mm——而壁厚只有 8 mm。
+    用 60 mm 的四面体去铺一层 8 mm 厚的壁，网格器只能铺出退化单元：
+    实测 1837 个单元里 725 个畸变（39%），standard.exe 直接以系统错误码
+    中止，.dat 里连一条 ***ERROR 都没有。
+
+    正确的标尺是壁厚：IIW 对实体单元热点应力的推荐单元尺寸就是 ≈ t，
+    这样壁厚方向至少有一个二次单元。实心圆没有壁，用直径的 1/10 —— 它
+    的应力梯度尺度由半径决定，不存在薄壁那种"一个单元都放不下"的问题。
+
+    多根臂取最严的那个：一根臂网格铺坏了，整个模型就坏了。
+    """
+    lengths = []
+    for arm in spec.arms:
+        if arm.wall_thickness_mm:
+            lengths.append(float(arm.wall_thickness_mm))
+        else:
+            lengths.append(float(arm.outer_diameter_mm) / 10.0)
+    if not lengths:
+        raise SolidJointError("节点没有可用的杆件臂")
+    return min(lengths)
+
+
+def _mesh_reference_reason(spec: JointSpec) -> str:
+    thin = [arm for arm in spec.arms if arm.wall_thickness_mm]
+    if thin:
+        arm = min(thin, key=lambda item: item.wall_thickness_mm)
+        return (f"参考尺寸取自最薄的管壁（杆件 {arm.member_id}，"
+                f"t={arm.wall_thickness_mm:.3g} mm）。")
+    return "参考尺寸取自实心圆直径的 1/10。"
+
+
 def diagnose_peak_convergence(meshes: list[dict[str, Any]],
                               key: str = "max_abs_principal_mpa",
                               tolerance: float = 0.05) -> dict[str, Any]:
@@ -232,7 +267,7 @@ def _physical_end_force(session, member: dict[str, Any], node_id: int,
 
 def prepare_joint_spec(session, node_id: int, case: str | None = None,
                        anchor_member: int | None = None,
-                       arm_length_factor: float = 3.0) -> JointSpec:
+                       arm_length_factor: float = 2.0) -> JointSpec:
     if session.solution is None or session.frame is None or session.compilation is None:
         raise SolidJointError("还没有整体梁模型结果，请先调用 solve_model")
     node_id = int(node_id)
@@ -476,7 +511,7 @@ def build(index, size):
         orient(inst, tuple(arm['direction']), assembly)
         instances.append(inst)
     merged = assembly.InstanceFromBooleanMerge(
-        name='Joint', instances=tuple(instances), keepIntersections=ON,
+        name='Joint', instances=tuple(instances), keepIntersections=OFF,
         originalInstances=DELETE, domain=GEOMETRY)
     part = model.parts['Joint']
     material = model.Material(name='JointMaterial')
@@ -632,16 +667,23 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
     from abaqus_backend import find_abaqus, scan_log
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member)
-    smallest_d = min(arm.outer_diameter_mm for arm in spec.arms)
+    reference = mesh_reference_length(spec)
     # 三档，不是两档。两档只能算出"最后一次变化有多大"，而奇异点上相邻两档
     # 的变化本来就可以很小——三档才能看出这个变化是在缩小还是不缩小。
-    sizes = ([smallest_d / 4.0, smallest_d / 6.0, smallest_d / 9.0]
+    sizes = ([reference, reference / 1.25, reference / 1.55]
              if mesh_sizes_mm is None else [float(value) for value in mesh_sizes_mm])
     if len(sizes) < 3 or any(not math.isfinite(value) or value <= 0.0 for value in sizes):
         raise SolidJointError("mesh_sizes_mm 至少需要三个正数：两档分辨不了收敛与发散")
     sizes = sorted(set(sizes), reverse=True)
     if len(sizes) < 3:
         raise SolidJointError("三档网格尺寸不能有重复")
+    if sizes[0] > reference * 1.0001:
+        raise SolidJointError(
+            f"最粗一档 {sizes[0]:.3g} mm 超过参考尺寸 {reference:.3g} mm。"
+            f"{_mesh_reference_reason(spec)}"
+            "壁厚方向连一个单元都放不下时，网格器只能铺出退化四面体，"
+            "求解器会直接崩而不是报错——实测 65.8 mm 单元配 8 mm 壁厚时"
+            "1837 个单元里有 725 个畸变。请改用不超过参考尺寸的档位。")
     executable = find_abaqus()
     if executable is None:
         raise SolidJointError("找不到 Abaqus 6.14 命令，无法运行局部实体分析")

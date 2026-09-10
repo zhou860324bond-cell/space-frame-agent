@@ -118,10 +118,18 @@ def main() -> int:
         return 1
 
     def solid():
-        # 冒烟用的粗网格。目的是"管线通不通"，不是"结果收不收敛"——
-        # 默认档位（D/4、D/6、D/9）在 219 管上会生成很多单元，第一次跑没必要等。
-        result = session.analyze_joint_solid(
-            node_id=2, mesh_sizes_mm=[60.0, 45.0, 35.0])
+        # 用默认档位，不再手动传粗网格。上一次我为了"先看通不通别等太久"
+        # 传了 [60,45,35] mm——而管壁只有 8 mm，网格器只能铺出退化四面体，
+        # 1837 个单元里 725 个畸变，standard.exe 直接崩。
+        # 现在默认档位由壁厚决定（t、t/1.25、t/1.55），最细一档单元数不少，
+        # 慢是正常的。
+        import solid_joint
+        spec = solid_joint.prepare_joint_spec(session, 2)
+        reference = solid_joint.mesh_reference_length(spec)
+        say(f"网格参考尺寸 = {reference:.3g} mm（由最薄管壁定，不是由直径定）")
+        say(f"档位：{[round(reference / r, 3) for r in (1.0, 1.25, 1.55)]} mm")
+        say("最细一档单元数可能上十万，请给它几分钟。")
+        result = session.analyze_joint_solid(node_id=2)
         say(f"ok = {result.ok}")
         say(json.dumps(result.payload, ensure_ascii=False, indent=2, default=str))
         if result.ok:

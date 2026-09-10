@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 from pathlib import Path
@@ -37,17 +38,36 @@ def already_done(inp: Path) -> bool:
 
 
 def run_one(inp: Path, timeout: float, log) -> dict:
-    """跑一个作业。用 cmd /c 隔离，避免 abaqus.bat 里的 exit 波及本进程。"""
+    """跑一个作业。用 cmd /c 隔离，避免 abaqus.bat 里的 exit 波及本进程。
+
+    **作业在纯 ASCII 的临时目录里跑，不在 inp 所在目录。** 实测：同一个输入
+    文件，放在 ASCII 路径下 `THE ANALYSIS HAS COMPLETED SUCCESSFULLY`；放在
+    含中文的项目路径下，pre.exe 以系统错误码 529697949 中止，一条 ***ERROR
+    都没有。这个仓库的默认位置就带中文（agent开发），所以原来 cwd=inp.parent
+    的写法会让整套对标基准**静默失效**——而它正是"与商软对标"那一节的全部证据。
+
+    产物跑完复制回 inp 所在目录，外部行为不变（already_done 仍看那边的 .dat）。
+    复制是 Python 干的，落在含中文的路径上没问题；Abaqus 自己不碰那儿。
+    """
     job = inp.stem
     started = time.time()
     cmd = ["abaqus", f"job={job}", f"input={inp.name}", "interactive", "ask_delete=OFF"]
     if sys.platform.startswith("win"):
         cmd = ["cmd", "/c"] + cmd
     try:
-        proc = subprocess.run(cmd, cwd=str(inp.parent), capture_output=True,
-                              text=True, timeout=timeout)
-        code = proc.returncode
-        output = (proc.stdout or "") + (proc.stderr or "")
+        with tempfile.TemporaryDirectory(prefix="abq_bench_") as temp:
+            run_dir = Path(temp)
+            shutil.copy2(inp, run_dir / inp.name)
+            proc = subprocess.run(cmd, cwd=str(run_dir), capture_output=True,
+                                  text=True, timeout=timeout)
+            code = proc.returncode
+            output = (proc.stdout or "") + (proc.stderr or "")
+            for produced in run_dir.iterdir():
+                if produced.is_file() and produced.name != inp.name:
+                    try:
+                        shutil.copy2(produced, inp.parent / produced.name)
+                    except OSError as exc:
+                        output += f"\n[复制 {produced.name} 回来失败：{exc}]"
     except subprocess.TimeoutExpired:
         code, output = -1, f"超过 {timeout:.0f} 秒未结束"
     except FileNotFoundError:
