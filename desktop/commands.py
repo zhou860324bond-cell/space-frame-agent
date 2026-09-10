@@ -128,6 +128,10 @@ COMMANDS: tuple[Command, ...] = (
     Command("analysis_mesh", "分析网格", "member",
             "只读查看物理杆件经自动剖分后，求解器实际使用的节点和杆段",
             "show_analysis_mesh", "", True),
+    Command("solid_joint", "节点实体", "contour",
+            "选中已求解的圆管节点，用自研 C3D10 局部实体求解器计算应力；"
+            "Gmsh只负责网格，Abaqus保留为独立对标后端",
+            "run_solid_joint"),
 
     # --- 结果 ---
     Command("model", "模型", "geometry", "显示几何、支座与荷载符号",

@@ -479,7 +479,7 @@ class MainWindow(QMainWindow):
                  ("载荷", ("create_bc", "support", None,
                            "create_load", "gravity", None,
                            "load", "combo")),
-                 ("分析", ("solve", None, "modal", "buckling", None,
+                 ("分析", ("solve", None, "modal", "buckling", "solid_joint", None,
                            "diagnose", "analysis_mesh")),
                  ("结果", ("model", "deformed", "contour", "diagram", None,
                            "envelope", "clear_results", "labels")),
@@ -1886,6 +1886,7 @@ class MainWindow(QMainWindow):
     _NEEDS_SELECTION = {
         "create_load": ("node", "member"),
         "create_bc": ("node",),
+        "solid_joint": ("node",),
     }
 
     def _sync_selection_actions(self) -> None:
@@ -2550,6 +2551,27 @@ class MainWindow(QMainWindow):
         self._analyse("deflection", "最大挠度",
                       lambda: self.session.query_results(
                           what="max_deflection"))
+
+    def run_solid_joint(self) -> None:
+        """对当前节点运行自研 C3D10 局部实体子模型。
+
+        这是分钟级作业，必须复用统一后台 runner。入口还同时卡住三个容易
+        造成“按钮点了却不知道为什么不算”的前置条件：选中节点、整体梁模型
+        已求解、当前没有别的作业。
+        """
+        if getattr(self, "_selected_kind", None) != "node":
+            self.set_prompt("节点实体：请先用“选择节点”在视口中选中一个节点")
+            return
+        if self.session.solution is None:
+            QMessageBox.information(
+                self, "节点实体", "请先求解整体梁模型，再选择节点运行局部实体分析。")
+            return
+        node_id = int(self._selected_id)
+        case = self.case
+        title = f"节点 {node_id} 局部实体"
+        self._analyse(
+            "solid_joint", title,
+            lambda: self.session.analyze_joint_solid(node_id=node_id, case=case))
 
     def write_report(self) -> None:
         self._analyse("generic", "计算书",

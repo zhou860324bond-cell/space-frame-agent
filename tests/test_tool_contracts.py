@@ -109,7 +109,8 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "compare_solvers": ((), "需要 Abaqus，不在测试里跑"),
     "solve_with_abaqus": ((), "需要 Abaqus，不在测试里跑"),
     "analyze_joint_solid": (("node_id", "case"),
-                            "节点局部实体：dry_run 只出规格，完整分析需要 Abaqus；\n                             两条路径的节点与工况字段同名，便于串起来"),
+                            "节点局部实体：dry_run 只出规格；native 自研求解，"
+                            "Abaqus 是可选对标后端"),
 }
 
 # 需要外部程序、测试里不实跑的

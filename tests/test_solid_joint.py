@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 import sections as S
@@ -308,13 +309,34 @@ def test_the_tool_is_registered_and_reaches_the_session_method():
     assert callable(getattr(Session, "analyze_joint_solid", None))
 
 
-def test_the_tool_declares_at_least_three_mesh_levels():
-    """工具描述里承诺三档，schema 就得真的拦住两档——否则模型会照着
-    描述之外的用法调，然后在 Abaqus 那一步才失败。"""
+def test_the_tool_allows_one_native_mesh_but_explains_three_for_convergence():
+    """自研后端允许先跑一档；是否足以判断收敛由结果明确写 inconclusive。"""
     from agent import TOOLS
 
     entry = next(e for e in TOOLS if e["function"]["name"] == "analyze_joint_solid")
-    assert entry["function"]["parameters"]["properties"]["mesh_sizes_mm"]["minItems"] == 3
+    props = entry["function"]["parameters"]["properties"]
+    assert props["mesh_sizes_mm"]["minItems"] == 1
+    assert props["backend"]["enum"] == ["native", "abaqus"]
+
+
+def test_native_hotspot_requires_three_stable_mesh_levels_before_publishing_kt():
+    from native_joint import diagnose_hotspot_convergence
+
+    stable = diagnose_hotspot_convergence([(16.0, 100.0), (12.0, 103.0),
+                                            (8.0, 104.0)])
+    assert stable["verdict"] == "converging"
+    unstable = diagnose_hotspot_convergence([(16.0, 100.0), (12.0, 110.0),
+                                              (8.0, 140.0)])
+    assert unstable["verdict"] == "inconclusive"
+    assert unstable["relative_changes"][1] > unstable["relative_changes"][0]
+
+
+def test_native_hotspot_one_mesh_is_explicitly_inconclusive():
+    from native_joint import diagnose_hotspot_convergence
+
+    got = diagnose_hotspot_convergence([(8.0, 1200.0)])
+    assert got["verdict"] == "inconclusive"
+    assert "三档" in got["reason"]
 
 
 def test_dry_run_returns_the_spec_without_needing_abaqus():
@@ -526,12 +548,79 @@ def test_the_refusal_names_the_arm_that_sets_the_limit():
     assert "最薄的管壁" in message and "t=8" in message
 
 
-def test_the_default_sizes_pass_their_own_guard():
+def test_the_default_sizes_pass_their_own_guard(monkeypatch):
     """默认档位不能被自己的闸门拦下来。
 
     这里没装 Abaqus，所以它最终会因为找不到 Abaqus 而失败——**恰恰是这个
     报错**证明网格闸门已经放行了。
     """
     session = _l_joint()
+    import abaqus_backend
+    monkeypatch.setattr(abaqus_backend, "find_abaqus", lambda: None)
     with pytest.raises(sj.SolidJointError, match="找不到 Abaqus"):
         sj.run_joint_analysis(session, node_id=2)
+
+
+# ------------------------------------------------- 桌面入口与结果表
+
+def test_desktop_registers_a_selected_node_entry_for_the_solid_model():
+    """内核工具够不着就不是产品能力；桌面端必须有选中节点后的明确入口。"""
+    from desktop import commands
+    from desktop.main_window import MainWindow
+
+    command = next(c for c in commands.COMMANDS if c.name == "solid_joint")
+    assert command.handler == "run_solid_joint"
+    assert MainWindow._NEEDS_SELECTION["solid_joint"] == ("node",)
+
+
+def test_desktop_solid_result_is_a_mesh_convergence_table():
+    from desktop import result_rows
+
+    payload = {
+        "node_id": 2, "case": "LC1", "nominal_normal_mpa": 296.4,
+        "stress_concentration_factor": 10.15,
+        "peak_convergence": {"verdict": "diverging"},
+        "files": {"contour_png": "joint.png"},
+        "meshes": [
+            {"mesh_size_mm": 8.0, "nodes": 100, "elements": 50,
+             "max_mises_mpa": 4000.0, "max_abs_principal_mpa": 4900.0,
+             "p99_abs_principal_mpa": 1260.0},
+            {"mesh_size_mm": 6.4, "nodes": 200, "elements": 120,
+             "max_mises_mpa": 4600.0, "max_abs_principal_mpa": 5400.0,
+             "p99_abs_principal_mpa": 1270.0},
+        ],
+    }
+    title, columns, rows, locators = result_rows.to_rows("solid_joint", payload)
+    assert "Kt=10.15" in title and "奇异发散" in title
+    assert "C3D10 单元数" in columns and len(rows) == 2
+    assert locators == [("node", 2), ("node", 2)]
+
+
+def test_agent_routes_the_default_solid_backend_to_native(monkeypatch):
+    import native_joint
+
+    seen = {}
+
+    def fake(session, node_id, case, anchor, sizes):
+        seen["args"] = (node_id, case, anchor, sizes)
+        return {"node_id": node_id, "case": case or "LC1", "backend": "native"}
+
+    monkeypatch.setattr(native_joint, "run_native_joint_analysis", fake)
+    result = _l_joint().analyze_joint_solid(2, mesh_sizes_mm=[20.0])
+    assert result.ok and result.payload["backend"] == "native"
+    assert seen["args"] == (2, None, None, [20.0])
+
+
+def test_gmsh_generates_positive_c3d10_and_cut_faces_when_available():
+    pytest.importorskip("gmsh")
+    import native_joint
+
+    session = _l_joint(section=S.solid_circle("R219", TUBE_D))
+    spec = sj.prepare_joint_spec(session, 2)
+    mesh, faces = native_joint.generate_joint_mesh(spec, 80.0)
+    assert len(mesh.elements) > 0
+    assert all(len(faces[arm.member_id]) >= 3 for arm in spec.arms)
+    for conn in mesh.elements[:20]:
+        _B, det = __import__("solid3d")._b_matrix(
+            mesh.nodes[conn], np.full(4, 0.25))
+        assert det > 0.0

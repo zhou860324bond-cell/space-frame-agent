@@ -198,6 +198,33 @@ def deflection(payload: dict) -> Rows:
     return "最大挠度" + _note(payload), cols, rows, loc
 
 
+def solid_joint(payload: dict) -> Rows:
+    """节点实体结果：每档网格一行，结论与可复核文件留在标题里。"""
+    meshes = payload.get("meshes") or []
+    cols = ["网格尺寸 (mm)", "节点数", "C3D10 单元数",
+            "最大 Mises (MPa)", "最大绝对主应力 (MPa)", "P99 主应力 (MPa)"]
+    rows = [[_r(m.get("mesh_size_mm")), m.get("nodes"), m.get("elements"),
+             _r(m.get("max_mises_mpa")), _r(m.get("max_abs_principal_mpa")),
+             _r(m.get("p99_abs_principal_mpa"))] for m in meshes]
+    diagnosis = payload.get("peak_convergence") or {}
+    verdict = {"converging": "峰值趋于收敛", "diverging": "峰值呈奇异发散",
+               "inconclusive": "峰值收敛性未定"}.get(
+                   diagnosis.get("verdict"), "峰值收敛性未知")
+    kt = payload.get("stress_concentration_factor")
+    kt_text = f"Kt={_r(kt, 3)}" if isinstance(kt, (int, float)) else "Kt 未给出"
+    backend = payload.get("backend") or "未标明后端"
+    title = (f"{backend}　节点 {payload.get('node_id')}，工况 {payload.get('case', '')}　"
+             f"名义正应力 {_r(payload.get('nominal_normal_mpa'))} MPa　"
+             f"{kt_text}　{verdict}")
+    refused = payload.get("stress_concentration_refused")
+    if refused:
+        title += f"\n{refused}"
+    contour = (payload.get("files") or {}).get("contour_png")
+    if contour:
+        title += f"\nMises 云图：{contour}"
+    return title, cols, rows, [("node", int(payload["node_id"]))] * len(rows)
+
+
 def generic(payload: dict) -> Rows:
     """认不出结构时的兜底：键值两列。
 
@@ -216,7 +243,7 @@ def generic(payload: dict) -> Rows:
 
 
 HANDLERS = {"envelope": envelope, "buckling": buckling, "modal": modal,
-            "deflection": deflection}
+            "deflection": deflection, "solid_joint": solid_joint}
 
 
 def to_rows(kind: str, payload: dict) -> Rows:

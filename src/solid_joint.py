@@ -637,10 +637,14 @@ def post(index, size, job_name):
     mises = sorted(float(v.mises) for v in values)
     principal = sorted([max(abs(float(v.maxPrincipal)), abs(float(v.minPrincipal)))
                         for v in values])
-    p99 = principal[min(len(principal)-1, int(0.99*(len(principal)-1)))]
+    p99_index = min(len(principal)-1, int(0.99*(len(principal)-1)))
+    p99 = principal[p99_index]
+    p99_mises = mises[min(len(mises)-1, int(0.99*(len(mises)-1)))]
     peak = principal[-1]
     peak_value = values[0]
-    for value in values[1:]:
+    # Abaqus 6.14 FieldValueArray looks like a sequence but has no slicing.
+    for value_index in range(1, len(values)):
+        value = values[value_index]
         current = max(abs(float(value.maxPrincipal)), abs(float(value.minPrincipal)))
         old = max(abs(float(peak_value.maxPrincipal)), abs(float(peak_value.minPrincipal)))
         if current > old:
@@ -649,6 +653,7 @@ def post(index, size, job_name):
            'nodes':len(instance.nodes), 'elements':len(instance.elements),
            'hotspot_values':len(values), 'max_mises_mpa':mises[-1],
            'max_abs_principal_mpa':peak, 'p99_abs_principal_mpa':p99,
+           'p99_mises_mpa':p99_mises,
            'peak_element':int(peak_value.elementLabel),
            'peak_integration_point':int(peak_value.integrationPoint)}
     # Sampling is geometric bookkeeping on top of a solved job. If it fails the
@@ -662,11 +667,18 @@ def post(index, size, job_name):
         out['surface_samples'] = None
         out['surface_samples_error'] = str(exc)
     if index == len(MESH_SIZES)-1:
-        viewport = session.Viewport(name='SolidJointViewport')
+        viewport = session.Viewport(name='SolidJointViewport', width=180, height=112)
         viewport.setValues(displayedObject=odb)
         viewport.odbDisplay.setPrimaryVariable(variableLabel='S',
             outputPosition=INTEGRATION_POINT, refinement=(INVARIANT, 'Mises'))
+        viewport.odbDisplay.display.setValues(plotState=(CONTOURS_ON_UNDEF,))
+        # Clip the contour at P99 so a singular toe does not flatten the map.
+        viewport.odbDisplay.contourOptions.setValues(
+            maxAutoCompute=OFF, maxValue=p99_mises)
+        viewport.viewportAnnotationOptions.setValues(title=OFF, state=OFF,
+            annotations=OFF, compass=ON)
         viewport.view.fitView()
+        session.pngOptions.setValues(imageSize=(1600, 1000))
         session.printToFile(fileName='solid_joint_mises', format=PNG,
                             canvasObjects=(viewport,))
     odb.close()

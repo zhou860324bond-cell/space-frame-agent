@@ -2,7 +2,7 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **1251 项通过、1 项按环境跳过**，Agent 注册 **44 个确定性工具**。
+当前回归基线为 **1352 项通过、1 项按环境跳过**，Agent 注册 **45 个确定性工具**。
 核心原则只有一条：
 **大模型只产结构，不产数值**——报告里每个数字都能溯源到某次工具调用。
 
@@ -39,14 +39,16 @@ python examples\agent_demo.py
 ```
 src/frame3d.py        求解内核：3D 梁单元、坐标变换、杆端释放、多工况求解、
                       内力回算、静力平衡校核、奇异诊断
+src/solid3d.py        自研 C3D10 实体内核：形函数、积分、稀疏组装与应力恢复
+src/native_joint.py   Gmsh圆管节点网格、六分量切割面载荷与 native-solid 结果输出
 src/model_io.py       版本化 Domain IR：JSON Schema、v0→v1 迁移与校验
 src/model_compiler.py 物理构件→分析单元编译、集中荷载自动剖分与双向映射
 src/result_db.py      统一结果层：Step / Frame / FieldOutput 与结果元数据
 src/generator.py      参数化生成器：参数 -> 节点与杆件拓扑
-src/agent.py          Agent 层：44 个工具、会话状态、对话循环、模型后端
+src/agent.py          Agent 层：45 个工具、会话状态、对话循环、模型后端
 src/plot3d.py         三维绘图：变形图、轴力图
 
-tests/                1251 项通过、1 项环境跳过；主体离线且不需要密钥
+tests/                回归基线见文首；主体离线且不需要密钥
 evalset/              14 题评测集 + 评分器 + 成绩单生成
 abaqus_bench/         与 Abaqus 对标：5 算例 × B33/B31
 examples/             示例模型、端到端脚本、离线演示、探针题
@@ -69,7 +71,7 @@ examples/             示例模型、端到端脚本、离线演示、探针题
 
 ## Agent 工具
 
-44 个工具的返回合同由 `tests/test_tool_contracts.py` 统一约束。下面只列正式演示
+45 个工具的返回合同由 `tests/test_tool_contracts.py` 统一约束。下面只列正式演示
 主链路；其余工具覆盖编辑、集合、扫参、包络、模态、屈曲和 Abaqus 对比。
 
 每次模型调用都会收到由当前 `Session` 确定性推导的工作流状态：`empty`、
@@ -86,6 +88,7 @@ examples/             示例模型、端到端脚本、离线演示、探针题
 | `preview_change` | 在模型副本上预演写操作，返回实体级差异与前后哈希 |
 | `apply_preview` | 只应用经后续用户消息确认且尚未失效的预演 |
 | `preview_analysis_mesh` | 只读预览自动剖分、分析节点/单元与物理构件映射 |
+| `analyze_joint_solid` | 选定圆管节点做 C3D10 局部实体分析；默认自研求解，Abaqus作为可选对标后端 |
 | `solve_model` | 先校验再求解，失败时直接附上奇异诊断 |
 | `query_results` | 最大位移、支座反力、杆端力（带坐标与符号约定） |
 | `plot_results` | 变形图 / 轴力图 |

@@ -1,6 +1,7 @@
 numpy>=2.0
 matplotlib>=3.8
 scipy>=1.13
+gmsh>=4.11        # native-solid 只用它生成二次四面体网格；刚度与求解均为自研
 jsonschema>=4.20
 pytest>=8.0
 # 图形界面：

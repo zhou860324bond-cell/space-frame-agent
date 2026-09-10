@@ -910,6 +910,8 @@ TOOLS: list[dict[str, Any]] = [
             "description": "对某个节点做局部实体子模型，观察杆件相交处的应力集中。"
                            "整体仍用梁模型，只把相连杆件截成短臂拼成 C3D10 实体，"
                            "切割面传入梁模型的六分量截面力。"
+                           "默认由自研 native-solid 有限元内核求解，Gmsh只负责网格；"
+                           "也可指定 Abaqus 作为独立商软对标。"
                            "只支持圆钢/圆管、同一种材料、无刚域偏移的节点，"
                            "其余情况明确拒绝，不做几何猜测。"
                            "几何不含焊缝倒圆，相贯线是应力奇异点，因此峰值应力只用于"
@@ -928,12 +930,13 @@ TOOLS: list[dict[str, Any]] = [
                                                      "留空优先取通向支座的那根"},
                     "mesh_sizes_mm": {
                         "type": "array", "items": {"type": "number"},
-                        "minItems": 3,
-                        "description": "网格档位（mm），至少三档；"
-                                       "两档分辨不了收敛与发散",
+                        "minItems": 1,
+                        "description": "网格档位（mm）；一档可求解，至少三档才能判断收敛与发散",
                     },
+                    "backend": {"type": "string", "enum": ["native", "abaqus"],
+                                "description": "默认 native；abaqus 用于商软对标"},
                     "dry_run": {"type": "boolean",
-                                "description": "只建规格，不调用 Abaqus"},
+                                "description": "只建规格，不调用实体求解器"},
                 },
                 "required": ["node_id"],
                 "additionalProperties": False,
@@ -3033,13 +3036,14 @@ class Session:
     def analyze_joint_solid(self, node_id: int, case: str | None = None,
                             anchor_member: int | None = None,
                             mesh_sizes_mm: list[float] | None = None,
+                            backend: str = "native",
                             dry_run: bool = False) -> ToolResult:
         """节点局部实体子模型：看杆件相交处的应力集中。
 
         分两段，是有意的。**建规格**（把梁模型的杆端力翻译成实体子模型的
-        边界条件、反演圆管尺寸、算名义应力）是纯计算，本机没有 Abaqus 也能
-        跑；**跑实体**才需要 Abaqus。所以 dry_run 不是调试开关，它是这个
-        工具在没有商软的机器上仍然有用的那一半。
+        边界条件、反演圆管尺寸、算名义应力）是纯计算；**跑实体**默认调用
+        自研 C3D10 内核，也可切换 Abaqus 对标。dry_run 不是调试开关，而是
+        在划网格前先审查几何和载荷映射的入口。
         """
         import solid_joint
 
@@ -3057,12 +3061,19 @@ class Session:
                                "可以先手算核对再决定是否跑实体分析。")
             return ToolResult(True, payload)
         try:
-            summary = solid_joint.run_joint_analysis(
-                self, int(node_id), case, anchor_member, mesh_sizes_mm)
+            if backend == "native":
+                import native_joint
+                summary = native_joint.run_native_joint_analysis(
+                    self, int(node_id), case, anchor_member, mesh_sizes_mm)
+            elif backend == "abaqus":
+                summary = solid_joint.run_joint_analysis(
+                    self, int(node_id), case, anchor_member, mesh_sizes_mm)
+            else:
+                return ToolResult(False, {"error": f"未知实体求解后端 {backend!r}"})
         except solid_joint.SolidJointError as exc:
             return ToolResult(False, {
                 "error": str(exc),
-                "hint": "可以先用 dry_run=true 看规格；那一段不需要 Abaqus",
+                "hint": "可以先用 dry_run=true 看规格；或切换 native/abaqus 后端定位问题",
             })
         return ToolResult(True, summary)
 
