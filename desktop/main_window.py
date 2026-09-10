@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from agent import Session                          # noqa: E402
 
+from stress import StressUnavailable                # noqa: E402
 from . import scene, theme                         # noqa: E402
 from .chat_panel import ChatPanel                  # noqa: E402
 from .model_tree import ModelTree                  # noqa: E402
@@ -802,15 +803,27 @@ class MainWindow(QMainWindow):
             self.viewport.show_deformed(frame, self.session.solution,
                                         self.case, scale)
         elif self.mode == "云图":
-            unit = "kN·m" if self.component in ("T", "My", "Mz", "M") else "kN"
             options = self.result_display_options
-            self.viewport.show_contour(frame, self.session.solution, self.case,
-                                       self.component,
-                                       title=f"{self.component} ({unit})",
-                                       percentile=options["percentile"],
-                                       sign_filter=options["sign"],
-                                       overlay_deformed=options["overlay_deformed"],
-                                       show_extrema=options["show_extrema"])
+            try:
+                self.viewport.show_contour(
+                    frame, self.session.solution, self.case, self.component,
+                    percentile=options["percentile"],
+                    sign_filter=options["sign"],
+                    levels=options.get("levels"),
+                    overlay_deformed=options["overlay_deformed"],
+                    show_extrema=options["show_extrema"])
+            except StressUnavailable as exc:
+                # 应力云图要截面的极端纤维距离。**明确拒绝并退回内力云图**，
+                # 比画一张来路不明的应力图安全；也别把用户卡在一个空视口里。
+                QMessageBox.information(self, "无法绘制应力云图", str(exc))
+                self.component = "Mz"
+                self.viewport.show_contour(
+                    frame, self.session.solution, self.case, self.component,
+                    percentile=options["percentile"],
+                    sign_filter=options["sign"],
+                    levels=options.get("levels"),
+                    overlay_deformed=options["overlay_deformed"],
+                    show_extrema=options["show_extrema"])
         elif self.mode == "模态":
             got = self.session.modal_analysis(num_modes=6)
             if not got.ok:
@@ -2514,7 +2527,8 @@ class MainWindow(QMainWindow):
         菜单里把每个分量是什么写出来——`My` 和 `Mz` 光看字母是分不出
         哪个是平面内弯矩的，而选错了看半天图都是白看。
         """
-        labels = (("M", "合弯矩 |M|（空间云图推荐）"),
+        labels = ((scene.STRESS, "极端纤维正应力 σ（N/A ± M·c/I，受拉为正）"),
+                  ("M", "合弯矩 |M|（空间云图推荐）"),
                   ("V", "合剪力 |V|（空间云图推荐）"),
                   ("N", "轴力 N（受拉为正）"), ("Vy", "剪力 Vy"),
                   ("Vz", "剪力 Vz"), ("T", "扭矩 T"),
@@ -2532,6 +2546,15 @@ class MainWindow(QMainWindow):
                   if widgets else self.cursor().pos())
 
     def _set_component(self, key: str) -> None:
+        if key == scene.STRESS:
+            # 应力云图要截面的极端纤维距离。**在点下去的那一刻就回答**，
+            # 而不是切过去之后留给用户一个空视口。
+            frame = self.session.frame or self.session.preview_frame()
+            try:
+                scene.check_stress_available(frame)
+            except StressUnavailable as exc:
+                QMessageBox.information(self, "无法绘制应力云图", str(exc))
+                return
         self.component = key
         if self._needs_solution():
             self.set_mode("云图")

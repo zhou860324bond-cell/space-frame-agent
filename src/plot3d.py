@@ -449,14 +449,21 @@ def plot_axial(frame, solution, case: str | None = None, path: str | Path = "axi
     # 它会重算主轴位置，把上面这句收窄直接覆盖掉。
     ax.set_position([0.11, 0.02, 0.68, 0.90])
     # 发散色标：受压 ← 中性灰 → 受拉。不用彩虹，中点不上色相。
-    from matplotlib.colors import LinearSegmentedColormap
+    # **分级**而不是连续渐变：连续色带上读不出"这根到底是多少"，只读得出
+    # "这根比那根红"；分成有限级之后，每一级对应色标上一个可读的区间。
+    # 级数与界面上的云图取自同一个常量（viz_theme.CONTOUR_LEVELS）。
+    from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap
+    levels = T.CONTOUR_LEVELS
     cmap = LinearSegmentedColormap.from_list(
-        "axial", [T.DIVERGING_LOW, T.DIVERGING_MID, T.DIVERGING_HIGH])
+        "axial", [T.DIVERGING_LOW, T.DIVERGING_MID, T.DIVERGING_HIGH],
+        N=levels)
+    bounds = np.linspace(-peak, peak, levels + 1)
+    norm = BoundaryNorm(bounds, cmap.N)
     segs, colors, widths = [], [], []
     for m in frame.members.values():
         segs.append([frame.nodes[m.i].xyz, frame.nodes[m.j].xyz])
         n = forces.get(m.id, 0.0)
-        colors.append(cmap(0.5 + 0.5 * n / peak))
+        colors.append(cmap(norm(n)))
         widths.append(1.6 + 4.0 * abs(n) / peak)
     ax.add_collection3d(Line3DCollection(segs, colors=colors, linewidths=widths))
 
@@ -469,9 +476,12 @@ def plot_axial(frame, solution, case: str | None = None, path: str | Path = "axi
     _title(ax, _t(f"轴力图   工况 {name}   最大 |N| = {shown_peak:.2f} {units.force_unit}",
                   f"Axial force - case {name} - "
                   f"max |N| = {shown_peak:.2f} {units.force_unit}"))
+    from matplotlib.colors import BoundaryNorm as _BoundaryNorm
+    shown_bounds = np.linspace(-shown_peak, shown_peak, levels + 1)
     sm = plt.cm.ScalarMappable(cmap=cmap,
-                               norm=plt.Normalize(vmin=-shown_peak, vmax=shown_peak))
-    bar = fig.colorbar(sm, cax=fig.add_axes([0.855, 0.24, 0.016, 0.46]))
+                               norm=_BoundaryNorm(shown_bounds, cmap.N))
+    bar = fig.colorbar(sm, cax=fig.add_axes([0.855, 0.24, 0.016, 0.46]),
+                       ticks=shown_bounds[::2])
     bar.set_label(_t(f"轴力 N ({units.force_unit})   正为受拉",
                      f"Axial N ({units.force_unit}), + = tension"),
                   color=T.INK_SECONDARY, fontsize=9)

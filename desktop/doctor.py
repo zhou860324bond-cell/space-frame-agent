@@ -16,9 +16,19 @@ from __future__ import annotations
 import os
 import platform
 import sys
+from pathlib import Path
 
 # 检查 Qt 之前先钉死绑定，理由见 app.py
 os.environ.setdefault("QT_API", "pyside6")
+
+# 自检要能**单独**跑：`python -m desktop.doctor`。走 app.py 时 sys.path 是
+# 它铺好的，直接跑这个模块则没有——那样求解器和云图两项会报 "No module
+# named 'agent'"，而真正的问题只是路径。自检工具自己把路铺好，
+# 免得它自己成为要排查的对象。
+for _extra in (Path(__file__).resolve().parent.parent,
+               Path(__file__).resolve().parent.parent / "src"):
+    if str(_extra) not in sys.path:
+        sys.path.insert(0, str(_extra))
 
 MIN_PYTHON = (3, 10)
 
@@ -62,6 +72,49 @@ def _kernel() -> tuple[bool, str]:
     if not got.ok:
         return False, f"求解没通过：{str(got.payload)[:160]}"
     return True, "求解正常（算了一个单跨单层框架）"
+
+
+def _contour() -> tuple[bool, str]:
+    """把云图这条链路真跑一遍：求解 → 内力 → 应力 → 分级切分 → 生成管。
+
+    OpenGL 正常不等于云图正常。这一条链路上任何一步坏了，在有屏幕的机器上
+    表现都只是"图看着怪"——没人查得出来是哪一步。所以单独检一次，
+    而且**连应力一起检**：应力多依赖截面的极端纤维距离，是另一处会断的地方。
+    """
+    try:
+        import numpy as np
+
+        from agent import Session
+        from desktop import scene, theme
+
+        s = Session()
+        s.define_materials_and_sections(
+            [{"name": "S", "E": 2.1e11, "nu": 0.3}],
+            [{"name": "B", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4, "J": 8e-7,
+              "cy": 0.15, "cz": 0.08}])
+        g = s.generate_frame(spans=[6.0], storeys=[3.6], column_section="B",
+                             beam_section="B", material="S")
+        s.set_load_cases(cases=[{"name": "D", "member_loads":
+                                 [{"member": m, "w": [0, 0, -20e3]}
+                                  for m in g.payload["beam_member_ids"]]}])
+        if not s.solve_model().ok:
+            return False, "云图要用的静力解没算出来"
+        levels = theme.CONTOUR_LEVELS
+        notes = []
+        for component, scale in (("Mz", 1e-3), (scene.STRESS, 1e-6)):
+            line = scene.contour_line(s.frame, s.solution, "D", component,
+                                      value_scale=scale)
+            clim = scene.contour_clim(line, component, percentile=None)
+            tube = scene.banded_tubes(line, component, clim, levels,
+                                      radius=0.02)
+            name = component + scene.BAND_SUFFIX
+            if name not in tube.cell_data or tube.n_cells == 0:
+                return False, f"{component} 云图没生成出带颜色的网格"
+            shades = len(np.unique(np.round(tube.cell_data[name], 9)))
+            notes.append(f"{component} {shades} 级/{levels}")
+    except Exception as exc:                      # noqa: BLE001
+        return False, f"{type(exc).__name__}: {str(exc)[:160]}"
+    return True, "内力与应力云图链路正常（" + "，".join(notes) + "）"
 
 
 def _qt() -> tuple[bool, str]:
@@ -169,7 +222,7 @@ def _opengl() -> tuple[bool, str]:
 
 CHECKS = (("Python", _python), ("内核依赖", _numeric), ("求解器", _kernel),
           ("Qt", _qt), ("Qt 绑定", _binding), ("PyVista", _pyvista),
-          ("OpenGL", _opengl))
+          ("云图链路", _contour), ("OpenGL", _opengl))
 
 # 这几项挂了，后面的必然跟着挂，报完根因就停
 FATAL = {"Python", "Qt", "PyVista"}

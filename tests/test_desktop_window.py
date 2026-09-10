@@ -503,3 +503,85 @@ def test_model_diagnosis_carries_object_references_for_viewport_highlight(
     assert captured["locations"][row] == [("node", 999)]
     w.locate_problem(captured["locations"][row])
     assert w.viewport.problem_refs == [("node", 999)]
+
+
+def test_the_contour_is_drawn_from_banded_cell_colours(qt_app):
+    """把 show_contour 真跑一遍，盯住送进渲染器的到底是什么。
+
+    无头环境画不出像素，但**送进去的网格和参数是可以查的**——这一层出错
+    （标量名写错、颜色挂在点上、级数没传下去）在有屏幕的机器上也只是
+    "图看着怪"，没人查得出来是哪一步。
+    """
+    window = solved(MainWindow(built()))
+    calls: list[dict] = []
+    plotter = window.viewport.plotter
+    plotter.add_mesh = lambda mesh=None, **kw: calls.append(
+        {"mesh": mesh, **kw})
+    import desktop.viewport as vp
+    from desktop import scene
+
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        window.viewport.show_contour(window.session.frame,
+                                     window.session.solution, "D", "Mz",
+                                     levels=8)
+    finally:
+        vp.CAN_RENDER = was
+
+    contour = calls[0]
+    assert contour["scalars"] == "Mz" + scene.BAND_SUFFIX
+    assert contour["n_colors"] == 8
+    assert contour["lighting"] is False, "打了光颜色就对不上色标"
+    mesh = contour["mesh"]
+    assert contour["scalars"] in mesh.cell_data
+    assert contour["scalars"] not in mesh.point_data
+
+
+def test_the_stress_contour_is_refused_at_the_click_not_after_switching(
+        qt_app, monkeypatch):
+    """截面缺 cy/cz 时应力云图算不出来。**在点下去的那一刻就说清楚**——
+    别让用户切过去之后对着一个空视口和一个没反应的菜单项。"""
+    from PySide6.QtWidgets import QMessageBox
+
+    from desktop import scene
+
+    window = solved(MainWindow(built()))
+    said: list[str] = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *a, **k: said.append(str(a[2])))
+    before = window.component
+    window._set_component(scene.STRESS)
+    assert said and "cy" in said[0], "要说清楚缺什么，而不是没反应"
+    assert window.component == before, "画不出来就别切过去"
+
+
+def test_the_colour_bar_is_bound_to_the_contour_layer_not_the_overflow_layer(
+        qt_app):
+    """色标必须紧挨着云图那一层加。
+
+    add_scalar_bar 绑的是**最后一个加进来的网格**的映射器。等把"量程外"
+    那层纯色网格加完再加色标，色标画的就是那层的默认查找表——一条 0…1 的
+    彩虹，和图上任何东西都对不上。这个错在有屏幕的机器上一眼能看见，
+    但没人会想到去查加网格的顺序。
+    """
+    window = solved(MainWindow(built()))
+    order: list[str] = []
+    plotter = window.viewport.plotter
+    plotter.add_mesh = lambda mesh=None, **kw: order.append(
+        kw.get("name") or ("contour" if "scalars" in kw else "other"))
+    plotter.add_scalar_bar = lambda **kw: order.append("scalar_bar")
+
+    import desktop.viewport as vp
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        window.viewport.show_contour(window.session.frame,
+                                     window.session.solution, "D", "Mz")
+    finally:
+        vp.CAN_RENDER = was
+
+    assert "scalar_bar" in order
+    assert order.index("contour") < order.index("scalar_bar")
+    if "_contour_out_of_range" in order:
+        assert order.index("scalar_bar") < order.index("_contour_out_of_range")

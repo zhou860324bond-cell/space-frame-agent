@@ -884,46 +884,81 @@ class Viewport(QWidget):
                      scale: float = 0.0, title: str | None = None,
                      percentile: float | None = scene.CONTOUR_PERCENTILE,
                      sign_filter: str = "all", overlay_deformed: bool = False,
-                     show_extrema: bool = True) -> tuple:
-        """内力云图。合量从零起，有符号局部分量关于零对称。"""
+                     show_extrema: bool = True,
+                     levels: int | None = None) -> tuple:
+        """内力 / 应力云图。合量从零起，有符号量关于零对称。
+
+        **分级着色（banded contour）**，级数默认 12，与色标上的分格一一对应。
+        连续渐变上读不出"这一段到底是多少"，只读得出"这边比那边红"。
+        """
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
             return (0.0, 0.0)
         self.clear()
-        tubes = scene.member_tubes(frame, solution, case, scale=scale,
-                                   scalars=component)
         # 云图和二维内力图都用工程显示单位，避免 MM 模型把 N·mm 标成 N·m。
         from units import of as unit_system
         system = unit_system(frame)
-        scalar_scale = (system.moment_scale if component in {"T", "My", "Mz", "M"}
-                        else system.force_scale)
+        if component == scene.STRESS:
+            scalar_scale, unit = system.stress_scale, system.stress_unit
+        elif component in {"T", "My", "Mz", "M"}:
+            scalar_scale, unit = system.moment_scale, system.moment_unit
+        else:
+            scalar_scale, unit = system.force_scale, system.force_unit
         if component in {"M", "V"}:
             sign_filter = "all"       # 合量定义为非负，正负筛选不适用
-        tubes[component] = scene.sign_filtered(
-            tubes[component] * scalar_scale, sign_filter)
-        clim = scene.contour_clim(tubes, component, percentile=percentile)
-        cmap = (theme.sequential_cmap() if component in {"V", "M"}
-                else theme.DIVERGING)
-        # 色标被分位裁剪时**必须写在图上**：这是对显示的人为压缩，
-        # 不写就成了静默近似。峰值仍由标题和查询如实给出。
-        # 披露文字用 ASCII：VTK 的色标用自己的字体引擎，默认字体没有中文
-        # 字形（实测中文会渲染成方块）。写成方块等于没披露。
-        bar_title = title or component
-        clipped = scene.clim_is_clipped(tubes, component, clim)
-        if clipped:
-            bar_title = f"{bar_title}  [clip p{scene.CONTOUR_PERCENTILE:.0f}]"
+        line = scene.contour_line(frame, solution, case, component,
+                                  scale=scale, value_scale=scalar_scale,
+                                  sign_filter=sign_filter)
+        clim = scene.contour_clim(line, component, percentile=percentile)
+        clipped = scene.clim_is_clipped(line, component, clim)
+        n = scene.contour_levels(levels)
+        base = (theme.sequential_cmap() if component in {"V", "M"}
+                else theme.diverging_cmap())
+        cmap = theme.banded(base, n)
+        tubes = scene.banded_tubes(
+            line, component, clim, n,
+            radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame))
         self.plotter.add_mesh(
-            tubes, scalars=component, cmap=cmap, clim=clim,
-            smooth_shading=True,
-            scalar_bar_args=dict(
-                title=bar_title, color=theme.VIEWPORT_INK_MUTED,
-                title_font_size=13, label_font_size=11, n_labels=5,
-                width=0.30, height=0.045, position_x=0.66, position_y=0.03))
-        unit = (system.moment_unit if component in {"T", "My", "Mz", "M"}
-                else system.force_unit)
+            tubes, scalars=component + scene.BAND_SUFFIX,
+            cmap=cmap, clim=clim, n_colors=n,
+            # **不打光。** 打了光同一个数值在向光面和背光面是两个颜色，
+            # 而看图的人正是拿模型上的颜色去对色标读数的——阴影会让他读错一级。
+            lighting=False, show_scalar_bar=False)
+        # 色标竖着放在右侧：横放时 VTK 把标题和刻度挤在同一条带上（实测重叠），
+        # 而且十几级的刻度横向根本排不开。
+        #
+        # **必须紧挨着云图那一层加。** add_scalar_bar 绑的是最后一个加进来的
+        # 网格的映射器；等把"量程外"那层纯色网格加完再加色标，色标画的就是
+        # 那层的默认查找表——一条 0…1 的彩虹，和图上任何东西都对不上。
+        self.plotter.add_scalar_bar(
+            title="", n_labels=n + 1, n_colors=n, vertical=True, fmt="%.3g",
+            color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
+            width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+        if clipped:
+            # 超出量程的段单独画。分级之后饱和的那一级和正常的一级长得一样，
+            # 峰值所在的位置会消失在一片同色里。
+            over = scene.out_of_range_tubes(
+                line, component, clim,
+                radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame) * 1.02)
+            if over.n_cells:
+                self.plotter.add_mesh(over, color=theme.HIGHLIGHT,
+                                      lighting=False, show_scalar_bar=False,
+                                      name="_contour_out_of_range")
+        # 标题自己画。交给 VTK 画会和最上面那个刻度撞在一起。
+        # 披露文字用 ASCII：VTK 的色标与文字用自己的字体引擎，默认字体没有
+        # 中文字形（实测中文渲染成方块）。写成方块等于没披露。
+        label = (scene.STRESS_LABEL_ASCII if component == scene.STRESS
+                 else component)
+        bar_title = f"{label}  [{unit}]\n{n} bands"
+        if clipped:
+            bar_title += (f"\nclip p{scene.CONTOUR_PERCENTILE:.0f}"
+                          "\noff scale: orange")
         self.plotter.add_text(
-            scene.contour_caption(component, unit, clipped, sign_filter),
+            bar_title, position=(0.795, 0.735), viewport=True,
+            color=theme.VIEWPORT_INK, font_size=10, name="_contour_bar_title")
+        self.plotter.add_text(
+            scene.contour_caption(component, unit, clipped, sign_filter, n),
             position="upper_left", color=theme.VIEWPORT_INK,
             font_size=9, name="_contour_definition")
         if overlay_deformed:
@@ -931,7 +966,7 @@ class Viewport(QWidget):
                 frame, solution, case)
             deformed = scene.member_tubes(
                 frame, solution, case, scale=deformation_scale,
-                radius=scene.TUBE_RATIO * scene.model_size(frame) * 0.55)
+                radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame) * 0.45)
             self.plotter.add_mesh(
                 deformed, color=theme.HIGHLIGHT, opacity=0.48,
                 name="_contour_deformed_overlay", smooth_shading=True)
@@ -939,10 +974,10 @@ class Viewport(QWidget):
             from .result_inspector import global_extreme
             extreme = global_extreme(frame, solution, component, case)
             if extreme["member"] is not None:
-                label = (f"{component}={extreme['value']:+.3g} {extreme['unit']} | "
-                         f"M{extreme['member']} x={extreme['x']:.3g}")
+                peak_text = (f"{label}={extreme['value']:+.3g} {extreme['unit']}"
+                             f" | M{extreme['member']} x={extreme['x']:.3g}")
                 self.plotter.add_point_labels(
-                    [extreme["point"]], [label], name="_contour_extreme",
+                    [extreme["point"]], [peak_text], name="_contour_extreme",
                     font_size=9, text_color=theme.VIEWPORT_INK, shape=None,
                     always_visible=True, show_points=True,
                     point_color=theme.HIGHLIGHT, point_size=9)

@@ -487,3 +487,154 @@ def test_analysis_mesh_geometry_shows_the_compiler_split():
     assert set(mesh.cell_data["physical_member"]) == {101}
     assert split.n_points == 1
     assert split.points[0] == pytest.approx([1.5, 0.0, 0.0])
+
+
+# ------------------------------------------------- 云图分级（色块分区）
+
+def test_band_index_and_value_agree_with_the_colour_bar():
+    clim = (-60.0, 60.0)
+    idx = scene.band_index([-60.0, -0.001, 0.0, 59.9, 60.0, 1e9], clim, 12)
+    assert list(idx) == [0, 5, 6, 11, 11, 11], "超量程要夹到两端，不能溢出"
+    # 每一级的代表值必须落在这一级里，否则色块和色标差一格
+    for k in range(12):
+        value = float(scene.band_value(k, clim, 12))
+        assert scene.band_index(value, clim, 12) == k
+
+
+def test_every_banded_segment_carries_exactly_one_colour():
+    """分级着色的关键：颜色挂在**单元**上，一段一个常量值。
+
+    挂在点上渲染器会插值，插出来是渐变，色块边界就没了。
+    """
+    line = pv.PolyData()
+    line.points = np.array([[0.0, 0, 0], [10.0, 0, 0]])
+    line.lines = np.array([2, 0, 1])
+    line["v"] = np.array([0.0, 60.0])
+    pieces = scene.banded_segments(line, "v", (0.0, 60.0), 12)
+
+    name = "v" + scene.BAND_SUFFIX
+    assert name in pieces.cell_data
+    assert name not in pieces.point_data, "颜色不许挂在点上"
+    assert pieces.n_cells == 12, "0→60 跨满 12 级，就该切成 12 段"
+    values = np.asarray(pieces.cell_data[name])
+    assert len(set(np.round(values, 9))) == 12
+    assert values == pytest.approx(scene.band_value(np.arange(12), (0.0, 60.0), 12))
+
+
+def test_a_band_boundary_is_cut_exactly_where_the_value_crosses_it():
+    """边界位置是**算出来的**：线性插值到该级的边界值，不是按段长凑的。"""
+    line = pv.PolyData()
+    line.points = np.array([[0.0, 0, 0], [4.0, 0, 0]])
+    line.lines = np.array([2, 0, 1])
+    line["v"] = np.array([0.0, 4.0])          # 值与 x 同步，便于手算
+    pieces = scene.banded_segments(line, "v", (0.0, 4.0), 4)   # 边界在 1、2、3
+    xs = np.sort(np.unique(np.round(pieces.points[:, 0], 9)))
+    assert xs == pytest.approx([0.0, 1.0, 2.0, 3.0, 4.0])
+
+
+def test_a_segment_inside_one_band_is_not_split():
+    line = pv.PolyData()
+    line.points = np.array([[0.0, 0, 0], [1.0, 0, 0]])
+    line.lines = np.array([2, 0, 1])
+    line["v"] = np.array([11.0, 12.0])
+    assert scene.banded_segments(line, "v", (0.0, 120.0), 12).n_cells == 1
+
+
+def test_contour_levels_are_clamped_to_something_usable():
+    from desktop import theme
+
+    low, high = theme.CONTOUR_LEVELS_RANGE
+    assert scene.contour_levels(None) == theme.CONTOUR_LEVELS
+    assert scene.contour_levels(1) == low
+    assert scene.contour_levels(999) == high
+
+
+def test_the_banded_tube_keeps_the_cell_colours():
+    session = portal()
+    line = scene.contour_line(session.frame, session.solution, None, "Mz",
+                              value_scale=1e-3)
+    clim = scene.contour_clim(line, "Mz", percentile=None)
+    tube = scene.banded_tubes(line, "Mz", clim, 12, radius=0.02)
+    name = "Mz" + scene.BAND_SUFFIX
+    assert name in tube.cell_data and tube.n_cells > 0
+    values = np.unique(np.round(tube.cell_data[name], 9))
+    assert len(values) <= 12, "颜色只能取那 12 个代表值"
+
+
+def test_viewport_text_avoids_glyphs_the_vtk_font_drops():
+    """视口里的文字由 VTK 自己的字体引擎画。
+
+    实测：σ 被整个吞掉（只剩下后面的单位），竖线渲染成一大片空白（一行字
+    被撑成两截，看着像文字丢了）。所以画在视口里的说明一律避开这两个字符。
+    """
+    for component in ("Mz", "M", scene.STRESS):
+        caption = scene.contour_caption(component, "kN.m", True, "positive", 12)
+        assert "σ" not in caption
+        assert "|" not in caption
+        assert "12 bands" in caption
+    assert "sigma" in scene.contour_caption(scene.STRESS, "MPa")
+
+
+def test_the_viewport_diverging_colours_come_from_viz_theme():
+    """屏幕和报告必须是同一套配色。
+
+    这里原来直接用 matplotlib 的 "coolwarm"，而报告里的静态图用的是
+    viz_theme 的锚点色——同一个结构两处颜色不一样，而 report.py 的说明里
+    还写着"两者共用 viz_theme 配色，不会各说各话"。
+
+    顺带钉住中点不能接近白色：深色视口上，零内力的杆件不该是全图最亮的。
+    """
+    import viz_theme as V
+    from desktop import theme
+
+    cmap = theme.diverging_cmap()
+    assert theme.DIVERGING_ANCHORS == V.VIEWPORT_DIVERGING
+    low = np.array(cmap(0.0)[:3])
+    high = np.array(cmap(1.0)[:3])
+    mid = np.array(cmap(0.5)[:3])
+    assert low[2] > low[0], "低端应当偏蓝（受压）"
+    assert high[0] > high[2], "高端应当偏红（受拉）"
+    assert mid.mean() < 0.75, "中点不能接近白色"
+
+
+def test_banding_a_colormap_gives_exactly_that_many_colours():
+    from desktop import theme
+
+    assert theme.banded(theme.diverging_cmap(), 8).N == 8
+    assert theme.banded(theme.sequential_cmap(), 999).N == theme.CONTOUR_LEVELS_RANGE[1]
+
+
+def test_the_out_of_range_part_is_a_mesh_of_its_own():
+    """色标按分位裁剪时，超限的段要能单独拿出来上专门的颜色。
+
+    **分级之后，饱和的那一级看起来和正常的一级一模一样**——峰值所在的位置
+    就此消失在一片同色里。这是"裁剪"这件事在分级云图上的新副作用。
+    """
+    line = pv.PolyData()
+    line.points = np.array([[0.0, 0, 0], [10.0, 0, 0]])
+    line.lines = np.array([2, 0, 1])
+    line["v"] = np.array([0.0, 100.0])
+    over = scene.out_of_range_tubes(line, "v", (0.0, 50.0), radius=0.1)
+    assert over.n_cells > 0
+    # 只该包含 x>5 的那一半（值超过 50 的部分），边界精确落在 x=5
+    assert over.bounds[0] == pytest.approx(5.0, abs=1e-9)
+    assert over.bounds[1] == pytest.approx(10.0, abs=1e-9)
+
+    inside = scene.out_of_range_tubes(line, "v", (0.0, 100.0), radius=0.1)
+    assert inside.n_cells == 0, "没有超限就不该多出一层网格"
+
+
+def test_the_band_cuts_and_the_range_cuts_come_from_one_place():
+    """分级边界和"量程外"的边界必须是同一套切法。
+
+    分开写两遍，迟早出现色块边界和橙色段错开半格——那种错看图的人查不出来。
+    """
+    line = pv.PolyData()
+    line.points = np.array([[0.0, 0, 0], [4.0, 0, 0]])
+    line.lines = np.array([2, 0, 1])
+    line["v"] = np.array([0.0, 4.0])
+    got = [(round(float(a[0]), 9), round(float(b[0]), 9), round(v, 9))
+           for a, b, v in scene.cut_at(line, "v", (1.0, 3.0))]
+    assert [g[0] for g in got] == [0.0, 1.0, 3.0]
+    assert [g[1] for g in got] == [1.0, 3.0, 4.0]
+    assert [g[2] for g in got] == [0.5, 2.0, 3.5]     # 段中点的值

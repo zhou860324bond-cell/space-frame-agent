@@ -175,3 +175,42 @@ def test_the_kernel_check_actually_solves():
     ok, note = doctor._kernel()
     assert ok, note
     assert "框架" in note
+
+
+def test_the_contour_pipeline_is_checked_too():
+    """OpenGL 正常不等于云图正常。
+
+    云图这条链路（求解 → 内力 → 应力 → 分级切分 → 生成管）上任何一步坏了，
+    在有屏幕的机器上表现都只是"图看着怪"，没人查得出来是哪一步。
+    所以自检里单列一项，**而且连应力一起检**——应力多依赖截面的极端纤维
+    距离，是另一处会断的地方。
+    """
+    from desktop import doctor
+
+    names = [label for label, _ in doctor.CHECKS]
+    assert "云图链路" in names
+    check = dict(doctor.CHECKS)["云图链路"]
+    ok, note = check()
+    assert ok, note
+    assert "sigma" in note, "应力那一路也要检到"
+
+
+def test_the_doctor_runs_on_its_own_without_the_launcher():
+    """`python -m desktop.doctor` 单独跑也要能用。
+
+    走 app.py 时 sys.path 是它铺好的；直接跑这个模块则没有，求解器和云图
+    两项会报"找不到 agent"——而真正的问题只是路径。**自检工具不该自己
+    成为要排查的对象。**
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    got = subprocess.run([sys.executable, "-m", "desktop.doctor"],
+                         cwd=root, capture_output=True, text=True,
+                         env={**os.environ, "PYTHONPATH": "",
+                              "QT_QPA_PLATFORM": "offscreen"})
+    assert "No module named" not in got.stdout, got.stdout
+    assert "求解器" in got.stdout

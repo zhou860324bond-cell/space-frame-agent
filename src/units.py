@@ -52,6 +52,10 @@ class UnitSystem:
     force_unit: str = "kN"
     moment_unit: str = "kN·m"
     line_load_unit: str = "kN/m"
+    # 应力一律报 MPa。工程上没人拿 Pa 读应力：Q355 的许用值写成
+    # 215000000 谁也认不出来，写成 215 一眼就知道。
+    stress_scale: float = 1.0
+    stress_unit: str = "MPa"
 
 
 _SYSTEMS = {
@@ -60,13 +64,15 @@ _SYSTEMS = {
                    disp_scale=1e3,      # m  → mm
                    force_scale=1e-3,    # N  → kN
                    moment_scale=1e-3,   # N·m → kN·m
-                   line_load_scale=1e-3),   # N/m → kN/m
+                   line_load_scale=1e-3,    # N/m → kN/m
+                   stress_scale=1e-6),      # Pa  → MPa
     MM: UnitSystem(name=MM, length="mm", gravity=9806.65, density="t/mm³",
                    length_to_m=1e-3,
                    disp_scale=1.0,      # mm → mm
                    force_scale=1e-3,    # N  → kN
                    moment_scale=1e-6,   # N·mm → kN·m
-                   line_load_scale=1.0),    # N/mm → kN/m
+                   line_load_scale=1.0,     # N/mm → kN/m
+                   stress_scale=1.0),       # MPa → MPa
 }
 
 NAMES = tuple(_SYSTEMS)

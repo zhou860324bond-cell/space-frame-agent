@@ -35,6 +35,10 @@ from viz_symbols import classify_support, model_size            # noqa: E402
 # 分析梁只表达中心线与连续实体感，不冒充真实截面。细长比例接近 CAE 梁单元，
 # 避免高饱和粗圆管产生“塑料玩具”观感；云图仍有足够表面积显示颜色。
 TUBE_RATIO = 0.0032
+# 云图用更粗的管。**这不是审美**：0.0032 的管在整屏视角下直径只有几个像素，
+# 一根杆件上的几级色块挤成一条细缝，分级就白分了。模型视图仍用细管，
+# 那里要看的是几何不是数值。
+CONTOUR_TUBE_RATIO = 0.0072
 # 支座符号比管子大，但不该大到反客为主。原值 0.020 是管半径的五倍，
 # 加上近白的颜色，支座成了画面上最抢眼的东西。
 SYMBOL_RATIO = 0.0145   # 配合细圆杆，支座可辨认但不压过结构主体
@@ -127,6 +131,37 @@ def analysis_split_points(preview: dict) -> pv.PolyData:
     return mesh
 
 
+# 极端纤维正应力这一"分量"。它不在 internal_forces.COMPONENTS 里——那六个是
+# 截面内力，这个是由内力和截面几何算出来的**应力**，多一层依赖（要 cy/cz）。
+# 用一个显式常量而不是字符串字面量，是因为它要在 scene / viewport /
+# result_inspector / 主窗口四处出现，写错一个字母只会安静地退回"认不出的分量"。
+STRESS = "sigma"
+STRESS_LABEL = "σ"          # 界面（Qt）上用，字体齐全
+# 视口里的文字由 VTK 自己的字体引擎画，默认字体**没有中文、也没有希腊字母**
+# 的字形——实测 σ 被整个吞掉，只剩下后面的单位。所以画在视口里的一律用 ASCII。
+STRESS_LABEL_ASCII = "sigma"
+
+
+def member_scalar(frame, member, diagram, name: str) -> np.ndarray:
+    """一根杆件沿长度的着色标量。
+
+    ``name`` 是六个截面内力分量、两个合量之一时直接取内力图；是 ``STRESS``
+    时按 σ = N/A ± (M·c/I) 算极端纤维正应力，**取绝对值大的那一侧并保留符号**
+    ——受拉为正、受压为负，正好落在发散色标的两端。
+
+    截面缺 cy/cz 时 `stress.extreme_normal_stress` 会抛
+    `StressUnavailable`，这里**不接**：让它一路传到界面上明确拒绝，
+    比画一张来路不明的应力图安全。
+    """
+    if name != STRESS:
+        return diagram.component(name)
+    from stress import extreme_normal_stress
+
+    section = frame.sections[member.section]
+    low, high = extreme_normal_stress(section, diagram.N, diagram.My, diagram.Mz)
+    return np.where(np.abs(high) >= np.abs(low), high, low)
+
+
 def member_polylines(frame, solution=None, case: str | None = None,
                      scale: float = 0.0, stations: int = STATIONS,
                      scalars: str | None = None) -> pv.PolyData:
@@ -173,7 +208,7 @@ def member_polylines(frame, solution=None, case: str | None = None,
 
         block = _polyline(pts)
         if diagram is not None:
-            block[scalars] = diagram.component(scalars)
+            block[scalars] = member_scalar(frame, member, diagram, scalars)
         block["member"] = np.full(len(pts), mid)
         blocks.append(block)
 
@@ -197,6 +232,167 @@ def member_tubes(frame, solution=None, case: str | None = None,
     line = member_polylines(frame, solution, case, scale, scalars=scalars)
     r = radius if radius is not None else TUBE_RATIO * model_size(frame)
     return line.tube(radius=r, n_sides=32, capping=True)
+
+
+BAND_SUFFIX = "_band"
+
+
+def band_index(values, clim: tuple[float, float], levels: int) -> np.ndarray:
+    """每个值落在第几级（0 … levels-1）。超出量程的夹到两端。"""
+    lo, hi = float(clim[0]), float(clim[1])
+    span = hi - lo
+    v = np.asarray(values, dtype=float)
+    if span <= 0.0:
+        return np.zeros(v.shape, dtype=int)
+    idx = np.floor((v - lo) / span * levels).astype(int)
+    return np.clip(idx, 0, levels - 1)
+
+
+def band_value(index, clim: tuple[float, float], levels: int) -> np.ndarray:
+    """第 k 级的代表值：取该级的中点，正好落在这一级的颜色上。"""
+    lo, hi = float(clim[0]), float(clim[1])
+    step = (hi - lo) / levels if hi > lo else 0.0
+    return lo + (np.asarray(index, dtype=float) + 0.5) * step
+
+
+def banded_segments(line: pv.PolyData, name: str,
+                    clim: tuple[float, float], levels: int) -> pv.PolyData:
+    """把折线按色带边界切开，颜色放到**单元数据**上。
+
+    为什么要这么做，而不是直接把分级色标交给渲染器：
+
+    * 颜色若挂在点上，渲染器会在两点之间**插值颜色**——分级色标插出来的是
+      渐变，色块的边界就没了；开 VTK 的 texture 映射倒是能出硬边界，
+      但十来级的查找表在十几像素宽的管子上会走样，实测是一片摩尔纹。
+    * 颜色挂在**单元**上就不插值。所以先在色带边界处把线段切开，
+      让每一小段整段落在同一级里，再给这一段一个常量颜色——
+      边界位置精确，色块干净，也没有走样。
+
+    切分点由线性插值定出（内力沿杆是分段光滑的，站点足够密时这就是它
+    真实的过零/过界位置），因此**色带边界的位置是算出来的，不是画出来的**。
+    """
+    lo, hi = float(clim[0]), float(clim[1])
+    step = (hi - lo) / levels if hi > lo else 0.0
+    edges = [lo + k * step for k in range(1, levels)] if step > 0 else []
+
+    out_pts: list[np.ndarray] = []
+    out_cells: list[int] = []
+    out_band: list[float] = []
+    for pa, pb, value in cut_at(line, name, edges):
+        k = len(out_pts)
+        out_pts.append(pa)
+        out_pts.append(pb)
+        out_cells.extend((2, k, k + 1))
+        out_band.append(float(band_value(band_index(value, clim, levels),
+                                         clim, levels)))
+
+    mesh = pv.PolyData()
+    if not out_pts:
+        return mesh
+    mesh.points = np.asarray(out_pts, dtype=float)
+    mesh.lines = np.asarray(out_cells, dtype=int)
+    mesh.cell_data[name + BAND_SUFFIX] = np.asarray(out_band, dtype=float)
+    return mesh
+
+
+def cut_at(line: pv.PolyData, name: str, edges):
+    """按给定的一组数值把折线切开，逐段给出 (起点, 终点, 段中点处的值)。
+
+    切分点由线性插值定出，所以边界的位置是**算出来的**，不是按段长凑的。
+    分级着色和"量程外"的标记都用这一个入口，两者的边界因此永远对得上。
+    """
+    values = np.asarray(line[name], dtype=float)
+    points = np.asarray(line.points, dtype=float)
+    edges = list(edges)
+    connectivity = np.asarray(line.lines, dtype=int)
+    cursor = 0
+    while cursor < connectivity.size:
+        count = int(connectivity[cursor])
+        ids = connectivity[cursor + 1: cursor + 1 + count]
+        cursor += count + 1
+        for a, b in zip(ids[:-1], ids[1:]):
+            pa, pb = points[a], points[b]
+            va, vb = float(values[a]), float(values[b])
+            cuts = [0.0, 1.0]
+            if va != vb:
+                lower, upper = (va, vb) if va < vb else (vb, va)
+                cuts += [(edge - va) / (vb - va)
+                         for edge in edges if lower < edge < upper]
+            cuts = sorted(set(round(c, 12) for c in cuts))
+            for t0, t1 in zip(cuts[:-1], cuts[1:]):
+                mid = 0.5 * (t0 + t1)
+                yield (pa + t0 * (pb - pa), pa + t1 * (pb - pa),
+                       va + mid * (vb - va))
+
+
+def out_of_range_tubes(line: pv.PolyData, component: str,
+                       clim: tuple[float, float], radius: float) -> pv.PolyData:
+    """超出色标量程的那些段，单独做成一份网格。
+
+    色标按分位裁剪时，超限的部分会被压进最上（下）一级——**而分级之后，
+    饱和的那一级看起来和正常的一级一模一样**，峰值所在的位置就此消失在
+    一片同色里。所以把量程外的段挑出来用一个专门的颜色画，
+    "这里已经出图了"一眼可见。裁剪本身仍然照旧写在说明里。
+    """
+    lo, hi = float(clim[0]), float(clim[1])
+    out_pts: list[np.ndarray] = []
+    out_cells: list[int] = []
+    for pa, pb, value in cut_at(line, component, (lo, hi)):
+        if lo <= value <= hi:
+            continue
+        k = len(out_pts)
+        out_pts.append(pa)
+        out_pts.append(pb)
+        out_cells.extend((2, k, k + 1))
+    mesh = pv.PolyData()
+    if not out_pts:
+        return mesh
+    mesh.points = np.asarray(out_pts, dtype=float)
+    mesh.lines = np.asarray(out_cells, dtype=int)
+    return mesh.tube(radius=radius, n_sides=24, capping=False)
+
+
+def check_stress_available(frame) -> None:
+    """应力云图画不画得出来，**在用户点下去的那一刻就回答**。
+
+    等切过去才发现算不出来，用户面对的是一个没反应的菜单项和一个空视口。
+    缺极端纤维距离的截面在这里就被点名，消息直接来自 `stress.py`，
+    与 Agent 那条路给出的说法一致。
+    """
+    from stress import _require_geometry
+
+    for member in frame.members.values():
+        _require_geometry(frame.sections[member.section])
+
+
+def contour_line(frame, solution, case: str | None, component: str,
+                 scale: float = 0.0, value_scale: float = 1.0,
+                 sign_filter: str = "all") -> pv.PolyData:
+    """云图用的折线：几何 + 已换成**显示单位**、已按符号筛选的标量。
+
+    色标范围、分级边界、极值标注全部要建立在同一份数值上。分成几处各算一遍，
+    迟早会出现"色块边界和色标刻度对不上"——那种错看图的人查不出来。
+    """
+    line = member_polylines(frame, solution, case, scale, scalars=component)
+    if not line.n_points:
+        return line
+    line[component] = sign_filtered(
+        np.asarray(line[component], dtype=float) * value_scale, sign_filter)
+    return line
+
+
+def banded_tubes(line: pv.PolyData, component: str,
+                 clim: tuple[float, float], levels: int,
+                 radius: float) -> pv.PolyData:
+    """由 `contour_line` 的折线做出分级着色的杆件管。"""
+    if not line.n_points:
+        return pv.PolyData()
+    pieces = banded_segments(line, component, clim, levels)
+    if not pieces.n_points:
+        return pieces
+    # 每一小段都封端会在相邻两段的接缝处留下两张重合的端盖，深度冲突渲染成
+    # 一圈明暗相间的细纹。分级后段与段首尾相接，内部本来就不需要端盖。
+    return pieces.tube(radius=radius, n_sides=24, capping=False)
 
 
 def support_glyphs(frame, size: float | None = None) -> dict[str, pv.PolyData]:
@@ -459,15 +655,28 @@ def clim_is_clipped(mesh: pv.PolyData, name: str,
 
 
 def contour_caption(component: str, unit: str, clipped: bool = False,
-                    sign_filter: str = "all") -> str:
-    """梁中心线结果的自描述文字；明确它不是截面实体应力云图。"""
-    convention = ("magnitude (nonnegative)" if component in {"M", "V"}
-                  else "signed in member local axes")
-    suffix = f" | display clipped at p{CONTOUR_PERCENTILE:.0f}" if clipped else ""
+                    sign_filter: str = "all", levels: int | None = None) -> str:
+    """梁中心线结果的自描述文字；明确它不是截面实体应力云图。
+
+    ``σ`` 那一档尤其要写清楚：它是**极端纤维正应力**，由梁内力和截面几何
+    算出来的，不含剪应力与扭转，也不是实体单元的截面应力场。
+    """
+    if component == STRESS:
+        head = "BEAM EXTREME-FIBRE NORMAL STRESS (from beam forces)"
+        convention = "sigma = N/A +/- M*c/I - tension positive - no shear/torsion"
+    else:
+        head = "BEAM CENTERLINE INTERNAL-FORCE RESULT"
+        convention = ("magnitude (nonnegative)" if component in {"M", "V"}
+                      else "signed in member local axes")
+    suffix = f" - display clipped at p{CONTOUR_PERCENTILE:.0f}" if clipped else ""
     if sign_filter != "all" and component not in {"M", "V"}:
-        suffix += f" | {sign_filter} values only"
-    return ("BEAM CENTERLINE INTERNAL-FORCE RESULT\n"
-            f"{component} [{unit}] | {convention}{suffix}")
+        suffix += f" - {sign_filter} values only"
+    if levels:
+        suffix += f" - {contour_levels(levels)} bands"
+    label = STRESS_LABEL_ASCII if component == STRESS else component
+    # 分隔符用短横不用竖线：VTK 的默认字体里竖线渲染成一大片空白（实测），
+    # 一行字会被撑成两截，看着像文字丢了。
+    return f"{head}\n{label} [{unit}] - {convention}{suffix}"
 
 
 def sign_filtered(values, mode: str) -> np.ndarray:
@@ -497,6 +706,16 @@ def symmetric_clim(mesh: pv.PolyData, name: str,
     return (-peak, peak) if peak > 0 else (-1.0, 1.0)
 
 
+def contour_levels(value: int | None = None) -> int:
+    """把用户给的分级数夹到可用范围。留空取默认。"""
+    from . import theme
+
+    if value is None:
+        return theme.CONTOUR_LEVELS
+    low, high = theme.CONTOUR_LEVELS_RANGE
+    return int(max(low, min(high, int(value))))
+
+
 def contour_clim(mesh: pv.PolyData, name: str,
                  percentile: float | None = CONTOUR_PERCENTILE
                  ) -> tuple[float, float]:
@@ -508,7 +727,7 @@ def contour_clim(mesh: pv.PolyData, name: str,
 
     上限默认取分位数而不是峰值，理由见 CONTOUR_PERCENTILE。
     """
-    if name not in {"V", "M"}:
+    if name not in {"V", "M"}:                 # σ 也是有符号的，走对称色标
         return symmetric_clim(mesh, name, percentile)
     peak = _bound(mesh[name], percentile)
     return (0.0, peak) if peak > 0 else (0.0, 1.0)

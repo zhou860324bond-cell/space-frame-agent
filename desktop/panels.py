@@ -121,6 +121,15 @@ class ResultPanel(QWidget):
         self.range_mode.addItem("95% 裁剪", 95.0)
         self.range_mode.addItem("满量程", None)
         controls.addWidget(self.range_mode)
+        controls.addWidget(QLabel("分级"))
+        self.levels = QComboBox(self)
+        for n in (6, 8, 10, 12, 16, 20, 24):
+            self.levels.addItem(f"{n} 级", n)
+        self.levels.setCurrentText("12 级")
+        self.levels.setToolTip(
+            "云图分成几级色块。连续渐变只看得出「这边比那边红」，"
+            "分级之后每一段颜色对应色标上一个可读的区间。")
+        controls.addWidget(self.levels)
         controls.addWidget(QLabel("符号"))
         self.sign_mode = QComboBox(self)
         self.sign_mode.addItem("全部", "all")
@@ -140,7 +149,7 @@ class ResultPanel(QWidget):
         controls.addWidget(self.btn_stress)
         controls.addStretch(1)
         box.addLayout(controls)
-        for widget in (self.range_mode, self.sign_mode):
+        for widget in (self.range_mode, self.sign_mode, self.levels):
             widget.currentIndexChanged.connect(self._emit_display_options)
         self.overlay_deformed.stateChanged.connect(self._emit_display_options)
         self.show_extrema.stateChanged.connect(self._emit_display_options)
@@ -158,6 +167,7 @@ class ResultPanel(QWidget):
     def display_options(self) -> dict:
         return {"percentile": self.range_mode.currentData(),
                 "sign": self.sign_mode.currentData(),
+                "levels": self.levels.currentData(),
                 "overlay_deformed": self.overlay_deformed.isChecked(),
                 "show_extrema": self.show_extrema.isChecked()}
 

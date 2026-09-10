@@ -98,8 +98,9 @@ def test_result_panel_controls_are_wired_to_contour_options(qt_app):
     window.results.range_mode.setCurrentIndex(1)
     window.results.sign_mode.setCurrentIndex(1)
     window.results.overlay_deformed.setChecked(True)
+    window.results.levels.setCurrentText("8 级")
     options = window.result_display_options
-    assert options == {"percentile": None, "sign": "positive",
+    assert options == {"percentile": None, "sign": "positive", "levels": 8,
                        "overlay_deformed": True, "show_extrema": True}
 
 
@@ -148,3 +149,39 @@ def test_load_can_be_copied_and_support_has_an_explicit_delete(qt_app, monkeypat
     window.bc.set_selection("node", 1)
     window.bc._clear_support()
     assert all(int(item["node"]) != 1 for item in session.model["supports"])
+
+
+def test_the_stress_field_is_the_worse_extreme_fibre_and_keeps_its_sign(qt_app):
+    """σ 取上下缘里绝对值大的那一侧，**并保留符号**——受拉为正、受压为负，
+    正好落在发散色标的两端。取 |σ| 会把受压画成受拉那一头。"""
+    from internal_forces import member_diagram
+
+    session = solved()
+    frame, sol = session.frame, session.solution
+    mid = sorted(frame.members)[0]
+    diagram = member_diagram(frame, sol, mid, sol.primary, stations=21)
+    values = scene.member_scalar(frame, frame.members[mid], diagram, scene.STRESS)
+
+    from stress import extreme_normal_stress
+    low, high = extreme_normal_stress(frame.sections[frame.members[mid].section],
+                                      diagram.N, diagram.My, diagram.Mz)
+    for k in range(len(values)):
+        assert values[k] in (low[k], high[k])
+        assert abs(values[k]) == pytest.approx(max(abs(low[k]), abs(high[k])))
+
+
+def test_a_section_without_fibre_distances_refuses_the_stress_contour(qt_app):
+    """缺 cy/cz 时**明确拒绝**，不估算一个来路不明的应力。"""
+    from frame3d import Section
+    from internal_forces import member_diagram
+    from stress import StressUnavailable
+
+    session = solved()
+    frame, sol = session.frame, session.solution
+    mid = sorted(frame.members)[0]
+    name = frame.members[mid].section
+    old = frame.sections[name]
+    frame.sections[name] = Section(name, A=old.A, Iy=old.Iy, Iz=old.Iz, J=old.J)
+    diagram = member_diagram(frame, sol, mid, sol.primary, stations=5)
+    with pytest.raises(StressUnavailable):
+        scene.member_scalar(frame, frame.members[mid], diagram, scene.STRESS)

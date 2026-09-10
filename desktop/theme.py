@@ -70,11 +70,17 @@ DRAFT_SUPPORT = "#2f9e68"
 # 工程软件通用局部轴色：x 红、y 绿、z 蓝。只用于方向编码，不参与结果色标。
 LOCAL_AXES = {"x": "#e05a5a", "y": "#55b86a", "z": "#4f87d8"}
 
-DIVERGING = "coolwarm"
 # 锚点色。**不要直接当 cmap 传给 add_mesh**：PyVista 会把颜色列表理解成
 # ListedColormap，只有 6 级，云图渲染出来是台阶不是渐变（已实测）。
-# 需要色标时调 sequential_cmap()。
+# 需要色标时调 sequential_cmap() / diverging_cmap()。
 SEQUENTIAL_ANCHORS = V.VIEWPORT_SEQUENTIAL
+DIVERGING_ANCHORS = V.VIEWPORT_DIVERGING
+
+# 云图默认分几级。12 是 CAE 后处理的通行值：再少读不出梯度，
+# 再多人眼分辨不出相邻两级的色差，等于回到连续渐变。
+# 取自 viz_theme，报告里的静态图读的是同一个数。
+CONTOUR_LEVELS = V.CONTOUR_LEVELS
+CONTOUR_LEVELS_RANGE = (4, 24)
 
 
 def sequential_cmap(steps: int = 256):
@@ -83,6 +89,38 @@ def sequential_cmap(steps: int = 256):
     from matplotlib.colors import LinearSegmentedColormap
     return LinearSegmentedColormap.from_list(
         "viewport_sequential", SEQUENTIAL_ANCHORS, N=steps)
+
+
+def diverging_cmap(steps: int = 256):
+    """发散色标：受压蓝 — 中性灰 — 受拉红，**取自 viz_theme**。
+
+    这里原来直接用 matplotlib 的 ``"coolwarm"``，而报告里的静态图用的是
+    `viz_theme` 的锚点色——**同一个结构在屏幕上和报告里配色不一样**，
+    而 report.py 的说明里还写着"两者共用 viz_theme 配色，不会各说各话"。
+
+    顺带，coolwarm 的中点接近白色：在深色视口上，零内力的杆件反而是全图
+    最亮的，眼睛先看到的是最不受力的地方。视口这套锚点的中点是中性灰，
+    没有这个问题。
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+    return LinearSegmentedColormap.from_list(
+        "viewport_diverging", DIVERGING_ANCHORS, N=steps)
+
+
+def banded(cmap, levels: int = CONTOUR_LEVELS):
+    """把连续色标切成 ``levels`` 个等宽色块。
+
+    云图分级不是装饰：连续渐变上读不出"这一段到底是多少"，只能读出
+    "这边比那边红"。切成有限级之后，每一级对应色标上一个可读的区间，
+    看图的人能直接把杆件上的一段对到一个数值范围——这是 CAE 后处理
+    默认分级的原因。
+    """
+    import numpy as np
+    from matplotlib.colors import ListedColormap
+
+    n = int(max(CONTOUR_LEVELS_RANGE[0],
+                min(CONTOUR_LEVELS_RANGE[1], int(levels))))
+    return ListedColormap(cmap(np.linspace(0.0, 1.0, n)), name="banded")
 
 # 小圆角只用于区分可交互表面，不做消费产品式大胶囊。
 RADIUS_SM = "4px"

@@ -30,6 +30,10 @@ DIVERGING_MID = "#e4e2dc"   # 比参考中点略深：在 #fcfcfb 画布上，�
 DIVERGING_HIGH = "#e34948"  # 受拉（正）
 DIVERGING_SCALE = [(0.0, DIVERGING_LOW), (0.5, DIVERGING_MID), (1.0, DIVERGING_HIGH)]
 
+# 云图分几级色块。**报告和屏幕读同一个数**：两处各写一个 12，改一处就会漂，
+# 而"报告里的图和界面上的图不一样"是最难被发现的一类不一致。
+CONTOUR_LEVELS = 12
+
 # 语义槽：结构图上的"非数据"标记。
 #
 # 取自同一套分类色序（槽 1 蓝=结构、槽 2 橙=峰值、槽 7 紫=支座、槽 3 青=荷载），
