@@ -56,16 +56,36 @@ _WINDOWS_HINTS = (
 )
 
 
+# 启动器的文件名。**装完 6.14 不一定有 abaqus.bat**：它的命令叫 abq6141.bat
+# （小版本不同则是 abq6142/6143/6144），只有装了多个版本时才会额外生成一个
+# abaqus.bat 指向默认版本。原来只找 abaqus.bat / abq2019.bat，于是机器上装着
+# 6.14 却被报成"没装"——而这个项目的对标基线正是 6.14。
+_COMMAND_NAMES = ("abaqus.bat", "abq6141.bat", "abq6142.bat", "abq6143.bat",
+                  "abq6144.bat", "abq2019.bat", "abaqus")
+# 小版本号还会变，写死一串不如再兜一次通配。
+_COMMAND_GLOBS = ("abq6*.bat", "abq20*.bat")
+
+
 def find_abaqus() -> str | None:
     """返回可执行的 abaqus 命令；找不到返回 None。"""
     found = shutil.which("abaqus")
     if found:
         return found
     for hint in _WINDOWS_HINTS:
-        for name in ("abaqus.bat", "abq2019.bat", "abaqus"):
+        for name in _COMMAND_NAMES:
             path = Path(hint) / name
             if path.is_file():
                 return str(path)
+    for hint in _WINDOWS_HINTS:
+        directory = Path(hint)
+        if not directory.is_dir():
+            continue
+        for pattern in _COMMAND_GLOBS:
+            # 排序是为了可复现：同一台机器多次调用要选中同一个，
+            # 不能今天挑 6141、明天挑 6142。
+            for path in sorted(directory.glob(pattern)):
+                if path.is_file():
+                    return str(path)
     return None
 
 

@@ -201,3 +201,41 @@ def test_comparison_says_which_side_failed(solved, monkeypatch, tmp_path):
     assert not r.ok
     assert "Abaqus" in r.payload["error"]
     assert "detail" in r.payload
+
+
+def test_abaqus_6_14_is_found_by_its_own_launcher_name(monkeypatch, tmp_path):
+    """装完 6.14 不一定有 abaqus.bat——它的命令叫 abq6141.bat。
+
+    原来只找 abaqus.bat / abq2019.bat，于是机器上装着 6.14 却被报成"没装"，
+    而 6.14 正是这个项目的对标基线。
+    """
+    monkeypatch.setattr(abaqus_backend.shutil, "which", lambda _: None)
+    fake = tmp_path / "Commands"
+    fake.mkdir()
+    (fake / "abq6141.bat").write_text("@echo off\n")
+    monkeypatch.setattr(abaqus_backend, "_WINDOWS_HINTS", (str(fake),))
+    assert abaqus_backend.find_abaqus() == str(fake / "abq6141.bat")
+
+
+def test_an_unlisted_minor_version_is_still_found_by_glob(monkeypatch, tmp_path):
+    """小版本号会变。写死一串名字挡不住 6.14-5 这种，通配再兜一层。"""
+    monkeypatch.setattr(abaqus_backend.shutil, "which", lambda _: None)
+    fake = tmp_path / "Commands"
+    fake.mkdir()
+    (fake / "abq6145.bat").write_text("@echo off\n")
+    monkeypatch.setattr(abaqus_backend, "_WINDOWS_HINTS", (str(fake),))
+    assert abaqus_backend.find_abaqus() == str(fake / "abq6145.bat")
+
+
+def test_the_choice_is_reproducible_when_several_versions_are_installed(
+        monkeypatch, tmp_path):
+    """同一台机器多次调用必须选中同一个，否则两次分析可能用不同版本算。"""
+    monkeypatch.setattr(abaqus_backend.shutil, "which", lambda _: None)
+    fake = tmp_path / "Commands"
+    fake.mkdir()
+    for name in ("abq6143.bat", "abq6141.bat", "abq6142.bat"):
+        (fake / name).write_text("@echo off\n")
+    monkeypatch.setattr(abaqus_backend, "_WINDOWS_HINTS", (str(fake),))
+    first = abaqus_backend.find_abaqus()
+    assert first == abaqus_backend.find_abaqus()
+    assert first == str(fake / "abq6141.bat")
