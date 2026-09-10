@@ -406,18 +406,45 @@ def test_the_script_does_not_edit_a_default_output_request_that_may_not_exist():
     assert "FieldOutputRequest(name=" in text
 
 
-def test_the_script_checks_the_job_status_before_reading_the_odb():
-    """求解器静默中止时 .dat 里没有 ***ERROR、.sta 根本不生成。
+def test_the_build_script_never_submits_the_job_itself():
+    """从 CAE 里 job.submit() 时 standard.exe 不是 CAE 的子进程——Abaqus 驱动
+    另起一个，这台机器需要的 MKL 开关传不过去，于是静默中止。
 
-    不查状态就直接 openOdb，报错会出现在离死因很远的地方；查一下才能
-    一次跑完就知道为什么。
+    所以建模脚本只写 .inp，求解由调用方直接 `abaqus job=` 驱动：那是实测
+    跑通过的配置。这条防止有人图省事把 submit 加回来。
     """
     session = _l_joint()
     spec = sj.prepare_joint_spec(session, node_id=2)
-    text = sj._script_text(spec, [50.0, 35.0, 24.0], "out.json")
-    assert "job.status != COMPLETED" in text
-    assert "waitForCompletion" in text
-    assert text.index("waitForCompletion") < text.index("openOdb(path=")
+    build = sj._script_text(spec, [8.0, 6.4, 5.2], "meta.json", phase="build")
+    assert "job.writeInput" in build
+    assert "job.submit" not in build, "建模阶段不该提交作业"
+    assert "waitForCompletion" not in build
+
+
+def test_the_two_phases_share_one_template():
+    """两个阶段共用同一份模板。拆成两个文件之后 SPEC、坐标约定和那些辅助
+    函数迟早会各改各的，而它们必须完全一致才对得上。"""
+    session = _l_joint()
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    build = sj._script_text(spec, [8.0, 6.4, 5.2], "a.json", phase="build")
+    post = sj._script_text(spec, [8.0, 6.4, 5.2], "b.json", phase="post")
+    for text in (build, post):
+        compile(text, "joint_script.py", "exec")
+        assert "def surface_samples" in text and "def build" in text
+    assert "PHASE = 'build'" in build
+    assert "PHASE = 'post'" in post
+
+
+def test_the_runner_drives_the_solver_directly_and_checks_the_sta():
+    """求解必须由 Python 直接调 `abaqus job=`，而且要亲自确认 .sta 里写着
+    COMPLETED SUCCESSFULLY——作业中止时 Abaqus 的返回码并不总能反映出来。"""
+    import inspect
+
+    source = inspect.getsource(sj.run_joint_analysis)
+    assert 'f"job={job}"' in source, "没有直接驱动求解器"
+    assert '"interactive"' in source
+    assert "COMPLETED SUCCESSFULLY" in source, "没有亲自校验 .sta"
+
 
 
 # ------------------------------------------------- 网格尺寸

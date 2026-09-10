@@ -129,27 +129,21 @@ def test_the_generated_cae_script_sets_it_too_on_amd():
     compile(on_intel, "build_joint.py", "exec")
 
 
-def test_the_solid_joint_run_writes_the_env_file_before_launching():
-    """顺序错了等于没写：必须在起 Abaqus **之前**落盘。"""
-    import ast
+def test_the_env_file_is_written_before_the_first_abaqus_launch():
+    """顺序错了等于没写：必须在起 Abaqus **之前**落盘。
+
+    按源码行号比较，而不是按 AST 里 subprocess.run 出现的位置——求解现在
+    包在一个嵌套函数里，它的定义位置早于调用位置，按定义排序会误判。
+    """
     import inspect
 
     import solid_joint
 
-    import textwrap
-
-    source = textwrap.dedent(
-        inspect.getsource(solid_joint.run_joint_analysis))
-    tree = ast.parse(source)
-    write_line = launch_line = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            name = (func.attr if isinstance(func, ast.Attribute)
-                    else getattr(func, "id", ""))
-            if name == "write_env_file":
-                write_line = node.lineno
-            elif name == "run" and isinstance(func, ast.Attribute):
-                launch_line = node.lineno
-    assert write_line is not None, "根本没写 abaqus_v6.env"
-    assert launch_line is not None and write_line < launch_line
+    lines = inspect.getsource(solid_joint.run_joint_analysis).splitlines()
+    write_at = next((i for i, line in enumerate(lines)
+                     if "write_env_file(run_dir)" in line), None)
+    launch_at = next((i for i, line in enumerate(lines)
+                      if "launch([executable" in line), None)
+    assert write_at is not None, "根本没写 abaqus_v6.env"
+    assert launch_at is not None, "找不到启动 Abaqus 的地方"
+    assert write_at < launch_at, "abaqus_v6.env 写晚了，求解器拿不到"

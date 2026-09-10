@@ -367,12 +367,24 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
 
 
 def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str,
-                 amd: bool | None = None) -> str:
+                 amd: bool | None = None, phase: str = "build") -> str:
     """生成 Abaqus 6.14/Python 2.7 兼容脚本。
 
     ``amd`` 决定要不要在脚本里补 MKL 开关。只在 AMD 上补——Intel 的 AVX-512
     机器上强制 AVX2 只会变慢；而且 solver_environment() 也是这个口径，
     两处不一致比两处都错更难查。
+
+    ``phase`` 取 ``build`` 或 ``post``，同一份模板走两遍：
+
+    * ``build`` 建模型、划网格、写 .inp，**不提交作业**
+    * ``post``  读已经解完的 ODB，取热点统计与表面取样
+
+    中间那步求解由调用方直接 ``abaqus job=`` 驱动。分这三段是被逼出来的：
+    从 CAE 里 job.submit() 时 standard.exe 不是 CAE 的子进程，这台机器需要的
+    MKL 环境变量传不过去；而直接 ``abaqus job=`` 带上它是实测跑通过的配置。
+
+    两个阶段共用同一个模板而不是拆成两个文件——拆开之后 SPEC、坐标约定和
+    那些辅助函数迟早会各改各的，而它们必须完全一致才对得上。
     """
     from abaqus_backend import is_amd_cpu
 
@@ -403,6 +415,7 @@ import regionToolset
 SPEC = json.loads(%s)
 MESH_SIZES = %s
 OUTPUT_JSON = %r
+PHASE = %r
 
 def cross(a, b):
     return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
@@ -603,28 +616,20 @@ def build(index, size):
                     createStepName='Static', region=rp_set, cm1=m[0], cm2=m[1], cm3=m[2])
     job = mdb.Job(name=job_name, model=model_name, numCpus=1, numDomains=1)
     job.writeInput(consistencyChecking=OFF)
-    job.submit(consistencyChecking=OFF)
-    job.waitForCompletion()
-    # A job that dies inside the solver leaves no ***ERROR in the .dat and no
-    # .sta at all. Without this check the script sails on to openOdb and fails
-    # far from the cause, so say what the status was and hand back whatever the
-    # driver actually wrote -- one run should be enough to find out why.
-    if job.status != COMPLETED:
-        detail = ['job status = ' + str(job.status)]
-        for suffix in ('.log', '.msg', '.dat'):
-            path = job_name+suffix
-            if os.path.isfile(path):
-                handle = open(path)
-                text = handle.read()
-                handle.close()
-                detail.append('--- ' + path + ' (tail) ---')
-                detail.append(text[-2500:])
-            else:
-                detail.append('--- ' + path + ' missing ---')
-        raise RuntimeError('\n'.join(detail))
+    # Build only -- the job is deliberately NOT submitted from here.
+    # When CAE submits, standard.exe is not CAE's child: the Abaqus driver
+    # starts it separately, and the MKL environment variable this machine needs
+    # never reaches it. The caller runs `abaqus job=` directly instead, which is
+    # the exact configuration that was measured to work.
+    return {'mesh_size_mm':size, 'job':job_name,
+            'nodes':len(part.nodes), 'elements':len(part.elements)}
+
+def post(index, size, job_name):
+    """Read one solved ODB. Runs after the caller has driven the solver."""
     odb = openOdb(path=job_name+'.odb', readOnly=True)
+    instance = odb.rootAssembly.instances['JOINT-1']
     frame = odb.steps['Static'].frames[-1]
-    region = odb.rootAssembly.instances['JOINT-1'].elementSets['HOTSPOT']
+    region = instance.elementSets['HOTSPOT']
     values = frame.fieldOutputs['S'].getSubset(region=region).values
     if not values:
         odb.close()
@@ -640,7 +645,8 @@ def build(index, size):
         old = max(abs(float(peak_value.maxPrincipal)), abs(float(peak_value.minPrincipal)))
         if current > old:
             peak_value = value
-    out = {'mesh_size_mm':size, 'nodes':len(part.nodes), 'elements':len(part.elements),
+    out = {'mesh_size_mm':size, 'job':job_name,
+           'nodes':len(instance.nodes), 'elements':len(instance.elements),
            'hotspot_values':len(values), 'max_mises_mpa':mises[-1],
            'max_abs_principal_mpa':peak, 'p99_abs_principal_mpa':p99,
            'peak_element':int(peak_value.elementLabel),
@@ -668,12 +674,13 @@ def build(index, size):
 
 results = []
 for i, size in enumerate(MESH_SIZES):
-    results.append(build(i, size))
+    name = 'solid_joint_%%d' %% i
+    results.append(build(i, size) if PHASE == 'build' else post(i, size, name))
 with open(OUTPUT_JSON, 'w') as handle:
     json.dump({'meshes':results}, handle, indent=2, sort_keys=True)
 ''' % (mkl_block,
        repr(json.dumps(data, ensure_ascii=True)),
-       repr([float(v) for v in mesh_sizes_mm]), output_json)
+       repr([float(v) for v in mesh_sizes_mm]), output_json, phase)
 
 
 def run_joint_analysis(session, node_id: int, case: str | None = None,
@@ -709,47 +716,98 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
 
     target = Path(output_dir).resolve() / f"node_{spec.node_id}_{spec.case}"
     target.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="solid_joint_") as temp:
-        run_dir = Path(temp)
-        script = run_dir / "build_joint.py"
-        script.write_text(_script_text(spec, sizes, "solid_joint_results.json"),
-                          encoding="ascii")
-        # 光设子进程环境变量不够：CAE 里 job.submit() 提交时 standard.exe
-        # 不是 CAE 的直接子进程，Abaqus 驱动会另起一个。abaqus_v6.env 是驱动
-        # 每次调用都会执行的文件，写在作业目录里，求解器那一次也就带上了。
-        write_env_file(run_dir)
+
+    def keep_everything(run_dir: Path) -> None:
+        for path in run_dir.iterdir():
+            if path.is_file():
+                try:
+                    shutil.copy2(path, target / path.name)
+                except OSError:
+                    pass
+
+    def launch(argv: list[str], run_dir: Path, what: str) -> str:
+        """跑一步 Abaqus。失败就把现场全部留下来再抛。
+
+        环境变量统一走 solver_environment()（清 PYTHONPATH，AMD 上补
+        MKL_DEBUG_CPU_TYPE=5）；作业目录里另外放一份 abaqus_v6.env，
+        因为求解器那次调用是 Abaqus 驱动另起的进程。
+        """
         try:
-            # 环境变量统一走 abaqus_backend.solver_environment()：清 PYTHONPATH，
-            # 并在 AMD 上补 MKL_DEBUG_CPU_TYPE=5。三个调用点各写一份迟早会漏。
-            clean_env = solver_environment()
-            proc = subprocess.run(
-                [executable, "cae", f"noGUI={script.name}"], cwd=str(run_dir),
-                capture_output=True, text=True, timeout=float(timeout), env=clean_env)
+            proc = subprocess.run(argv, cwd=str(run_dir), capture_output=True,
+                                  text=True, timeout=float(timeout),
+                                  env=solver_environment())
         except subprocess.TimeoutExpired as exc:
-            raise SolidJointError(f"局部实体分析超过 {timeout:.0f} 秒") from exc
+            keep_everything(run_dir)
+            raise SolidJointError(f"{what} 超过 {timeout:.0f} 秒未结束") from exc
         console = (proc.stdout or "") + "\n" + (proc.stderr or "")
         logs = console
         for log_path in run_dir.glob("solid_joint_*.*"):
             if log_path.suffix.lower() in {".msg", ".dat", ".sta", ".log"}:
                 logs += "\n" + log_path.read_text(encoding="utf-8", errors="replace")
         scan = scan_log(logs)
-        result_path = run_dir / "solid_joint_results.json"
-        if proc.returncode != 0 or not scan["ok"] or not result_path.is_file():
-            for path in run_dir.iterdir():
-                if path.is_file():
-                    shutil.copy2(path, target / path.name)
-            # 控制台输出单独落盘、也单独进错误消息。原来把 .msg/.dat 拼在
-            # stdout 后面再取尾巴，**真正的报错反而被日志正文挤掉了**——
-            # 求解器静默中止时死因只在控制台里，那正是最不该丢的一段。
+        if proc.returncode != 0 or not scan["ok"]:
+            keep_everything(run_dir)
+            # 控制台输出单独落盘、也单独进错误消息。把 .msg/.dat 拼在 stdout
+            # 后面再取尾巴，会让真正的报错被日志正文挤掉——求解器静默中止时
+            # 死因只在控制台里，那正是最不该丢的一段。
             (target / "run_console.txt").write_text(
-                f"returncode = {proc.returncode}\n\n"
+                f"# {what}\ncommand = {argv}\nreturncode = {proc.returncode}\n\n"
                 f"--- stdout ---\n{proc.stdout or ''}\n\n"
                 f"--- stderr ---\n{proc.stderr or ''}\n", encoding="utf-8")
             detail = ("；".join(scan["fatal"][:3])
                       or console.strip()[-1500:] or logs[-800:])
             raise SolidJointError(
-                f"Abaqus 局部实体作业失败（返回码 {proc.returncode}）：{detail}"
+                f"{what} 失败（返回码 {proc.returncode}）：{detail}"
                 f"\n完整控制台输出：{target / 'run_console.txt'}")
+        return console
+
+    # 三段。**中间那段是重点**：求解由我们直接 `abaqus job=` 驱动，不经过
+    # CAE 的 job.submit()。实测在这台机器上，CAE 提交时 standard.exe 拿不到
+    # MKL 开关而静默中止；直接调用带上它就能跑通。分段的代价是多两次进程
+    # 启动，换来的是全程走在验证过的调用方式上。
+    with tempfile.TemporaryDirectory(prefix="solid_joint_") as temp:
+        run_dir = Path(temp)
+        write_env_file(run_dir)
+
+        build_script = run_dir / "build_joint.py"
+        build_script.write_text(
+            _script_text(spec, sizes, "mesh_meta.json", phase="build"),
+            encoding="ascii")
+        launch([executable, "cae", f"noGUI={build_script.name}"],
+               run_dir, "第 1 段：建模型并写输入文件")
+        meta_path = run_dir / "mesh_meta.json"
+        if not meta_path.is_file():
+            keep_everything(run_dir)
+            raise SolidJointError("建模阶段没有写出 mesh_meta.json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))["meshes"]
+
+        for index, row in enumerate(meta):
+            job = row["job"]
+            if not (run_dir / f"{job}.inp").is_file():
+                keep_everything(run_dir)
+                raise SolidJointError(f"建模阶段没有写出 {job}.inp")
+            launch([executable, f"job={job}", "interactive"], run_dir,
+                   f"第 2 段：求解 {job}"
+                   f"（{row['elements']} 单元 / {row['nodes']} 节点，"
+                   f"网格 {row['mesh_size_mm']:.3g} mm）")
+            status = run_dir / f"{job}.sta"
+            if not (status.is_file() and "COMPLETED SUCCESSFULLY"
+                    in status.read_text(encoding="utf-8", errors="replace")):
+                keep_everything(run_dir)
+                raise SolidJointError(
+                    f"{job} 没有正常完成——.sta 里没有 COMPLETED SUCCESSFULLY。"
+                    f"现场已保存在 {target}")
+
+        post_script = run_dir / "post_joint.py"
+        post_script.write_text(
+            _script_text(spec, sizes, "solid_joint_results.json", phase="post"),
+            encoding="ascii")
+        launch([executable, "cae", f"noGUI={post_script.name}"],
+               run_dir, "第 3 段：读 ODB 取热点应力")
+        result_path = run_dir / "solid_joint_results.json"
+        if not result_path.is_file():
+            keep_everything(run_dir)
+            raise SolidJointError("后处理阶段没有写出结果文件")
         payload = json.loads(result_path.read_text(encoding="utf-8"))
         for path in run_dir.iterdir():
             if path.is_file() and path.suffix.lower() in {
