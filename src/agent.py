@@ -906,6 +906,43 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "analyze_joint_solid",
+            "description": "对某个节点做局部实体子模型，观察杆件相交处的应力集中。"
+                           "整体仍用梁模型，只把相连杆件截成短臂拼成 C3D10 实体，"
+                           "切割面传入梁模型的六分量截面力。"
+                           "只支持圆钢/圆管、同一种材料、无刚域偏移的节点，"
+                           "其余情况明确拒绝，不做几何猜测。"
+                           "几何不含焊缝倒圆，相贯线是应力奇异点，因此峰值应力只用于"
+                           "观察分布；应力集中系数一律以 IIW 0.4t/1.0t 线性外推的"
+                           "热点应力为分子，外推拿不到就不给系数。"
+                           "dry_run 只建规格、返回杆端力与名义应力，不需要本机装 Abaqus。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "integer",
+                                "description": "要放大观察的节点编号"},
+                    "case": {"type": "string",
+                             "description": "工况或组合名；留空取控制工况"},
+                    "anchor_member": {"type": "integer",
+                                      "description": "作为固定端的杆件；"
+                                                     "留空优先取通向支座的那根"},
+                    "mesh_sizes_mm": {
+                        "type": "array", "items": {"type": "number"},
+                        "minItems": 3,
+                        "description": "网格档位（mm），至少三档；"
+                                       "两档分辨不了收敛与发散",
+                    },
+                    "dry_run": {"type": "boolean",
+                                "description": "只建规格，不调用 Abaqus"},
+                },
+                "required": ["node_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "compare_solvers",
             "description": "同一个模型两个后端各算一遍，逐分量给出归一化偏差。"
                            "用户问“结果可不可信”“和 Abaqus 差多少”时用这个，"
@@ -2991,6 +3028,42 @@ class Session:
         summary["note"] = ("这是 Abaqus 的结果。与 solve_model 的结果比对时请注意单元格式："
                            "B33 与本程序同为 Euler-Bernoulli，误差应到数值精度量级；"
                            "B31 含剪切变形，偏差是格式差异不是错误。")
+        return ToolResult(True, summary)
+
+    def analyze_joint_solid(self, node_id: int, case: str | None = None,
+                            anchor_member: int | None = None,
+                            mesh_sizes_mm: list[float] | None = None,
+                            dry_run: bool = False) -> ToolResult:
+        """节点局部实体子模型：看杆件相交处的应力集中。
+
+        分两段，是有意的。**建规格**（把梁模型的杆端力翻译成实体子模型的
+        边界条件、反演圆管尺寸、算名义应力）是纯计算，本机没有 Abaqus 也能
+        跑；**跑实体**才需要 Abaqus。所以 dry_run 不是调试开关，它是这个
+        工具在没有商软的机器上仍然有用的那一半。
+        """
+        import solid_joint
+
+        try:
+            spec = solid_joint.prepare_joint_spec(
+                self, int(node_id), case, anchor_member)
+        except solid_joint.SolidJointError as exc:
+            return ToolResult(False, {"error": str(exc)})
+        except (KeyError, ValueError) as exc:
+            return ToolResult(False, {"error": f"节点局部实体建模失败：{exc}"})
+
+        if dry_run:
+            payload = spec.to_dict()
+            payload["note"] = ("只建了规格，没有调用 Abaqus。名义正应力即 Kt 的分母，"
+                               "可以先手算核对再决定是否跑实体分析。")
+            return ToolResult(True, payload)
+        try:
+            summary = solid_joint.run_joint_analysis(
+                self, int(node_id), case, anchor_member, mesh_sizes_mm)
+        except solid_joint.SolidJointError as exc:
+            return ToolResult(False, {
+                "error": str(exc),
+                "hint": "可以先用 dry_run=true 看规格；那一段不需要 Abaqus",
+            })
         return ToolResult(True, summary)
 
     def _native_rows(self, case: str) -> dict[int, dict[str, float]]:

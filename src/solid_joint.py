@@ -41,6 +41,10 @@ class JointArm:
     force_n: tuple[float, float, float]
     moment_nmm: tuple[float, float, float]
     nominal_normal_mpa: float
+    # 壁厚。热点应力外推的两个参考点按 0.4t / 1.0t 定义，没有壁厚就没有 t。
+    # 实心圆因此拿不到 IIW 意义上的热点应力——这里如实写 None，而不是拿
+    # 半径之类的量凑一个"看起来像 t"的数。
+    wall_thickness_mm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +91,121 @@ def infer_circular_dimensions(section: dict[str, Any]) -> tuple[float, float]:
     if inner / max(outer, 1e-30) < 1e-4:
         inner = 0.0
     return outer, inner
+
+
+def hot_spot_stress_linear(samples: list[tuple[float, float]],
+                           thickness_mm: float) -> dict[str, Any]:
+    """IIW/DNV 线性热点应力外推。
+
+    为什么需要它：两根管子直接布尔合并、不带焊缝倒圆，相贯线在线弹性里是
+    **真正的应力奇异点**——网格越细峰值越高，不收敛到任何有限值。所以
+    "最大主应力"这个量本身没有意义，它只是网格密度的函数。
+
+    IIW 的解法是不去取奇异点上的值，而是在离焊趾 0.4t 和 1.0t 两处取表面
+    应力，**线性外推回焊趾**。这两点都在奇异影响区之外，外推值因此是网格
+    不敏感的——这正是它被写进规范的原因。
+
+        sigma_hs = sigma(0.4t) + (sigma(0.4t) - sigma(1.0t)) * 0.4t / 0.6t
+                 = 5/3 * sigma(0.4t) - 2/3 * sigma(1.0t)
+
+    ``samples`` 是沿路径的 (距焊趾距离 mm, 应力 MPa)，不要求恰好落在两个
+    参考距离上——中间线性插值。数据必须真的跨过 [0.4t, 1.0t]；只覆盖一半
+    就外推等于拿噪声乘以放大系数，这里直接拒绝而不是返回一个数。
+    """
+    if not thickness_mm or not math.isfinite(float(thickness_mm)) or thickness_mm <= 0.0:
+        raise SolidJointError("热点应力外推需要正的壁厚 t（实心截面没有 t）")
+    thickness = float(thickness_mm)
+    points = sorted((float(d), float(s)) for d, s in samples
+                    if math.isfinite(float(d)) and math.isfinite(float(s)))
+    if len(points) < 2:
+        raise SolidJointError("热点应力外推至少需要两个表面取样点")
+    near, far = 0.4 * thickness, 1.0 * thickness
+    lo, hi = points[0][0], points[-1][0]
+    if lo > near + 1e-9 or hi < far - 1e-9:
+        raise SolidJointError(
+            f"表面取样范围 [{lo:.3f}, {hi:.3f}] mm 没有覆盖外推区 "
+            f"[{near:.3f}, {far:.3f}] mm（t={thickness:.3f}）；"
+            "不能只用半边数据外推")
+
+    def at(distance: float) -> float:
+        for (d0, s0), (d1, s1) in zip(points, points[1:]):
+            if d0 <= distance <= d1:
+                if d1 - d0 < 1e-12:
+                    return s0
+                ratio = (distance - d0) / (d1 - d0)
+                return s0 + ratio * (s1 - s0)
+        return points[-1][1]
+
+    s_near, s_far = at(near), at(far)
+    hot_spot = (5.0 / 3.0) * s_near - (2.0 / 3.0) * s_far
+    return {
+        "hot_spot_mpa": float(hot_spot),
+        "thickness_mm": thickness,
+        "sigma_at_0_4t_mpa": float(s_near),
+        "sigma_at_1_0t_mpa": float(s_far),
+        "method": "IIW linear extrapolation from 0.4t and 1.0t",
+        "sample_count": len(points),
+    }
+
+
+def diagnose_peak_convergence(meshes: list[dict[str, Any]],
+                              key: str = "max_abs_principal_mpa",
+                              tolerance: float = 0.05) -> dict[str, Any]:
+    """判断峰值应力到底在收敛，还是在跟着网格发散。
+
+    这个判据存在的理由：原来的 ``mesh_converged_5pct`` 只比较最后两档网格，
+    两档之间变化小于 5% 就报"已收敛"。但在应力奇异点上，峰值按
+    ``sigma ~ h^(-lambda)`` 增长，**任意相邻两档的变化都可以很小**，只要
+    网格没细到位——于是奇异问题会被判成收敛，然后拿一个纯属虚构的 Kt 去写报告。
+
+    三档以上才能分辨这件事：真收敛时逐次变化会**逐档变小**（大致等比缩小），
+    发散时逐次变化不缩小甚至变大，且峰值单调上升。同时用
+    ``log(sigma) ~ -lambda * log(h)`` 拟合出指数：lambda 明显为正就是奇异特征。
+
+    返回 verdict 之一：``converging`` / ``diverging`` / ``inconclusive``。
+    """
+    rows = [row for row in meshes
+            if row.get("mesh_size_mm") and row.get(key) is not None]
+    rows = sorted(rows, key=lambda row: -float(row["mesh_size_mm"]))  # 粗 -> 细
+    if len(rows) < 3:
+        return {"verdict": "inconclusive", "reason": "少于三档网格，无法分辨收敛与发散",
+                "levels": len(rows)}
+    sizes = [float(row["mesh_size_mm"]) for row in rows]
+    values = [float(row[key]) for row in rows]
+    if any(abs(v) <= 1e-12 for v in values):
+        return {"verdict": "inconclusive", "reason": "存在零应力档，无法比较",
+                "levels": len(rows)}
+
+    changes = [(values[i] - values[i - 1]) / abs(values[i])
+               for i in range(1, len(values))]
+    monotone_up = all(change > 0.0 for change in changes)
+    last, prev = abs(changes[-1]), abs(changes[-2])
+    shrinking = last < 0.6 * prev
+
+    # log-log 斜率：sigma ~ h^slope，奇异时 slope < 0（网格越细应力越大）
+    mean_x = sum(math.log(s) for s in sizes) / len(sizes)
+    mean_y = sum(math.log(abs(v)) for v in values) / len(values)
+    num = sum((math.log(s) - mean_x) * (math.log(abs(v)) - mean_y)
+              for s, v in zip(sizes, values))
+    den = sum((math.log(s) - mean_x) ** 2 for s in sizes)
+    slope = num / den if den > 1e-15 else 0.0
+
+    if monotone_up and not shrinking:
+        verdict, reason = "diverging", (
+            f"峰值随网格加密单调上升且逐次变化不缩小"
+            f"（{prev:.1%} → {last:.1%}），log-log 斜率 {slope:.3f}；"
+            "这是应力奇异点的特征，峰值不存在有限极限")
+    elif last <= tolerance and shrinking:
+        verdict, reason = "converging", (
+            f"逐次变化在缩小（{prev:.1%} → {last:.1%}）且最后一档 "
+            f"≤ {tolerance:.0%}")
+    else:
+        verdict, reason = "inconclusive", (
+            f"逐次变化 {prev:.1%} → {last:.1%}，既不满足收敛判据也不构成"
+            "明确的发散特征；需要更多网格档位")
+    return {"verdict": verdict, "reason": reason, "levels": len(rows),
+            "relative_changes": [float(c) for c in changes],
+            "log_log_slope": float(slope), "tolerance": float(tolerance)}
 
 
 def _physical_end_force(session, member: dict[str, Any], node_id: int,
@@ -179,6 +298,8 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
             force_n=tuple(float(v) for v in force),
             moment_nmm=tuple(float(v) * moment_to_nmm for v in moment),
             nominal_normal_mpa=float(normal_mpa),
+            wall_thickness_mm=(0.5 * (outer - inner) * length_to_mm
+                               if inner > 1e-9 * outer else None),
         ))
 
     if anchor_member is None:
@@ -252,6 +373,76 @@ def orient(instance, direction, assembly):
     axis = cross(z, direction)
     assembly.rotate(instanceList=(instance.name,), axisPoint=(0.0,0.0,0.0),
                     axisDirection=axis, angle=math.degrees(math.acos(dot)))
+
+def surface_samples(odb, frame, size):
+    """Sample outer-surface stress versus distance from the weld toe, per arm.
+
+    The toe is found numerically, not from geometry: a surface node of arm k
+    that also lies inside another arm's cylinder is still within the merged
+    intersection, so the largest axial station among those nodes is the toe.
+    Values are the envelope over the circumference, which is what hot-spot
+    extrapolation needs -- the critical meridian is wherever the peak is.
+    """
+    instance = odb.rootAssembly.instances['JOINT-1']
+    coords = {}
+    for node in instance.nodes:
+        coords[node.label] = node.coordinates
+    field = frame.fieldOutputs['S'].getSubset(position=ELEMENT_NODAL)
+    stress = {}
+    for value in field.values:
+        label = value.nodeLabel
+        if label is None:
+            continue
+        magnitude = max(abs(float(value.maxPrincipal)), abs(float(value.minPrincipal)))
+        if magnitude > stress.get(label, -1.0):
+            stress[label] = magnitude
+
+    arms = SPEC['arms']
+    tol = 0.35*size
+    out = {}
+    for arm in arms:
+        thickness = arm['wall_thickness_mm']
+        if not thickness:
+            continue                      # solid circle has no t; IIW needs one
+        d = tuple(arm['direction'])
+        radius = 0.5*arm['outer_diameter_mm']
+        on_surface = []
+        for label in stress:
+            p = coords[label]
+            s = p[0]*d[0]+p[1]*d[1]+p[2]*d[2]
+            if s <= 0.0 or s > arm['length_mm']:
+                continue
+            rad = (p[0]-s*d[0], p[1]-s*d[1], p[2]-s*d[2])
+            if abs(norm(rad)-radius) > tol:
+                continue
+            on_surface.append((s, p, stress[label]))
+        if not on_surface:
+            continue
+        toe = 0.0
+        for s, p, _value in on_surface:
+            for other in arms:
+                if other['member_id'] == arm['member_id']:
+                    continue
+                od = tuple(other['direction'])
+                t_axis = p[0]*od[0]+p[1]*od[1]+p[2]*od[2]
+                if t_axis < 0.0 or t_axis > other['length_mm']:
+                    continue
+                rad = (p[0]-t_axis*od[0], p[1]-t_axis*od[1], p[2]-t_axis*od[2])
+                if norm(rad) <= 0.5*other['outer_diameter_mm']+tol and s > toe:
+                    toe = s
+        band = 0.25*thickness
+        bins = {}
+        for s, _p, value in on_surface:
+            offset = s-toe
+            if offset < 0.0 or offset > 1.6*thickness:
+                continue
+            index = int(offset/band)
+            if value > bins.get(index, -1.0):
+                bins[index] = value
+        if len(bins) < 2:
+            continue
+        out[str(arm['member_id'])] = [[(k+0.5)*band, bins[k]] for k in sorted(bins)]
+    return out
 
 def build(index, size):
     model_name = 'LocalJoint_%%d' %% index
@@ -370,6 +561,16 @@ def build(index, size):
            'max_abs_principal_mpa':peak, 'p99_abs_principal_mpa':p99,
            'peak_element':int(peak_value.elementLabel),
            'peak_integration_point':int(peak_value.integrationPoint)}
+    # Sampling is geometric bookkeeping on top of a solved job. If it fails the
+    # solve is still valid, so record why and keep the run rather than losing it.
+    try:
+        out['surface_samples'] = surface_samples(odb, frame, size)
+        out['surface_samples_error'] = None
+    except Exception as exc:
+        # `as` (not the py2-only comma form) keeps this script parseable by
+        # python3 too, which is what lets the offline test syntax-check it.
+        out['surface_samples'] = None
+        out['surface_samples_error'] = str(exc)
     if index == len(MESH_SIZES)-1:
         viewport = session.Viewport(name='SolidJointViewport')
         viewport.setValues(displayedObject=odb)
@@ -400,13 +601,15 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member)
     smallest_d = min(arm.outer_diameter_mm for arm in spec.arms)
-    sizes = ([smallest_d / 4.0, smallest_d / 6.0]
+    # 三档，不是两档。两档只能算出"最后一次变化有多大"，而奇异点上相邻两档
+    # 的变化本来就可以很小——三档才能看出这个变化是在缩小还是不缩小。
+    sizes = ([smallest_d / 4.0, smallest_d / 6.0, smallest_d / 9.0]
              if mesh_sizes_mm is None else [float(value) for value in mesh_sizes_mm])
-    if len(sizes) < 2 or any(not math.isfinite(value) or value <= 0.0 for value in sizes):
-        raise SolidJointError("mesh_sizes_mm 至少需要两个正数，用于网格收敛检查")
+    if len(sizes) < 3 or any(not math.isfinite(value) or value <= 0.0 for value in sizes):
+        raise SolidJointError("mesh_sizes_mm 至少需要三个正数：两档分辨不了收敛与发散")
     sizes = sorted(set(sizes), reverse=True)
-    if len(sizes) < 2:
-        raise SolidJointError("两档网格尺寸不能相同")
+    if len(sizes) < 3:
+        raise SolidJointError("三档网格尺寸不能有重复")
     executable = find_abaqus()
     if executable is None:
         raise SolidJointError("找不到 Abaqus 6.14 命令，无法运行局部实体分析")
@@ -446,27 +649,67 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
                 shutil.copy2(path, target / path.name)
 
     meshes = payload["meshes"]
-    coarse, fine = meshes[-2], meshes[-1]
-    reference = max(abs(float(fine["p99_abs_principal_mpa"])), 1e-12)
-    convergence = abs(float(fine["p99_abs_principal_mpa"])
-                      - float(coarse["p99_abs_principal_mpa"])) / reference
+    fine = meshes[-1]
     nominal = spec.nominal_normal_mpa
-    fine["stress_concentration_factor"] = (
-        float(fine["p99_abs_principal_mpa"]) / nominal if nominal > 1e-12 else None)
+    diagnosis = diagnose_peak_convergence(meshes)
+
+    # 热点应力外推。取样在 Abaqus 侧完成，可能失败（几何退化、表面点太少），
+    # 失败时脚本会写 surface_samples=null——那不该让整个作业作废，这里逐臂
+    # 兜住，把原因记下来继续。
+    hot_spots: dict[str, Any] = {}
+    for arm in spec.arms:
+        if arm.member_id == spec.anchor_member:
+            continue
+        samples = (fine.get("surface_samples") or {}).get(str(arm.member_id))
+        if not samples:
+            hot_spots[str(arm.member_id)] = {"error": "该臂没有取到表面应力样本"}
+            continue
+        try:
+            hot_spots[str(arm.member_id)] = hot_spot_stress_linear(
+                [(row[0], row[1]) for row in samples], arm.wall_thickness_mm)
+        except SolidJointError as exc:
+            hot_spots[str(arm.member_id)] = {"error": str(exc)}
+
+    # Kt 只在**站得住**的时候给。几何里没有焊缝倒圆，相贯线是应力奇异点；
+    # 拿峰值或 P99 去除名义应力得到的"应力集中系数"是网格的函数，不是结构的
+    # 性质。所以：有热点外推值就用它算 Kt；没有就明确拒绝并说明理由，
+    # 绝不退回去用峰值凑一个数。
+    usable = {mid: item.get("hot_spot_mpa") for mid, item in hot_spots.items()
+              if item.get("hot_spot_mpa") is not None}
+    if usable and nominal > 1e-12:
+        governing = max(usable, key=lambda mid: abs(usable[mid]))
+        kt: float | None = abs(usable[governing]) / nominal
+        kt_basis = (f"IIW 0.4t/1.0t 线性外推热点应力（控制臂 {governing}）/ 名义正应力")
+        kt_refused = None
+    else:
+        governing, kt, kt_basis = None, None, None
+        kt_refused = (
+            "未给出应力集中系数：" + (
+                "名义正应力接近零" if nominal <= 1e-12 else
+                "没有拿到可用的热点外推值") +
+            "。几何未建焊缝倒圆，相贯线在线弹性下是应力奇异点，"
+            "峰值/P99 随网格加密无上界，不能作为 Kt 的分子。")
+
     summary = {
-        "schema": "solid-joint-analysis/v1",
+        "schema": "solid-joint-analysis/v2",
         "backend": "abaqus-6.14",
-        "node": spec.node_id,
+        "node_id": spec.node_id,
         "case": spec.case,
         "anchor_member": spec.anchor_member,
         "nominal_normal_mpa": nominal,
-        "mesh_convergence_relative": convergence,
-        "mesh_converged_5pct": convergence <= 0.05,
+        "peak_convergence": diagnosis,
+        "hot_spot_extrapolation": hot_spots,
+        "governing_arm": governing,
+        "stress_concentration_factor": kt,
+        "stress_concentration_basis": kt_basis,
+        "stress_concentration_refused": kt_refused,
         "finest": fine,
         "meshes": meshes,
         "warnings": list(spec.warnings),
         "scope": ("圆钢/圆管节点的线弹性 C3D10 局部实体子模型；切割面采用整体梁模型"
-                  "六分量截面力，Kt 使用节点邻域 P99 最大绝对主应力/名义正应力。"),
+                  "六分量截面力。几何**不含焊缝与倒圆**，相贯线是应力奇异点，"
+                  "因此峰值与 P99 仅供观察应力分布，Kt 一律以 IIW 0.4t/1.0t "
+                  "线性外推的热点应力为分子。"),
         "files": {
             "directory": str(target),
             "contour_png": str(target / "solid_joint_mises.png"),
