@@ -359,3 +359,48 @@ def test_dry_run_payload_satisfies_the_declared_tool_contract():
     payload = _l_joint().analyze_joint_solid(node_id=2, dry_run=True).payload
     missing = [key for key in required if key not in payload]
     assert not missing, f"缺少契约要求的键 {missing}；实际给的是 {sorted(payload)}"
+
+
+def test_the_script_imports_every_module_its_api_calls_depend_on():
+    """Abaqus 的成员是随模块导入才注册的，漏一个就是一次 AttributeError。
+
+    第一次真跑就死在这上面：只 import 了 mesh 和 regionToolset，于是
+    `mdb.Model()` 造出来的模型根本没有 fieldOutputRequests。而且后面还连着
+    埋了 Coupling / EncastreBC / Job 好几个同类地雷——一次修一个要来回跑很多趟。
+
+    这条测试把"用了哪个 API 就必须导哪个模块"钉死，靠的是文本检查，
+    不需要装 Abaqus。
+    """
+    session = _l_joint()
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    text = sj._script_text(spec, [50.0, 35.0, 24.0], "out.json")
+
+    needs = {
+        "FieldOutputRequest": "step",
+        "StaticStep": "step",
+        "Coupling": "interaction",
+        "EncastreBC": "load",
+        "ConcentratedForce": "load",
+        "Moment": "load",
+        "mdb.Job": "job",
+        "ConstrainedSketch": "sketch",
+        "ElemType": "mesh",
+        "HomogeneousSolidSection": "section",
+        "regionToolset.Region": "regionToolset",
+    }
+    imported = {line.strip() for line in text.splitlines()
+                if line.startswith("import ") or line.startswith("from ")}
+    blob = " ".join(imported)
+    for api, module in sorted(needs.items()):
+        if api in text:
+            assert module in blob, f"脚本用了 {api}，却没 import {module}"
+
+
+def test_the_script_does_not_edit_a_default_output_request_that_may_not_exist():
+    """mdb.Model() 造出来的模型没有任何默认输出请求，
+    去 setValues 一个 'F-Output-1' 就是在够一个不存在的东西。"""
+    session = _l_joint()
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    text = sj._script_text(spec, [50.0, 35.0, 24.0], "out.json")
+    assert "fieldOutputRequests['F-Output-1']" not in text
+    assert "FieldOutputRequest(name=" in text

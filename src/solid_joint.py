@@ -338,7 +338,15 @@ def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str) 
 from abaqus import mdb, session
 from abaqusConstants import *
 from odbAccess import openOdb
-import json, math, mesh, os, regionToolset
+import json, math, os
+# Abaqus registers most Model/Part members only when the matching module is
+# imported -- `mdb.Model(...)` alone has no `fieldOutputRequests`, no Coupling,
+# no EncastreBC and no Job. Importing only `mesh` and `regionToolset` is what
+# made this script die at the first output request. Import the full standard
+# set once, up front, instead of chasing one AttributeError per run.
+import part, material, section, assembly, step, interaction
+import load, mesh, job, sketch, visualization, connectorBehavior
+import regionToolset
 
 SPEC = json.loads(%s)
 MESH_SIZES = %s
@@ -505,7 +513,11 @@ def build(index, size):
 
     model.StaticStep(name='Static', previous='Initial', nlgeom=OFF,
                      initialInc=1.0, maxInc=1.0, maxNumInc=1)
-    model.fieldOutputRequests['F-Output-1'].setValues(variables=('S','U','RF'))
+    # Create the request instead of editing 'F-Output-1'. A model made with
+    # mdb.Model() has no default output request at all, so the old setValues
+    # was reaching for something that need not exist.
+    model.FieldOutputRequest(name='F-Joint', createStepName='Static',
+                             variables=('S','U','RF'))
     for arm in SPEC['arms']:
         d = tuple(arm['direction'])
         end = tuple(d[k]*arm['length_mm'] for k in range(3))
@@ -514,8 +526,11 @@ def build(index, size):
         if radius <= 1.0e-8:
             radius = 0.25*arm['outer_diameter_mm']
         probe = tuple(end[k]+radius*rv[k] for k in range(3))
-        face = instance.faces.findAt((probe,))
-        surface = assembly.Surface(name='CUT_%%d' %% arm['member_id'], side1Faces=(face,))
+        # findAt with a tuple *of points* returns a sequence of faces, which is
+        # what Surface wants. Wrapping it again in (face,) hands Surface a
+        # sequence-of-sequences and it refuses.
+        faces = instance.faces.findAt((probe,))
+        surface = assembly.Surface(name='CUT_%%d' %% arm['member_id'], side1Faces=faces)
         rp_feature = assembly.ReferencePoint(point=end)
         rp = assembly.referencePoints[rp_feature.id]
         rp_set = assembly.Set(name='RP_%%d' %% arm['member_id'], referencePoints=(rp,))
