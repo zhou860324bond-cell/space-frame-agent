@@ -369,6 +369,11 @@ def build(window) -> Ribbon:
     g = p.group("查询")
     g.add_small(a["curve"]); g.add_small(a["deflection"])
     g.add_small(a["envelope"]); g.add_small(a["report"])
+    # 校核单独成一组：它回答的是"够不够"，与"是多少"不是一回事，
+    # 混在查询里会让人以为它只是又一种查询方式。
+    g = p.group("校核")
+    g.add_large(a["strength"])
+    g.add_small(a["symmetry"]); g.add_small(a["bandwidth"])
 
     # ========== 视图 ==========
     # 注意：标准视角（前/侧/顶/等轴测/适应）和编号标注在下方常驻快捷栏

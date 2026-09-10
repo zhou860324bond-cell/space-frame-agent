@@ -23,6 +23,12 @@ ACTION = Qt.ItemDataRole.UserRole + 1
 PAYLOAD = Qt.ItemDataRole.UserRole + 2
 
 
+def _branch_key(text: str) -> str:
+    """顶层分支的身份。标题里带着计数（"材料（2）"），数量一变就成了另一个
+    名字，展开状态会莫名其妙地丢——所以按括号前的部分认。"""
+    return text.split("（")[0].strip()
+
+
 class ModelTree(QTreeWidget):
     """模型 + 结果的树。"""
 
@@ -66,8 +72,11 @@ class ModelTree(QTreeWidget):
 
     @staticmethod
     def _child(parent, text: str, action: str | None = None,
-               payload: Any = None) -> QTreeWidgetItem:
+               payload: Any = None, tip: str | None = None) -> QTreeWidgetItem:
         node = QTreeWidgetItem(parent, [text])
+        # 面板窄的时候文字会被省略号吃掉——"COLUMN　A=0.012　Iz…"看不出任何东西。
+        # 所以每一项都挂上完整文本作为悬停提示：**显示可以省略，数据不可以**。
+        node.setToolTip(0, tip or text)
         if action:
             node.setData(0, ACTION, action)
             node.setData(0, PAYLOAD, payload)
@@ -78,10 +87,15 @@ class ModelTree(QTreeWidget):
 
         重建会丢掉展开状态，所以先记下来再恢复——不然每求解一次
         树就全折起来，用起来很别扭。
+
+        记的是**收起过哪些**，不是展开过哪些。这两者对"新出现的分支"处理
+        完全不同：求解之后才出现的"结果"分支，按前一种做法会因为"上次不在
+        展开集合里"而默认收起——而它恰恰是用户此刻最想看的东西。
+        新分支一律展开，只有用户亲手收起过的才保持收起。
         """
-        expanded = {self.topLevelItem(k).text(0)
-                    for k in range(self.topLevelItemCount())
-                    if self.topLevelItem(k).isExpanded()}
+        collapsed = {_branch_key(self.topLevelItem(k).text(0))
+                     for k in range(self.topLevelItemCount())
+                     if not self.topLevelItem(k).isExpanded()}
         self.clear()
         model = session.model
 
@@ -89,13 +103,25 @@ class ModelTree(QTreeWidget):
                            "materials")
         for m in model.get("materials") or []:
             rho = m.get("density")
+            extra = "　".join(
+                f"{label}={m[key]:.6g}" for key, label in
+                (("yield_stress", "屈服应力"), ("allow_tension", "许用拉应力"),
+                 ("allow_compression", "许用压应力"), ("alpha", "线膨胀系数"))
+                if m.get(key))
             self._child(mats, f"{m['name']}　E={m['E']:.4g}　ν={m['nu']}"
-                              + (f"　ρ={rho:g}" if rho else "　（无密度）"))
+                              + (f"　ρ={rho:g}" if rho else "　（无密度）"),
+                        tip=f"{m['name']}　E={m['E']:.6g}　ν={m['nu']}"
+                            + (f"　ρ={rho:g}" if rho else "　未给密度，无法计入自重")
+                            + (f"　{extra}" if extra else ""))
 
         secs = self._child(self, f"截面（{len(model.get('sections') or [])}）",
                            "sections")
         for s in model.get("sections") or []:
-            self._child(secs, f"{s['name']}　A={s['A']:.4g}　Iz={s['Iz']:.4g}")
+            detail = "　".join(
+                f"{k}={s[k]:.6g}" for k in ("A", "Iy", "Iz", "J", "cy", "cz")
+                if s.get(k) is not None)
+            self._child(secs, f"{s['name']}　A={s['A']:.4g}　Iz={s['Iz']:.4g}",
+                        tip=f"{s['name']}　{detail}")
 
         geo = self._child(self, "几何", "geometry")
         self._child(geo, f"节点　{len(model.get('nodes') or [])}", "nodes")
@@ -180,5 +206,4 @@ class ModelTree(QTreeWidget):
             font.setBold(True)
             item.setFont(0, font)
             item.setForeground(0, QColor(theme.INK))
-            item.setExpanded(item.text(0).split("（")[0] in
-                             {t.split("（")[0] for t in expanded} or not expanded)
+            item.setExpanded(_branch_key(item.text(0)) not in collapsed)

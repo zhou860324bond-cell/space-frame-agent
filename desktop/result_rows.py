@@ -68,25 +68,41 @@ _TRANSLATE = {
     "num_modes": "阶数",
     "传 member": "指定杆件",
     "传进来": "填进来",
+    # 校核类结果里的字段名。这几个是被截图抓出来的：强度验算的警告原文里
+    # 写着"请在杆件上显式给 mu_y / mu_z"，直接印到界面上就是把内部接口
+    # 漏给了用户——和当初"算前守门"漏出去是同一类错误。
+    "mu_y / mu_z": "「计算长度系数 μy / μz」",
+    "mu_y": "「计算长度系数 μy」",
+    "mu_z": "「计算长度系数 μz」",
+    "buckling_analysis": "特征值屈曲分析",
+    "check_strength": "强度验算",
+    "allow_tension": "「许用拉应力」",
+    "allow_compression": "「许用压应力」",
+    "yield_stress": "「屈服应力」",
+    "define_materials_and_sections": "材料与截面定义",
+    "solve_model": "求解",
 }
 
 # 译完还剩下的标识符：说明有没覆盖到的字段名，那一句宁可不显示
 _LEFTOVER = re.compile(r"[a-z][a-z0-9]*(_[a-z0-9]+)+")
 
 
-def _note(payload: dict, limit: int = 150) -> str:
-    """内核给的说明，**清洗后**带到界面上。
+def clean(text: Any, limit: int = 150) -> str:
+    """把内核写给大模型的说明**清洗**成能印在界面上的句子。
 
-    它写的通常正是这个结果最容易被误读的地方（挠跨比的分母是杆长不是
-    设计跨度、λ 只是上限不能当承载力）。丢掉的话，用户就只剩一个
-    没有上下文的数字。
+    内核的说明里常常带着字段名和调用方式——那是写给模型看的。原样印出来
+    就是把内部接口漏给了用户。所以先把认识的字段名译成中文；译完还剩下
+    标识符的那一句，说明有没覆盖到的字段，宁可从那里断开也不显示。
+
+    断开而不是跳过：跳过会让后面的句子失去指代对象（"它为 0 并不等于……"
+    的"它"没了）。这一条是踩过的坑。
     """
-    text = str(payload.get("note") or "").replace("**", "")
+    text = str(text or "").replace("**", "")
     if not text:
         return ""
     for src, dst in _TRANSLATE.items():
         text = text.replace(src, dst)
-    kept = []
+    kept: list[str] = []
     for sentence in re.split(r"(?<=[。；])", text):
         s = sentence.strip()
         if not s:
@@ -96,7 +112,17 @@ def _note(payload: dict, limit: int = 150) -> str:
         kept.append(s)
         if sum(len(x) for x in kept) >= limit:
             break
-    body = "".join(kept)
+    return "".join(kept)
+
+
+def _note(payload: dict, limit: int = 150) -> str:
+    """内核给的 note，清洗后带到界面上。
+
+    它写的通常正是这个结果最容易被误读的地方（挠跨比的分母是杆长不是
+    设计跨度、λ 只是上限不能当承载力）。丢掉的话，用户就只剩一个
+    没有上下文的数字。
+    """
+    body = clean(payload.get("note"), limit)
     return f"\n{body}" if body else ""
 
 
@@ -225,6 +251,107 @@ def solid_joint(payload: dict) -> Rows:
     return title, cols, rows, [("node", int(payload["node_id"]))] * len(rows)
 
 
+def strength(payload: dict) -> Rows:
+    """强度验算：一杆一行。
+
+    **「判不了」必须与「不合格」分开显示。** 粗短杆的欧拉临界力没有物理意义，
+    把它标成"不合格"会让人以为结构有问题，标成"合格"则是拿一个虚高的临界力
+    盖章。所以「结论」这一列原样用内核给的三态，标题里也分开点名。
+    """
+    cols = ["杆件", "截面", "应力比 σ/[σ]", "控制", "轴力 (kN)",
+            "Pcr (kN)", "N/Pcr", "长细比 λ", "μ", "μ 来源", "结论"]
+    rows, loc = [], []
+    for r in payload.get("members") or []:
+        rows.append([r.get("member"), r.get("section"),
+                     _r(r.get("stress_ratio"), 4), r.get("governs"),
+                     _r(r.get("axial_kN")), _r(r.get("P_cr_kN")),
+                     _r(r.get("buckling_ratio"), 4),
+                     _r(r.get("slenderness"), 1), _r(r.get("mu"), 3),
+                     r.get("mu_source", ""), r.get("verdict")])
+        mid = r.get("member")
+        loc.append(("member", int(mid)) if isinstance(mid, int) else None)
+
+    worst = payload.get("worst_strength") or {}
+    bits = [f"共 {payload.get('count', len(rows))} 根杆件",
+            f"工况 {'、'.join(payload.get('cases') or [])}"]
+    if worst:
+        bits.append(f"最大应力比 {_r(worst.get('ratio'), 4)}"
+                    f"（杆件 {worst.get('member')}，{worst.get('governs', '')}）")
+    failed = payload.get("failed_members") or []
+    unclear = payload.get("inconclusive_members") or []
+    bits.append("全部通过" if not failed else
+                "超限：" + "、".join(str(v) for v in failed))
+    if unclear:
+        bits.append("欧拉公式不适用（既非通过也非超限）："
+                    + "、".join(str(v) for v in unclear))
+    title = "　".join(bits)
+    for w in payload.get("warnings") or []:
+        cleaned = clean(w, limit=200)
+        if cleaned:
+            title += "\n" + cleaned
+    limitation = clean(payload.get("limitation"), limit=200)
+    if limitation:
+        title += "\n" + limitation
+    return title, cols, rows, loc
+
+
+def symmetry(payload: dict) -> Rows:
+    """对称性：每个对称面一行，附各工况的对称/反对称判定。"""
+    cols = ["对称面", "结构", "各工况", "可用于校核的工况"]
+    rows = []
+    for p in payload.get("planes") or []:
+        cases = "　".join(f"{k}：{v}" for k, v in (p.get("cases") or {}).items())
+        rows.append([p.get("plane"), "对称", cases,
+                     "、".join(p.get("usable_cases") or []) or "（无）"])
+    check = payload.get("response_check") or {}
+    for c in check.get("checks") or []:
+        rows.append([c.get("plane"), f"位移镜像校核（{check.get('case', '')}）",
+                     f"{c.get('kind', '')}　最大相对偏差 "
+                     f"{c.get('max_relative_difference')}",
+                     "通过" if c.get("ok") else "未通过"])
+    title = clean(payload.get("advice"), limit=200)
+    if check.get("checks"):
+        title += ("\n对称结构 + 对称荷载，对称位置的位移必须互为镜像。"
+                  "这条校核不需要任何外部参照。")
+    elif check.get("note"):
+        title += "\n" + clean(check["note"], limit=200)
+    return title, cols, rows, [None] * len(rows)
+
+
+def numbering(payload: dict) -> Rows:
+    """编号与总刚存储：四种方案各一行，按存储量排。"""
+    e = payload.get("storage_entries") or {}
+    full = e.get("full") or 0
+
+    def share(v) -> Any:
+        return _r(100.0 * v / full, 1) if full else None
+
+    cols = ["存储方案", "存储量（个数）", "相对满阵 (%)"]
+    rows = [["满阵 n²", e.get("full"), share(e.get("full", 0))],
+            ["等带宽 n·b（讲义 §3-10）", e.get("banded"),
+             share(e.get("banded", 0))],
+            ["一维变带宽（讲义 §4-6，当前编号）", e.get("skyline_current"),
+             share(e.get("skyline_current", 0))],
+            ["一维变带宽（RCM 重编号后）", e.get("skyline_after_rcm"),
+             share(e.get("skyline_after_rcm", 0))],
+            ["稀疏，只存非零元（本程序默认）", e.get("sparse_nonzeros"),
+             share(e.get("sparse_nonzeros", 0))]]
+    bw = payload.get("half_bandwidth") or {}
+    title = (f"自由度 {payload.get('dofs')} 个　"
+             f"最大节点号差 {payload.get('node_number_span')}　"
+             f"半带宽 {bw.get('current')} → RCM 重编号后 {bw.get('after_rcm')}")
+    v = payload.get("verification") or {}
+    if v:
+        title += (f"\n用讲义的一维变带宽 LDLᵀ 再解一遍，与默认稀疏解的最大相对"
+                  f"偏差 {v.get('max_relative_difference')}"
+                  f"（{'一致' if v.get('agrees') else '不一致，需要排查'}）。")
+    lecture = clean(payload.get("lecture"), limit=220)
+    if lecture:
+        title += "\n" + lecture
+    title += "\n" + clean(payload.get("note"), limit=120)
+    return title, cols, rows, [None] * len(rows)
+
+
 def generic(payload: dict) -> Rows:
     """认不出结构时的兜底：键值两列。
 
@@ -243,7 +370,44 @@ def generic(payload: dict) -> Rows:
 
 
 HANDLERS = {"envelope": envelope, "buckling": buckling, "modal": modal,
-            "deflection": deflection, "solid_joint": solid_joint}
+            "deflection": deflection, "solid_joint": solid_joint,
+            "strength": strength, "symmetry": symmetry, "numbering": numbering}
+
+
+# 行的严重度。表越长，"逐格读结论列"越不现实——超限的行要自己跳出来。
+FAIL = "fail"          # 真的不合格
+UNCLEAR = "unclear"    # 判不了（欧拉公式不适用那一档），既非通过也非不通过
+PASS = "pass"
+
+
+def _strength_marks(payload: dict) -> list[str | None]:
+    failed = {int(v) for v in payload.get("failed_members") or []}
+    unclear = {int(v) for v in payload.get("inconclusive_members") or []}
+    out: list[str | None] = []
+    for r in payload.get("members") or []:
+        mid = r.get("member")
+        out.append(FAIL if mid in failed else
+                   UNCLEAR if mid in unclear else PASS)
+    return out
+
+
+def _symmetry_marks(payload: dict) -> list[str | None]:
+    out: list[str | None] = [None for _ in (payload.get("planes") or [])]
+    for c in (payload.get("response_check") or {}).get("checks") or []:
+        out.append(PASS if c.get("ok") else FAIL)
+    return out
+
+
+_MARKERS = {"strength": _strength_marks, "symmetry": _symmetry_marks}
+
+
+def row_marks(kind: str, payload: dict) -> list[str | None]:
+    """每行的严重度，供界面着色。认不出的种类一律不标——
+    **宁可全表素色，也不要把好行标成红的**。"""
+    try:
+        return _MARKERS[kind](payload or {})
+    except Exception:                           # noqa: BLE001
+        return []
 
 
 def to_rows(kind: str, payload: dict) -> Rows:

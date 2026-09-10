@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QHeaderView, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QPushButton, QTableWidget,
@@ -171,10 +173,20 @@ class ResultPanel(QWidget):
         if target:
             self.locate.emit(target[0], int(target[1]))
 
+    # 严重度 → 底色。红只留给**真的不合格**；"判不了"用琥珀色，
+    # 因为把它染成红的会让人以为结构有问题——那正是这一档要避免的误读。
+    _MARK_TINT = {"fail": "#f7dede", "unclear": "#fbf0da"}
+
     def show_rows(self, title: str, columns: list[str],
                   rows: list[list[Any]],
-                  locators: list[tuple[str, int] | None] | None = None) -> None:
-        """填表。`locators[i]` 说明第 i 行对应视口里的哪个对象，可为 None。"""
+                  locators: list[tuple[str, int] | None] | None = None,
+                  marks: list[str | None] | None = None) -> None:
+        """填表。
+
+        `locators[i]` 说明第 i 行对应视口里的哪个对象，可为 None。
+        `marks[i]` 是该行的严重度（fail / unclear / pass），用来着色——
+        校核表动辄十几行，逐格去读"结论"那一列不现实，超限的行要自己跳出来。
+        """
         self.table.setSortingEnabled(False)     # 填的过程中排序会打乱行序
         self.table.clear()
         self.table.setColumnCount(len(columns))
@@ -193,11 +205,29 @@ class ResultPanel(QWidget):
                     cell.setText("" if value is None else str(value))
                 if c == 0 and locators and r < len(locators) and locators[r]:
                     cell.setData(LOCATE, locators[r])
+                tint = (self._MARK_TINT.get(marks[r])
+                        if marks and r < len(marks) else None)
+                if tint:
+                    cell.setBackground(QColor(tint))
                 self.table.setItem(r, c, cell)
         self.table.setSortingEnabled(True)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.caption.setText(title)
+        self._set_caption(title)
+
+    def _set_caption(self, title: str) -> None:
+        """标题第一行是结论，其余是限制与警告。
+
+        全用同一种字号铺成一堵墙时，最要紧的那一行反而看不见了。所以第一行
+        加粗，后面的话降一号、用弱色——**但一句都不删**：那些话正是这个结果
+        最容易被误读的地方。
+        """
+        head, *rest = [line for line in str(title).split("\n") if line.strip()]
+        body = (f'<div style="font-weight:600">{escape(head)}</div>'
+                + "".join(
+                    f'<div style="color:{theme.INK_MUTED};font-size:11px">'
+                    f'{escape(line)}</div>' for line in rest))
+        self.caption.setText(body)
 
     def show_message(self, title: str, text: str) -> None:
         """没有表可给的时候（比如报错），也要在同一个地方说话，
@@ -205,4 +235,4 @@ class ResultPanel(QWidget):
         self.table.clear()
         self.table.setRowCount(0)
         self.table.setColumnCount(0)
-        self.caption.setText(f"{title}\n{text}")
+        self._set_caption(f"{title}\n{text}")

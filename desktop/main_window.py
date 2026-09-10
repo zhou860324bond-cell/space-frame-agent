@@ -265,10 +265,13 @@ class MainWindow(QMainWindow):
         """Offer the three real starting paths inside an otherwise empty viewport."""
         panel = QFrame(self.viewport)
         panel.setObjectName("emptyState")
-        panel.setFixedSize(500, 210)
+        # 原来是写死 500×210 再 addStretch，于是标题和按钮之间空出一大片。
+        # 空白本身不是问题，**没有内容的空白**才是：它让这张卡片看着像没画完。
+        # 改成按内容定高，把省下来的位置用来说清楚下一步会发生什么。
+        panel.setFixedWidth(520)
         box = QVBoxLayout(panel)
-        box.setContentsMargins(28, 24, 28, 24)
-        box.setSpacing(9)
+        box.setContentsMargins(28, 22, 28, 22)
+        box.setSpacing(8)
         title = QLabel("创建第一个结构模型", panel)
         title.setProperty("emptyState", "title")
         subtitle = QLabel(
@@ -276,9 +279,17 @@ class MainWindow(QMainWindow):
             panel)
         subtitle.setProperty("emptyState", "subtitle")
         subtitle.setWordWrap(True)
+        steps = QLabel(
+            "建好几何之后，按顶部「分析流程」往右走：定义材料截面与荷载 → "
+            "校验 → 求解 → 看变形、内力与校核结论。",
+            panel)
+        steps.setProperty("emptyState", "subtitle")
+        steps.setWordWrap(True)
         box.addWidget(title)
         box.addWidget(subtitle)
-        box.addStretch(1)
+        box.addSpacing(2)
+        box.addWidget(steps)
+        box.addSpacing(6)
         actions = QHBoxLayout()
         for text, action_name, primary in (
                 ("AI 识别图纸", "sketch_ai", True),
@@ -291,6 +302,7 @@ class MainWindow(QMainWindow):
             button.clicked.connect(self.actions_by_name[action_name].trigger)
             actions.addWidget(button)
         box.addLayout(actions)
+        panel.adjustSize()
         self.empty_state = panel
         self._position_empty_state()
 
@@ -414,7 +426,7 @@ class MainWindow(QMainWindow):
             "属性": "属性：选择杆件，创建或指派材料与截面。",
             "载荷": "载荷：选择节点创建边界条件，或选择杆件/节点施加载荷。",
             "分析": "分析：先执行模型检查，再求解或进行模态、屈曲分析。",
-            "结果": "结果：求解后查看变形、梁内力云图、沿杆内力图和最大挠度。",
+            "结果": "结果：查看变形与内力，并做强度验算、对称性与存储方案校核。",
             "视图": "视图：切换标准视角、选择视口背景、开关网格地面与编号标注。",
         }
         self.set_prompt(hints.get(page, "就绪 | 选择上方功能区模块开始建模"))
@@ -2573,6 +2585,21 @@ class MainWindow(QMainWindow):
             "solid_joint", title,
             lambda: self.session.analyze_joint_solid(node_id=node_id, case=case))
 
+    # --- 校核 ---
+
+    def run_strength_check(self) -> None:
+        """逐杆强度与稳定校核。缺许用应力时不算，并直接告诉用户去哪儿补。"""
+        self._analyse("strength", "强度验算",
+                      lambda: self.session.check_strength())
+
+    def run_symmetry_check(self) -> None:
+        self._analyse("symmetry", "对称性",
+                      lambda: self.session.check_symmetry(case=self.case))
+
+    def run_numbering_check(self) -> None:
+        self._analyse("numbering", "编号与存储",
+                      lambda: self.session.check_numbering())
+
     def write_report(self) -> None:
         self._analyse("generic", "计算书",
                       lambda: self.session.write_report(
@@ -2607,7 +2634,9 @@ class MainWindow(QMainWindow):
             else:
                 caption, cols, rows, loc = result_rows.to_rows(
                     kind, result.payload)
-                self.results.show_rows(f"{title}　{caption}", cols, rows, loc)
+                self.results.show_rows(f"{title}　{caption}", cols, rows, loc,
+                                       result_rows.row_marks(kind,
+                                                             result.payload))
             self.refresh()
 
         def failed(kind_: str, message: str) -> None:

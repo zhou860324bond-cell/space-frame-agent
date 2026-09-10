@@ -157,6 +157,57 @@ def test_the_results_branch_appears_only_after_solving(qt_app):
     assert any("结果" == t for t in after)
 
 
+def test_a_branch_that_appears_after_solving_starts_expanded(qt_app):
+    """求解之后才出现的"结果"分支，必须是展开的。
+
+    原来的做法是记住"上次展开了哪些"，于是新分支因为"上次不在展开集合里"
+    而默认收起——**而它恰恰是用户此刻最想看的东西**。现在记的是"收起过哪些"。
+    """
+    w = solved(MainWindow(built()))
+    node = next(w.tree.topLevelItem(k)
+                for k in range(w.tree.topLevelItemCount())
+                if w.tree.topLevelItem(k).text(0) == "结果")
+    assert node.childCount(), "结果分支下该列出工况"
+    assert node.isExpanded(), "新出现的分支不该默认收起"
+
+
+def test_a_branch_the_user_collapsed_stays_collapsed(qt_app):
+    """反过来也要成立：用户亲手收起的，刷新之后别自作主张展开。"""
+    w = MainWindow(built())
+    node = next(w.tree.topLevelItem(k)
+                for k in range(w.tree.topLevelItemCount())
+                if w.tree.topLevelItem(k).text(0).startswith("材料"))
+    node.setExpanded(False)
+    w.refresh()
+    again = next(w.tree.topLevelItem(k)
+                 for k in range(w.tree.topLevelItemCount())
+                 if w.tree.topLevelItem(k).text(0).startswith("材料"))
+    assert not again.isExpanded()
+
+
+def test_tree_items_keep_the_full_text_in_a_tooltip(qt_app):
+    """面板窄的时候文字会被省略号吃掉。**显示可以省略，数据不可以。**"""
+    w = MainWindow(built())
+    secs = next(w.tree.topLevelItem(k)
+                for k in range(w.tree.topLevelItemCount())
+                if w.tree.topLevelItem(k).text(0).startswith("截面"))
+    child = secs.child(0)
+    tip = child.toolTip(0)
+    assert "Iy=" in tip and "J=" in tip, f"截面提示里没有完整特性：{tip!r}"
+
+
+def test_the_check_tools_are_reachable_from_the_interface(qt_app):
+    """三项校核不是附加功能，是结构程序该有的东西——界面上必须点得到。"""
+    from desktop import commands
+
+    w = MainWindow(built())
+    for name in ("strength", "symmetry", "bandwidth"):
+        assert name in w.actions_by_name, f"功能区里没有 {name}"
+    handlers = {c.name: c.handler for c in commands.COMMANDS}
+    for name in ("strength", "symmetry", "bandwidth"):
+        assert callable(getattr(w, handlers[name], None))
+
+
 def test_clearing_results_keeps_the_model(qt_app):
     w = solved(MainWindow(built()))
     before = w.session.model.copy()

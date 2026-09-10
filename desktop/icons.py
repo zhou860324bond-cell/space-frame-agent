@@ -525,7 +525,65 @@ def _chat(g: QPainter) -> None:
         g.drawLine(QPointF(9, y), QPointF(23, y))
 
 
+def _strength(g: QPainter) -> None:
+    """强度验算：截面上的直线应力分布 —— N/A ± M·c/I 的那张图。
+
+    画的是一个矩形截面加一侧受拉、一侧受压的三角形应力块，中间一条中和轴。
+    一个学过材料力学的人扫一眼就认得出这是"验应力"，
+    比拿一个对勾或盾牌来凑数强。
+    """
+    g.setPen(_pen(_LINE, 1.8))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawRect(QRectF(5, 7, 7, 18))                  # 截面
+    g.setPen(QPen(_DIM, 1.0, Qt.PenStyle.DashLine))
+    g.drawLine(QPointF(4, 16), QPointF(29, 16))      # 中和轴
+    # 上压下拉：两个方向相反的三角形应力块
+    top = QPolygonF([QPointF(12, 7), QPointF(27, 7), QPointF(12, 16)])
+    bot = QPolygonF([QPointF(12, 16), QPointF(24, 25), QPointF(12, 25)])
+    g.setPen(Qt.PenStyle.NoPen)
+    g.setBrush(QBrush(QColor(_HOT.red(), _HOT.green(), _HOT.blue(), 90)))
+    g.drawPolygon(top)
+    g.setBrush(QBrush(QColor(_DIM.red(), _DIM.green(), _DIM.blue(), 90)))
+    g.drawPolygon(bot)
+    g.setPen(_pen(_HOT, 1.6))
+    g.drawLine(QPointF(27, 7), QPointF(12, 16))
+    g.setPen(_pen(_DIM, 1.6))
+    g.drawLine(QPointF(12, 16), QPointF(24, 25))
+
+
+def _symmetry(g: QPainter) -> None:
+    """对称性：中间一条对称轴，两侧互为镜像的半跨。"""
+    g.setPen(QPen(_HOT, 1.4, Qt.PenStyle.DashDotLine))
+    g.drawLine(QPointF(16, 3), QPointF(16, 29))
+    g.setPen(_pen(_LINE, 2.0))
+    for sign in (-1, 1):
+        x0, x1 = 16 + sign * 3, 16 + sign * 11
+        g.drawLine(QPointF(x0, 9), QPointF(x1, 9))      # 半跨梁
+        g.drawLine(QPointF(x1, 9), QPointF(x1, 24))     # 柱
+    _pin(g, 5, 24); _pin(g, 27, 24)
+
+
+def _bandwidth(g: QPainter) -> None:
+    """一维变带宽存储：方阵里靠着对角线的一条不等宽的带。
+
+    带宽不等——那正是"变带宽"相对"等带宽"的全部区别，
+    画成等宽的就把这个图标最该说的事画丢了。
+    """
+    g.setPen(Qt.PenStyle.NoPen)
+    g.setBrush(QBrush(QColor(_HOT.red(), _HOT.green(), _HOT.blue(), 80)))
+    heights = (2, 3, 3, 5, 4, 6, 6)                  # 各列列高，故意不等
+    for i, h in enumerate(heights):
+        x = 6.0 + i * 3.0
+        g.drawRect(QRectF(x, 6.0 + i * 3.0 - h * 3.0 + 3.0, 2.4, h * 3.0))
+    g.setPen(_pen(_LINE, 1.6))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawRect(QRectF(5, 5, 22, 22))
+    g.setPen(QPen(_DIM, 1.0, Qt.PenStyle.DotLine))
+    g.drawLine(QPointF(5, 5), QPointF(27, 27))       # 对角线
+
+
 DRAWERS: dict[str, Callable[[QPainter], None]] = {
+    "strength": _strength, "symmetry": _symmetry, "bandwidth": _bandwidth,
     "new": _new, "open": _open, "save": _save, "units": _units,
     "frame": _frame, "portal": _portal, "node": _node, "member": _member,
     "remove": _remove, "section": _section, "support": _support,

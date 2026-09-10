@@ -135,7 +135,7 @@ class WorkflowBar(QWidget):
                 states[stage], suffixes[stage] = "done", "  ✓"
             states["results"] = "active"
             self._next_stage = "results"
-            message, action = "求解完成，可查看变形、内力与报告", "查看结果"
+            message, action = "求解完成，可查看变形与内力，并做强度、对称性校核，最后出报告", "查看结果"
         for stage, button in self.buttons.items():
             state = states[stage]
             self._set_state(button, state, suffixes[stage])

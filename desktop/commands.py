@@ -154,6 +154,21 @@ COMMANDS: tuple[Command, ...] = (
     Command("report", "报告", "report", "导出 Markdown + Word 计算书",
             "write_report"),
 
+    # --- 校核 ---
+    # 这三项对应课程讲义「程序灵活应用」里的三条，是结构程序该有的东西，
+    # 不是附加功能：算完了不校核，等于只交了一半。
+    Command("strength", "强度验算", "strength",
+            "逐杆应力比 σ/[σ]（拉压许用分开）与受压杆的欧拉临界力 Pcr，"
+            "需要材料给出许用应力、截面给出极端纤维距离",
+            "run_strength_check"),
+    Command("symmetry", "对称性", "symmetry",
+            "检测结构与荷载的对称性；并用对称位置的位移互为镜像自校核结果",
+            "run_symmetry_check"),
+    Command("bandwidth", "编号与存储", "bandwidth",
+            "节点编号的带宽、重编号后的改善，以及满阵/等带宽/一维变带宽/稀疏"
+            "四种总刚存储量对比",
+            "run_numbering_check"),
+
     # --- 视图 ---
     # 视角用数字键：**照抄 Abaqus / SolidWorks 的约定，不自己发明**。
     # 用户的肌肉记忆是跨软件的，自创一套只会让人按错

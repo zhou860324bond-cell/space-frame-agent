@@ -124,3 +124,55 @@ def test_global_qt_stylesheet_uses_point_sized_fonts():
     from desktop import theme
 
     assert not re.search(r"font-size\s*:\s*[\d.]+px", theme.STYLESHEET)
+
+
+def test_check_results_do_not_leak_field_names_to_the_interface():
+    """内核的说明是写给大模型看的，里面带着字段名。**原样印出来就是把内部
+    接口漏给了用户**——和当初把"算前守门"印在对话框上是同一类错误。
+
+    这一条是截图抓出来的：强度验算的警告原文写着"请在杆件上显式给
+    mu_y / mu_z"，直接显示在结果面板的标题里。
+    """
+    import re
+
+    from desktop import result_rows
+
+    payloads = {
+        "strength": {
+            "members": [{"member": 1, "section": "C", "stress_ratio": 0.5,
+                         "governs": "受压", "verdict": "通过"}],
+            "cases": ["D"], "count": 1, "failed_members": [],
+            "inconclusive_members": [1],
+            "warnings": ["μ 由杆端释放推定。请在杆件上显式给 mu_y / mu_z，"
+                         "或用特征值屈曲分析核对。"],
+            "limitation": "只算正应力，特征值屈曲分析回答整体失稳。"},
+        "symmetry": {"symmetric": True, "planes": [],
+                     "advice": "未检测到关于坐标平面的对称性。",
+                     "response_check": {"note": "还没有结果"}},
+        "numbering": {"dofs": 18, "node_number_span": 3,
+                      "half_bandwidth": {"current": 12, "after_rcm": 8},
+                      "storage_entries": {"full": 324, "banded": 144,
+                                          "skyline_current": 126,
+                                          "skyline_after_rcm": 108,
+                                          "sparse_nonzeros": 180},
+                      "lecture": "满阵→等带宽→一维变带宽。", "note": "只在内部发生。"},
+    }
+    leftover = re.compile(r"[a-z][a-z0-9]*(_[a-z0-9]+)+")
+    for kind, payload in payloads.items():
+        title, cols, _, _ = result_rows.to_rows(kind, payload)
+        text = title + " " + " ".join(cols)
+        found = leftover.search(text)
+        assert not found, f"{kind} 的界面文字里漏出了字段名：{found.group(0)}"
+        assert "**" not in text, f"{kind} 的界面文字里留着 Markdown 记号"
+
+
+def test_a_failed_member_is_never_tinted_as_passing():
+    """校核表要靠颜色扫。**红色只留给真的不合格**——"判不了"染成红的
+    会让人以为结构有问题，那正是这一档要避免的误读。"""
+    from desktop import result_rows
+
+    payload = {"members": [{"member": 1}, {"member": 2}, {"member": 3}],
+               "failed_members": [2], "inconclusive_members": [3]}
+    marks = result_rows.row_marks("strength", payload)
+    assert marks == [result_rows.PASS, result_rows.FAIL, result_rows.UNCLEAR]
+    assert result_rows.row_marks("没见过的", payload) == []

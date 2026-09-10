@@ -177,9 +177,12 @@ def check_member(frame: Frame, solution, member_id: int, *,
                       else "稳定超限")
     out["ok"] = not failed
     out["conclusive"] = b is None or b["conclusive"]
+    reason = {BUCKLING_NA: "λ<λp，欧拉公式不适用",
+              BUCKLING_UNKNOWN: "未给屈服应力"}.get(
+                  b["status"] if b is not None else None, "")
     out["verdict"] = ("、".join(failed) if failed else
                       ("通过" if out["conclusive"] else
-                       f"强度通过，稳定{b['status']}"))
+                       f"强度通过 · 稳定判不了（{reason}）"))
     return out
 
 
