@@ -162,6 +162,14 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                 for element_id in element_ids:
                     analysis_case.member_loads[element_id] = physical_case.member_loads[physical_id]
 
+            # 初应变沿杆是常量，各段**原样继承**，不按段长分配——
+            # 这正是把装配误差和温度都归一成应变而不是 Δl 的好处：
+            # 剖分在这里不需要知道任何长度。
+            if physical_id in physical_case.member_strains:
+                for element_id in element_ids:
+                    analysis_case.member_strains[element_id] = (
+                        physical_case.member_strains[physical_id])
+
             for load in physical_case.member_spans.get(physical_id, ()):
                 if load.kind == POINT:
                     position = float(load.a)

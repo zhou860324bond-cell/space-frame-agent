@@ -181,6 +181,13 @@ def convert_model(model: dict, to: str) -> dict:
                     item["a"] = e["a"] * f["length"]
                 spans.append(item)
             got["member_spans"] = spans
+        if block.get("member_strains"):
+            # lack_of_fit 是长度，要换；delta_t 是温度，**不能换**。
+            # 同一条目里两种量纲，漏掉任一边都不会报错，只会静默算错。
+            got["member_strains"] = [
+                {**e, **({"lack_of_fit": e["lack_of_fit"] * f["length"]}
+                         if e.get("lack_of_fit") is not None else {})}
+                for e in block["member_strains"]]
         if block.get("settlements"):
             # 前三个是位移、后三个是转角（弧度，不换算）
             got["settlements"] = [
@@ -189,7 +196,8 @@ def convert_model(model: dict, to: str) -> dict:
                 for e in block["settlements"]]
         return got
 
-    for key in ("nodal_loads", "member_loads", "member_spans", "settlements"):
+    for key in ("nodal_loads", "member_loads", "member_spans", "settlements",
+                "member_strains"):
         if model.get(key):
             out.update({k: v for k, v in case({key: model[key]}).items()})
     if model.get("load_cases"):

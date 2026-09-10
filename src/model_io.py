@@ -10,8 +10,10 @@ import math
 from copy import deepcopy
 from typing import Any
 
+import numpy as np
+
 from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Frame, LoadCase, Material,
-                     Member, Node, Section, check_model)
+                     Member, Node, Section, check_model, member_endpoints)
 from span_loads import KINDS as SPAN_KINDS
 from span_loads import SpanLoad
 
@@ -57,6 +59,20 @@ _SETTLEMENTS = {
         "type": "object", "required": ["node", "d"], "additionalProperties": False,
         "properties": {"name": {"type": "string", "minLength": 1},
                        "node": {"type": "integer"}, "d": _LOAD6},
+    },
+}
+# 初应变：装配误差与温度。讲义 §3-9 五、六把温度应力"转化为装配内力问题"，
+# 两者本来就是同一个机制，所以放同一张表里，可以同时给。
+# lack_of_fit 是制造误差 Δl = 实际长度 − 设计长度，**正值表示做长了**——
+# 与升温同向（都想变长），这样两种输入的符号含义一致，不用记两套规则。
+_MEMBER_STRAINS = {
+    "type": "array",
+    "items": {
+        "type": "object", "required": ["member"], "additionalProperties": False,
+        "properties": {"name": {"type": "string", "minLength": 1},
+                       "member": {"type": "integer"},
+                       "lack_of_fit": {"type": "number"},
+                       "delta_t": {"type": "number"}},
     },
 }
 _MEMBER_LOADS = {
@@ -110,7 +126,9 @@ MODEL_SCHEMA: dict[str, Any] = {
                                "density": {"type": "number", "minimum": 0},
                                "yield_stress": {"type": "number", "exclusiveMinimum": 0},
                                "hardening_ratio": {"type": "number", "minimum": 0,
-                                                   "exclusiveMaximum": 1}},
+                                                   "exclusiveMaximum": 1},
+                               # 线膨胀系数 1/℃，只有算温度应力时才用得上
+                               "alpha": {"type": "number", "minimum": 0}},
             },
         },
         "sections": {
@@ -177,6 +195,7 @@ MODEL_SCHEMA: dict[str, Any] = {
         "member_loads": _MEMBER_LOADS,
         "member_spans": _MEMBER_SPANS,
         "settlements": _SETTLEMENTS,
+        "member_strains": _MEMBER_STRAINS,
         # 多工况模型写这一项
         "load_cases": {
             "type": "array", "minItems": 0,
@@ -186,7 +205,8 @@ MODEL_SCHEMA: dict[str, Any] = {
                                "nodal_loads": _NODAL_LOADS,
                                "member_loads": _MEMBER_LOADS,
                                "member_spans": _MEMBER_SPANS,
-                               "settlements": _SETTLEMENTS},
+                               "settlements": _SETTLEMENTS,
+                               "member_strains": _MEMBER_STRAINS},
             },
         },
         "combos": {
@@ -224,7 +244,7 @@ def migrate_payload(data: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
-def _fill_case(case: LoadCase, data: dict[str, Any]) -> LoadCase:
+def _fill_case(frame: Frame, case: LoadCase, data: dict[str, Any]) -> LoadCase:
     for e in data.get("nodal_loads", []):
         node = int(e["node"])
         previous = case.nodal_loads.get(node, (0.0,) * 6)
@@ -240,6 +260,22 @@ def _fill_case(case: LoadCase, data: dict[str, Any]) -> LoadCase:
             SpanLoad.from_dict(e))
     for e in data.get("settlements", []):
         case.settlements[int(e["node"])] = tuple(float(v) for v in e["d"])
+    for e in data.get("member_strains", []):
+        member = frame.members.get(int(e["member"]))
+        if member is None:
+            continue           # 语义校验会单独报"引用了不存在的杆件"
+        # 换算成初应变。**存应变不存 Δl/ΔT**：应变沿杆是常量，杆件被自动
+        # 剖分时各段直接继承，不需要按段长重新分配。
+        strain = 0.0
+        if e.get("lack_of_fit") is not None:
+            pi, pj = member_endpoints(frame, member)
+            length = float(np.linalg.norm(np.asarray(pj) - np.asarray(pi)))
+            if length > 0.0:
+                strain += float(e["lack_of_fit"]) / length
+        if e.get("delta_t") is not None:
+            strain += frame.materials[member.material].alpha * float(e["delta_t"])
+        case.member_strains[member.id] = (
+            case.member_strains.get(member.id, 0.0) + strain)
     return case
 
 
@@ -250,7 +286,8 @@ def from_dict(data: dict[str, Any]) -> Frame:
         f.materials[m["name"]] = Material(
             m["name"], float(m["E"]), float(m["nu"]), float(m.get("density", 0.0)),
             float(m["yield_stress"]) if m.get("yield_stress") is not None else None,
-            float(m.get("hardening_ratio", 0.01)))
+            float(m.get("hardening_ratio", 0.01)),
+            float(m.get("alpha", 0.0)))
     for s in data["sections"]:
         f.sections[s["name"]] = Section(
             s["name"], float(s["A"]), float(s["Iy"]), float(s["Iz"]), float(s["J"]),
@@ -273,13 +310,14 @@ def from_dict(data: dict[str, Any]) -> Frame:
     for s in data["supports"]:
         f.supports[int(s["node"])] = tuple(int(v) for v in s["fix"])
 
-    _fill_case(f.case(DEFAULT_CASE), data)
+    _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):
-        _fill_case(f.case(str(c["name"])), c)
+        _fill_case(f, f.case(str(c["name"])), c)
     # 只写了多工况时，别留一个空的 default 干扰结果表
     if data.get("load_cases") and not any(
             data.get(k) for k in ("nodal_loads", "member_loads",
-                                  "member_spans", "settlements")):
+                                  "member_spans", "settlements",
+                                  "member_strains")):
         f.load_cases.pop(DEFAULT_CASE, None)
 
     for c in data.get("combos", []):

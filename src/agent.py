@@ -673,6 +673,33 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "set_member_strain",
+            "description": "给杆件施加装配误差或温度变化（讲义 §3-9 五、六）。"
+                           "两者是同一个机制：杆件有初始长度变化，转成沿杆轴的"
+                           "等效节点力 EA·ε₀ 进入右端项，回算内力时再减掉，"
+                           "所以自由伸缩的杆轴力为零、被约束住才产生内力。"
+                           "lack_of_fit 是制造误差 Δl=实际长度−设计长度，"
+                           "**正值表示做长了**，与升温同向。"
+                           "delta_t 需要材料定义了线膨胀系数 alpha。"
+                           "两者可同时给，叠加。全部留空或给零表示删除。",
+            "parameters": {
+                "type": "object", "required": ["member_id"],
+                "properties": {
+                    "member_id": {"type": "integer"},
+                    "lack_of_fit": {"type": "number",
+                                    "description": "制造误差，当前长度单位；正=做长了"},
+                    "delta_t": {"type": "number",
+                                "description": "温度变化 ℃；正=升温"},
+                    "case_name": {"type": "string"},
+                    "name": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_load_cases",
             "description": "一次性定义全部荷载工况与组合。多工况必须用这个，"
                            "不要把几个工况的荷载加起来当单一工况。"
@@ -2609,6 +2636,66 @@ class Session:
                                  "case": chosen, "d": values,
                                  "analysis_ready": not errors, "warnings": errors,
                                  "note": "给定位移属于分析步边界条件，不计入外力。"})
+
+    @_records
+    def set_member_strain(self, member_id: int,
+                          lack_of_fit: float | None = None,
+                          delta_t: float | None = None,
+                          case_name: str | None = None,
+                          name: str | None = None) -> ToolResult:
+        """装配误差与温度变化（讲义 §3-9 五、六）。
+
+        讲义把温度应力"转化为装配内力问题"，这里就照这个思路做成一个入口：
+        两者都只是给杆件一个初始长度变化，差别仅在于 Δl 是直接给的还是由
+        α·ΔT 算出来的。
+        """
+        from copy import deepcopy
+
+        member_id = int(member_id)
+        members = {int(m["id"]): m for m in self.model.get("members") or []}
+        if member_id not in members:
+            return ToolResult(False, {"error": f"杆件 {member_id} 不存在"})
+        for label, value in (("lack_of_fit", lack_of_fit), ("delta_t", delta_t)):
+            if value is not None and not np.isfinite(float(value)):
+                return ToolResult(False, {"error": f"{label} 必须是有限数"})
+        if delta_t:
+            material = next(
+                (item for item in self.model.get("materials") or []
+                 if item["name"] == members[member_id]["material"]), None)
+            if not (material or {}).get("alpha"):
+                return ToolResult(False, {
+                    "error": f"材料 {members[member_id]['material']!r} 没有线膨胀系数 alpha，"
+                             "算不了温度应力",
+                    "hint": "在 define_materials_and_sections 里给该材料补 alpha（1/℃），"
+                            "钢约 1.2e-5"})
+
+        entry_name = str(name or f"Strain-Member-{member_id}").strip()
+        if not entry_name:
+            return ToolResult(False, {"error": "名称不能为空"})
+        candidate = deepcopy(self.model)
+        case, chosen = self._load_case_in(candidate, case_name)
+        if case is None:
+            return ToolResult(False, {"error": f"工况 {chosen!r} 不存在"})
+        entries = [entry for entry in case.get("member_strains", [])
+                   if entry.get("name") != entry_name
+                   and int(entry["member"]) != member_id]
+        payload = {"name": entry_name, "member": member_id}
+        if lack_of_fit:
+            payload["lack_of_fit"] = float(lack_of_fit)
+        if delta_t:
+            payload["delta_t"] = float(delta_t)
+        if len(payload) > 2:
+            entries.append(payload)
+        case["member_strains"] = entries
+        errors = validate_payload(candidate)
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            "name": entry_name, "member": member_id, "case": chosen,
+            "lack_of_fit": lack_of_fit, "delta_t": delta_t,
+            "analysis_ready": not errors, "warnings": errors,
+            "note": "初应变不是外力：杆件能自由伸缩时轴力为零，"
+                    "被约束住才产生内力。"})
 
     @_records
     def set_model(self, model: dict[str, Any]) -> ToolResult:

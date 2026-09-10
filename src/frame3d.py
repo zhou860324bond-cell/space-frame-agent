@@ -65,6 +65,8 @@ class Material:
     density: float = 0.0          # kg/m³，只有算自重时才用得上
     yield_stress: float | None = None  # 双线性轴向屈服应力；留空为线弹性
     hardening_ratio: float = 0.01     # 屈服后切线模量 / E
+    # 线膨胀系数 1/℃。只有算温度应力时才用得上；留 0 表示不考虑温度。
+    alpha: float = 0.0
 
     @property
     def G(self) -> float:
@@ -137,6 +139,11 @@ class LoadCase:
     member_spans: dict[int, list[SpanLoad]] = field(default_factory=dict)
     # 支座沉降：给定位移，不是荷载。只有被约束住的那个方向才有意义
     settlements: dict[int, tuple[float, float, float, float, float, float]] = field(default_factory=dict)
+    # 初应变 ε₀（无量纲），按杆件。装配误差 Δl/L 与温度 α·ΔT 都归到这里——
+    # 讲义把温度应力"转化为装配内力问题"，本质就是同一个初应变。
+    # 存应变而不是存 Δl 或 ΔT：应变沿杆是常量，杆件被自动剖分时各段直接继承，
+    # 不需要按段长重新分配。
+    member_strains: dict[int, float] = field(default_factory=dict)
 
 
 def span_loads_of(case: LoadCase, member_id: int) -> list[SpanLoad]:
@@ -434,6 +441,29 @@ def _member_matrices(model: Frame, m: Member):
     return L, R, transformation(R), rigid_offset_transform(m), k_local, k_star, cond
 
 
+def equivalent_local_load(model: "Frame", member: "Member", case: LoadCase,
+                          L: float, rot: np.ndarray) -> np.ndarray:
+    """一根杆件在某工况下的**全部**局部等效节点荷载（12,）。
+
+    杆间荷载和初应变都从这里出。**右端项组装、杆端力回算、端释放位移还原
+    这三处必须共用同一个入口**——任何一处漏算初应变，方程和内力就会各说各话，
+    而且不会报任何错：自由伸长的杆会凭空出现轴力，或者约束住的杆算不出温度应力。
+
+    初应变的等效节点力由 ``f₀ = ∫Bᵀ E ε₀ dV = EA·ε₀·[−1 … +1]`` 得到：
+    升温（ε₀>0）把两端往外推，所以自由杆自由伸长、轴力为零；两端固定时
+    位移为零，回算得到 ``N = −EA·ε₀``，即受压。这与讲义 §3-9 五、六一致。
+    """
+    p = np.zeros(12)
+    for item in span_loads_of(case, member.id):
+        p += fixed_end(item, L, rot)
+    strain = float(case.member_strains.get(member.id, 0.0))
+    if strain:
+        axial = model.materials[member.material].E * model.sections[member.section].A * strain
+        p[0] -= axial
+        p[6] += axial
+    return p
+
+
 def assemble(model: Frame, case_names: list[str] | None = None):
     """装配整体刚度阵与各工况右端项。
 
@@ -453,8 +483,8 @@ def assemble(model: Frame, case_names: list[str] | None = None):
             for b in range(12):
                 rows.append(dofs[a]); cols.append(dofs[b]); vals.append(ke[a, b])
         for c, name in enumerate(case_names):
-            for item in span_loads_of(model.load_cases[name], m.id):
-                p = fixed_end(item, L, R)
+            p = equivalent_local_load(model, m, model.load_cases[name], L, R)
+            if p.any():
                 F[dofs, c] += B.T @ T.T @ _condense_load(p, cond)
 
     for c, name in enumerate(case_names):
@@ -480,9 +510,7 @@ def _member_forces(model: Frame, U: np.ndarray, case: LoadCase) -> dict[int, np.
         L, R, T, B, k_local, _, cond = _member_matrices(model, m)
         dofs = model.node_dofs(m.i) + model.node_dofs(m.j)
         u_local = T @ B @ U[dofs]
-        p = np.zeros(12)
-        for item in span_loads_of(case, m.id):
-            p += fixed_end(item, L, R)
+        p = equivalent_local_load(model, m, case, L, R)
         if cond is not None:
             kept, rel = list(cond.kept), list(cond.released)
             u_local[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ u_local[kept])
@@ -502,10 +530,8 @@ def member_local_displacements(model: Frame, member: Member,
     L, R, T, B, _, _, cond = _member_matrices(model, member)
     dofs = model.node_dofs(member.i) + model.node_dofs(member.j)
     q = T @ B @ np.asarray(U, dtype=float)[dofs]
-    p = np.zeros(12)
-    if case is not None:
-        for item in span_loads_of(case, member.id):
-            p += fixed_end(item, L, R)
+    p = (np.zeros(12) if case is None
+         else equivalent_local_load(model, member, case, L, R))
     if cond is not None:
         kept, rel = list(cond.kept), list(cond.released)
         q[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ q[kept])

@@ -107,6 +107,8 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "plot_results": (("path", "case"), "图片落盘路径"),
     "write_report": (("path",), "报告落盘路径"),
     "compare_solvers": ((), "需要 Abaqus，不在测试里跑"),
+    "set_member_strain": (("member", "case"),
+                          "装配误差/温度：回显作用在哪根杆件的哪个工况"),
     "solve_with_abaqus": ((), "需要 Abaqus，不在测试里跑"),
     "analyze_joint_solid": (("node_id", "case"),
                             "节点局部实体：dry_run 只出规格；native 自研求解，"
@@ -388,11 +390,14 @@ def test_every_load_kind_is_pruned_on_delete():
                          {"member": 9, "kind": "uniform"}],
         "settlements": [{"node": 1, "d": [0, 0, -0.01, 0, 0, 0]},
                         {"node": 9, "d": [0, 0, -0.01, 0, 0, 0]}],
+        "member_strains": [{"member": 1, "delta_t": 30.0},
+                           {"member": 9, "delta_t": 30.0}],
         "load_cases": [{"name": "D",
                         "nodal_loads": [{"node": 9, "load": [0, 0, -1, 0, 0, 0]}],
                         "member_loads": [{"member": 9, "w": [0, 0, -1]}],
                         "member_spans": [{"member": 9, "kind": "uniform"}],
-                        "settlements": [{"node": 9, "d": [0, 0, -0.01, 0, 0, 0]}]}],
+                        "settlements": [{"node": 9, "d": [0, 0, -0.01, 0, 0, 0]}],
+                        "member_strains": [{"member": 9, "delta_t": 30.0}]}],
     }
     counted = changes.prune_loads(model, dropped_members={9}, dropped_nodes={9})
     for key, _ in changes.LOAD_KEYS:

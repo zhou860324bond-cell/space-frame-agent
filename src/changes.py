@@ -31,6 +31,7 @@ LOAD_KEYS: tuple[tuple[str, str], ...] = (
     ("member_loads", "member"),
     ("member_spans", "member"),
     ("settlements", "node"),
+    ("member_strains", "member"),
 )
 
 # 荷载既可以直接写在模型顶层（单工况），也可以写在 load_cases 里（多工况）。
