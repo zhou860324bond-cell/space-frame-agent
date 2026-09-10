@@ -3762,6 +3762,9 @@ class TurnResult:
     tool_calls: list[tuple[str, dict]]
     session: Session
     stopped_by_limit: bool = False
+    # 由对话层填写的分段耗时。保留默认值，让单元测试、离线脚本和第三方调用
+    # 不必为了新增观测能力同步修改构造代码。
+    metrics: dict[str, Any] = field(default_factory=dict)
 
 
 def run_turn(user_text: str, provider: Provider, session: Session | None = None,

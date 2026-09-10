@@ -87,6 +87,7 @@ class Viewport(QWidget):
 
     # 拾取到了什么：("node" | "member", 编号)
     picked = Signal(str, int)
+    probed = Signal(int, object)     # 杆件编号 + 世界坐标，定位具体截面
     # 人工建模：创建了节点 / 创建了杆件
     node_created = Signal(float, float, float)   # x, y, z
     member_created = Signal(int, int)             # node_i, node_j
@@ -94,22 +95,37 @@ class Viewport(QWidget):
     node_snapped = Signal(int)
     # 在视口里按了 Esc，请求退出当前建模/拾取模式
     escape_pressed = Signal()
+    # 右键菜单由主窗口组装，这里只报告屏幕坐标。
+    context_requested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        # 视口深、chrome 浅，直接相接会露出一条硬边。给它一圈 1px 内嵌边框，
+        # 深色区域读起来是"嵌进去的画布"而不是"贴上去的另一张图"。
+        # 纯 QWidget 子类默认不吃样式表的背景/边框，必须开 WA_StyledBackground；
+        # 同时留 1px 内边距，否则边框会被 VTK 的原生子窗口整个盖住。
+        self.setObjectName("viewportHost")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(1, 1, 1, 1)
         if CAN_RENDER:
             from pyvistaqt import QtInteractor
             self.plotter = QtInteractor(self)
         else:
             self.plotter = _NullPlotter(self)
         layout.addWidget(self.plotter.interactor)
+        self.plotter.interactor.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.plotter.interactor.customContextMenuRequested.connect(
+            lambda pos: self.context_requested.emit(
+                self.plotter.interactor.mapToGlobal(pos)))
 
         if CAN_RENDER:
             self.plotter.set_background(theme.VIEWPORT_BG)
             self.plotter.add_axes(color=theme.VIEWPORT_INK_MUTED)
+            self.plotter.enable_anti_aliasing("fxaa")
         self._first_render = True
 
         # 左下角坐标系指示器
@@ -123,6 +139,7 @@ class Viewport(QWidget):
         # 你不说清楚要选什么类型，用户就得靠反复试来猜自己选中了谁
         self.pick_mode: str | None = None      # None / "node" / "member"
         self.selection: tuple[str, int] | None = None
+        self.problem_refs: list[tuple[str, int]] = []
         self.show_labels = False
         self._frame = None                     # 最近一次画的 frame，拾取要用
 
@@ -139,9 +156,9 @@ class Viewport(QWidget):
         self._node_snap_ratio = 0.06  # 已有节点吸附半径=模型尺寸×该比例
 
         # 视口外观状态
-        self.bg_theme: str = "dark"            # 背景主题；"__custom__" 表示自定义
+        self.bg_theme: str = "deep"            # 背景主题；"__custom__" 表示自定义
         self.custom_bg = None                  # 自定义背景：str=纯色，(mode,base,second)=渐变
-        self.show_grid_floor: bool = False     # 网格地面
+        self.show_grid_floor: bool = True      # 网格地面
         self.show_axes_widget: bool = True     # 坐标轴指示器
 
         # 左上角模式徽章：进入建模/拾取模式时提示当前模式、工作平面、捕捉
@@ -333,7 +350,7 @@ class Viewport(QWidget):
                     span = max(
                         float(np.ptp(coords[:, 0])),
                         float(np.ptp(coords[:, 1])), 1.0)
-                    half = max(span * 0.8, 10.0)
+                    half = max(span * 0.65, 2.0)
                     cx = float(np.mean(coords[:, 0]))
                     cy = float(np.mean(coords[:, 1]))
                 else:
@@ -403,19 +420,76 @@ class Viewport(QWidget):
                 if mesh.n_cells:
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_selection", opacity=0.85)
+                for axis, glyph in scene.member_local_axis_glyphs(
+                        frame, ident).items():
+                    self.plotter.add_mesh(
+                        glyph, color=theme.LOCAL_AXES[axis],
+                        name=f"_local_axis_{axis}", smooth_shading=True,
+                        render=True)
+                points, texts = scene.member_local_axis_labels(frame, ident)
+                if points:
+                    self.plotter.add_point_labels(
+                        points, texts, name="_local_axis_labels", font_size=9,
+                        text_color=theme.VIEWPORT_INK, shape=None,
+                        always_visible=True, show_points=False)
             else:
                 mesh = scene.highlight_nodes(frame, [ident])
                 if mesh.n_points:
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_selection", point_size=16,
                                           render_points_as_spheres=True)
+        member_ids = [ident for kind, ident in self.problem_refs
+                      if kind == "member"]
+        node_ids = [ident for kind, ident in self.problem_refs
+                    if kind == "node"]
+        if member_ids:
+            mesh = scene.highlight_members(frame, member_ids, radius_scale=2.0)
+            if mesh.n_cells:
+                self.plotter.add_mesh(mesh, color=theme.ERROR,
+                                      name="_problem_members", opacity=0.9)
+        if node_ids:
+            mesh = scene.highlight_nodes(frame, node_ids)
+            if mesh.n_points:
+                self.plotter.add_mesh(mesh, color=theme.ERROR,
+                                      name="_problem_nodes", point_size=20,
+                                      render_points_as_spheres=True)
 
     def set_selection(self, kind: str | None, ident: int | None) -> None:
         self.selection = (kind, ident) if kind and ident is not None else None
         if self._frame is not None and CAN_RENDER:
-            self.plotter.remove_actor("_selection", reset_camera=False)
+            for name in ("_selection", "_local_axis_x", "_local_axis_y",
+                         "_local_axis_z", "_local_axis_labels"):
+                self.plotter.remove_actor(name, reset_camera=False)
             self._decorate(self._frame)
             self.plotter.render()
+
+    def set_problem_refs(self, refs: list[tuple[str, int]]) -> None:
+        """同时标出一个诊断问题涉及的节点和杆件。"""
+        self.problem_refs = [(kind, int(ident)) for kind, ident in refs
+                             if kind in {"node", "member"}]
+        if self._frame is not None and CAN_RENDER:
+            for name in ("_problem_members", "_problem_nodes"):
+                self.plotter.remove_actor(name, reset_camera=False)
+            self._decorate(self._frame)
+            self.plotter.render()
+
+    def set_result_marker(self, point, label: str = "") -> None:
+        """在结果极值或探针截面处放置可追溯标记。"""
+        if not CAN_RENDER or self._frame is None:
+            return
+        for name in ("_result_marker", "_result_marker_label"):
+            self.plotter.remove_actor(name, reset_camera=False)
+        marker = pv.Sphere(radius=0.010 * scene.model_size(self._frame),
+                           center=np.asarray(point, dtype=float),
+                           theta_resolution=24, phi_resolution=24)
+        self.plotter.add_mesh(marker, color=theme.HIGHLIGHT,
+                              name="_result_marker", smooth_shading=True)
+        if label:
+            self.plotter.add_point_labels(
+                [point], [label], name="_result_marker_label", font_size=10,
+                text_color=theme.VIEWPORT_INK, shape=None,
+                always_visible=True, show_points=False)
+        self.plotter.render()
 
     def set_labels(self, on: bool) -> None:
         self.show_labels = bool(on)
@@ -612,6 +686,8 @@ class Viewport(QWidget):
             return
         self.set_selection(self.pick_mode, found)
         self.picked.emit(self.pick_mode, found)
+        if self.pick_mode == "member":
+            self.probed.emit(found, pt.copy())
 
     def _fit(self) -> None:
         """首次显示时摆好相机；之后保持用户转过的视角。
@@ -619,22 +695,29 @@ class Viewport(QWidget):
         每次重画都重置相机的话，改一个参数就把视角弹回去，用起来很恼火。
         """
         if self._first_render:
-            self.plotter.camera_position = "iso"
-            self.plotter.camera.zoom(1.3)
+            self._apply_view(scene.preferred_view(self._frame))
             self._first_render = False
+
+    def _apply_view(self, name: str) -> None:
+        """平面视图用正交投影，等轴测用透视投影。"""
+        if name == "isometric":
+            self.plotter.disable_parallel_projection()
+        else:
+            self.plotter.enable_parallel_projection()
+        getattr(self.plotter, f"view_{name}", self.plotter.view_isometric)()
+        self.plotter.camera.zoom(1.3)
 
     def reset_camera(self) -> None:
         if not CAN_RENDER:
             return
-        self.plotter.camera_position = "iso"
-        self.plotter.camera.zoom(1.3)
+        self._apply_view(scene.preferred_view(self._frame))
         self.plotter.render()
 
     def set_view(self, name: str) -> None:
         """标准视角。CAE 里这几个按钮是必备的。"""
         if not CAN_RENDER:
             return
-        getattr(self.plotter, f"view_{name}", self.plotter.view_isometric)()
+        self._apply_view(name)
         self.plotter.render()
 
     # --- 显示模式 ---
@@ -669,20 +752,32 @@ class Viewport(QWidget):
         self.clear()
         info: dict = {}
         tubes = scene.member_tubes(frame)
-        if tubes.n_points:          # 早期只有节点、还没杆件时管子为空，空 mesh 不能画
-            self.plotter.add_mesh(tubes, color=theme.MEMBER, smooth_shading=True)
+        if tubes.n_points:
+            self.plotter.add_mesh(
+                tubes, color=theme.MEMBER, smooth_shading=True,
+                pbr=True, metallic=0.28, roughness=0.58,
+                ambient=0.18, diffuse=0.82)
         links = scene.rigid_link_polylines(frame)
         if links.n_points:
             self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
         self.plotter.add_mesh(scene.node_points(frame), color=theme.VIEWPORT_INK,
-                              point_size=7, render_points_as_spheres=True)
+                              point_size=4, render_points_as_spheres=True)
         hinges = scene.hinge_glyphs(frame)
         if hinges.n_points:
             self.plotter.add_mesh(hinges, color=theme.HINGE)
         if supports:
             glyphs = scene.support_glyphs(frame)
             for mesh in glyphs.values():
-                self.plotter.add_mesh(mesh, color=theme.SUPPORT)
+                self.plotter.add_mesh(
+                    mesh, color=theme.SUPPORT,
+                    smooth_shading=True, ambient=0.28, diffuse=0.72,
+                    specular=0.10, specular_power=12)
+            support_points, support_texts = scene.support_labels(frame)
+            if support_points:
+                self.plotter.add_point_labels(
+                    support_points, support_texts, font_size=9,
+                    text_color=theme.VIEWPORT_INK_MUTED,
+                    shape=None, always_visible=True, show_points=False)
             info["supports"] = {k: 1 for k in glyphs}
         legend: list[tuple[str, str]] = []
         if tubes.n_points:
@@ -698,7 +793,9 @@ class Viewport(QWidget):
                 color = (theme.LOAD_MOMENT
                          if label in {"节点力矩", "给定位移", "给定转角"}
                          else theme.LOAD)
-                self.plotter.add_mesh(mesh, color=color)
+                self.plotter.add_mesh(
+                    mesh, color=color, smooth_shading=True,
+                    ambient=0.35, diffuse=0.65)
                 legend.append((_LEGEND_TEXT.get(label, label), color))
             # **数值直接标在旁边。** 四类荷载用四种颜色跑不过 all-pairs 校验，
             # 而且颜色只回答"哪一类"、回答不了"多大"——后者才是工程师要看的。
@@ -728,10 +825,11 @@ class Viewport(QWidget):
         analysis = scene.analysis_mesh_polylines(frame, preview)
         if analysis.n_cells:
             radius = max(scene.model_size(frame) * scene.TUBE_RATIO * 0.65, 1e-9)
-            self.plotter.add_mesh(analysis.tube(radius=radius),
+            self.plotter.add_mesh(analysis.tube(
+                                      radius=radius, n_sides=32, capping=True),
                                   color=theme.ACCENT, smooth_shading=True)
         self.plotter.add_mesh(scene.node_points(frame), color=theme.VIEWPORT_INK,
-                              point_size=7, render_points_as_spheres=True)
+                              point_size=5, render_points_as_spheres=True)
         splits = scene.analysis_split_points(preview)
         if splits.n_points:
             self.plotter.add_mesh(splits, color=theme.HINGE, point_size=15,
@@ -762,22 +860,31 @@ class Viewport(QWidget):
             self.plotter.add_mesh(scene.member_polylines(frame),
                                   color=theme.REFERENCE, line_width=1.5)
         tubes = scene.member_tubes(frame, solution, case, scale=scale)
-        self.plotter.add_mesh(tubes, color=theme.MEMBER, smooth_shading=True)
+        self.plotter.add_mesh(
+            tubes, color=theme.MEMBER, smooth_shading=True,
+            pbr=True, metallic=0.22, roughness=0.62,
+            ambient=0.20, diffuse=0.80)
         links = scene.rigid_link_polylines(frame, solution, case, scale)
         if links.n_points:
             self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
         self.plotter.add_mesh(
             scene.displaced_node_points(frame, solution[case].U, scale),
-            color=theme.MEMBER, point_size=8, render_points_as_spheres=True)
+            color=theme.MEMBER, point_size=5, render_points_as_spheres=True)
         if supports:
             for mesh in scene.support_glyphs(frame).values():
-                self.plotter.add_mesh(mesh, color=theme.SUPPORT)
+                self.plotter.add_mesh(
+                    mesh, color=theme.SUPPORT, smooth_shading=True,
+                    ambient=0.28, diffuse=0.72,
+                    specular=0.10, specular_power=12)
         self._decorate(frame)
         self._fit()
         self.plotter.render()
 
     def show_contour(self, frame, solution, case: str, component: str,
-                     scale: float = 0.0, title: str | None = None) -> tuple:
+                     scale: float = 0.0, title: str | None = None,
+                     percentile: float | None = scene.CONTOUR_PERCENTILE,
+                     sign_filter: str = "all", overlay_deformed: bool = False,
+                     show_extrema: bool = True) -> tuple:
         """内力云图。合量从零起，有符号局部分量关于零对称。"""
         if not CAN_RENDER:
             self._frame = frame
@@ -791,8 +898,11 @@ class Viewport(QWidget):
         system = unit_system(frame)
         scalar_scale = (system.moment_scale if component in {"T", "My", "Mz", "M"}
                         else system.force_scale)
-        tubes[component] = tubes[component] * scalar_scale
-        clim = scene.contour_clim(tubes, component)
+        if component in {"M", "V"}:
+            sign_filter = "all"       # 合量定义为非负，正负筛选不适用
+        tubes[component] = scene.sign_filtered(
+            tubes[component] * scalar_scale, sign_filter)
+        clim = scene.contour_clim(tubes, component, percentile=percentile)
         cmap = (theme.sequential_cmap() if component in {"V", "M"}
                 else theme.DIVERGING)
         # 色标被分位裁剪时**必须写在图上**：这是对显示的人为压缩，
@@ -800,7 +910,8 @@ class Viewport(QWidget):
         # 披露文字用 ASCII：VTK 的色标用自己的字体引擎，默认字体没有中文
         # 字形（实测中文会渲染成方块）。写成方块等于没披露。
         bar_title = title or component
-        if scene.clim_is_clipped(tubes, component, clim):
+        clipped = scene.clim_is_clipped(tubes, component, clim)
+        if clipped:
             bar_title = f"{bar_title}  [clip p{scene.CONTOUR_PERCENTILE:.0f}]"
         self.plotter.add_mesh(
             tubes, scalars=component, cmap=cmap, clim=clim,
@@ -809,8 +920,37 @@ class Viewport(QWidget):
                 title=bar_title, color=theme.VIEWPORT_INK_MUTED,
                 title_font_size=13, label_font_size=11, n_labels=5,
                 width=0.30, height=0.045, position_x=0.66, position_y=0.03))
+        unit = (system.moment_unit if component in {"T", "My", "Mz", "M"}
+                else system.force_unit)
+        self.plotter.add_text(
+            scene.contour_caption(component, unit, clipped, sign_filter),
+            position="upper_left", color=theme.VIEWPORT_INK,
+            font_size=9, name="_contour_definition")
+        if overlay_deformed:
+            deformation_scale = scale or scene.auto_deformation_scale(
+                frame, solution, case)
+            deformed = scene.member_tubes(
+                frame, solution, case, scale=deformation_scale,
+                radius=scene.TUBE_RATIO * scene.model_size(frame) * 0.55)
+            self.plotter.add_mesh(
+                deformed, color=theme.HIGHLIGHT, opacity=0.48,
+                name="_contour_deformed_overlay", smooth_shading=True)
+        if show_extrema:
+            from .result_inspector import global_extreme
+            extreme = global_extreme(frame, solution, component, case)
+            if extreme["member"] is not None:
+                label = (f"{component}={extreme['value']:+.3g} {extreme['unit']} | "
+                         f"M{extreme['member']} x={extreme['x']:.3g}")
+                self.plotter.add_point_labels(
+                    [extreme["point"]], [label], name="_contour_extreme",
+                    font_size=9, text_color=theme.VIEWPORT_INK, shape=None,
+                    always_visible=True, show_points=True,
+                    point_color=theme.HIGHLIGHT, point_size=9)
         for mesh in scene.support_glyphs(frame).values():
-            self.plotter.add_mesh(mesh, color=theme.SUPPORT)
+            self.plotter.add_mesh(
+                mesh, color=theme.SUPPORT, smooth_shading=True,
+                ambient=0.28, diffuse=0.72,
+                specular=0.10, specular_power=12)
         self._decorate(frame)
         self._fit()
         self.plotter.render()
@@ -832,14 +972,16 @@ class Viewport(QWidget):
                               color=theme.REFERENCE, line_width=1.5)
         self.plotter.add_mesh(
             scene.mode_shape_tubes(frame, shapes, mode, scale),
-            color=theme.HIGHLIGHT, smooth_shading=True)
+            color=theme.HIGHLIGHT, smooth_shading=True,
+            pbr=True, metallic=0.16, roughness=0.66,
+            ambient=0.20, diffuse=0.80)
         links = scene.rigid_link_polylines(
             frame, scale=scale, mode_vector=phi)
         if links.n_points:
             self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
         self.plotter.add_mesh(
             scene.displaced_node_points(frame, phi, scale),
-            color=theme.HIGHLIGHT, point_size=8, render_points_as_spheres=True)
+            color=theme.HIGHLIGHT, point_size=5, render_points_as_spheres=True)
         if label:
             self.plotter.add_text(label, position="upper_left",
                                   color=theme.VIEWPORT_INK, font_size=10)

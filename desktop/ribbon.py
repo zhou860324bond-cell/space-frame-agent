@@ -157,15 +157,9 @@ class QuickBar(QWidget):
         self.setObjectName("workspaceBar")
         self._window = window
         a = window.actions_by_name
-        stack = QVBoxLayout(self)
-        stack.setContentsMargins(8, 4, 8, 4)
-        stack.setSpacing(3)
-        primary = QHBoxLayout()
-        context = QHBoxLayout()
-        for row in (primary, context):
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(3)
-            stack.addLayout(row)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(8, 3, 8, 3)
+        row.setSpacing(2)
 
         def separator(row) -> None:
             sep = QFrame(self)
@@ -186,33 +180,30 @@ class QuickBar(QWidget):
                 row.addWidget(b)
             separator(row)
 
-        section(primary, "视角")
-        icon_group(primary, "front", "side", "top", "iso", "fit")
+        section(row, "视角")
+        icon_group(row, "front", "side", "top", "iso", "fit")
 
-        # 拾取按钮用图标+文字——纯图标用户不知道是干什么的
-        section(primary, "选择")
+        section(row, "选择")
         for n in ("pick_node", "pick_member"):
             b = _button(a[n], False)
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             b.setIconSize(QSize(16, 16))
-            primary.addWidget(b)
-        separator(primary)
+            row.addWidget(b)
+        separator(row)
 
         # 人工建模按钮
-        section(primary, "编辑")
+        section(row, "编辑")
         for n in ("model_node", "model_member", "delete"):
             b = _button(a[n], False)
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             b.setIconSize(QSize(16, 16))
-            primary.addWidget(b)
-        separator(primary)
-        icon_group(primary, "labels", "props", "undo", "redo")
-        primary.addStretch(1)
+            row.addWidget(b)
+        separator(row)
+        icon_group(row, "labels", "props", "undo", "redo")
 
         # 精确建模：工作平面 + 网格捕捉 + 精确坐标建点。
         # 三维里直接点坐标会飘，这三个控件把节点"锁"在工作平面和网格上。
-        section(context, "工作平面")
-        context.addWidget(QLabel("平面"))
+        section(row, "工作平面")
         self.plane = QComboBox(self)
         self.plane.addItems(["XY", "XZ", "YZ"])
         self.plane.setFixedWidth(56)
@@ -220,10 +211,10 @@ class QuickBar(QWidget):
             "工作平面：新建节点先投影到该平面\n"
             "XY=水平面固定 z，XZ=正立面固定 y，YZ=侧立面固定 x")
         self.plane.currentTextChanged.connect(self._on_plane)
-        context.addWidget(self.plane)
+        row.addWidget(self.plane)
 
         self.offset_label = QLabel("z=")
-        context.addWidget(self.offset_label)
+        row.addWidget(self.offset_label)
         self.offset = QDoubleSpinBox(self)
         self.offset.setRange(-1.0e6, 1.0e6)
         self.offset.setDecimals(3)
@@ -232,9 +223,9 @@ class QuickBar(QWidget):
         self.offset.setToolTip(
             "工作平面位置：XY 填 z，XZ 填 y，YZ 填 x；单位跟随当前模型")
         self.offset.valueChanged.connect(window.set_work_offset)
-        context.addWidget(self.offset)
+        row.addWidget(self.offset)
 
-        context.addWidget(QLabel("捕捉"))
+        row.addWidget(QLabel("捕捉"))
         self.snap = QComboBox(self)
         self.snap.setEditable(True)
         self.snap.addItems(["关闭", "0.1", "0.25", "0.5", "1", "2"])
@@ -247,27 +238,27 @@ class QuickBar(QWidget):
         self.snap.setCurrentIndex(0)
         self.snap.blockSignals(False)
         self.snap.currentTextChanged.connect(window.set_snap_size)
-        context.addWidget(self.snap)
+        row.addWidget(self.snap)
 
         self.coord_btn = QToolButton(self)
         self.coord_btn.setText("坐标建点")
         self.coord_btn.setAutoRaise(True)
         self.coord_btn.setToolTip("输入精确 x/y/z 坐标创建节点（鼠标点不准时用）")
         self.coord_btn.clicked.connect(window.create_node_exact)
-        context.addWidget(self.coord_btn)
-        separator(context)
+        row.addWidget(self.coord_btn)
+        separator(row)
 
-        section(context, "显示")
-        icon_group(context, "model", "deformed", "contour", "modal")
+        section(row, "显示")
+        icon_group(row, "model", "deformed", "contour", "modal")
 
-        context.addWidget(QLabel("工况"))
+        row.addWidget(QLabel("工况"))
         self.cases = QComboBox(self)
         self.cases.setMinimumWidth(132)
         self.cases.setToolTip("切换显示哪个荷载工况或组合的结果")
         self.cases.currentTextChanged.connect(self._on_case)
-        context.addWidget(self.cases)
+        row.addWidget(self.cases)
 
-        context.addWidget(QLabel("放大"))
+        row.addWidget(QLabel("放大"))
         self.scale = QComboBox(self)
         self.scale.setEditable(True)
         self.scale.addItems(["自动", "1", "10", "50", "100", "200", "500"])
@@ -275,9 +266,9 @@ class QuickBar(QWidget):
             "变形图的放大倍数。判断变形是真的大还是被放大了，靠调这个")
         self.scale.setMinimumWidth(84)
         self.scale.currentTextChanged.connect(self._on_scale)
-        context.addWidget(self.scale)
+        row.addWidget(self.scale)
 
-        context.addStretch(1)
+        row.addStretch(1)
         self._filling = False
 
     def _on_plane(self, plane: str) -> None:

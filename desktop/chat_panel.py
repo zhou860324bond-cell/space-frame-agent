@@ -319,12 +319,25 @@ class ChatPanel(QWidget):
                               "建议将要求拆分为多次描述后重试。")
         self._set_busy(False)
         self.model_changed.emit(self._model_signature() != before)
-        self._update_call_status()
+        self._update_call_status(result)
 
-    def _update_call_status(self):
-        """如果用了 ModelRouter，显示最近一次调用的模型和降级状态。"""
+    def _update_call_status(self, result=None):
+        """显示本轮端到端分解；模型慢和工具慢不再混成一个“正在运行”。"""
         if self.conversation is None:
             return
+        parts = []
+        metrics = getattr(result, "metrics", {}) if result is not None else {}
+        if metrics:
+            total = metrics.get("total_ms", 0.0) / 1000
+            if metrics.get("fast_path"):
+                parts.append(f"本轮 {total:.2f}s · 本地快速路径")
+            else:
+                model = metrics.get("provider_ms", 0.0) / 1000
+                tool = metrics.get("tool_ms", 0.0) / 1000
+                calls = int(metrics.get("provider_calls", 0))
+                parts.append(
+                    f"本轮 {total:.1f}s · 模型等待 {model:.1f}s · "
+                    f"工具 {tool:.2f}s · {calls} 次模型往返")
         provider = getattr(self.conversation, "provider", None)
         if provider is None:
             # Conversation 可能把 provider 存在别的属性名
@@ -334,11 +347,8 @@ class ChatPanel(QWidget):
             last = provider.call_history[-1]
             fallback = " ⚠️降级" if last.was_fallback else ""
             status = "✅" if last.success else f"❌{last.error[:30] if last.error else ''}"
-            self.lbl_call_status.setText(
-                f"最近调用：{last.model} {status}{fallback} · "
-                f"{last.duration_ms:.0f}ms · 共 {len(provider.call_history)} 次")
-        else:
-            self.lbl_call_status.setText("")
+            parts.append(f"最近模型：{last.model} {status}{fallback}")
+        self.lbl_call_status.setText("　|　".join(parts))
 
     def _failed(self, kind: str, message: str) -> None:
         """网络超时、密钥无效、脚本用尽……都走这里。

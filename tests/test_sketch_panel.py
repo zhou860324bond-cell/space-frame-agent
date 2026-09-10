@@ -77,6 +77,9 @@ def test_recognized_model_requires_explicit_confirmation_before_loading(qt_app):
     panel._on_recognized(ParseResult(
         model=draft.model, draft=draft, success=True, attempts=1))
 
+    assert panel._stage_index == 3
+    assert "校核与装配" in panel.lbl_stage.text()
+    assert "尚未写入" in panel.lbl_stage.text() or not session.model
     assert panel.chk_confirm.isEnabled()
     assert panel.txt_result.isHidden()
     assert not panel.btn_details.isHidden()
@@ -89,6 +92,8 @@ def test_recognized_model_requires_explicit_confirmation_before_loading(qt_app):
     assert panel.btn_load.isEnabled()
     panel._load_model()
 
+    assert panel._stage_index == 4
+    assert "计算模型" in panel.lbl_stage.text()
     assert len(session.model["nodes"]) == 2
     assert session.model["members"][0]["section"] == ""
     assert len(session.history) == 1

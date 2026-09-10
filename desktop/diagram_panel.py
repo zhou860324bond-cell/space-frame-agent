@@ -64,6 +64,58 @@ COMPONENTS = {
 
 MOMENTS = {"T", "My", "Mz", "M"}
 
+SIGN_CONVENTIONS = {
+    "V": "|V| = sqrt(Vy^2 + Vz^2)，无正负方向",
+    "M": "|M| = sqrt(My^2 + Mz^2)，无正负方向",
+    "N": "+N：沿局部 x 轴受拉",
+    "Vy": "+Vy：沿局部 y 轴",
+    "Vz": "+Vz：沿局部 z 轴",
+    "T": "+T：绕局部 x 轴，按右手定则",
+    "My": "+My：绕局部 y 轴，按右手定则",
+    "Mz": "+Mz：绕局部 z 轴，按右手定则",
+}
+
+
+def diagram_features(x, y) -> dict:
+    """提取专业读图需要的极值、过零点和集中荷载跳跃位置。"""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if not len(x):
+        return {"max": None, "min": None, "zeros": [], "jumps": []}
+    peak = float(np.abs(y).max(initial=0.0))
+    tolerance = max(peak * 1e-10, 1e-12)
+    length = float(np.ptp(x))
+    close = max(length * 1e-7, 1e-12)
+    zeros: list[float] = []
+    if peak > 0.0:
+        for index in range(len(x) - 1):
+            x1, x2, y1, y2 = x[index], x[index + 1], y[index], y[index + 1]
+            if abs(y1) <= tolerance:
+                zeros.append(float(x1))
+            elif y1 * y2 < 0.0 and x2 - x1 > close:
+                zeros.append(float(x1 - y1 * (x2 - x1) / (y2 - y1)))
+        if abs(y[-1]) <= tolerance:
+            zeros.append(float(x[-1]))
+    jumps = [float(0.5 * (x[i] + x[i + 1]))
+             for i in range(len(x) - 1)
+             if x[i + 1] - x[i] <= close
+             and abs(y[i + 1] - y[i]) > tolerance]
+
+    def unique(values: list[float]) -> list[float]:
+        out: list[float] = []
+        for value in values:
+            if not out or abs(value - out[-1]) > close:
+                out.append(value)
+        return out
+
+    i_max, i_min = int(np.argmax(y)), int(np.argmin(y))
+    return {
+        "max": (float(x[i_max]), float(y[i_max])),
+        "min": (float(x[i_min]), float(y[i_min])),
+        "zeros": unique(sorted(zeros)),
+        "jumps": unique(sorted(jumps)),
+    }
+
 
 class DiagramPanel(QWidget):
     """沿杆长的内力曲线。"""
@@ -167,7 +219,10 @@ class DiagramPanel(QWidget):
         out = {"x": np.asarray(d.x) * system.length_to_m,
                "y": np.asarray(d.component(comp)) * scale,
                "component": comp, "case": case, "member": mid,
-               "unit": unit, "scale": scale, "x_unit": "m"}
+               "unit": unit, "scale": scale, "x_unit": "m",
+               "axis": f"local x: N{frame.members[mid].i} -> N{frame.members[mid].j}",
+               "sign_convention": SIGN_CONVENTIONS[comp]}
+        out["features"] = diagram_features(out["x"], out["y"])
 
         if self.envelope.isChecked():
             cases = list(solution.all_results())
@@ -210,8 +265,10 @@ class DiagramPanel(QWidget):
                 if n not in names:
                     names.append(n)
             text += f"　在某处控制的组合：{'、'.join(names)}"
-        if data["component"] in MOMENTS:
-            text += "　弯矩按工程习惯画在受拉侧。"
+        features = data["features"]
+        text += (f"　{data['axis']}；{data['sign_convention']}；"
+                 f"过零点 {len(features['zeros'])} 个，跳跃点 "
+                 f"{len(features['jumps'])} 个。")
         self.caption.setText(text)
 
     def export_png(self) -> None:
@@ -263,22 +320,44 @@ class _Canvas(QWidget):
             self.canvas.draw_idle()
             return
         x, y = data["x"], data["y"]
-        # 弯矩画在受拉侧：轴向下为正，图形就落在受拉的那一边
-        flip = -1.0 if data["component"] in MOMENTS else 1.0
         self.ax.axhline(0.0, color=theme.INK_MUTED, linewidth=1.0)
         if "upper" in data:
-            self.ax.fill_between(x, flip * data["lower"], flip * data["upper"],
+            self.ax.fill_between(x, data["lower"], data["upper"],
                                  color=theme.ACCENT, alpha=0.18,
                                  label="各组合包络")
-            self.ax.plot(x, flip * data["upper"], color=theme.ACCENT,
+            self.ax.plot(x, data["upper"], color=theme.ACCENT,
                          linewidth=0.9, alpha=0.7)
-            self.ax.plot(x, flip * data["lower"], color=theme.ACCENT,
+            self.ax.plot(x, data["lower"], color=theme.ACCENT,
                          linewidth=0.9, alpha=0.7)
-        self.ax.fill_between(x, 0.0, flip * y, color=theme.ACCENT, alpha=0.30)
-        self.ax.plot(x, flip * y, color=theme.INK, linewidth=1.6,
+        self.ax.fill_between(x, 0.0, y, where=y >= 0.0,
+                             color=theme.ACCENT, alpha=0.30, interpolate=True)
+        self.ax.fill_between(x, 0.0, y, where=y < 0.0,
+                             color=theme.LOAD, alpha=0.24, interpolate=True)
+        self.ax.plot(x, y, color=theme.INK, linewidth=1.6,
                      label=data["case"])
-        self.ax.set_xlabel(f"沿杆长 x ({data.get('x_unit', 'm')})")
-        self.ax.set_ylabel(f"{data['component']} ({data['unit']})")
+        features = data.get("features", {})
+        for label, item in (("max", features.get("max")),
+                            ("min", features.get("min"))):
+            if item is not None:
+                self.ax.scatter(*item, s=18, color=theme.INK, zorder=4)
+                self.ax.annotate(f"{item[1]:+.3g}", item, xytext=(4, 5),
+                                 textcoords="offset points", fontsize=7,
+                                 color=theme.INK_MUTED)
+        zeros = features.get("zeros", [])
+        if zeros:
+            self.ax.scatter(zeros, np.zeros(len(zeros)), s=16,
+                            facecolors=theme.PANEL_ALT, edgecolors=theme.INK,
+                            zorder=4, label="过零点")
+        for index, at in enumerate(features.get("jumps", [])):
+            self.ax.axvline(at, color=theme.WARN, linestyle="--",
+                            linewidth=0.9, alpha=0.8,
+                            label="跳跃点" if index == 0 else None)
+        self.ax.set_xlabel(
+            f"{data.get('axis', 'local x')} ({data.get('x_unit', 'm')})")
+        self.ax.set_ylabel(f"signed {data['component']} ({data['unit']})")
+        self.ax.text(0.01, 0.98, data.get("sign_convention", ""),
+                     transform=self.ax.transAxes, va="top", ha="left",
+                     fontsize=7, color=theme.INK_MUTED)
         legend = self.ax.legend(fontsize=8, facecolor=theme.PANEL_ALT,
                                 edgecolor=theme.BORDER)
         for text in legend.get_texts():

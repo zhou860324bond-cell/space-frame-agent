@@ -7,8 +7,8 @@ Qt 那层只负责把这些网格塞进渲染器，薄到不需要测。
 
 三种网格：
 
-* **杆件管** —— 每根杆一段折线，`tube()` 成管子。管子比线好在两点：有粗细
-  可以编码截面、有真实光照，深色视口下立体感强得多。
+* **杆件管** —— 每根杆一段折线，`tube()` 成细圆杆。圆杆只表达分析梁的中心线
+  与连续实体感，不表达真实截面；同时保留光照，便于在深色视口下辨认空间关系。
 * **符号** —— 支座与荷载，几何和 Streamlit 那版同源（`viz_symbols` 里的分类），
   但这里画成实体而不是线，因为 VTK 的实体在三维里更好辨认。
 * **标量** —— 轴力/弯矩挂在管子上做云图。**标量是逐点的**，
@@ -27,22 +27,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from internal_forces import (max_centerline_displacement,
                              member_diagram, member_displacement)  # noqa: E402
-from frame3d import Frame, Node, Member, member_endpoints          # noqa: E402
+from frame3d import (Frame, Node, Member, local_axes,
+                     member_endpoints)                             # noqa: E402
 from modal import member_mode_displacement                        # noqa: E402
 from viz_symbols import classify_support, model_size            # noqa: E402
 
-# 管半径取模型特征尺寸的这个比例。太粗会糊成一团，太细就失去了用管子的意义。
-# 0.004 实测太细：十米跨的刚架管半径 4 cm，投影到屏幕只有几个像素，
-# 颜色需要面积才读得出来，云图因此几乎看不出深浅。
-TUBE_RATIO = 0.011
+# 分析梁只表达中心线与连续实体感，不冒充真实截面。细长比例接近 CAE 梁单元，
+# 避免高饱和粗圆管产生“塑料玩具”观感；云图仍有足够表面积显示颜色。
+TUBE_RATIO = 0.0032
 # 支座符号比管子大，但不该大到反客为主。原值 0.020 是管半径的五倍，
 # 加上近白的颜色，支座成了画面上最抢眼的东西。
-SYMBOL_RATIO = 0.017    # 0.013 实测太小，柱脚分不出固接/铰接/滚动
+SYMBOL_RATIO = 0.0145   # 配合细圆杆，支座可辨认但不压过结构主体
 # 每根杆件沿长度取几个点。云图和变形都靠它，取太少弯矩渐变会变成折线
 STATIONS = 21
 # 挠度积分的分辨率。画形状 21 个点就够，但做两次梯形积分不够——
 # 分开取，画得快、算得准
 DEFLECTION_STATIONS = 201
+
+
+def preferred_view(frame) -> str:
+    """平面结构返回其正投影视图，空间结构返回等轴测。"""
+    if frame is None or not frame.nodes:
+        return "isometric"
+    coords = np.array([node.xyz for node in frame.nodes.values()], dtype=float)
+    extents = np.ptp(coords, axis=0)
+    span = float(extents.max())
+    if span <= 1e-12:
+        return "isometric"
+    flat_axis = int(np.argmin(extents))
+    if extents[flat_axis] > span * 1e-8:
+        return "isometric"
+    return ("yz", "xz", "xy")[flat_axis]
 
 
 def auto_deformation_scale(frame, solution, case: str,
@@ -181,7 +196,7 @@ def member_tubes(frame, solution=None, case: str | None = None,
     """杆件管。radius 留空按模型尺寸取。"""
     line = member_polylines(frame, solution, case, scale, scalars=scalars)
     r = radius if radius is not None else TUBE_RATIO * model_size(frame)
-    return line.tube(radius=r, n_sides=12)
+    return line.tube(radius=r, n_sides=32, capping=True)
 
 
 def support_glyphs(frame, size: float | None = None) -> dict[str, pv.PolyData]:
@@ -203,16 +218,74 @@ def support_glyphs(frame, size: float | None = None) -> dict[str, pv.PolyData]:
                         y_length=2.2 * r, z_length=2 * r)
         elif kind == "铰接":
             g = pv.Cone(center=p - [0, 0, r], direction=[0, 0, 1],
-                        height=2 * r, radius=1.2 * r, resolution=16)
+                        height=2 * r, radius=1.2 * r, resolution=32)
         else:
-            g = pv.Sphere(radius=0.9 * r, center=p)
+            g = pv.Sphere(radius=0.9 * r, center=p,
+                          theta_resolution=24, phi_resolution=24)
         groups.setdefault(kind, []).append(g)
     return {k: (v[0].merge(v[1:]) if len(v) > 1 else v[0])
             for k, v in groups.items()}
 
 
+def support_labels(frame, size: float | None = None) -> tuple[list, list[str]]:
+    """返回主支座的精确约束自由度标注。
+
+    锥体、方块只能表达支座的概略类别，不能表达 ``U1/U2/U3/UR1/UR2/UR3``
+    的真实组合。标签与 :func:`support_glyphs` 使用同一可见性规则，避免把平面
+    模型每个节点上的面外稳定约束全部铺到画面上；被画出的主支座则逐项写清。
+    """
+    offset = 0.024 * (size or model_size(frame))
+    dofs = ("U1", "U2", "U3", "UR1", "UR2", "UR3")
+    points: list = []
+    texts: list[str] = []
+    for nid, mask in frame.supports.items():
+        if sum(mask[:3]) < 2 or nid not in frame.nodes:
+            continue
+        fixed = " ".join(name for name, restrained in zip(dofs, mask)
+                         if restrained)
+        if not fixed:
+            continue
+        p = np.asarray(frame.nodes[nid].xyz, dtype=float)
+        points.append(p + np.array([offset, offset, offset]))
+        texts.append(f"N{nid} BC: {fixed}")
+    return points, texts
+
+
+def member_local_axis_glyphs(frame, member_id: int,
+                             size: float | None = None) -> dict[str, pv.PolyData]:
+    """在杆件中点生成局部 x/y/z 右手坐标箭头。"""
+    member = frame.members.get(member_id)
+    if member is None:
+        return {}
+    pi, pj = member_endpoints(frame, member)
+    _, rotation = local_axes(pi, pj, member.ref_vector)
+    origin = 0.5 * (pi + pj)
+    length = 0.075 * (size or model_size(frame))
+    return {
+        axis: pv.Arrow(start=origin, direction=direction, scale=length,
+                       tip_length=0.24, tip_radius=0.075,
+                       shaft_radius=0.018, tip_resolution=24,
+                       shaft_resolution=16)
+        for axis, direction in zip(("x", "y", "z"), rotation)
+    }
+
+
+def member_local_axis_labels(frame, member_id: int,
+                             size: float | None = None) -> tuple[list, list[str]]:
+    """局部轴箭头端点和标签；与 ``member_local_axis_glyphs`` 共用尺度。"""
+    member = frame.members.get(member_id)
+    if member is None:
+        return [], []
+    pi, pj = member_endpoints(frame, member)
+    _, rotation = local_axes(pi, pj, member.ref_vector)
+    origin = 0.5 * (pi + pj)
+    length = 0.088 * (size or model_size(frame))
+    return [origin + length * direction for direction in rotation], [
+        "local x (i->j)", "local y", "local z"]
+
+
 def load_arrows(frame, case: str, size: float | None = None,
-                per_member: int = 3) -> dict[str, pv.PolyData]:
+                per_member: int = 7) -> dict[str, pv.PolyData]:
     """荷载与分析步给定位移箭头，按物理类型分组。
 
     **各组分别归一**，与 Streamlit 版同一条理由：物理量量级常跨几个数量级，
@@ -226,30 +299,78 @@ def load_arrows(frame, case: str, size: float | None = None,
         return {}
     span = size or model_size(frame)
 
-    def arrows(points, vectors) -> pv.PolyData | None:
+    def arrows(points, vectors, groups=None) -> pv.PolyData | None:
         if not points:
             return None
         mag = np.linalg.norm(np.array(vectors), axis=1)
         peak = float(mag.max()) or 1.0
-        made = []
+        made, tails = [], []
         for p, v, m in zip(points, vectors, mag):
             # 反对称梯形荷载可能恰好在某个显示站点过零。零向量不能传给
             # pv.Arrow；VTK 会归一化它并产生 NaN，严重时在渲染线程原生崩溃。
             if m <= 1e-15 * peak:
                 continue
-            length = span * 0.10 * (0.35 + 0.65 * m / peak)
+            length = span * 0.06 * (0.45 + 0.55 * m / peak)
             direction = np.asarray(v, dtype=float) / m
             # 箭头尾端接在作用点上，箭头指向荷载方向
-            made.append(pv.Arrow(start=np.asarray(p) - direction * length,
+            tail = np.asarray(p) - direction * length
+            tails.append(tail)
+            made.append(pv.Arrow(start=tail,
                                  direction=direction, scale=length,
-                                 tip_length=0.35, tip_radius=0.12,
-                                 shaft_radius=0.04))
+                                 tip_length=0.26, tip_radius=0.06,
+                                 shaft_radius=0.014,
+                                 tip_resolution=24, shaft_resolution=16))
+        if groups is not None and len(tails) == len(groups):
+            group_values = np.asarray(groups)
+            tail_values = np.asarray(tails)
+            for group in dict.fromkeys(groups):
+                rail = tail_values[group_values == group]
+                if len(rail) >= 2:
+                    made.append(_polyline(rail).tube(
+                        radius=span * 0.0011, n_sides=20, capping=True))
+        if not made:
+            return None
+        return made[0].merge(made[1:]) if len(made) > 1 else made[0]
+
+    def circular_arrows(points, vectors) -> pv.PolyData | None:
+        """按右手定则画力矩/转角；轴向量决定旋向，不再冒充直线力。"""
+        if not points:
+            return None
+        magnitudes = np.linalg.norm(np.asarray(vectors, dtype=float), axis=1)
+        peak = float(magnitudes.max()) or 1.0
+        made: list[pv.PolyData] = []
+        for point, vector, magnitude in zip(points, vectors, magnitudes):
+            if magnitude <= 1e-15 * peak:
+                continue
+            axis = np.asarray(vector, dtype=float) / magnitude
+            reference = (np.array([0.0, 0.0, 1.0])
+                         if abs(axis[2]) < 0.85 else np.array([0.0, 1.0, 0.0]))
+            radial = np.cross(reference, axis)
+            radial /= np.linalg.norm(radial)
+            tangent_basis = np.cross(axis, radial)
+            radius = span * 0.034 * (0.72 + 0.28 * magnitude / peak)
+            theta = np.linspace(-0.78 * np.pi, 0.78 * np.pi, 34)
+            center = np.asarray(point, dtype=float)
+            arc_points = center + radius * (
+                np.cos(theta)[:, None] * radial
+                + np.sin(theta)[:, None] * tangent_basis)
+            arc = _polyline(arc_points).tube(
+                radius=span * 0.00125, n_sides=16, capping=True)
+            end = arc_points[-1]
+            tangent = (-np.sin(theta[-1]) * radial
+                       + np.cos(theta[-1]) * tangent_basis)
+            head_height = radius * 0.36
+            head = pv.Cone(center=end + 0.5 * head_height * tangent,
+                           direction=tangent, height=head_height,
+                           radius=radius * 0.105, resolution=24)
+            made.append(arc.merge(head))
         if not made:
             return None
         return made[0].merge(made[1:]) if len(made) > 1 else made[0]
 
     nodal_p, nodal_v, moment_p, moment_v = [], [], [], []
-    span_p, span_v, given_p, given_v, rotation_p, rotation_v = [], [], [], [], [], []
+    span_p, span_v, span_groups = [], [], []
+    given_p, given_v, rotation_p, rotation_v = [], [], [], []
     for nid, load in load_case.nodal_loads.items():
         f = np.asarray(load[:3], dtype=float)
         if np.linalg.norm(f) > 0 and nid in frame.nodes:
@@ -270,6 +391,7 @@ def load_arrows(frame, case: str, size: float | None = None,
         if np.linalg.norm(rotation) > 0:
             rotation_p.append(frame.nodes[nid].xyz)
             rotation_v.append(rotation)
+    group = 0
     for mid, member in frame.members.items():
         pi, pj = member_endpoints(frame, member)
         for item in span_loads_of(load_case, mid):
@@ -277,11 +399,14 @@ def load_arrows(frame, case: str, size: float | None = None,
                 L = float(np.linalg.norm(pj - pi))
                 span_p.append(pi + (item.a / L if L else 0.0) * (pj - pi))
                 span_v.append(np.asarray(item.w1, dtype=float))
+                span_groups.append(None)
                 continue
+            group += 1
             v1, v2 = item.ends()
             for t in np.linspace(0.15, 0.85, per_member):
                 span_p.append(pi + t * (pj - pi))
                 span_v.append((1 - t) * v1 + t * v2)
+                span_groups.append(group)
 
     out = {}
     for label, pts, vec in (("节点荷载", nodal_p, nodal_v),
@@ -289,7 +414,14 @@ def load_arrows(frame, case: str, size: float | None = None,
                             ("杆间荷载", span_p, span_v),
                             ("给定位移", given_p, given_v),
                             ("给定转角", rotation_p, rotation_v)):
-        got = arrows(pts, vec)
+        groups = span_groups if label == "杆间荷载" else None
+        # 集中杆荷载没有连续顶线；用 None 将它们从分布荷载组中排除。
+        if groups is not None and any(value is None for value in groups):
+            groups = [value if value is not None else f"point-{index}"
+                      for index, value in enumerate(groups)]
+        got = (circular_arrows(pts, vec)
+               if label in {"节点力矩", "给定转角"}
+               else arrows(pts, vec, groups))
         if got is not None:
             out[label] = got
     return out
@@ -324,6 +456,30 @@ def clim_is_clipped(mesh: pv.PolyData, name: str,
     if not values.size:
         return False
     return float(values.max()) > max(abs(clim[0]), abs(clim[1])) * (1.0 + 1e-9)
+
+
+def contour_caption(component: str, unit: str, clipped: bool = False,
+                    sign_filter: str = "all") -> str:
+    """梁中心线结果的自描述文字；明确它不是截面实体应力云图。"""
+    convention = ("magnitude (nonnegative)" if component in {"M", "V"}
+                  else "signed in member local axes")
+    suffix = f" | display clipped at p{CONTOUR_PERCENTILE:.0f}" if clipped else ""
+    if sign_filter != "all" and component not in {"M", "V"}:
+        suffix += f" | {sign_filter} values only"
+    return ("BEAM CENTERLINE INTERNAL-FORCE RESULT\n"
+            f"{component} [{unit}] | {convention}{suffix}")
+
+
+def sign_filtered(values, mode: str) -> np.ndarray:
+    """保留结果数组尺寸，仅把未选符号压到零色，底层结果不变。"""
+    data = np.asarray(values, dtype=float).copy()
+    if mode == "positive":
+        data[data < 0.0] = 0.0
+    elif mode == "negative":
+        data[data > 0.0] = 0.0
+    elif mode != "all":
+        raise ValueError("符号筛选只能是 all / positive / negative")
+    return data
 
 
 def symmetric_clim(mesh: pv.PolyData, name: str,
@@ -518,7 +674,7 @@ def draft_frame(model: dict) -> Frame:
     return f
 
 
-def highlight_members(frame, member_ids, radius_scale: float = 2.2) -> pv.PolyData:
+def highlight_members(frame, member_ids, radius_scale: float = 1.6) -> pv.PolyData:
     """把选中的杆件加粗画一遍，套在原杆件外面。
 
     **用加粗而不是换颜色**：云图模式下颜色是有含义的（受拉受压），
@@ -533,7 +689,7 @@ def highlight_members(frame, member_ids, radius_scale: float = 2.2) -> pv.PolyDa
         m = frame.members[mid]
         blocks.append(_polyline(np.vstack(member_endpoints(frame, m))))
     merged = blocks[0].merge(blocks[1:]) if len(blocks) > 1 else blocks[0]
-    return merged.tube(radius=r, n_sides=14)
+    return merged.tube(radius=r, n_sides=32, capping=True)
 
 
 def highlight_nodes(frame, node_ids) -> pv.PolyData:
@@ -554,11 +710,11 @@ def mode_shape_tubes(frame, shapes: np.ndarray, mode: int, scale: float,
         blocks.append(_polyline(points + scale * displacement))
     merged = (blocks[0].merge(blocks[1:], merge_points=False)
               if len(blocks) > 1 else blocks[0])
-    return merged.tube(radius=r, n_sides=12)
+    return merged.tube(radius=r, n_sides=32, capping=True)
 
 
 def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list]:
-    """每个荷载的标注点与文字（含数值和单位）。
+    """每个荷载的标注点与文字（含带符号全局分量、数值和单位）。
 
     **类型不该只靠颜色分。** 四类荷载用四种颜色，跑 validate_palette.js 的
     all-pairs 最严档必然不合格（文档写明超过三槽就该换编码方式）；而且颜色
@@ -568,7 +724,7 @@ def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list
     文字用 ASCII：VTK 有自己的字体引擎，默认字体没有中文字形。
     """
     from frame3d import span_loads_of
-    from span_loads import POINT
+    from span_loads import POINT, TRAPEZOID
     from units import of as unit_system
 
     load_case = frame.load_cases.get(case)
@@ -579,30 +735,46 @@ def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list
     points: list = []
     texts: list[str] = []
 
-    def add(point, magnitude: float, unit: str) -> None:
-        if abs(magnitude) <= 0.0:
+    def vector_text(prefix: str, vector, scale: float, unit: str) -> str:
+        values = np.asarray(vector, dtype=float) * scale
+        terms = [f"{prefix}{axis}={value:+.3g}"
+                 for axis, value in zip("xyz", values) if value != 0.0]
+        return f"{', '.join(terms)} {unit} [global]" if terms else ""
+
+    def add(point, text: str) -> None:
+        if not text:
             return
         points.append(np.asarray(point, dtype=float) + np.array([0.0, 0.0, span]))
-        texts.append(f"{magnitude:.3g} {unit}")
+        texts.append(text)
 
     for node_id, load in load_case.nodal_loads.items():
         if node_id not in frame.nodes:
             continue
         p = frame.nodes[node_id].xyz
-        force = float(np.linalg.norm(np.asarray(load[:3], dtype=float)))
-        add(p, force * system.force_scale, system.force_unit)
-        moment = float(np.linalg.norm(np.asarray(load[3:], dtype=float)))
-        add(p, moment * system.moment_scale, system.moment_unit)
+        add(p, vector_text("F", load[:3], system.force_scale,
+                           system.force_unit))
+        add(p, vector_text("M", load[3:], system.moment_scale,
+                           system.moment_unit))
 
     for member_id, member in frame.members.items():
         pi, pj = member_endpoints(frame, member)
         for load in span_loads_of(load_case, member_id):
-            magnitude = float(np.linalg.norm(np.asarray(load.w1[:3], dtype=float)))
             if load.kind == POINT:
                 length = float(np.linalg.norm(pj - pi)) or 1.0
                 where = pi + (float(load.a) / length) * (pj - pi)
-                add(where, magnitude * system.force_scale, system.force_unit)
+                add(where, vector_text("P", load.w1, system.force_scale,
+                                       system.force_unit))
+            elif load.kind == TRAPEZOID:
+                first = vector_text("w1", load.w1, system.line_load_scale,
+                                    system.line_load_unit)
+                second = vector_text("w2", load.w2, system.line_load_scale,
+                                     system.line_load_unit)
+                # 单位与坐标系只写一次，避免长标签重复两遍。
+                first = first.removesuffix(
+                    f" {system.line_load_unit} [global]")
+                add(0.5 * (pi + pj), f"{first} -> {second}")
             else:
-                add(0.5 * (pi + pj), magnitude * system.line_load_scale,
-                    system.line_load_unit)
+                add(0.5 * (pi + pj), vector_text(
+                    "w", load.w1, system.line_load_scale,
+                    system.line_load_unit))
     return points, texts

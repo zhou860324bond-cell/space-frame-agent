@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
 
 from . import theme
 from .image_preprocess_widget import ImagePreprocessWidget
-from .issue_panel import IssuePanel
+from .issue_panel import IssuePanel, confidence_band
 
 
 def _provider_with_credentials(default: str = "openai") -> str:
@@ -76,9 +76,20 @@ class SketchPanel(QWidget):
         layout.setSpacing(6)
 
         # 标题
-        title = QLabel("手绘草图 → 模型")
+        title = QLabel("二维图纸识别 → 计算模型")
         title.setStyleSheet(f"font-weight:650; font-size:10pt; color:{theme.INK};")
         layout.addWidget(title)
+
+        self.lbl_stage = QLabel()
+        self.lbl_stage.setWordWrap(True)
+        self.lbl_stage.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_stage.setStyleSheet(
+            f"background:{theme.PANEL_RAISED}; border:1px solid {theme.BORDER}; "
+            "padding:6px; border-radius:4px; font-size:8pt;")
+        self.lbl_stage.setToolTip(
+            "二维识别只生成可校核草稿；完成装配预演并人工确认后，才写入计算模型。")
+        layout.addWidget(self.lbl_stage)
+        self._set_stage(1, "等待选择图像并确认工作平面")
 
         # 不常改的提供商、模型和密钥默认收起，主流程只留图片与确认。
         self.btn_settings = QPushButton("识别设置 ▸")
@@ -160,6 +171,15 @@ class SketchPanel(QWidget):
             f"background:{theme.PANEL_ALT};")
         self.lbl_image.installEventFilter(self)
         layout.addWidget(self.lbl_image)
+
+        self.lbl_confidence_legend = QLabel(
+            "识别置信度：高 ≥90% · 中 75–89% · 低 <75% · 紫色为当前审核对象\n"
+            "仅表示图像识别确定性，不代表结构计算可靠性")
+        self.lbl_confidence_legend.setWordWrap(True)
+        self.lbl_confidence_legend.setStyleSheet(
+            f"color:{theme.INK_MUTED}; font-size:8pt;")
+        self.lbl_confidence_legend.setVisible(False)
+        layout.addWidget(self.lbl_confidence_legend)
 
         self.issue_panel = IssuePanel(self)
         self.issue_panel.setVisible(False)
@@ -316,13 +336,13 @@ class SketchPanel(QWidget):
         self.scale_widget.setVisible(False)
         layout.addWidget(self.scale_widget)
 
-        self.chk_confirm = QCheckBox("我已核对覆盖标注和模型拓扑")
+        self.chk_confirm = QCheckBox("我已核对二维覆盖、结构拓扑和装配预演")
         self.chk_confirm.setEnabled(False)
         self.chk_confirm.toggled.connect(self._update_load_enabled)
         layout.addWidget(self.chk_confirm)
 
         # 加载按钮
-        self.btn_load = QPushButton("确认并加载识别草稿")
+        self.btn_load = QPushButton("确认并写入计算模型")
         self.btn_load.clicked.connect(self._load_model)
         self.btn_load.setEnabled(False)
         self.btn_load.setStyleSheet(
@@ -330,6 +350,22 @@ class SketchPanel(QWidget):
         layout.addWidget(self.btn_load)
 
         layout.addStretch()
+
+    def _set_stage(self, current: int, note: str) -> None:
+        """固定展示识别草稿与计算模型之间的阶段边界。"""
+        from html import escape
+        self._stage_index = current
+        stages = ("图像准备", "二维识别", "校核与装配", "计算模型")
+        parts = []
+        for index, label in enumerate(stages, 1):
+            color = theme.ACCENT if index == current else theme.INK_DIM
+            weight = "650" if index == current else "400"
+            parts.append(
+                f'<span style="color:{color};font-weight:{weight}">'
+                f'{index} {label}</span>')
+        self.lbl_stage.setText(
+            "　→　".join(parts)
+            + f'<br><span style="color:{theme.INK_MUTED}">{escape(note)}</span>')
 
     def _pick_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -365,6 +401,7 @@ class SketchPanel(QWidget):
         self._v2_draft = None
         self._v2_state = None
         self._v2_node_reuse.clear()
+        self.lbl_confidence_legend.setVisible(False)
         self.chk_confirm.setChecked(False)
         self.chk_confirm.setEnabled(False)
         self.scale_widget.setVisible(False)
@@ -379,12 +416,14 @@ class SketchPanel(QWidget):
         self.txt_result.clear()
         self.lbl_status.setText(
             f"已载入派生图：{Path(self._image_path).name}；请确认工作平面")
+        self._set_stage(1, "派生图已生成；确认工作平面后才能开始识别")
 
     def _on_work_plane_confirmed(self, payload: dict) -> None:
         self._work_plane = dict(payload)
         self.btn_recognize.setEnabled(True)
         self.lbl_status.setText(
             f"工作平面已确认：{payload['plane']}，可开始识别")
+        self._set_stage(1, f"工作平面 {payload['plane']} 已确认；可以开始二维识别")
 
     def set_v2_draft(self, draft: dict) -> None:
         """Host the frozen v2 review APIs without changing the legacy v1 path."""
@@ -396,6 +435,7 @@ class SketchPanel(QWidget):
         self.chk_confirm.setEnabled(False)
         self.btn_load.setEnabled(False)
         self.issue_panel.setVisible(True)
+        self.lbl_confidence_legend.setVisible(True)
         self.issue_panel.set_draft(self._v2_draft)
         self._show_overlay(self._v2_draft)
         self._refresh_v2_scale_controls()
@@ -403,6 +443,7 @@ class SketchPanel(QWidget):
         self.edit_widget.setVisible(True)
         self._refresh_boundary_controls()
         self.btn_boundaries.setVisible(True)
+        self._set_stage(3, "当前仍是可编辑识别草稿，尚未写入计算模型")
         self._refresh_v2_commit_state()
 
     def _on_v2_issue_selected(self, issue_id: str, refs: list) -> None:
@@ -553,8 +594,9 @@ class SketchPanel(QWidget):
             "结构化变更预演：\n" + json.dumps(
                 preview["operations"], ensure_ascii=False, indent=2))
         self.lbl_status.setText(
-            f"预演完成：{len(preview['operations'])} 项结构化变更，请核对后确认加载。")
+            f"预演完成：{len(preview['operations'])} 项结构化变更，请核对后确认写入。")
         self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
+        self._set_stage(3, "装配预演已生成；确认前不会修改当前计算模型")
         self._update_load_enabled()
 
     @staticmethod
@@ -594,6 +636,7 @@ class SketchPanel(QWidget):
         self._v2_draft = None
         self._v2_state = None
         self._v2_node_reuse.clear()
+        self.lbl_confidence_legend.setVisible(False)
         self.chk_confirm.setChecked(False)
         self.chk_confirm.setEnabled(False)
         self.scale_widget.setVisible(False)
@@ -606,6 +649,7 @@ class SketchPanel(QWidget):
         self.btn_details.setChecked(False)
         self.btn_details.setVisible(False)
         self.txt_result.clear()
+        self._set_stage(2, "正在从图像提取节点、杆件、支座和载荷")
         self._start_elapsed_ticker()
 
         provider = self.cmb_provider.currentText()
@@ -713,12 +757,15 @@ class SketchPanel(QWidget):
             self._refresh_boundary_controls()
             self.edit_widget.setVisible(True)
             self.btn_boundaries.setVisible(True)
+            self.lbl_confidence_legend.setVisible(True)
             self.scale_widget.setVisible(draft.scale_status == "unknown")
             self._show_overlay(draft)
+            self._set_stage(3, "二维识别已完成；请校核覆盖、尺度和结构拓扑")
             self._update_load_enabled()
         else:
             self.lbl_status.setText(f"❌ 识别失败（{result.attempts} 次尝试）")
             self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
+            self._set_stage(2, "识别未完成；当前计算模型没有改变")
             dump = self._dump_failure(result)
             text = "\n".join(result.errors)
             if dump:
@@ -787,6 +834,7 @@ class SketchPanel(QWidget):
         self.btn_pick.setEnabled(True)
         self.lbl_status.setText(f"❌ 调用失败：{exc_type}: {msg}")
         self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
+        self._set_stage(2, "识别未完成；当前计算模型没有改变")
 
     def _update_load_enabled(self, *_):
         if self._v2_draft is not None:
@@ -1263,12 +1311,15 @@ class SketchPanel(QWidget):
         entities = draft.get("entities", []) if isinstance(draft, dict) else draft.entities
         for entity in entities:
             geometry = entity.get("image_geometry") or {}
-            raw_confidence = entity.get("confidence")
-            confidence = 1.0 if raw_confidence is None else float(raw_confidence)
+            band = confidence_band(entity)
             if self._v2_entity_ref(entity) in self._highlight_refs:
                 colour = QColor("#d946ef")
-            elif confidence < 0.75:
+            elif band == "low":
+                colour = QColor(theme.ERROR)
+            elif band in {"medium", "unknown"}:
                 colour = QColor(theme.WARN)
+            elif band == "verified":
+                colour = QColor(theme.SUCCESS)
             elif entity.get("kind") == "support":
                 colour = QColor(theme.DRAFT_SUPPORT)
             elif entity.get("kind") == "load":
@@ -1516,6 +1567,7 @@ class SketchPanel(QWidget):
                 f"V2 草稿已原子加载（1 个撤销步骤）"
                 + (f"；仍有 {len(warnings)} 项工程属性待补全。" if warnings else "。"))
             self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
+            self._set_stage(4, "识别草稿已写入当前计算模型；后续修改由模型历史管理")
             return
         if (self._result_draft is None or not self.chk_confirm.isChecked()
                 or not self._result_draft.ready_to_load):
@@ -1538,3 +1590,4 @@ class SketchPanel(QWidget):
         else:
             self.lbl_status.setText("识别草稿已加载，请执行模型检查后求解。")
         self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
+        self._set_stage(4, "识别草稿已写入当前计算模型；请完成工程属性并检查")

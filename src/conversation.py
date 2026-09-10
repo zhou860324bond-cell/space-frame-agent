@@ -24,6 +24,8 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,6 +36,10 @@ from workflow import refresh_workflow_message, workflow_message
 # 默认保留多少个回合。一个回合可能有十几条消息，六个回合已经够
 # "改一下再算"这类连续追问了，再多只是在烧 token。
 DEFAULT_KEEP_TURNS = 6
+# 回合数只是第一道闸；一次内力查询可能比六个普通回合还大，因此再加字符预算。
+# 预算只作用于旧历史，当前请求和完整系统约束永远保留。
+DEFAULT_CONTEXT_CHARS = 24_000
+TOOL_MESSAGE_MAX_CHARS = 6_000
 
 _CONTINUATION_HINT = """
 你正在一次**多轮对话**中。此前的模型状态还在：材料、截面、节点、杆件、荷载
@@ -83,6 +89,37 @@ def check_pairing(messages: list[dict]) -> list[str]:
     if pending:
         problems.append(f"末尾还有未应答的调用 {sorted(pending)}")
     return problems
+
+
+def _message_chars(messages: list[dict]) -> int:
+    return len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")))
+
+
+def _compact_value(value: Any, list_edge: int = 10) -> Any:
+    """缩短只供模型阅读的工具回包，Session 中的完整结果不受影响。"""
+    if isinstance(value, dict):
+        return {str(key): _compact_value(item, list_edge)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        if len(value) <= list_edge * 2:
+            return [_compact_value(item, list_edge) for item in value]
+        return ([_compact_value(item, list_edge) for item in value[:list_edge]]
+                + [{"_omitted_items": len(value) - list_edge * 2}]
+                + [_compact_value(item, list_edge) for item in value[-list_edge:]])
+    if isinstance(value, str) and len(value) > 2_000:
+        return value[:1_000] + f"…（省略 {len(value) - 2_000} 字符）…" + value[-1_000:]
+    return value
+
+
+def tool_message_content(result, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str:
+    """返回有效 JSON；大数组仅在 LLM 上下文中折叠，避免后续每轮反复上传。"""
+    raw = result.to_json()
+    if len(raw) <= max_chars:
+        return raw
+    compact = {"ok": result.ok, **_compact_value(result.payload)}
+    compact["_context_note"] = (
+        "回包为降低模型等待时间已折叠长数组；完整结果仍保存在 Session 和界面中。")
+    return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
 
 
 
@@ -139,13 +176,17 @@ class Conversation:
 
     def __init__(self, provider: Provider, session: Session | None = None,
                  keep_turns: int = DEFAULT_KEEP_TURNS,
-                 max_rounds: int = MAX_ROUNDS):
+                 max_rounds: int = MAX_ROUNDS,
+                 context_chars: int = DEFAULT_CONTEXT_CHARS):
         if keep_turns < 1:
             raise ValueError("keep_turns 至少为 1")
+        if context_chars < 1:
+            raise ValueError("context_chars 必须大于 0")
         self.provider = provider
         self.session = session or Session()
         self.keep_turns = keep_turns
         self.max_rounds = max_rounds
+        self.context_chars = context_chars
         self.history: list[Exchange] = []
         # 界面上的"停止"置位它。**只在轮与轮之间检查**——
         # 一次工具调用中途掐断，模型可能停在改了一半的状态，
@@ -172,12 +213,154 @@ class Conversation:
         裁剪以回合为单位：要么整段留，要么整段丢。**绝不从回合中间切开**——
         那会拆散 assistant.tool_calls 与它的 tool 结果。
         """
-        kept = self.history[-self.keep_turns:] if self.keep_turns else []
-        messages = self.system_messages()
-        for ex in kept:
+        candidates = self.history[-self.keep_turns:] if self.keep_turns else []
+        base = self.system_messages()
+        current = {"role": "user", "content": user_text}
+        budget = max(0, self.context_chars - _message_chars(base + [current]))
+        kept_reversed: list[Exchange] = []
+        used = 0
+        for ex in reversed(candidates):
+            size = _message_chars(ex.messages)
+            # 至少保留最近一轮，延续“它/那根梁/再算”的指代；更早历史严格受预算约束。
+            if kept_reversed and used + size > budget:
+                break
+            kept_reversed.append(ex)
+            used += size
+        messages = base
+        for ex in reversed(kept_reversed):
             messages.extend(ex.messages)
-        messages.append({"role": "user", "content": user_text})
+        messages.append(current)
         return messages
+
+    def _finish_local(self, user_text: str, text: str,
+                      calls: list[tuple[str, dict]], started: float,
+                      on_tool=None) -> TurnResult:
+        messages = [{"role": "user", "content": user_text},
+                    {"role": "assistant", "content": text}]
+        self.history.append(Exchange(user_text, text, messages, calls, 0))
+        return TurnResult(text, 0, calls, self.session, metrics={
+            "total_ms": (time.perf_counter() - started) * 1000,
+            "provider_ms": 0.0,
+            "tool_ms": 0.0,
+            "provider_calls": 0,
+            "prompt_chars": 0,
+            "fast_path": True,
+        })
+
+    def _try_local_fast_path(self, user_text: str, started: float,
+                             on_tool=None) -> TurnResult | None:
+        """确定性处理极常见的短命令；其余语言理解仍交给模型。
+
+        边界刻意很窄，避免把“把荷载改了再算”误判成无修改的重新求解。
+        """
+        normalized = re.sub(r"[\s，。！？、,.!?]", "", user_text).lower()
+        if normalized in {"下一步", "下一步呢", "next", "next可以干什么",
+                          "下一步可以干什么"}:
+            from workflow import WorkflowPhase, inspect_workflow
+
+            status = inspect_workflow(self.session)
+            if status.phase is WorkflowPhase.EMPTY:
+                text = "下一步先建立几何；请给出结构类型、跨度、层高和开间。"
+            elif status.phase is WorkflowPhase.DRAFT:
+                detail = "；".join(status.validation_errors[:2])
+                text = f"下一步先补全模型再求解。当前问题：{detail}"
+            elif status.phase is WorkflowPhase.READY:
+                text = "模型已经可分析。下一步运行求解，然后检查位移、反力和杆件内力。"
+            else:
+                text = "求解已经完成。下一步建议先看最大位移与控制工况，再检查内力和边界反力。"
+            return self._finish_local(user_text, text, [], started, on_tool)
+
+        if normalized in {"最大位移", "查看最大位移", "查询最大位移"} \
+                and self.session.solution is not None:
+            args = {"what": "max_displacement"}
+            tool_started = time.perf_counter()
+            result = self.session.dispatch("query_results", args)
+            tool_ms = (time.perf_counter() - tool_started) * 1000
+            if on_tool is not None:
+                try:
+                    on_tool("query_results", args, result.ok)
+                except Exception:
+                    pass
+            if result.ok:
+                p = result.payload
+                text = (f"最大位移为 {p['magnitude_mm']} mm，控制工况 {p['case']}，"
+                        f"位置坐标 {p['coordinates_xyz']} m；分量 {p['components_mm']} mm。")
+            else:
+                text = str(result.payload.get("error", "结果查询失败"))
+            out = self._finish_local(user_text, text,
+                                     [("query_results", args)], started, on_tool)
+            out.metrics["tool_ms"] = tool_ms
+            return out
+
+        if normalized in {"检查模型", "校验模型", "验证模型"}:
+            args: dict[str, Any] = {}
+            tool_started = time.perf_counter()
+            result = self.session.dispatch("validate_model", args)
+            tool_ms = (time.perf_counter() - tool_started) * 1000
+            if on_tool is not None:
+                try:
+                    on_tool("validate_model", args, result.ok)
+                except Exception:
+                    pass
+            if result.ok:
+                summary = result.payload.get("summary") or {}
+                text = ("模型校验通过，可以求解。"
+                        f"当前 {summary.get('nodes', 0)} 个节点、"
+                        f"{summary.get('members', 0)} 根杆件。")
+            else:
+                issues = result.payload.get("errors") or [result.payload.get("error")]
+                text = "模型尚不能求解：" + "；".join(str(item) for item in issues[:3])
+            out = self._finish_local(user_text, text,
+                                     [("validate_model", args)], started, on_tool)
+            out.metrics["tool_ms"] = tool_ms
+            return out
+
+        if normalized in {"重新求解", "重新计算", "再算一遍", "求解模型"}:
+            args = {}
+            tool_started = time.perf_counter()
+            result = self.session.dispatch("solve_model", args)
+            tool_ms = (time.perf_counter() - tool_started) * 1000
+            if on_tool is not None:
+                try:
+                    on_tool("solve_model", args, result.ok)
+                except Exception:
+                    pass
+            if result.ok:
+                cases = result.payload.get("cases") or {}
+                rows = [f"{name}: {row.get('max_displacement_mm')} mm"
+                        for name, row in list(cases.items())[:4]]
+                text = "求解完成。" + ("；".join(rows) if rows else "结果已更新。")
+            else:
+                issues = result.payload.get("errors") or [result.payload.get("error")]
+                text = "求解未通过：" + "；".join(str(item) for item in issues[:3])
+            out = self._finish_local(user_text, text,
+                                     [("solve_model", args)], started, on_tool)
+            out.metrics["tool_ms"] = tool_ms
+            return out
+
+        if normalized in {"查看反力", "查询反力", "支座反力"} \
+                and self.session.solution is not None:
+            args = {"what": "reactions"}
+            tool_started = time.perf_counter()
+            result = self.session.dispatch("query_results", args)
+            tool_ms = (time.perf_counter() - tool_started) * 1000
+            if on_tool is not None:
+                try:
+                    on_tool("query_results", args, result.ok)
+                except Exception:
+                    pass
+            if result.ok:
+                p = result.payload
+                text = (f"控制工况 {p['case']} 的支座反力已读取；"
+                        f"竖向合力 {p['vertical_total_kN']} kN。"
+                        "各支座分量已保留在结果检查器中。")
+            else:
+                text = str(result.payload.get("error", "反力查询失败"))
+            out = self._finish_local(user_text, text,
+                                     [("query_results", args)], started, on_tool)
+            out.metrics["tool_ms"] = tool_ms
+            return out
+        return None
 
     def cancel(self) -> None:
         """请求停止。**下一轮开始前生效，不打断正在跑的这一轮。**
@@ -199,7 +382,11 @@ class Conversation:
         不只是"看着不慌"——他能在第三行就发现模型理解错了跨度，立刻按停止，
         而不是等它把报告都写完。
         """
+        started = time.perf_counter()
         self.session.receive_user_confirmation(user_text)
+        local = self._try_local_fast_path(user_text, started, on_tool)
+        if local is not None:
+            return local
         messages = self.build_messages(user_text)
         problems = check_pairing(messages)
         if problems:
@@ -210,6 +397,9 @@ class Conversation:
         this_turn: list[dict] = [{"role": "user", "content": user_text}]
         calls: list[tuple[str, dict]] = []
         self._cancelled = False
+        provider_ms = 0.0
+        tool_ms = 0.0
+        prompt_chars = 0
 
         for round_index in range(self.max_rounds):
             if self._cancelled:
@@ -221,13 +411,24 @@ class Conversation:
                     calls, round_index + 1, True))
                 return TurnResult(text, round_index + 1, calls, self.session,
                                   stopped_by_limit=True)
+            prompt_chars += _message_chars(messages)
+            provider_started = time.perf_counter()
             reply = self.provider.complete(messages, TOOLS)
+            provider_ms += (time.perf_counter() - provider_started) * 1000
             if not reply.get("tool_calls"):
                 text = reply.get("content", "")
                 this_turn.append({"role": "assistant", "content": text})
                 self.history.append(Exchange(user_text, text, this_turn,
                                              calls, round_index + 1))
-                return TurnResult(text, round_index + 1, calls, self.session)
+                return TurnResult(text, round_index + 1, calls, self.session,
+                                  metrics={
+                                      "total_ms": (time.perf_counter() - started) * 1000,
+                                      "provider_ms": provider_ms,
+                                      "tool_ms": tool_ms,
+                                      "provider_calls": round_index + 1,
+                                      "prompt_chars": prompt_chars,
+                                      "fast_path": False,
+                                  })
 
             assistant = {
                 "role": "assistant", "content": None,
@@ -242,7 +443,9 @@ class Conversation:
             this_turn.append(assistant)
 
             for call in reply["tool_calls"]:
+                tool_started = time.perf_counter()
                 result = self.session.dispatch(call["name"], call["arguments"])
+                tool_ms += (time.perf_counter() - tool_started) * 1000
                 calls.append((call["name"], call["arguments"]))
                 if on_tool is not None:
                     try:
@@ -252,7 +455,7 @@ class Conversation:
                         # 模型已经改过的东西不会因为显示不出来就撤销
                         pass
                 tool_msg = {"role": "tool", "tool_call_id": call["id"],
-                            "content": result.to_json()}
+                            "content": tool_message_content(result)}
                 messages.append(tool_msg)
                 this_turn.append(tool_msg)
             refresh_workflow_message(messages, self.session)
@@ -268,7 +471,14 @@ class Conversation:
                                       {"role": "assistant", "content": text}],
                                      calls, self.max_rounds, True))
         return TurnResult(text, self.max_rounds, calls, self.session,
-                          stopped_by_limit=True)
+                          stopped_by_limit=True, metrics={
+                              "total_ms": (time.perf_counter() - started) * 1000,
+                              "provider_ms": provider_ms,
+                              "tool_ms": tool_ms,
+                              "provider_calls": self.max_rounds,
+                              "prompt_chars": prompt_chars,
+                              "fast_path": False,
+                          })
 
     # --- 观察 ---
 

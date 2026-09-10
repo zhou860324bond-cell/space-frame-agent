@@ -130,6 +130,20 @@ def test_picking_reports_position_not_just_a_number(qt_app):
     assert "杆件 1" in text and "长" in text and "截面" in text, text
 
 
+def test_locating_an_object_completes_the_same_selection_flow_as_picking(qt_app):
+    """结果表定位不能只画高亮；后续编辑命令也必须知道选中了什么。"""
+    w = MainWindow(built())
+    w.props_dock.hide()
+
+    w.locate("node", 3)
+
+    assert (w._selected_kind, w._selected_id) == ("node", 3)
+    assert w.viewport.selection == ("node", 3)
+    assert w.properties.kind == "node" and w.properties.ident == 3
+    assert w.actions_by_name["create_bc"].isEnabled()
+    assert not w.props_dock.isHidden()
+
+
 def test_the_pick_filter_can_be_turned_off(qt_app):
     """全不选时回到纯看图——转视角时不该误点中东西。"""
     w = MainWindow(built())

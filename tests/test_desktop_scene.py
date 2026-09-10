@@ -57,6 +57,17 @@ def beam() -> Session:
 
 # ------------------------------------------------- 几何
 
+def test_planar_models_use_their_true_orthographic_plane_and_3d_uses_iso():
+    assert scene.preferred_view(portal().frame) == "xz"
+    spatial = scene.Frame(nodes={
+        1: scene.Node(1, 0.0, 0.0, 0.0),
+        2: scene.Node(2, 2.0, 0.0, 0.0),
+        3: scene.Node(3, 0.0, 3.0, 0.0),
+        4: scene.Node(4, 0.0, 0.0, 4.0),
+    })
+    assert scene.preferred_view(spatial) == "isometric"
+
+
 def test_polylines_start_and_end_at_the_real_nodes():
     s = portal()
     f = s.frame
@@ -203,6 +214,17 @@ def test_signed_components_still_use_a_symmetric_colour_range():
     assert scene.contour_clim(line, "Mz") == scene.symmetric_clim(line, "Mz")
 
 
+def test_contour_caption_does_not_claim_cross_section_stress():
+    signed = scene.contour_caption("Mz", "kN·m", clipped=True,
+                                   sign_filter="negative")
+    magnitude = scene.contour_caption("M", "kN·m")
+    assert "BEAM CENTERLINE INTERNAL-FORCE RESULT" in signed
+    assert "signed in member local axes" in signed
+    assert "clipped" in signed
+    assert "negative values only" in signed
+    assert "magnitude (nonnegative)" in magnitude
+
+
 # ------------------------------------------------- 变形
 
 def test_the_deformed_shape_uses_in_element_deflection():
@@ -287,6 +309,34 @@ def test_out_of_plane_restraints_do_not_get_a_glyph():
     assert sum(m.n_cells for m in glyphs.values()) > 0
 
 
+def test_support_labels_state_the_exact_restrained_dofs():
+    s = beam()
+    s.frame.supports[1] = (1, 0, 1, 0, 1, 0)
+    points, labels = scene.support_labels(s.frame)
+    assert len(points) == len(labels) == 2
+    assert "N1 BC: U1 U3 UR2" in labels
+    assert "N2 BC: U2 U3 UR1" in labels
+
+
+def test_selected_member_local_axes_match_the_solver_axes():
+    from frame3d import local_axes
+
+    s = portal()
+    mid = sorted(s.frame.members)[0]
+    member = s.frame.members[mid]
+    pi, pj = scene.member_endpoints(s.frame, member)
+    _, expected = local_axes(pi, pj, member.ref_vector)
+    glyphs = scene.member_local_axis_glyphs(s.frame, mid)
+    points, labels = scene.member_local_axis_labels(s.frame, mid)
+    origin = 0.5 * (pi + pj)
+    shown = np.asarray(points) - origin
+    shown /= np.linalg.norm(shown, axis=1)[:, None]
+    assert set(glyphs) == {"x", "y", "z"}
+    assert all(mesh.n_cells > 0 for mesh in glyphs.values())
+    assert shown == pytest.approx(expected)
+    assert labels == ["local x (i->j)", "local y", "local z"]
+
+
 def test_load_arrows_point_the_way_the_load_does():
     s = portal()
     arrows = scene.load_arrows(s.frame, "D")
@@ -328,6 +378,19 @@ def test_pure_moments_and_prescribed_motion_are_not_invisible():
                for key in ("节点力矩", "给定位移", "给定转角"))
 
 
+def test_moment_is_a_circular_right_hand_glyph_not_a_straight_force_arrow():
+    s = beam()
+    assert s.set_load_cases(cases=[{
+        "name": "D",
+        "nodal_loads": [{"node": 2, "load": [0, 0, 0, 1000, 0, 0]}],
+    }]).ok
+    mesh = scene.load_arrows(s.preview_frame(), "D")["节点力矩"]
+    extent = np.ptp(np.asarray(mesh.points), axis=0)
+    # 绕全局 X 的力矩应在 YZ 平面形成圆弧，而不是沿 X 拉出一根直箭头。
+    assert extent[1] > 3.0 * extent[0]
+    assert extent[2] > 3.0 * extent[0]
+
+
 def test_a_trapezoid_crossing_zero_does_not_create_a_zero_direction_arrow():
     s = beam()
     assert s.set_load_cases(cases=[{
@@ -338,6 +401,30 @@ def test_a_trapezoid_crossing_zero_does_not_create_a_zero_direction_arrow():
     arrows = scene.load_arrows(s.preview_frame(), "D", per_member=3)
     assert "杆间荷载" in arrows
     assert np.isfinite(np.asarray(arrows["杆间荷载"].points)).all()
+
+
+def test_load_labels_keep_signed_global_components_instead_of_magnitude():
+    s = beam()
+    assert s.set_load_cases(cases=[{
+        "name": "D",
+        "nodal_loads": [{"node": 2,
+                          "load": [6000, 0, -8000, 0, 2000, 0]}],
+    }]).ok
+    _, labels = scene.load_labels(s.preview_frame(), "D")
+    assert "Fx=+6, Fz=-8 kN [global]" in labels
+    assert "My=+2 kN·m [global]" in labels
+    assert all("10 kN" not in label for label in labels)
+
+
+def test_trapezoid_label_reports_both_signed_end_intensities():
+    s = beam()
+    assert s.set_load_cases(cases=[{
+        "name": "D",
+        "member_spans": [{"member": 1, "kind": "trapezoid",
+                           "w1": [0, 0, -3000], "w2": [0, 0, -9000]}],
+    }]).ok
+    _, labels = scene.load_labels(s.preview_frame(), "D")
+    assert labels == ["w1z=-3 -> w2z=-9 kN/m [global]"]
 
 
 def test_mode_shape_tubes_move_the_structure():

@@ -98,8 +98,8 @@ class MainWindow(QMainWindow):
         self.result = None
         self.case: str | None = None
         self.mode = "模型"
-        # 空间结构里各杆局部轴不同，默认用旋转不变量合弯矩。需要看正负与
-        # 受拉侧时再切到 My/Mz；默认直接画 Mz 会让不同方向杆件看起来乱跳色。
+        # 空间结构里各杆局部轴不同，默认用旋转不变量合弯矩。需要核对有符号
+        # 局部分量时再切到 My/Mz；默认直接画 Mz 会让不同方向杆件看起来乱跳色。
         self.component = "M"
         self.scale = 0.0
         self.analysis_type = "linear"
@@ -144,6 +144,11 @@ class MainWindow(QMainWindow):
 
         self.results = ResultPanel(self)
         self.results.locate.connect(self.locate)
+        self.results.display_changed.connect(self._on_result_display_changed)
+        self.results.extreme_requested.connect(self.locate_current_extreme)
+        self.results.stress_requested.connect(self.show_section_stress)
+        self.result_display_options = self.results.display_options()
+        self._last_probe = None
         self.results_dock = QDockWidget("结果", self)
         self.results_dock.setObjectName("resultsDock")
         self.results_dock.setWidget(self.results)
@@ -205,7 +210,8 @@ class MainWindow(QMainWindow):
 
         # 边界条件面板：隐藏，通过 Load 模块的"创建边界条件"按钮弹出对话框
         self.bc = BCPanel(self.session, self)
-        self.bc.changed.connect(self.refresh)
+        self.bc.changed.connect(
+            lambda: self._after_manual_edit("边界条件或荷载已修改"))
         self.bc_dock = QDockWidget("边界条件", self)
         self.bc_dock.setObjectName("boundaryDock")
         self.bc_scroll = QScrollArea(self.bc_dock)
@@ -219,10 +225,12 @@ class MainWindow(QMainWindow):
         self.bc_dock.setVisible(False)
 
         self.viewport.picked.connect(self._on_picked)
+        self.viewport.probed.connect(self.probe_member_result)
         self.viewport.node_created.connect(self._on_node_created)
         self.viewport.member_created.connect(self._on_member_created)
         self.viewport.node_snapped.connect(self._on_node_snapped)
         self.viewport.escape_pressed.connect(self.cancel_interaction)
+        self.viewport.context_requested.connect(self._show_viewport_context_menu)
 
         self.tree = ModelTree(self)
         self.tree.activated_item.connect(self._on_tree_action)
@@ -233,6 +241,7 @@ class MainWindow(QMainWindow):
                              | Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self.tree_dock = dock
+        self._tree_auto_hidden = False
 
         # ===== 最后创建浮动按钮，确保它在所有组件之上 =====
         # 右侧中间圆形按钮 —— 点击召唤/收起 AI 助手对话框
@@ -405,7 +414,7 @@ class MainWindow(QMainWindow):
             "属性": "属性：选择杆件，创建或指派材料与截面。",
             "载荷": "载荷：选择节点创建边界条件，或选择杆件/节点施加载荷。",
             "分析": "分析：先执行模型检查，再求解或进行模态、屈曲分析。",
-            "结果": "结果：求解后查看变形、云图、内力图和最大挠度。",
+            "结果": "结果：求解后查看变形、梁内力云图、沿杆内力图和最大挠度。",
             "视图": "视图：切换标准视角、选择视口背景、开关网格地面与编号标注。",
         }
         self.set_prompt(hints.get(page, "就绪 | 选择上方功能区模块开始建模"))
@@ -453,12 +462,13 @@ class MainWindow(QMainWindow):
                 self._on_workflow_stage("solve")
 
     def _build_menus(self) -> None:
-        """菜单栏。和功能区共用同一批 QAction。
+        """Build one compact main-menu button from the shared QActions.
 
-        功能区好用，但**菜单是可搜索、可截图、可写进文档的**——
-        写使用说明时"文件 → 保存"比"点第三个图标"清楚得多。
+        The full menu hierarchy remains intact for documentation and keyboard
+        use, but no longer consumes a dedicated row above the ribbon.
         """
         from . import commands
+        from PySide6.QtWidgets import QToolButton
 
         menus = (("文件", ("new", "open", "save", None, "report", "learning_trace")),
                  ("建模", ("sketch", "frame", "portal", None,
@@ -476,9 +486,10 @@ class MainWindow(QMainWindow):
                  ("视图", ("iso", "front", "side", "top", "fit", None,
                            "bg_settings", "grid_floor", "labels", "camera", None,
                            "chat", "props")))
-        bar = self.menuBar()
+        root = QMenu(self)
+        root.setTitle("主菜单")
         for title, names in menus:
-            menu = bar.addMenu(title)
+            menu = root.addMenu(title)
             for name in names:
                 if name is None:
                     menu.addSeparator()
@@ -489,6 +500,16 @@ class MainWindow(QMainWindow):
                     # 再走一遍文件选择器只会打断建模节奏。
                     self.recent_menu = menu.addMenu("最近打开")
                     self.recent_menu.aboutToShow.connect(self._populate_recent_menu)
+        self.main_menu = root
+        self.menu_button = QToolButton(self.ribbon)
+        self.menu_button.setObjectName("mainMenuButton")
+        self.menu_button.setText("☰  菜单")
+        self.menu_button.setToolTip("文件、建模、分析、结果与视图菜单")
+        self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.menu_button.setMenu(root)
+        self.ribbon.setCornerWidget(
+            self.menu_button, Qt.Corner.TopLeftCorner)
+        self.menuBar().hide()
 
     def _build_statusbar(self) -> None:
         self.setStatusBar(QStatusBar(self))
@@ -544,6 +565,8 @@ class MainWindow(QMainWindow):
 
     def set_mode(self, name: str) -> None:
         self.mode = name
+        if name in {"变形", "云图"} and self.session.solution is not None:
+            self.viewport.set_pick_mode("member")
         act = self.mode_actions.get(name)
         if act is not None:
             act.setChecked(True)
@@ -560,6 +583,8 @@ class MainWindow(QMainWindow):
         self.session = session
         self._selected_kind = self._selected_id = None
         self.viewport.set_selection(None, None)
+        self.viewport.set_problem_refs([])
+        self._last_probe = None
         self.chat.session = session
         self.chat.conversation = None
         self.properties.session = session
@@ -765,9 +790,14 @@ class MainWindow(QMainWindow):
                                         self.case, scale)
         elif self.mode == "云图":
             unit = "kN·m" if self.component in ("T", "My", "Mz", "M") else "kN"
+            options = self.result_display_options
             self.viewport.show_contour(frame, self.session.solution, self.case,
                                        self.component,
-                                       title=f"{self.component} ({unit})")
+                                       title=f"{self.component} ({unit})",
+                                       percentile=options["percentile"],
+                                       sign_filter=options["sign"],
+                                       overlay_deformed=options["overlay_deformed"],
+                                       show_extrema=options["show_extrema"])
         elif self.mode == "模态":
             got = self.session.modal_analysis(num_modes=6)
             if not got.ok:
@@ -814,9 +844,22 @@ class MainWindow(QMainWindow):
         self.act_solve.setEnabled(bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
         self.redraw()
-        self.empty_state.setVisible(not bool(model.get("nodes")))
+        has_model = bool(model.get("nodes"))
+        self._sync_model_tree(has_model)
+        self.empty_state.setVisible(not has_model)
         if self.empty_state.isVisible():
             self._position_empty_state()
+
+    def _sync_model_tree(self, has_model: bool) -> None:
+        """Give an empty viewport its width back, then reveal real model data."""
+        if not has_model:
+            if not self.tree_dock.isHidden():
+                self.tree_dock.hide()
+            self._tree_auto_hidden = True
+        elif self._tree_auto_hidden:
+            self.tree_dock.show()
+            self.tree_dock.raise_()
+            self._tree_auto_hidden = False
 
 
 
@@ -902,11 +945,99 @@ class MainWindow(QMainWindow):
         """
         self.result = None
         self.case = None
+        self._last_probe = None
         self.results.show_message(
             what, "模型已变更，原有分析结果已失效并清除，请重新求解。")
         self.set_mode("模型")
         self.refresh()
         self.statusBar().showMessage(what, 5000)
+
+    def _on_result_display_changed(self, options: dict) -> None:
+        """结果显示选项只改变视图，不触碰求解数据。"""
+        self.result_display_options = dict(options)
+        if self.mode == "云图" and self.session.solution is not None:
+            self.redraw()
+
+    def probe_member_result(self, member_id: int, point) -> None:
+        """将视口点击位置变成可审查的杆件截面结果表。"""
+        if self.session.solution is None or self.session.frame is None:
+            return
+        from .result_inspector import probe_member
+
+        data = probe_member(self.session.frame, self.session.solution,
+                            member_id, point, self.case)
+        self._last_probe = data
+        rows = []
+        for component in ("N", "Vy", "Vz", "T", "My", "Mz"):
+            unit = (data["moment_unit"] if component in {"T", "My", "Mz"}
+                    else data["force_unit"])
+            rows.append([component, data["forces"][component], unit,
+                         "杆件局部分量"])
+        for prefix, values in (("U(global)", data["global_displacement"]),
+                               ("U(local)", data["local_displacement"])):
+            for axis, value in zip("xyz", values):
+                rows.append([f"{prefix}.{axis}", float(value),
+                             data["displacement_unit"], "中心线位移"])
+        if data["stress"] is not None:
+            rows += [["sigma_min", data["stress"]["min"], "MPa", "受压端"],
+                     ["sigma_max", data["stress"]["max"], "MPa", "受拉端"]]
+        else:
+            rows.append(["截面正应力", "不可用", "", data["stress_error"]])
+        self.results_dock.setVisible(True)
+        self.results_dock.raise_()
+        self.results.show_rows(
+            f"结果探针：杆件 {member_id}，工况 {data['case']}，"
+            f"距 i 端 x={data['x']:.4g}/{data['length']:.4g}",
+            ["结果量", "值", "单位", "约定"], rows,
+            [("member", member_id)] * len(rows))
+        self.viewport.set_result_marker(
+            data["point"], f"PROBE M{member_id} x={data['x']:.3g}")
+
+    def locate_current_extreme(self) -> None:
+        """定位当前梁内力分量的全结构绝对极值。"""
+        if self.session.solution is None or self.session.frame is None:
+            QMessageBox.information(self, "尚无分析结果", "请先求解。")
+            return
+        from .result_inspector import global_extreme
+
+        extreme = global_extreme(self.session.frame, self.session.solution,
+                                 self.component, self.case)
+        if extreme["member"] is None:
+            return
+        self.locate("member", extreme["member"])
+        self.viewport.set_result_marker(
+            extreme["point"],
+            f"MAX |{self.component}|={extreme['value']:+.3g} {extreme['unit']}")
+        self.results.show_rows(
+            f"{self.component} 全结构绝对极值，工况 {extreme['case']}",
+            ["杆件", "距 i 端 x", "值", "单位"],
+            [[extreme["member"], extreme["x"], extreme["value"],
+              extreme["unit"]]], [("member", extreme["member"])])
+
+    def show_section_stress(self) -> None:
+        """打开当前探针截面的轴力+双向弯曲正应力图。"""
+        if self.session.solution is None or self.session.frame is None:
+            QMessageBox.information(self, "尚无分析结果", "请先求解。")
+            return
+        data = self._last_probe
+        selected = getattr(self, "_selected_id", None)
+        if data is None or (selected is not None and data["member"] != selected):
+            if getattr(self, "_selected_kind", None) != "member":
+                QMessageBox.information(
+                    self, "请选择杆件", "先在视口中选择或探测一根杆件。")
+                return
+            from .result_inspector import probe_member
+            member = self.session.frame.members[selected]
+            midpoint = 0.5 * (self.session.frame.nodes[member.i].xyz
+                              + self.session.frame.nodes[member.j].xyz)
+            data = probe_member(self.session.frame, self.session.solution,
+                                selected, midpoint, self.case)
+            self._last_probe = data
+        if data["stress"] is None:
+            QMessageBox.information(self, "截面正应力不可用", data["stress_error"])
+            return
+        from .result_inspector import show_stress_dialog
+        show_stress_dialog(self, data)
 
     def run_diagnose(self) -> None:
         """约束诊断。
@@ -1250,17 +1381,57 @@ class MainWindow(QMainWindow):
         才在界面上真正兑现。
         """
         self.viewport.set_selection(kind, ident)
-        self._describe_selection(kind, ident)
-        self.properties.show_object(kind, ident)
+        self._on_picked(kind, ident)
+        label = "节点" if kind == "node" else "杆件"
+        self.statusBar().showMessage(f"已在视口定位{label} {ident}", 4000)
+
+    def locate_problem(self, refs: list[tuple[str, int]]) -> None:
+        """诊断问题可能同时涉及多个对象；保留整组红色问题标记。"""
+        self.viewport.set_problem_refs(refs)
+        if len(refs) == 1:
+            self.locate(*refs[0])
+        elif refs:
+            self.statusBar().showMessage(
+                f"已在视口标出 {len(refs)} 个相关对象", 4000)
+
+    def _viewport_context_menu(self) -> QMenu:
+        """按当前选择组装右键菜单，动作直接复用功能区 QAction。"""
+        menu = QMenu(self)
+        kind = getattr(self, "_selected_kind", None)
+        ident = getattr(self, "_selected_id", None)
+        if kind in {"node", "member"} and ident is not None:
+            label = "节点" if kind == "node" else "杆件"
+            title = menu.addAction(f"{label} {ident}")
+            title.setEnabled(False)
+            menu.addSeparator()
+            names = (["create_bc", "create_load"] if kind == "node"
+                     else ["assign_section", "hinge", "create_load"])
+            for name in names:
+                menu.addAction(self.actions_by_name[name])
+            menu.addSeparator()
+            menu.addAction(self.actions_by_name["delete"])
+        else:
+            menu.addAction(self.actions_by_name["pick_node"])
+            menu.addAction(self.actions_by_name["pick_member"])
+            menu.addSeparator()
+            menu.addAction(self.actions_by_name["fit"])
+            menu.addAction(self.actions_by_name["labels"])
+        return menu
+
+    def _show_viewport_context_menu(self, global_pos) -> None:
+        self._viewport_context_menu().exec(global_pos)
 
     def _on_picked(self, kind: str, ident: int) -> None:
         self._selected_kind = kind
         self._selected_id = ident
+        if self.viewport.selection != (kind, ident):
+            self.viewport.set_selection(kind, ident)
         self._sync_selection_actions()
         self._describe_selection(kind, ident)
         # **选中就显示属性。** 这一步是把"拾取"这条路走完：
         # 之前点中一根杆只能看到它多长，改不了
         self.properties.show_object(kind, ident)
+        self.props_dock.show()
         self.props_dock.raise_()
         # 边界条件面板也更新
         self.bc.set_selection(kind, ident)
@@ -1952,23 +2123,30 @@ class MainWindow(QMainWindow):
 
         issues = []
         suggestions = []
+        locations: list[list[tuple[str, int]]] = []
 
         # 1. 模型为空
         if not nodes:
             issues.append("模型为空，没有节点")
             suggestions.append("在 Part 模块使用草图建模或规则框架生成模型")
-            self._show_diagnose_result(issues, suggestions)
+            locations.append([])
+            self._show_diagnose_result(issues, suggestions, locations)
             return
 
         # 2. 没有杆件
         if not members:
             issues.append("模型只有节点，没有杆件")
             suggestions.append("使用草图建模的连续画线工具，或在视口中用建杆件工具连接节点")
+            locations.append([("node", int(n["id"])) for n in nodes])
 
         # 3. 没有支座
         if not supports:
             issues.append("模型没有任何支座约束")
             suggestions.append("在 Load 模块选中柱底节点，使用创建边界条件勾选自由度（固定端全选）")
+            base_z = min(float(n.get("z", 0.0)) for n in nodes)
+            locations.append([
+                ("node", int(n["id"])) for n in nodes
+                if abs(float(n.get("z", 0.0)) - base_z) < 1e-9])
 
         # 4. 没有荷载
         has_load = False
@@ -1979,6 +2157,7 @@ class MainWindow(QMainWindow):
         if not has_load:
             issues.append("模型没有任何荷载")
             suggestions.append("在 Load 模块选中节点/杆件，使用创建载荷施加集中力/线载荷，或使用重力自动计算自重")
+            locations.append([])
 
         # 5. 孤立节点（没有连接任何杆件）
         connected_nodes = set()
@@ -1989,18 +2168,22 @@ class MainWindow(QMainWindow):
         if isolated:
             issues.append(f"有 {len(isolated)} 个孤立节点（没有连接任何杆件）：{isolated[:5]}")
             suggestions.append("检查是否有多余节点，使用删除工具移除，或用建杆件工具连接")
+            locations.append([("node", int(nid)) for nid in isolated])
 
         # 6. 重复杆件
         member_pairs = set()
         duplicates = []
+        duplicate_ids = []
         for m in members:
             pair = tuple(sorted([int(m["i"]), int(m["j"])]))
             if pair in member_pairs:
                 duplicates.append(pair)
+                duplicate_ids.append(int(m["id"]))
             member_pairs.add(pair)
         if duplicates:
             issues.append(f"有 {len(duplicates)} 根重复杆件：{duplicates[:3]}")
             suggestions.append("重复杆件会导致刚度矩阵异常，使用删除工具移除重复的杆件")
+            locations.append([("member", mid) for mid in duplicate_ids])
 
         # 7. 零长度杆件
         zero_len = []
@@ -2015,6 +2198,7 @@ class MainWindow(QMainWindow):
         if zero_len:
             issues.append(f"有 {len(zero_len)} 根零长度杆件：{zero_len[:3]}")
             suggestions.append("零长度杆件会导致求解失败，检查节点坐标是否正确")
+            locations.append([("member", int(mid)) for mid in zero_len])
 
         # 8. 柱底没有约束（z=0 的节点没有支座）
         base_nodes = [int(n["id"]) for n in nodes if abs(n.get("z", 0)) < 0.01]
@@ -2023,41 +2207,73 @@ class MainWindow(QMainWindow):
         if unsupported_base and base_nodes:
             issues.append(f"有 {len(unsupported_base)} 个底部节点（z≈0）没有支座约束：{unsupported_base[:5]}")
             suggestions.append("底部节点通常需要支座约束，在 Load 模块选中这些节点，使用创建边界条件设置固定端或铰接")
+            locations.append([("node", nid) for nid in unsupported_base])
 
         # 9. 材料/截面
         if not model.get("materials"):
             issues.append("没有定义材料")
             suggestions.append("在 Property 模块使用创建材料定义弹性模量、泊松比、密度")
+            locations.append([("member", int(m["id"])) for m in members])
         if not model.get("sections"):
             issues.append("没有定义截面")
             suggestions.append("在 Property 模块使用创建截面选择梁截面类型，输入尺寸")
+            locations.append([("member", int(m["id"])) for m in members])
 
         if not issues:
             QMessageBox.information(self, "模型检查",
                                     "模型检查通过，没有发现明显问题。\n\n"
                                     "可以在 Step 模块提交求解。")
         else:
-            self._show_diagnose_result(issues, suggestions)
+            self._show_diagnose_result(issues, suggestions, locations)
 
-    def _show_diagnose_result(self, issues: list, suggestions: list) -> None:
+    def _show_diagnose_result(self, issues: list, suggestions: list,
+                              locations: list[list[tuple[str, int]]] | None = None) -> None:
         """显示模型检查结果。"""
-        from PySide6.QtWidgets import QMessageBox, QTextEdit, QVBoxLayout, QDialog
+        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout,
+                                       QLabel, QListWidget, QPushButton,
+                                       QVBoxLayout)
         dlg = QDialog(self)
         dlg.setWindowTitle(f"模型检查 — 发现 {len(issues)} 个问题")
-        dlg.resize(500, 400)
+        dlg.resize(560, 430)
         layout = QVBoxLayout(dlg)
-        text = QTextEdit()
-        text.setReadOnly(True)
-        html = "<h3>发现的问题</h3><ul>"
-        for i, issue in enumerate(issues):
-            html += f"<li>{issue}</li>"
-        html += "</ul><h3>修正建议</h3><ul>"
-        for s in suggestions:
-            html += f"<li>{s}</li>"
-        html += "</ul>"
-        text.setHtml(html)
-        layout.addWidget(text)
-        from PySide6.QtWidgets import QDialogButtonBox
+        issue_list = QListWidget(dlg)
+        issue_list.addItems([f"{i + 1}. {text}" for i, text in enumerate(issues)])
+        layout.addWidget(issue_list)
+        detail = QLabel(dlg)
+        detail.setWordWrap(True)
+        detail.setProperty("panel", "hint")
+        layout.addWidget(detail)
+        nav = QHBoxLayout()
+        previous = QPushButton("上一项", dlg)
+        locate = QPushButton("在视口定位", dlg)
+        following = QPushButton("下一项", dlg)
+        nav.addWidget(previous)
+        nav.addWidget(locate)
+        nav.addWidget(following)
+        layout.addLayout(nav)
+
+        refs_by_row = locations or [[] for _ in issues]
+
+        def select_row(row: int) -> None:
+            if not 0 <= row < len(issues):
+                return
+            detail.setText(f"修正建议：{suggestions[row]}")
+            refs = refs_by_row[row] if row < len(refs_by_row) else []
+            locate.setEnabled(bool(refs))
+            self.viewport.set_problem_refs(refs)
+            previous.setEnabled(row > 0)
+            following.setEnabled(row + 1 < len(issues))
+
+        issue_list.currentRowChanged.connect(select_row)
+        previous.clicked.connect(
+            lambda: issue_list.setCurrentRow(max(0, issue_list.currentRow() - 1)))
+        following.clicked.connect(
+            lambda: issue_list.setCurrentRow(
+                min(len(issues) - 1, issue_list.currentRow() + 1)))
+        locate.clicked.connect(
+            lambda: self.locate_problem(refs_by_row[issue_list.currentRow()]))
+        issue_list.setCurrentRow(0)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         btns.accepted.connect(dlg.accept)
         layout.addWidget(btns)
@@ -2271,10 +2487,12 @@ class MainWindow(QMainWindow):
 
     def show_contour(self) -> None:
         if self._needs_solution():
+            self.results_dock.setVisible(True)
+            self.results_dock.raise_()
             self.set_mode("云图")
 
     def pick_component(self) -> None:
-        """选云图画哪个分量。
+        """选择梁中心线内力结果显示哪个分量。
 
         菜单里把每个分量是什么写出来——`My` 和 `Mz` 光看字母是分不出
         哪个是平面内弯矩的，而选错了看半天图都是白看。

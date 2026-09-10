@@ -81,7 +81,12 @@ class BCPanel(QWidget):
         support_layout.addWidget(self.cmb_support)
         self.btn_apply_support = QPushButton("应用到选中节点")
         self.btn_apply_support.clicked.connect(self._apply_support)
-        support_layout.addWidget(self.btn_apply_support)
+        self.btn_clear_support = QPushButton("删除支座")
+        self.btn_clear_support.clicked.connect(self._clear_support)
+        support_buttons = QHBoxLayout()
+        support_buttons.addWidget(self.btn_apply_support)
+        support_buttons.addWidget(self.btn_clear_support)
+        support_layout.addLayout(support_buttons)
         box.addWidget(self.group_support)
         box.addLayout(case_row)
 
@@ -130,7 +135,10 @@ class BCPanel(QWidget):
         self.btn_apply_nodal.clicked.connect(self._apply_nodal_load)
         self.btn_clear_nodal = QPushButton("删除")
         self.btn_clear_nodal.clicked.connect(self._clear_nodal_load)
+        self.btn_copy_nodal = QPushButton("复制")
+        self.btn_copy_nodal.clicked.connect(self._copy_nodal_load)
         nodal_btn_row.addWidget(self.btn_apply_nodal)
+        nodal_btn_row.addWidget(self.btn_copy_nodal)
         nodal_btn_row.addWidget(self.btn_clear_nodal)
         nodal_layout.addRow(nodal_btn_row)
         box.addWidget(self.group_nodal)
@@ -152,7 +160,10 @@ class BCPanel(QWidget):
         self.btn_apply_member.clicked.connect(self._apply_member_load)
         self.btn_clear_member = QPushButton("删除")
         self.btn_clear_member.clicked.connect(self._clear_member_load)
+        self.btn_copy_member = QPushButton("复制")
+        self.btn_copy_member.clicked.connect(self._copy_member_load)
         member_btn_row.addWidget(self.btn_apply_member)
+        member_btn_row.addWidget(self.btn_copy_member)
         member_btn_row.addWidget(self.btn_clear_member)
         member_layout.addRow(member_btn_row)
         box.addWidget(self.group_member)
@@ -343,6 +354,18 @@ class BCPanel(QWidget):
         else:
             self._show_error("边界条件设置失败", result.payload)
 
+    def _clear_support(self):
+        if self._current_node is None:
+            return
+        result = self.session.set_supports(
+            [self._current_node], [0] * 6,
+            name=self.txt_bc_name.text().strip())
+        if result.ok:
+            self._load_selection_values()
+            self.changed.emit()
+        else:
+            self._show_error("删除支座失败", result.payload)
+
     def _apply_settlement(self):
         if self._current_node is None:
             return
@@ -392,6 +415,25 @@ class BCPanel(QWidget):
         else:
             self._show_error("删除节点荷载失败", result.payload)
 
+    def _copy_nodal_load(self):
+        if self._current_node is None:
+            return
+        from PySide6.QtWidgets import QInputDialog
+        default = (self.txt_nodal_name.text().strip() or
+                   f"CF-Node-{self._current_node}") + "-Copy"
+        name, ok = QInputDialog.getText(self, "复制节点荷载", "新名称：",
+                                        text=default)
+        if not ok or not name.strip():
+            return
+        values = [self.spn_fx.value(), self.spn_fy.value(), self.spn_fz.value(),
+                  self.spn_mx.value(), self.spn_my.value(), self.spn_mz.value()]
+        result = self.session.set_nodal_load(
+            self._current_node, values, self.cmb_case.currentText(), name.strip())
+        if result.ok:
+            self.changed.emit()
+        else:
+            self._show_error("复制节点荷载失败", result.payload)
+
     def _apply_member_load(self):
         if self._current_member is None:
             return
@@ -415,3 +457,21 @@ class BCPanel(QWidget):
             self.changed.emit()
         else:
             self._show_error("删除杆件荷载失败", result.payload)
+
+    def _copy_member_load(self):
+        if self._current_member is None:
+            return
+        from PySide6.QtWidgets import QInputDialog
+        default = (self.txt_member_name.text().strip() or
+                   f"Line-Member-{self._current_member}") + "-Copy"
+        name, ok = QInputDialog.getText(self, "复制杆件荷载", "新名称：",
+                                        text=default)
+        if not ok or not name.strip():
+            return
+        values = [self.spn_wx.value(), self.spn_wy.value(), self.spn_wz.value()]
+        result = self.session.set_member_load(
+            self._current_member, values, self.cmb_case.currentText(), name.strip())
+        if result.ok:
+            self.changed.emit()
+        else:
+            self._show_error("复制杆件荷载失败", result.payload)

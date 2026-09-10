@@ -207,3 +207,23 @@ def test_a_failed_turn_explains_why(qt_app):
     w.chat._failed("TimeoutError", "connection timed out")
     shown = w.chat.view.toPlainText()
     assert "TimeoutError" in shown and "网络" in shown
+
+
+def test_turn_latency_breakdown_is_visible(qt_app):
+    from types import SimpleNamespace
+    from agent import ScriptedProvider
+
+    w = MainWindow()
+    w.chat.conversation = SimpleNamespace(provider=ScriptedProvider([]))
+    result = SimpleNamespace(metrics={
+        "total_ms": 5320.0,
+        "provider_ms": 5010.0,
+        "tool_ms": 143.0,
+        "provider_calls": 4,
+        "fast_path": False,
+    })
+    w.chat._update_call_status(result)
+    shown = w.chat.lbl_call_status.text()
+    assert "模型等待 5.0s" in shown
+    assert "工具 0.14s" in shown
+    assert "4 次模型往返" in shown

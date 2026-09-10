@@ -18,15 +18,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import viz_theme as V                                    # noqa: E402
 
 # 浅色 CAD chrome：三层表面明确区分工作区、面板和浮层。
-PANEL = "#f3f5f7"
-PANEL_ALT = "#ffffff"
-PANEL_RAISED = "#e8edf2"
-PANEL_HOVER = "#dfe6ed"
-BORDER = "#cbd3dc"
-BORDER_LIGHT = "#aeb9c6"
+#
+# 整体比"办公软件白"压深一档，是为了**和视口衔接**。深色视口 (#1b2027)
+# 紧挨着纯白面板时，两者之间是一条硬边——眼睛会先看到那条边界，再看模型。
+# 把 chrome 压到中浅灰以后，视口读起来像嵌进去的画布，不像贴上去的另一张图。
+# Abaqus/ANSYS 的中灰 chrome 是同一个道理。
+#
+# 压深会挤压文字对比度，所以次级墨色跟着一起加深：
+# INK_MUTED 对 PANEL 从 4.5:1 提到 5.1:1，INK_DIM 从 2.6:1 提到 3.6:1
+# （INK_DIM 只用于"未开始"这类刻意弱化的文字，不承载正文）。
+PANEL = "#e6ebf0"
+PANEL_ALT = "#f5f8fa"
+PANEL_RAISED = "#d9e1e9"
+PANEL_HOVER = "#cbd6e0"
+BORDER = "#b9c4d0"
+BORDER_LIGHT = "#9dabbb"
 INK = "#17212b"
-INK_MUTED = "#5e6b78"
-INK_DIM = "#84909c"
+INK_MUTED = "#55626f"
+INK_DIM = "#6f7c88"
 ACCENT = "#1769aa"
 ACCENT_HOVER = "#0f79c5"
 ACCENT_DIM = "#0f568e"
@@ -37,7 +46,8 @@ SUCCESS = "#237a4b"
 ERROR = "#b53a3a"
 
 VIEWPORT_BG = V.VIEWPORT_BG
-MEMBER = V.VIEWPORT_ACCENT
+# 低饱和钢灰蓝用于未求解模型；高饱和蓝只留给变形和结果强调。
+MEMBER = "#91a5b9"
 HIGHLIGHT = V.VIEWPORT_HIGHLIGHT
 REFERENCE = V.VIEWPORT_REFERENCE
 # 支座不能用正文墨色：那是全视口最亮的颜色，配上比杆件粗好几倍的符号，
@@ -57,6 +67,8 @@ LOAD = "#d95926"
 LOAD_MOMENT = "#199e70"
 HINGE = "#ffb454"
 DRAFT_SUPPORT = "#2f9e68"
+# 工程软件通用局部轴色：x 红、y 绿、z 蓝。只用于方向编码，不参与结果色标。
+LOCAL_AXES = {"x": "#e05a5a", "y": "#55b86a", "z": "#4f87d8"}
 
 DIVERGING = "coolwarm"
 # 锚点色。**不要直接当 cmap 传给 add_mesh**：PyVista 会把颜色列表理解成
@@ -138,6 +150,19 @@ QToolButton:checked {{
 }}
 QToolButton:disabled {{
     color: {INK_DIM};
+}}
+QToolButton#mainMenuButton {{
+    min-width: 72px;
+    margin: 2px 6px 2px 4px;
+    padding: 4px 9px;
+    background: {PANEL_RAISED};
+    border-color: {BORDER};
+    font-weight: 600;
+}}
+QToolButton#mainMenuButton:hover {{
+    background: {SELECTION};
+    border-color: {ACCENT_DIM};
+    color: {ACCENT_DIM};
 }}
 
 QDockWidget {{
@@ -286,6 +311,12 @@ QStatusBar QLabel {{
     padding: 2px 8px;
 }}
 
+/* 视口是深色、chrome 是浅色，两者直接相接会出现一条硬边，眼睛先看到边界
+   再看模型。给它一圈 1px 内嵌边框，深色区域读起来就像"嵌进去的画布"。 */
+QWidget#viewportHost {{
+    background: {VIEWPORT_BG};
+    border: 1px solid {BORDER_LIGHT};
+}}
 QWidget#workspaceBar {{
     background: {PANEL_ALT};
     border-bottom: 1px solid {BORDER};
@@ -304,29 +335,58 @@ QLabel[workflow="guidance"] {{
     color: {INK_MUTED};
     padding-left: 10px;
 }}
+/* 流程条不是五个并排的按钮，是一条**有方向的路**：
+   已完成→绿、当前→实心蓝（全条唯一的实心块，一眼定位）、被阻断→红、
+   未开始→灰。中间由 workflow_bar 插入 › 连接符，读起来才是流程不是工具栏。 */
 QPushButton[workflowStage] {{
-    min-width: 68px;
-    padding: 4px 8px;
+    min-width: 66px;
+    padding: 4px 10px;
     background: transparent;
     border: 1px solid transparent;
-    color: {INK_MUTED};
+    border-radius: {RADIUS_SM};
+    color: {INK_DIM};
+    text-align: center;
+}}
+QPushButton[workflowStage]:hover {{
+    background: {PANEL_HOVER};
 }}
 QPushButton[workflowState="done"] {{
     color: {SUCCESS};
+    background: #dfeee6;
+    border-color: #a9cfba;
 }}
+QPushButton[workflowState="done"]:hover {{
+    background: #d0e6da;
+}}
+/* 当前步是全条唯一的实心块。反白文字 + 深蓝底，"现在该干这一步"
+   不需要用户去找。 */
 QPushButton[workflowState="active"] {{
-    color: {ACCENT_DIM};
-    background: {SELECTION};
-    border-color: {ACCENT};
+    color: #ffffff;
+    background: {ACCENT};
+    border-color: {ACCENT_DIM};
     font-weight: 600;
+}}
+QPushButton[workflowState="active"]:hover {{
+    background: {ACCENT_HOVER};
 }}
 QPushButton[workflowState="blocked"] {{
     color: {ERROR};
-    background: #fae9e9;
-    border-color: #dfaaaa;
+    background: #f7e3e3;
+    border-color: #d9a2a2;
+    font-weight: 600;
 }}
+QPushButton[workflowState="blocked"]:hover {{
+    background: #f0d5d5;
+}}
+/* 未开始：灰、无底色，但 hover 仍给反馈——它是可以点的（允许跳读流程），
+   只是不推荐现在点。 */
 QPushButton[workflowState="pending"] {{
     color: {INK_DIM};
+}}
+QLabel[workflow="arrow"] {{
+    color: {BORDER_LIGHT};
+    font-size: 11pt;
+    padding: 0px 1px;
 }}
 QFrame#emptyState {{
     background: {PANEL_ALT};

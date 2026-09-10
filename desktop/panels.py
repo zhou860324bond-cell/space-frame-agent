@@ -11,8 +11,9 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel,
-                               QListWidget, QListWidgetItem, QTableWidget,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
+                               QHeaderView, QHBoxLayout, QLabel, QListWidget,
+                               QListWidgetItem, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import theme
@@ -97,6 +98,9 @@ class ResultPanel(QWidget):
     """
 
     locate = Signal(str, int)        # ("member" | "node", 编号)
+    display_changed = Signal(object)
+    extreme_requested = Signal()
+    stress_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -109,6 +113,36 @@ class ResultPanel(QWidget):
         self.caption.setWordWrap(True)
         box.addWidget(self.caption)
 
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("云图量程"))
+        self.range_mode = QComboBox(self)
+        self.range_mode.addItem("95% 裁剪", 95.0)
+        self.range_mode.addItem("满量程", None)
+        controls.addWidget(self.range_mode)
+        controls.addWidget(QLabel("符号"))
+        self.sign_mode = QComboBox(self)
+        self.sign_mode.addItem("全部", "all")
+        self.sign_mode.addItem("仅正值", "positive")
+        self.sign_mode.addItem("仅负值", "negative")
+        controls.addWidget(self.sign_mode)
+        self.overlay_deformed = QCheckBox("叠加变形", self)
+        controls.addWidget(self.overlay_deformed)
+        self.show_extrema = QCheckBox("标注极值", self)
+        self.show_extrema.setChecked(True)
+        controls.addWidget(self.show_extrema)
+        self.btn_extreme = QPushButton("定位当前分量极值", self)
+        self.btn_extreme.clicked.connect(lambda: self.extreme_requested.emit())
+        controls.addWidget(self.btn_extreme)
+        self.btn_stress = QPushButton("截面正应力", self)
+        self.btn_stress.clicked.connect(lambda: self.stress_requested.emit())
+        controls.addWidget(self.btn_stress)
+        controls.addStretch(1)
+        box.addLayout(controls)
+        for widget in (self.range_mode, self.sign_mode):
+            widget.currentIndexChanged.connect(self._emit_display_options)
+        self.overlay_deformed.stateChanged.connect(self._emit_display_options)
+        self.show_extrema.stateChanged.connect(self._emit_display_options)
+
         self.table = QTableWidget(self)
         self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(
@@ -118,6 +152,15 @@ class ResultPanel(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_select)
         box.addWidget(self.table, 1)
+
+    def display_options(self) -> dict:
+        return {"percentile": self.range_mode.currentData(),
+                "sign": self.sign_mode.currentData(),
+                "overlay_deformed": self.overlay_deformed.isChecked(),
+                "show_extrema": self.show_extrema.isChecked()}
+
+    def _emit_display_options(self, *_args) -> None:
+        self.display_changed.emit(self.display_options())
 
     def _on_select(self) -> None:
         rows = self.table.selectionModel().selectedRows()

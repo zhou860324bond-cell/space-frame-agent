@@ -26,7 +26,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication                  # noqa: E402
 
 from agent import Session                                   # noqa: E402
-from desktop.diagram_panel import COMPONENTS, DiagramPanel  # noqa: E402
+from desktop.diagram_panel import (COMPONENTS, DiagramPanel,
+                                   diagram_features)         # noqa: E402
 
 MATERIALS = [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0}]
 SECTIONS = [{"name": "B", "A": 0.0147, "Iy": 4.2e-5, "Iz": 1.18e-3, "J": 9e-7}]
@@ -169,13 +170,25 @@ def test_the_caption_says_where_the_peak_is(qt_app, solved):
     assert f"杆件 {mid}" in text and "x =" in text and "kN·m" in text
 
 
-def test_moments_are_noted_as_drawn_on_the_tension_side(qt_app, solved):
-    """弯矩按工程习惯画在受拉侧。**这个约定必须写出来**——
-    不说的话，看图的人不知道正负朝哪边。"""
+def test_signed_diagram_states_local_axis_and_right_hand_rule(qt_app, solved):
+    """空间梁不能笼统声称弯矩画在受拉侧，必须说明局部轴与正号。"""
     s, mid = solved
     p = panel(s, mid)
     p.redraw()
-    assert "受拉侧" in p.caption.text()
+    assert "local x:" in p.caption.text()
+    assert "局部 z 轴" in p.caption.text()
+    assert "右手定则" in p.caption.text()
     p.component.setCurrentText("轴力 N（受拉为正）")
     p.redraw()
-    assert "受拉侧" not in p.caption.text(), "轴力图不该提这句"
+    assert "受拉" in p.caption.text()
+    assert "右手定则" not in p.caption.text()
+
+
+def test_diagram_features_find_zero_extrema_and_a_jump():
+    features = diagram_features(
+        [0.0, 1.0, 2.0, 2.0 + 1e-9, 3.0],
+        [-2.0, 0.0, 3.0, -1.0, 2.0])
+    assert features["max"] == (2.0, 3.0)
+    assert features["min"] == (0.0, -2.0)
+    assert features["zeros"] == pytest.approx([1.0, 7.0 / 3.0])
+    assert features["jumps"] == pytest.approx([2.0 + 0.5e-9])

@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from agent import Session  # noqa: E402
-from desktop.issue_panel import IssuePanel  # noqa: E402
+from desktop.issue_panel import IssuePanel, confidence_band  # noqa: E402
 from desktop.sketch_panel import SketchPanel  # noqa: E402
 from sketch_topology import detect_topology  # noqa: E402
 from multimodal_workflow import MultimodalControllerState  # noqa: E402
@@ -69,6 +69,17 @@ def test_queue_orders_blockers_by_workflow_priority_and_counts(qt_app):
     assert panel.list.item(0).data(256) == "plane"
     assert panel.list.item(1).data(256) == "low"
     assert panel.list.item(2).data(256) == "warn"
+    assert panel.confidence_summary.text() == "低置信度待审核 1"
+    panel.list.setCurrentRow(2)
+    panel.btn_next_low.click()
+    assert panel.current_issue_id() == "low"
+
+
+def test_confidence_bands_distinguish_recognition_quality_from_user_review():
+    assert confidence_band({"source": "vision", "confidence": 0.92}) == "high"
+    assert confidence_band({"source": "vision", "confidence": 0.80}) == "medium"
+    assert confidence_band({"source": "vision", "confidence": 0.50}) == "low"
+    assert confidence_band({"source": "user", "confidence": None}) == "verified"
 
 
 def test_intersection_issue_exposes_only_explicit_topology_actions(qt_app):
@@ -87,6 +98,8 @@ def test_low_confidence_selection_links_issue_to_overlay_and_confirmation(qt_app
     value["issues"] = [issue("low", "low_confidence", refs=["node:1"])]
     panel = SketchPanel(Session(), IdleRunner())
     panel.set_v2_draft(value)
+    assert not panel.lbl_confidence_legend.isHidden()
+    assert "不代表结构计算可靠性" in panel.lbl_confidence_legend.text()
     assert panel._highlight_refs == {"node:1"}
     panel.issue_panel.btn_confirm.click()
     entity = panel._v2_draft["entities"][0]
@@ -168,6 +181,7 @@ def test_v2_review_reaches_atomic_commit_and_single_undo_step(qt_app):
     panel._v2_state = state
     panel.set_v2_draft(value)
 
+    assert panel._stage_index == 3
     assert panel.chk_confirm.isEnabled()
     assert state.commit_preview is not None
     assert not panel.btn_load.isEnabled()
@@ -175,6 +189,7 @@ def test_v2_review_reaches_atomic_commit_and_single_undo_step(qt_app):
     assert panel.btn_load.isEnabled()
     panel._load_model()
 
+    assert panel._stage_index == 4
     assert len(session.model["nodes"]) == 4
     assert session.multimodal_provenance["image_hash"] == "a" * 64
     assert len(session.history) == 1

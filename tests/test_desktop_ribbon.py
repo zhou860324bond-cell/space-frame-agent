@@ -120,13 +120,13 @@ def test_ribbon_buttons_share_the_window_actions(qt_app):
         assert b.defaultAction() in owned, b.text()
 
 
-def test_workspace_bar_uses_two_rows_and_marks_primary_actions(qt_app):
-    """Dense controls stay readable at laptop widths and key actions stand out."""
+def test_workspace_bar_uses_one_compact_row_and_marks_primary_actions(qt_app):
+    """Frequent controls use one compact row and key actions still stand out."""
     from PySide6.QtWidgets import QToolButton
 
     w = MainWindow()
     assert w.quickbar.objectName() == "workspaceBar"
-    assert w.quickbar.layout().count() == 2
+    assert w.quickbar.layout().__class__.__name__ == "QHBoxLayout"
     primary = [button.defaultAction().objectName() for button in
                w.ribbon.findChildren(QToolButton)
                if button.property("role") == "primary"]
@@ -138,6 +138,14 @@ def test_empty_viewport_offers_real_starting_paths(qt_app):
     labels = {button.text() for button in w.empty_state.findChildren(QPushButton)}
     assert labels == {"AI 识别图纸", "参数化框架", "二维草图"}
     assert not w.empty_state.isHidden()
+    assert w.tree_dock.isHidden()
+
+
+def test_model_tree_returns_when_a_model_exists(qt_app):
+    session = Session()
+    assert session.add_nodes([[0, 0, 0], [1, 0, 0]]).ok
+    w = MainWindow(session)
+    assert not w.tree_dock.isHidden()
 
 
 def test_workflow_action_opens_the_editor_for_the_actual_blocker(qt_app):
@@ -169,7 +177,9 @@ def test_the_menus_use_the_same_actions(qt_app):
     w = MainWindow()
     owned = set(w.actions_by_name.values())
     seen = 0
-    for menu in w.menuBar().findChildren(type(w.menuBar().addMenu("x"))):
+    assert w.menuBar().isHidden()
+    assert w.menu_button.menu() is w.main_menu
+    for menu in [w.main_menu, *w.main_menu.findChildren(type(w.main_menu))]:
         for act in menu.actions():
             if act.menu() is not None or act.parent() is getattr(w, "recent_menu", None):
                 continue

@@ -396,3 +396,59 @@ def test_selection_dependent_buttons_are_disabled_until_something_is_picked(qt_a
     assert load.isEnabled(), "杆件可以施加载荷"
     assert not bc.isEnabled(), "边界条件只能加在节点上"
     assert "节点" in bc.toolTip()
+
+
+def test_property_edit_keeps_the_object_selected_and_highlighted(qt_app):
+    s = built()
+    w = MainWindow(s)
+    member = s.model["members"][0]["id"]
+    w._on_picked("member", member)
+    sections = [item["name"] for item in s.model["sections"]]
+    replacement = next(name for name in sections
+                       if name != s.model["members"][0]["section"])
+
+    w.properties._widgets["section"].setCurrentText(replacement)
+
+    assert (w._selected_kind, w._selected_id) == ("member", member)
+    assert w.viewport.selection == ("member", member)
+    assert w.properties.kind == "member" and w.properties.ident == member
+
+
+def test_viewport_context_menu_tracks_the_selected_object(qt_app):
+    w = MainWindow(built())
+    empty = [action.text() for action in w._viewport_context_menu().actions()]
+    assert "选择节点" in empty and "适应窗口" in empty
+
+    w._on_picked("node", 1)
+    node = [action.text() for action in w._viewport_context_menu().actions()]
+    assert "节点 1" in node
+    assert "创建边界条件" in node and "创建载荷" in node
+    assert "属性指派" not in node
+
+    member = w.session.model["members"][0]["id"]
+    w._on_picked("member", member)
+    member_actions = [action.text() for action in
+                      w._viewport_context_menu().actions()]
+    assert f"杆件 {member}" in member_actions
+    assert {"属性指派", "创建铰接", "创建载荷", "删除选中"}.issubset(
+        member_actions)
+
+
+def test_model_diagnosis_carries_object_references_for_viewport_highlight(
+        qt_app, monkeypatch):
+    s = built()
+    w = MainWindow(s)
+    s.model["nodes"].append({"id": 999, "x": 2.0, "y": 1.0, "z": 9.0})
+    captured = {}
+    monkeypatch.setattr(
+        w, "_show_diagnose_result",
+        lambda issues, suggestions, locations: captured.update(
+            issues=issues, suggestions=suggestions, locations=locations))
+
+    w.diagnose_model()
+
+    row = next(i for i, text in enumerate(captured["issues"])
+               if "孤立节点" in text)
+    assert captured["locations"][row] == [("node", 999)]
+    w.locate_problem(captured["locations"][row])
+    assert w.viewport.problem_refs == [("node", 999)]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from workflow import WorkflowPhase, inspect_workflow
@@ -42,6 +42,21 @@ class WorkflowBar(QWidget):
         ("solve", "4  求解"),
         ("results", "5  结果"),
     )
+    # 每一步到底在干什么。写在 tooltip 里，因为按钮上只放得下两个字，
+    # 而"定义"和"校验"这两个词单看是猜不出内容的。
+    STAGE_HELP = {
+        "model": "建立几何：节点与杆件",
+        "define": "定义材料、截面、支座与荷载工况",
+        "validate": "确定性完整性校验（不通过就不能求解）",
+        "solve": "提交求解",
+        "results": "查看变形、内力云图与报告",
+    }
+    STATE_HELP = {
+        "done": "已完成",
+        "active": "当前步骤",
+        "blocked": "被阻断",
+        "pending": "尚未开始",
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,10 +68,17 @@ class WorkflowBar(QWidget):
         label.setProperty("workflow", "caption")
         row.addWidget(label)
         self.buttons: dict[str, QPushButton] = {}
-        for stage, text in self.STAGES:
+        for index, (stage, text) in enumerate(self.STAGES):
+            if index:
+                # 连接符。没有它，五个按钮读起来是并列的工具栏；
+                # 有了它才是一条有先后的流程。
+                arrow = QLabel("›", self)
+                arrow.setProperty("workflow", "arrow")
+                row.addWidget(arrow)
             button = QPushButton(text, self)
             button.setProperty("workflowStage", stage)
             button.setProperty("workflowState", "pending")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(
                 lambda _=False, value=stage: self.stage_requested.emit(value))
             row.addWidget(button)
@@ -115,7 +137,14 @@ class WorkflowBar(QWidget):
             self._next_stage = "results"
             message, action = "求解完成，可查看变形、内力与报告", "查看结果"
         for stage, button in self.buttons.items():
-            self._set_state(button, states[stage], suffixes[stage])
+            state = states[stage]
+            self._set_state(button, state, suffixes[stage])
+            tip = f"{self.STAGE_HELP[stage]}\n状态：{self.STATE_HELP[state]}"
+            if state == "blocked" and status.validation_errors:
+                tip += "\n\n" + "\n".join(status.validation_errors[:6])
+            elif state == "pending":
+                tip += "（可直接点击跳到该步）"
+            button.setToolTip(tip)
         self.guidance.setText(message)
         self.guidance.setToolTip("\n".join(status.validation_errors))
         self.next_button.setText(action)

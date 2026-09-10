@@ -12,7 +12,7 @@
 import pytest
 
 from agent import ScriptedProvider, Session
-from conversation import Conversation, check_pairing
+from conversation import Conversation, check_pairing, tool_message_content
 
 MATERIALS = [{"name": "STEEL", "E": 2.1e11, "nu": 0.3, "density": 7850.0}]
 SECTIONS = [{"name": "COLUMN", "A": 0.012, "Iy": 8e-5, "Iz": 2.4e-4, "J": 1e-6},
@@ -172,6 +172,71 @@ def test_trimming_never_cuts_inside_a_turn():
 def test_keep_turns_must_be_at_least_one():
     with pytest.raises(ValueError, match="至少"):
         Conversation(ScriptedProvider([]), keep_turns=0)
+
+
+def test_context_budget_drops_old_complete_turns_without_breaking_pairs():
+    chat = Conversation(ScriptedProvider(build_script()), context_chars=900)
+    chat.ask("第一问 ZZZALPHA")
+    chat.ask("第二问 ZZZBETA")
+    messages = chat.build_messages("第三问")
+    assert check_pairing(messages) == []
+    texts = [m.get("content") or "" for m in messages]
+    assert not any("ZZZALPHA" in text for text in texts)
+    assert any("ZZZBETA" in text for text in texts)
+
+
+def test_large_tool_result_is_compacted_to_valid_json():
+    from agent import ToolResult
+    import json
+
+    result = ToolResult(True, {"stations": list(range(5000)), "peak": 4999})
+    content = tool_message_content(result, max_chars=1000)
+    decoded = json.loads(content)
+    assert decoded["ok"] is True
+    assert decoded["peak"] == 4999
+    assert decoded["_context_note"]
+    assert len(content) < len(result.to_json())
+
+
+def test_next_step_uses_local_fast_path_without_calling_model():
+    provider = ScriptedProvider([])
+    chat = Conversation(provider)
+    out = chat.ask("下一步")
+    assert out.metrics["fast_path"] is True
+    assert out.metrics["provider_calls"] == 0
+    assert provider.seen == []
+    assert "建立几何" in out.reply
+
+
+def test_max_displacement_query_uses_local_fast_path():
+    session = Session()
+    session.define_materials_and_sections(MATERIALS, SECTIONS)
+    session.generate_frame(spans=[6], storeys=[3.6], beam_load=20e3)
+    assert session.solve_model().ok
+    provider = ScriptedProvider([])
+    out = Conversation(provider, session=session).ask("查看最大位移")
+    assert out.metrics["fast_path"] is True
+    assert provider.seen == []
+    assert "mm" in out.reply
+    assert [name for name, _ in out.tool_calls] == ["query_results"]
+
+
+@pytest.mark.parametrize("prompt, expected_tool", [
+    ("检查模型", "validate_model"),
+    ("重新求解", "solve_model"),
+    ("查看反力", "query_results"),
+])
+def test_common_engineering_commands_do_not_need_a_model_round_trip(
+        prompt, expected_tool):
+    session = Session()
+    session.define_materials_and_sections(MATERIALS, SECTIONS)
+    session.generate_frame(spans=[6], storeys=[3.6], beam_load=20e3)
+    assert session.solve_model().ok
+    provider = ScriptedProvider([])
+    out = Conversation(provider, session=session).ask(prompt)
+    assert out.metrics["provider_calls"] == 0
+    assert provider.seen == []
+    assert out.tool_calls[0][0] == expected_tool
 
 
 # ------------------------------------------------- 其他
