@@ -29,6 +29,10 @@ from units import convert_model  # noqa: F401  界面从这里取，不必再 im
 
 NODE_COLUMNS = ("id", "x", "y", "z")
 MEMBER_COLUMNS = ("id", "i", "j", "section", "material", "releases_i", "releases_j")
+# 表格实际负责的模型键。不在这张表里的（ref_vector、offset_i/offset_j）
+# 由 from_tables 原样带回，避免编辑一次表格就静默抹掉它们。
+_MEMBER_TABLE_KEYS = frozenset(
+    ("id", "i", "j", "section", "material", "releases"))
 SUPPORT_COLUMNS = ("name", "node") + LOCAL_DOF_NAMES
 NODAL_LOAD_COLUMNS = ("case", "name", "node", "Fx", "Fy", "Fz", "Mx", "My", "Mz")
 MEMBER_LOAD_COLUMNS = ("case", "name", "member", "wx", "wy", "wz")
@@ -236,6 +240,14 @@ def from_tables(base: dict[str, Any],
             "z": _num(row, "z", "nodes", lineno)})
     _check_unique([n["id"] for n in model["nodes"]], "nodes", "节点号")
 
+    # 表格里没有的字段按杆件号原样带回来。**编辑表格只该改表格显示的东西。**
+    # 这里丢过 ref_vector（截面朝向）和 offset_i/offset_j（刚域偏移）：
+    # 前者一丢，报出来的 My/Mz 符号会变；后者一丢，结构本身就变了。
+    # 两种都不报错，只是下次求解结果悄悄不一样。
+    carried = {int(m["id"]): {k: v for k, v in m.items()
+                             if k not in _MEMBER_TABLE_KEYS}
+               for m in base.get("members") or [] if "id" in m}
+
     for lineno, row in enumerate(tables.get("members") or [], 1):
         if _row_is_blank(row):
             continue
@@ -250,6 +262,7 @@ def from_tables(base: dict[str, Any],
         if rel_i or rel_j:
             # 只在真有释放时才写这一项——空的 releases 会让模型 JSON 变脏
             m["releases"] = {k: v for k, v in (("i", rel_i), ("j", rel_j)) if v}
+        m.update(carried.get(m["id"], {}))
         model["members"].append(m)
     _check_unique([m["id"] for m in model["members"]], "members", "杆件号")
 

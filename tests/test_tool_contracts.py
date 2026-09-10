@@ -259,14 +259,18 @@ def test_member_reference_vector_rejects_an_axial_direction():
     nj = next(n for n in s.model["nodes"] if n["id"] == member["j"])
     axis = [nj[k] - ni[k] for k in ("x", "y", "z")]
 
+    before = member.get("ref_vector")
+
     bad = s.edit_member(member_id=mid, ref_vector=axis)
     assert not bad.ok
     assert "平行" in bad.payload["error"]
-    assert "ref_vector" not in member
+    # 被拒绝的编辑一个字节都不许写进去。生成器现在会给柱子显式写 ref_vector，
+    # 所以这里查"没被改动"，而不是查"这一项不存在"。
+    assert member.get("ref_vector") == before
 
     good = s.edit_member(member_id=mid, ref_vector=[0, 1, 0])
     assert good.ok
-    assert good.payload["changed"]["ref_vector"] == {"was": None, "now": [0.0, 1.0, 0.0]}
+    assert good.payload["changed"]["ref_vector"] == {"was": before, "now": [0.0, 1.0, 0.0]}
 
 
 def fresh() -> Session:

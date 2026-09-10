@@ -58,6 +58,29 @@ def _check_positive(name: str, values: Sequence[float]) -> list[float]:
     return out
 
 
+# 柱子的截面朝向必须**写进模型**，不能靠 local_axes 的兜底。
+#
+# local_axes 对竖直杆有一条兜底分支：参考向量退化时改用全局 X。它是对的，
+# 但**恰好竖直和略微倾斜会给出反向的局部 y**——实测倾斜 0.01° 时局部 y 是
+# +X，0.1° 时就变成 −X。双轴对称截面刚度不受影响，但局部 z 跟着翻，
+# **报出来的 My/Mz/Vy/Vz 全部反号**。
+#
+# 于是同一榀框架里，一根恰好竖直的柱和一根偏零点几度的柱（图纸识别出来的
+# 坐标、抬升节点之后、带坡度的柱）会给出符号相反的弯矩，内力图上有一根柱
+# 画在错误的一侧。而这个不连续是本质的：竖直杆没有"向上投影"这个方向，
+# 极限依赖于从哪一侧趋近，兜底只能任选一个。
+#
+# 所以生成器显式写下这个选择：柱子的参考向量取全局 X，与兜底一致（跨方向
+# 用强轴，这是常规做法），但从此它记录在模型里、看得见、改得动，也不会
+# 因为坐标动了零点几度就翻号。
+_COLUMN_REF = (1.0, 0.0, 0.0)
+
+
+def _is_upright(a: dict, b: dict, tol: float = 1e-9) -> bool:
+    """两节点连线是不是竖直（只差 z）。"""
+    return abs(a["x"] - b["x"]) <= tol and abs(a["y"] - b["y"]) <= tol
+
+
 def _cumulative(widths: Sequence[float]) -> list[float]:
     coords, total = [0.0], 0.0
     for w in widths:
@@ -120,9 +143,13 @@ def generate_frame(
     members: list[dict[str, Any]] = []
     beam_ids: list[int] = []
 
+    by_id = {n["id"]: n for n in nodes}
+
     def add(i: int, j: int, section: str, releases: dict | None = None) -> int:
         m: dict[str, Any] = {"id": len(members) + 1, "i": i, "j": j,
                              "section": section, "material": material}
+        if _is_upright(by_id[i], by_id[j]):
+            m["ref_vector"] = list(_COLUMN_REF)
         if releases:
             m["releases"] = releases
         members.append(m)
@@ -252,9 +279,14 @@ def generate_portal_frame(
     members: list[dict[str, Any]] = []
     rafter_ids: list[int] = []
 
+    by_id = {n["id"]: n for n in nodes}
+
     def add(i: int, j: int, section: str) -> int:
-        members.append({"id": len(members) + 1, "i": i, "j": j,
-                        "section": section, "material": material})
+        entry: dict[str, Any] = {"id": len(members) + 1, "i": i, "j": j,
+                                 "section": section, "material": material}
+        if _is_upright(by_id[i], by_id[j]):
+            entry["ref_vector"] = list(_COLUMN_REF)
+        members.append(entry)
         return members[-1]["id"]
 
     for iy in range(ny):                # 柱：只在非脊站位立柱
