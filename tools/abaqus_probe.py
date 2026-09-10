@@ -1,23 +1,22 @@
-"""standard.exe 崩溃的二分探针。
+"""standard.exe / pre.exe 崩溃的二分探针。
 
-背景：局部实体作业里 pre.exe 跑完、许可证正常签出，然后 standard.exe 以
-Windows 系统错误码中止，.dat 里一条 ***ERROR 都没有。这种崩法有两类原因，
-必须先分开，否则改哪儿都是猜：
+背景：局部实体作业在 Windows 临时目录（纯 ASCII 路径）里跑时，pre.exe 正常
+跑完、许可证正常签出，然后 standard.exe 以系统错误码 1073741795 中止，.dat
+里一条 ***ERROR 都没有。
 
-  A. 这台机器上 C3D10 实体单元 / 稀疏求解器本身就跑不了
-     （已知它跑得动 70 方程的 B33 梁算例，但那是完全不同的代码路径）
-  B. C3D10 没问题，是我们这个模型的几何或网格有问题
-     （布尔合并出来的相贯区有 725 个畸变单元）
+第一版探针把作业放在项目文件夹里跑，结果 **pre.exe 就崩了**，错误码却是
+另一个（529697949）。项目路径含中文（agent开发），所以那一版探针测的根本
+不是它想测的东西——它自己的工作目录就引入了一个新变量。这一版把路径单独
+拿出来做对照。
 
-两个探针：
+三个探针，每个都用 abaqus job= 直接跑，不经过 CAE：
 
-  P1  一个手写的单 C3D10 单元输入文件，**不经过 CAE**，直接交给求解器。
-      它崩 -> 属于 A，跟我们的模型无关。
-  P2  把上一次失败留下的 solid_joint_0.inp 直接用 abaqus job= 跑，
-      同样绕开 CAE。CAE 提交时不落 .log，直接跑会落，报错更完整。
-
-P1 过、P2 崩 -> 问题在我们的几何/网格。
-两个都崩 -> 问题在这台机器的实体求解路径，我们的代码没得改。
+  P1a  手写的单 C3D10 单元输入文件，放在 **ASCII 临时目录**
+       它崩 -> 这台机器跑不了 C3D10，与我们的模型无关
+  P1b  同一个输入文件，放在 **项目文件夹**（路径含中文）
+       P1a 过而 P1b 崩 -> 是路径里的非 ASCII 字符，不是模型
+  P2   上次失败留下的 solid_joint_0.inp，放在 ASCII 临时目录
+       P1a 过而 P2 崩 -> 是我们生成的几何或网格
 
 用法：run_abaqus_probe.bat
 """
@@ -28,6 +27,7 @@ import datetime as _dt
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -82,9 +82,13 @@ U,
 """
 
 
-def run_job(executable: str, directory: Path, job: str,
+def run_job(executable: str, directory: Path, job: str, keep: Path,
             timeout: float = 900.0) -> bool:
-    """跑一个输入文件，把控制台和 .log/.sta 原样记下来。"""
+    """跑一个输入文件，把控制台和 .log/.sta/.dat 原样记下来。
+
+    产物复制到 ``keep`` 保存——临时目录会被清掉，而证据不能跟着没。
+    复制是 Python 干的，落在含中文的路径上没问题；Abaqus 自己不碰那儿。
+    """
     say(f"命令：{executable} job={job} interactive")
     say(f"目录：{directory}")
     try:
@@ -99,6 +103,14 @@ def run_job(executable: str, directory: Path, job: str,
     say((proc.stdout or "").strip() or "(空)")
     say("--- stderr ---")
     say((proc.stderr or "").strip() or "(空)")
+
+    keep.mkdir(parents=True, exist_ok=True)
+    for path in directory.iterdir():
+        if path.is_file():
+            try:
+                shutil.copy2(path, keep / path.name)
+            except OSError:
+                pass
     for suffix in (".log", ".sta"):
         path = directory / (job + suffix)
         say(f"--- {job}{suffix} ---")
@@ -106,14 +118,27 @@ def run_job(executable: str, directory: Path, job: str,
             say(path.read_text(encoding="utf-8", errors="replace").strip() or "(空)")
         else:
             say("(没有生成)")
-    ok = proc.returncode == 0
+
     status = directory / (job + ".sta")
     if status.is_file() and "COMPLETED SUCCESSFULLY" in status.read_text(
             encoding="utf-8", errors="replace"):
         say(">>> 结论：跑通了")
         return True
     say(">>> 结论：没跑通")
-    return ok and False
+    return False
+
+
+def probe(executable: str, title: str, why: str, deck: str, job: str,
+          directory: Path, keep_name: str) -> bool:
+    say()
+    say("=" * 70)
+    say(f"# {title}")
+    say("=" * 70)
+    say(why)
+    say()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / (job + ".inp")).write_text(deck, encoding="ascii")
+    return run_job(executable, directory, job, WORK / keep_name)
 
 
 def main() -> int:
@@ -125,49 +150,68 @@ def main() -> int:
     if executable is None:
         say("找不到 Abaqus，无法继续。")
         return 1
-
     WORK.mkdir(parents=True, exist_ok=True)
 
-    say()
-    say("=" * 70)
-    say("# P1　单个 C3D10 单元（手写输入文件，不经过 CAE）")
-    say("=" * 70)
-    say("它崩 => 这台机器的实体求解路径本身有问题，与我们的模型无关。")
-    say()
-    p1_dir = WORK / "p1_minimal"
-    p1_dir.mkdir(exist_ok=True)
-    (p1_dir / "probe_c3d10.inp").write_text(MINIMAL_C3D10, encoding="ascii")
-    p1_ok = run_job(executable, p1_dir, "probe_c3d10")
+    ascii_root = Path(tempfile.mkdtemp(prefix="abqprobe_"))
+    say(f"ASCII 临时目录：{ascii_root}")
+    say(f"项目目录（含中文）：{ROOT}")
 
+    p1a = probe(executable,
+                "P1a　单个 C3D10 单元，ASCII 临时目录",
+                "它崩 => 这台机器跑不了 C3D10 实体，与我们的模型无关。",
+                MINIMAL_C3D10, "probe_c3d10", ascii_root / "p1a", "p1a_ascii")
+
+    p1b = probe(executable,
+                "P1b　同一个输入文件，放在项目文件夹（路径含中文）",
+                "P1a 过而这个崩 => 是路径里的非 ASCII 字符，不是模型。",
+                MINIMAL_C3D10, "probe_c3d10", WORK / "p1b_cjk_path", "p1b_cjk_path")
+
+    source = ROOT / "results" / "solid_joint" / "node_2_LC1" / "solid_joint_0.inp"
     say()
     say("=" * 70)
-    say("# P2　上次失败留下的 solid_joint_0.inp（同样绕开 CAE）")
+    say("# P2　上次失败留下的 solid_joint_0.inp，ASCII 临时目录")
     say("=" * 70)
-    source = ROOT / "results" / "solid_joint" / "node_2_LC1" / "solid_joint_0.inp"
     if not source.is_file():
         say(f"找不到 {source}，跳过。先跑一次 run_joint.bat 让它留下输入文件。")
-        p2_ok = None
+        p2 = None
     else:
-        p2_dir = WORK / "p2_joint"
-        p2_dir.mkdir(exist_ok=True)
-        shutil.copy2(source, p2_dir / "solid_joint_0.inp")
+        say("P1a 过而这个崩 => 是我们生成的几何或网格。")
         say(f"输入文件来自 {source}")
         say()
-        p2_ok = run_job(executable, p2_dir, "solid_joint_0")
+        p2_dir = ascii_root / "p2"
+        p2_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, p2_dir / "solid_joint_0.inp")
+        p2 = run_job(executable, p2_dir, "solid_joint_0", WORK / "p2_joint")
 
     say()
     say("=" * 70)
     say("# 结论")
     say("=" * 70)
-    if not p1_ok:
-        say("P1 就崩了 —— 这台机器跑不了 C3D10 实体，问题不在我们的模型里。")
-        say("排查方向是 Abaqus 安装本身，不是这个项目的代码。")
-    elif p2_ok is False:
-        say("P1 通过、P2 崩 —— C3D10 没问题，是我们生成的这个模型的几何或网格。")
+    say(f"P1a（C3D10 / ASCII 路径）　　　{'通过' if p1a else '失败'}")
+    say(f"P1b（同一文件 / 中文路径）　　{'通过' if p1b else '失败'}")
+    say(f"P2 （我们的模型 / ASCII 路径）{'跳过' if p2 is None else ('通过' if p2 else '失败')}")
+    say()
+    if not p1a:
+        say("P1a 就崩了 —— 这台机器跑不了 C3D10 实体单元。一个单元、十个节点的")
+        say("输入文件都过不去，不可能是模型的问题。排查方向是 Abaqus 安装本身。")
+    elif not p1b:
+        say("路径里的中文是致命的：同一个输入文件，ASCII 路径能跑、项目路径不能。")
+        say("局部实体分析本来就在临时目录里跑，所以这一条不是它失败的原因；")
+        say("但 abaqus_bench 是直接在项目文件夹里跑作业的，那套基准现在必然是坏的。")
+        if p2 is False:
+            say("而 P2 在 ASCII 路径下仍然崩 —— 那才是局部实体的真正问题，")
+            say("方向是我们生成的几何或网格（上次报了 725 个畸变单元）。")
+        elif p2:
+            say("P2 在 ASCII 路径下跑通了 —— 那么问题在 CAE 提交作业这条路径上，")
+            say("而不是求解器本身。改成先写输入文件、再单独调求解器即可。")
+    elif p2 is False:
+        say("C3D10 与路径都没问题，是我们生成的这个模型的几何或网格。")
         say("最可能的是布尔合并相贯区的畸变单元（上次报了 725 个）。")
-    elif p2_ok:
-        say("两个都通过 —— 那么问题出在 CAE 提交作业这条路径上，")
-        say("而不是求解器。可以改成先写输入文件、再单独调求解器。")
+    else:
+        say("全部通过 —— 那么问题在 CAE 提交作业这条路径上，而不是求解器。")
+        say("改成先写输入文件、再单独调求解器即可。")
+    say()
+    say(f"各作业产物已保存到 {WORK}")
     return 0
 
 
