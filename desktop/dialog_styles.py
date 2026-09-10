@@ -9,8 +9,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
+                               QVBoxLayout, QWidget)
 
 from . import theme
 
@@ -125,3 +125,29 @@ def style_dialog(dialog, min_width: int = 420, min_height: int = 300):
             padding: 5px 18px;
         }}
     """)
+
+
+def button_box(parent=None, ok: str = "确定", cancel: str = "取消"
+               ) -> QDialogButtonBox:
+    """确定 / 取消按钮条。
+
+    **走这个入口，不要各对话框自己 new 一个。** Qt 的标准按钮默认取系统语言的
+    文案，机器语言不是中文时就是 "OK / Cancel"——于是同一个程序里，材料对话框
+    写着「确定」，截面对话框写着 "OK"。这种不一致一眼就能看见，
+    而且每加一个对话框就多一次机会漏掉。
+
+    需要别的动作名（"应用""写回模型"）时传 ``ok``，语言仍然是一致的。
+    """
+    box = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok
+        | QDialogButtonBox.StandardButton.Cancel, parent=parent)
+    box.button(QDialogButtonBox.StandardButton.Ok).setText(ok)
+    box.button(QDialogButtonBox.StandardButton.Cancel).setText(cancel)
+    return box
+
+
+def close_box(parent=None, ok: str = "关闭") -> QDialogButtonBox:
+    """只有一个按钮的按钮条（查看类弹窗）。同样是为了文案一致。"""
+    box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, parent=parent)
+    box.button(QDialogButtonBox.StandardButton.Ok).setText(ok)
+    return box

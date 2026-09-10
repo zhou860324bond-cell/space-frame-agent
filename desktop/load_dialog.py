@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QComboBox, QDialog, 
                                QDoubleSpinBox, QFormLayout, QGroupBox,
                                QLabel, QLineEdit, QStackedWidget, QVBoxLayout, QWidget)
+
+from . import dialog_styles
 
 from . import theme
 
@@ -225,8 +227,7 @@ class LoadDialog(QDialog):
         self.stack.addWidget(self.point_widget)
         layout.addWidget(self.stack)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns = dialog_styles.button_box(self)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)

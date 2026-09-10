@@ -35,6 +35,7 @@ from .section_opt_panel import SectionOptPanel       # noqa: E402
 from .bc_panel import BCPanel                          # noqa: E402
 from .properties import PropertiesPanel             # noqa: E402
 from .floating_button import FloatingAgentButton      # noqa: E402
+from . import dialog_styles                         # noqa: E402
 from . import result_rows                           # noqa: E402
 from .viewport import Viewport                     # noqa: E402
 from .worker import Runner                         # noqa: E402
@@ -1296,8 +1297,7 @@ class MainWindow(QMainWindow):
                 sp.setToolTip(f"当前工作平面 {self.viewport.work_plane} 固定该坐标")
             spins[axis] = sp
             form.addRow(f"{label}：", sp)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns = dialog_styles.button_box(dlg)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
         form.addRow(btns)
@@ -1551,7 +1551,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(sec_table, "截面")
         layout = QVBoxLayout(dlg)
         layout.addWidget(tabs)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns = dialog_styles.button_box(dlg)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1659,7 +1659,7 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             cmb.setCurrentIndex(idx)
         form.addRow("单位制", cmb)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns = dialog_styles.button_box(dlg)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
         form.addRow(btns)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1688,7 +1688,7 @@ class MainWindow(QMainWindow):
             table.setItem(i, 0, QTableWidgetItem(c.get("name", "")))
             table.setItem(i, 1, QTableWidgetItem(_format_combo_factors(c.get("factors") or {})))
         layout.addWidget(table)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns = dialog_styles.button_box(dlg)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1752,11 +1752,15 @@ class MainWindow(QMainWindow):
             return
         raw_section = dlg.get_section()
         # ``type`` 和 ``params`` 是截面对话框的 UI 元数据；正式模型只认
-        # name / A / Iy / Iz / J。把它们写进去会违反 JSON Schema，直到
-        # 下一次求解才暴露出来，用户会误以为是求解器出了问题。
+        # name / A / Iy / Iz / J 这一套。把它们写进去会违反 JSON Schema，
+        # 直到下一次求解才暴露出来，用户会误以为是求解器出了问题。
+        #
+        # 反过来，这份白名单**漏掉一个键就是静默丢数据**：cy/cz/circular
+        # 一丢，界面上建的截面就永远做不了强度验算，而且不报错——
+        # 只在点「强度验算」时被拒绝，看着像校核功能坏了。
         section_type = raw_section["type"]
         sec = {key: raw_section[key] for key in
-               ("name", "A", "Iy", "Iz", "J", "Ay", "Az")
+               ("name", "A", "Iy", "Iz", "J", "Ay", "Az", "cy", "cz", "circular")
                if key in raw_section}
         from copy import deepcopy
 
@@ -2287,7 +2291,7 @@ class MainWindow(QMainWindow):
             lambda: self.locate_problem(refs_by_row[issue_list.currentRow()]))
         issue_list.setCurrentRow(0)
 
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btns = dialog_styles.close_box(dlg)
         btns.accepted.connect(dlg.accept)
         layout.addWidget(btns)
         dlg.exec()

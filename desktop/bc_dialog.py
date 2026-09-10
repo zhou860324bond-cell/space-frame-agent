@@ -11,11 +11,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
-                               QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QVBoxLayout, QWidget)
 
-from . import theme
+from . import dialog_styles, theme
 from .dialog_styles import DialogHeader, DialogSection, FormRow, HintLabel, style_dialog
 
 DOFS = [
@@ -120,10 +119,7 @@ class BCDialog(QDialog):
         # 按钮
         btn_layout = QVBoxLayout()
         btn_layout.setContentsMargins(16, 8, 16, 0)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        btns = dialog_styles.button_box(self)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         btn_layout.addWidget(btns)

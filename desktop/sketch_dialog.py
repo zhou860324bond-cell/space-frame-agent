@@ -16,11 +16,11 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QDialog,
-                               QDialogButtonBox, QDoubleSpinBox, QFormLayout,
+                               QDoubleSpinBox, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QPushButton,
                                QSpinBox, QVBoxLayout, QWidget)
 
-from . import theme
+from . import dialog_styles, theme
 
 
 class SketchCanvas(QWidget):
@@ -497,9 +497,7 @@ class SketchDialog(QDialog):
         root.addLayout(top, 1)
 
         # 底部按钮
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("生成模型")
+        btns = dialog_styles.button_box(self, ok="生成模型")
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         root.addWidget(btns)

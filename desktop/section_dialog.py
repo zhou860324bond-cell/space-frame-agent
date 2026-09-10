@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, 
                                QDoubleSpinBox, QFormLayout, QLabel, QLineEdit,
                                QMessageBox, QStackedWidget, QVBoxLayout, QWidget)
 
-from . import theme
+from . import dialog_styles, theme
 
 # 截面类型定义：(显示名, 参数字典)
 SECTION_TYPES = {
@@ -40,10 +40,30 @@ DEFAULT_DIMENSIONS = {
 }
 
 
+# 双轴对称的截面：形心在几何中心，极端纤维距离就是半高、半宽，**是精确值**。
+# 槽钢、等边角钢、T 型钢不在此列：它们形心偏置，而本对话框的 Iz（槽钢、角钢）
+# 与 Iy（T 型钢）本来就标着"近似"。给一个精确的 c 配一个近似的 I，
+# 算出来的应力照样是错的，只是错得看不出来。所以**这三种干脆不给**，
+# 强度验算会明确拒绝——那比给一个来路不明的应力安全。
+_SYMMETRIC_FIBRES = {
+    "I 型钢": lambda p: (p["h"] / 2.0, p["b"] / 2.0, False),
+    "矩形管": lambda p: (p["h"] / 2.0, p["b"] / 2.0, False),
+    "矩形": lambda p: (p["h"] / 2.0, p["b"] / 2.0, False),
+    "圆管": lambda p: (p["d"] / 2.0, p["d"] / 2.0, True),
+    "圆钢": lambda p: (p["d"] / 2.0, p["d"] / 2.0, True),
+}
+
+OFFSET_CENTROID_SHAPES = ("槽钢", "等边角钢", "T 型钢")
+
+
 def calc_section(section_type: str, params: dict) -> dict:
-    """根据截面类型和尺寸计算 A, Iy, Iz, J。
+    """根据截面类型和尺寸计算 A, Iy, Iz, J，以及极端纤维距离 cy/cz。
 
     y 轴沿截面高度方向，z 轴沿截面宽度方向。
+
+    ``cy``/``cz`` 是强度验算算弯曲应力必需的（σ = N/A ± M·c/I）。少了它们，
+    在对话框里建的截面**做不了强度验算**——这是从界面走一遍才发现的：
+    工具链全通，一到校核就被拒绝。
     """
     if section_type == "I 型钢":
         h, b, tw, tf = params["h"], params["b"], params["tw"], params["tf"]
@@ -105,7 +125,14 @@ def calc_section(section_type: str, params: dict) -> dict:
 
     # 不在模型层舍入。小截面的 m⁴ 数值本来就可能低于 1e-8，四舍五入
     # 会直接变成零，到求解阶段才报“截面惯性矩必须大于 0”。
-    return {"A": float(A), "Iy": float(Iy), "Iz": float(Iz), "J": float(J)}
+    out = {"A": float(A), "Iy": float(Iy), "Iz": float(Iz), "J": float(J)}
+    fibres = _SYMMETRIC_FIBRES.get(section_type)
+    if fibres is not None:
+        cy, cz, circular = fibres(params)
+        out.update({"cy": float(cy), "cz": float(cz)})
+        if circular:
+            out["circular"] = True
+    return out
 
 
 class SectionDialog(QDialog):
@@ -118,7 +145,9 @@ class SectionDialog(QDialog):
         self.length_unit = "mm" if units == "N-mm-MPa" else "m"
         size_scale = 1000.0 if units == "N-mm-MPa" else 1.0
         self.setWindowTitle("编辑截面" if section else "创建截面")
-        self.resize(400, 420)
+        # 预览块的行数随截面类型变（偏心截面要多说两句为什么不给 cy/cz），
+        # 写死高度会把最后一行切掉——那一行恰恰是解释原因的。
+        self.resize(440, 470)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -169,10 +198,10 @@ class SectionDialog(QDialog):
             f"background:{theme.PANEL_ALT}; padding:8px; border:1px solid {theme.BORDER};"
             f"color:{theme.INK}; font-family:monospace; font-size:8pt;")
         self.lbl_preview.setMinimumHeight(80)
+        self.lbl_preview.setWordWrap(True)
         layout.addWidget(self.lbl_preview)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns = dialog_styles.button_box(self)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
@@ -195,12 +224,25 @@ class SectionDialog(QDialog):
         props = calc_section(stype, params)
         shear = (f"\n  Ay = Az ≈ {5 * props['A'] / 6:.6e} {self.length_unit}²"
                  if self.chk_shear.isChecked() else "\n  剪切变形：关闭")
+        # 极端纤维距离决定这个截面能不能做强度验算。有就报出来，
+        # 没有就**当场说清楚为什么**——不要等用户点了「强度验算」才被拒绝。
+        if "cy" in props:
+            fibre = (f"\n  cy = {props['cy']:.6e} {self.length_unit}"
+                     f"　cz = {props['cz']:.6e} {self.length_unit}"
+                     + ("（圆形，双向弯曲按平方和合成）" if props.get("circular")
+                        else "")
+                     + "\n  可用于强度验算")
+        else:
+            fibre = ("\n  形心偏置，本程序不给极端纤维距离 cy/cz："
+                     "该截面的 I 本身是近似值，配一个精确的 c 算出来的应力"
+                     "照样不对。\n  强度验算会明确拒绝，而不是给一个"
+                     "来路不明的应力。")
         self.lbl_preview.setText(
             f"截面属性（自动计算）：\n"
             f"  A  = {props['A']:.6e} {self.length_unit}²\n"
             f"  Iy = {props['Iy']:.6e} {self.length_unit}⁴\n"
             f"  Iz = {props['Iz']:.6e} {self.length_unit}⁴\n"
-            f"  J  = {props['J']:.6e} {self.length_unit}⁴" + shear
+            f"  J  = {props['J']:.6e} {self.length_unit}⁴" + shear + fibre
         )
 
     def accept(self):
@@ -221,7 +263,9 @@ class SectionDialog(QDialog):
         elif stype == "T 型钢" and (p["tf"] >= p["h"] or p["tw"] >= p["b"]):
             error = "T 型钢需满足 tf < h 且 tw < b"
         props = calc_section(stype, p)
-        if error is None and (not all(math.isfinite(v) and v > 0 for v in props.values())):
+        numbers = [v for k, v in props.items() if k != "circular"]
+        if error is None and (not all(math.isfinite(v) and v > 0
+                                      for v in numbers)):
             error = "当前尺寸算出的截面属性无效，请检查各项尺寸"
         if error:
             QMessageBox.warning(self, "截面尺寸不合理", error)

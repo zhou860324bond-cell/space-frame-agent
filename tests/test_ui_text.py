@@ -176,3 +176,26 @@ def test_a_failed_member_is_never_tinted_as_passing():
     marks = result_rows.row_marks("strength", payload)
     assert marks == [result_rows.PASS, result_rows.FAIL, result_rows.UNCLEAR]
     assert result_rows.row_marks("没见过的", payload) == []
+
+
+def test_every_dialog_says_ok_in_the_same_language():
+    """同一个程序里，材料对话框写着「确定」、截面对话框写着 "OK"——
+    这种不一致一眼就能看见。
+
+    Qt 的标准按钮取的是**系统语言**的文案，机器语言不是中文时就露出英文。
+    所以按钮条一律走 `dialog_styles.button_box()`；这条测试盯的是有没有人
+    绕过它自己 new 一个。
+    """
+    import re
+
+    offenders = []
+    for path in sorted((ROOT / "desktop").glob("*.py")):
+        if path.name == "dialog_styles.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"QDialogButtonBox\s*\(", text):
+            line = text[:match.start()].count("\n") + 1
+            offenders.append(f"{path.name}:{line}")
+    assert not offenders, (
+        "这些地方自己创建了按钮条，请改用 dialog_styles.button_box()："
+        + "、".join(offenders))

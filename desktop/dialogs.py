@@ -21,12 +21,14 @@ from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
-                               QDialog, QDialogButtonBox, QDoubleSpinBox,
+                               QDialog, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QMessageBox, QPlainTextEdit,
                                QPushButton, QSpinBox, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout,
                                QWidget)
+
+from . import dialog_styles
 
 from . import theme
 
@@ -111,9 +113,7 @@ class ParametricDialog(QDialog):
         self.hint.setProperty("panel", "hint")
         box.addWidget(self.hint)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel, parent=self)
+        buttons = dialog_styles.button_box(self)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         box.addWidget(buttons)
@@ -386,9 +386,7 @@ class TableDialog(QDialog):
         row.addStretch(1)
         box.addLayout(row)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel, parent=self)
+        buttons = dialog_styles.button_box(self)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         box.addWidget(buttons)
@@ -523,9 +521,7 @@ class JsonDialog(QDialog):
         hint.setWordWrap(True); hint.setProperty("panel", "hint")
         box.addWidget(hint)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel, parent=self)
+        buttons = dialog_styles.button_box(self)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         box.addWidget(buttons)

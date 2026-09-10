@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QComboBox, QDialog, 
                                QFormLayout, QLabel, QVBoxLayout)
+
+from . import dialog_styles
 
 
 class AssignmentDialog(QDialog):
@@ -38,8 +40,7 @@ class AssignmentDialog(QDialog):
         hint = QLabel("两项会同时写入所选杆件；之后仍可在属性面板中单独修改。")
         hint.setWordWrap(True)
         layout.addWidget(hint)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = dialog_styles.button_box(self)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

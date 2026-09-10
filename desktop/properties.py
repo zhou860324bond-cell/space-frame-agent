@@ -166,6 +166,16 @@ class PropertiesPanel(QWidget):
             self._text(f"offset_{end}", f"{end} 端刚域偏移（全局）", value,
                        "例如 0.2, 0, 0；留空表示无刚域")
 
+        # 计算长度系数：欧拉校核用。不给就由杆端释放推定，而推定**只对无侧移
+        # 结构成立**——有侧移的框架柱 μ>1、悬臂柱 2.0。所以这一栏必须在界面上
+        # 能填，否则有侧移的框架永远只能拿到一个偏不安全的判定。
+        for key, label in (("mu_y", "计算长度系数 μy"),
+                           ("mu_z", "计算长度系数 μz")):
+            value = entry.get(key)
+            self._text(key, label, "" if value is None else f"{float(value):g}",
+                       "留空按杆端约束推定（仅无侧移适用）；两端铰 1、"
+                       "一端固一端铰 0.7、两端固 0.5、悬臂 2")
+
         rel = entry.get("releases") or {}
         for end in ("i", "j"):
             current = list(rel.get(end) or [])
@@ -286,6 +296,23 @@ class PropertiesPanel(QWidget):
                         self._reload()
                         return
                     kwargs[key] = vector
+            elif key in ("mu_y", "mu_z"):
+                raw = str(value).strip()
+                if not raw:
+                    kwargs[key] = None          # 清空 = 回到按杆端约束推定
+                else:
+                    try:
+                        factor = float(raw)
+                    except ValueError:
+                        self.status.setText(
+                            "未生效：计算长度系数应为一个正数，例如 1、0.7、2。")
+                        self._reload()
+                        return
+                    if not (factor > 0):
+                        self.status.setText("未生效：计算长度系数必须大于零。")
+                        self._reload()
+                        return
+                    kwargs[key] = factor
             elif key.startswith("release_"):
                 end = key[-1]
                 preset = next((v for n, v in RELEASE_PRESETS if n == value), None)

@@ -17,10 +17,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog,
-                               QDialogButtonBox, QGridLayout, QHBoxLayout,
+                               QGridLayout, QHBoxLayout,
                                QLabel, QPushButton, QVBoxLayout, QWidget)
 
-from . import theme
+from . import dialog_styles, theme
 from .dialog_styles import DialogHeader, DialogSection, HintLabel, style_dialog
 
 # 预设分组：(组名, [(key, 中文名), ...])，key 必须在 viewport.Viewport.BG_THEMES 内
@@ -241,10 +241,7 @@ class BackgroundDialog(QDialog):
 
         btn_box = QVBoxLayout()
         btn_box.setContentsMargins(14, 8, 14, 0)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        btns = dialog_styles.button_box(self)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self._reject)
         btn_box.addWidget(btns)

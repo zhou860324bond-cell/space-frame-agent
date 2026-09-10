@@ -413,3 +413,76 @@ def test_json_that_fails_validation_is_refused(qt_app, monkeypatch):
     d.edit.setPlainText('{"nodes": [], "members": [], "supports": []}')
     d._accept()
     assert shown and d.model is None
+
+
+def test_a_section_built_in_the_dialog_can_actually_be_checked(qt_app):
+    """从界面建的截面必须带着极端纤维距离，否则**做不了强度验算**。
+
+    这条盯的是两段路：截面对话框要算出 cy/cz，主窗口写回模型时的白名单
+    也要放它们过去。任何一段漏掉都不报错——只在点「强度验算」时被拒绝，
+    看着像校核功能坏了。
+    """
+    from desktop.section_dialog import calc_section
+
+    props = calc_section("I 型钢", {"h": 0.30, "b": 0.15,
+                                    "tw": 0.008, "tf": 0.012})
+    assert props["cy"] == pytest.approx(0.15)
+    assert props["cz"] == pytest.approx(0.075)
+
+    round_pipe = calc_section("圆管", {"d": 0.168, "t": 0.008})
+    assert round_pipe["circular"] is True
+    assert round_pipe["cy"] == pytest.approx(0.084)
+
+    # 形心偏置的截面**故意不给**：I 本身是近似值，配一个精确的 c 也是错的
+    for shape, params in (("槽钢", {"h": .25, "b": .09, "tw": .008, "tf": .012}),
+                          ("T 型钢", {"h": .2, "b": .15, "tw": .008, "tf": .012}),
+                          ("等边角钢", {"b": .075, "t": .008})):
+        assert "cy" not in calc_section(shape, params), shape
+
+
+def test_the_section_whitelist_lets_the_fibre_distances_through(qt_app):
+    """主窗口写回模型时的白名单漏一个键，就是一次静默的数据丢失。"""
+    import inspect
+
+    from desktop.main_window import MainWindow
+
+    source = inspect.getsource(MainWindow.create_section)
+    for key in ("cy", "cz", "circular"):
+        assert f'"{key}"' in source, f"截面白名单里没有 {key}"
+
+
+def test_a_material_built_in_the_dialog_can_carry_allowable_stresses(qt_app):
+    """强度验算要许用应力、温度应力要线膨胀系数。
+    这两项原来只有 Agent 能填，界面上建的材料一到校核就被拒绝。"""
+    from desktop.material_dialog import MaterialDialog
+
+    dlg = MaterialDialog()
+    assert dlg.get_material().get("allow_tension") is None, "默认不该凭空写上"
+
+    dlg.chk_allowable.setChecked(True)
+    dlg.spn_allow_t.setValue(215e6)
+    got = dlg.get_material()
+    assert got["allow_tension"] == pytest.approx(215e6)
+    # 不勾"抗压不同"时不写压许用：写一个与拉相同的值，就分不清是用户确认过
+    # 还是默认带出来的，而强度验算的输出要报出这个区别
+    assert "allow_compression" not in got
+
+    dlg.chk_diff_compression.setChecked(True)
+    dlg.spn_allow_c.setValue(360e6)
+    assert dlg.get_material()["allow_compression"] == pytest.approx(360e6)
+
+    dlg.spn_alpha.setValue(1.2e-5)
+    assert dlg.get_material()["alpha"] == pytest.approx(1.2e-5)
+
+
+def test_an_edited_material_keeps_its_allowable_stresses(qt_app):
+    """编辑一个已有材料时，这几项要回填——不回填就等于打开一次就丢了。"""
+    from desktop.material_dialog import MaterialDialog
+
+    dlg = MaterialDialog({"name": "Q355", "E": 2.06e11, "nu": 0.3,
+                          "density": 7850.0, "allow_tension": 215e6,
+                          "allow_compression": 360e6, "alpha": 1.2e-5})
+    got = dlg.get_material()
+    assert got["allow_tension"] == pytest.approx(215e6)
+    assert got["allow_compression"] == pytest.approx(360e6)
+    assert got["alpha"] == pytest.approx(1.2e-5)

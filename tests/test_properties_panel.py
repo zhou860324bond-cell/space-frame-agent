@@ -65,7 +65,8 @@ def test_selecting_a_member_shows_editable_properties(app):
     assert p.title.text() == f"杆件 {mid}"
     # 截面和材料可改；端点和长度是几何，改这两个是移动节点，不在这里
     assert set(p._widgets) == {"section", "material", "ref_vector",
-                               "offset_i", "offset_j", "release_i", "release_j"}
+                               "offset_i", "offset_j", "mu_y", "mu_z",
+                               "release_i", "release_j"}
     assert p._widgets["section"].currentText() == s.model["members"][0]["section"]
 
 
@@ -214,3 +215,34 @@ def test_the_panel_clears_when_the_selected_object_is_deleted(app):
     s.remove_members(ids=[mid])
     p.refresh()
     assert p.kind is None and p.title.text() == "未选中对象"
+
+
+@needs_qt
+def test_the_effective_length_factor_can_be_set_and_cleared(app):
+    """有侧移的框架柱 μ>1，推定值偏小、判定偏不安全。这一栏必须能填。"""
+    s = build()
+    p = panel(s)
+    mid = s.model["members"][0]["id"]
+    p.show_object("member", mid)
+
+    p._widgets["mu_y"].setText("2")
+    p._commit("mu_y", "2")
+    entry = next(m for m in s.model["members"] if m["id"] == mid)
+    assert entry["mu_y"] == 2.0
+
+    p._commit("mu_y", "")                 # 清空 = 回到按杆端约束推定
+    entry = next(m for m in s.model["members"] if m["id"] == mid)
+    assert "mu_y" not in entry
+
+
+@needs_qt
+def test_a_nonsense_effective_length_factor_is_refused_and_rolled_back(app):
+    """提交失败要把界面退回去。模型没变而面板显示着新值，就是界面在说谎。"""
+    s = build()
+    p = panel(s)
+    mid = s.model["members"][0]["id"]
+    p.show_object("member", mid)
+    p._commit("mu_z", "负一")
+    assert "计算长度系数" in p.status.text()
+    entry = next(m for m in s.model["members"] if m["id"] == mid)
+    assert "mu_z" not in entry
