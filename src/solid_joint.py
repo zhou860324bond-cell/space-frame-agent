@@ -664,7 +664,7 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
                        output_dir: Path | str = "results/solid_joint",
                        timeout: float = 1800.0) -> dict[str, Any]:
     """建立、运行并验证两档网格的局部实体节点模型。"""
-    from abaqus_backend import find_abaqus, scan_log
+    from abaqus_backend import find_abaqus, scan_log, solver_environment
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member)
     reference = mesh_reference_length(spec)
@@ -696,9 +696,9 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
         script.write_text(_script_text(spec, sizes, "solid_joint_results.json"),
                           encoding="ascii")
         try:
-            clean_env = os.environ.copy()
-            clean_env.pop("PYTHONPATH", None)
-            clean_env.pop("PYTHONHOME", None)
+            # 环境变量统一走 abaqus_backend.solver_environment()：清 PYTHONPATH，
+            # 并在 AMD 上补 MKL_DEBUG_CPU_TYPE=5。三个调用点各写一份迟早会漏。
+            clean_env = solver_environment()
             proc = subprocess.run(
                 [executable, "cae", f"noGUI={script.name}"], cwd=str(run_dir),
                 capture_output=True, text=True, timeout=float(timeout), env=clean_env)

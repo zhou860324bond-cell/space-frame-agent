@@ -30,9 +30,10 @@ class _Silent:
 
 
 def _fake_abaqus(seen: dict, *, succeed: bool = True):
-    def run(cmd, cwd, capture_output, text, timeout):
+    def run(cmd, cwd, capture_output, text, timeout, env=None):
         seen["cwd"] = cwd
         seen["cmd"] = cmd
+        seen["env"] = env
         directory = Path(cwd)
         assert (directory / "demo.inp").is_file(), "输入文件没有被带到运行目录"
         if succeed:
@@ -104,3 +105,19 @@ def test_the_input_file_itself_is_not_copied_back_over_itself(tmp_path, monkeypa
     run_jobs.run_one(inp, 60.0, _Silent())
 
     assert inp.stat().st_mtime_ns == before
+
+
+def test_the_bench_also_gets_the_amd_workaround(tmp_path, monkeypatch):
+    """对标作业和局部实体走同一个求解器，同一台机器上就该带同一套环境变量。
+    漏掉这里，报告里"与商软对标"那一节会在 AMD 上整批静默失败。"""
+    import abaqus_backend
+
+    inp = _job_in(tmp_path)
+    seen: dict = {}
+    monkeypatch.setattr(run_jobs.subprocess, "run", _fake_abaqus(seen))
+    monkeypatch.setattr(abaqus_backend, "is_amd_cpu", lambda env=None: True)
+
+    run_jobs.run_one(inp, 60.0, _Silent())
+
+    assert seen["env"] is not None, "没有传环境变量"
+    assert seen["env"].get("MKL_DEBUG_CPU_TYPE") == "5"

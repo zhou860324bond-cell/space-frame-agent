@@ -15,6 +15,7 @@ Abaqus 6.14 的 Python 是 2.7，所以读 ODB 那一步必须交给 `abaqus pyt
 
 from __future__ import annotations
 
+import os
 import csv
 import math
 import re
@@ -215,10 +216,61 @@ def compare_rows(native: dict[int, dict[str, float]],
     return out
 
 
+def is_amd_cpu(env: dict[str, str] | None = None) -> bool:
+    """当前 CPU 是不是 AMD。Windows 看 PROCESSOR_IDENTIFIER，Linux 看 cpuinfo。
+
+    env 可注入，否则测不了——真实调用传 None 即可。
+    """
+    identifier = (os.environ if env is None else env).get(
+        "PROCESSOR_IDENTIFIER", "")
+    if "AMD" in identifier.upper():
+        return True
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as handle:
+            return "AuthenticAMD" in handle.read()
+    except OSError:
+        return False
+
+
+def solver_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+    """跑 Abaqus 子进程该带的环境变量。**所有调用点都要走这里。**
+
+    两件事：
+
+    1. 清掉 PYTHONPATH / PYTHONHOME。Abaqus 自带 Python，继承宿主的路径会让
+       它去 import 我们的模块，行为不可预料。
+
+    2. AMD 上设 ``MKL_DEBUG_CPU_TYPE=5``。这是实测出来的：
+
+           CPU        AMD Ryzen 9 7940HX（Zen 4, 2023）
+           Abaqus     6.14-1（2014），捆的是 Intel MKL 11.x
+
+       同一个输入文件，不设这个变量时 standard.exe 以系统错误码 1073741795
+       中止——.dat 里没有一条 ***ERROR，.sta 根本不生成；设上就
+       `THE ANALYSIS HAS COMPLETED SUCCESSFULLY`。对照实验还表明这**不是**
+       网格问题：一个单元全等、畸变为零、规模相当（10125 自由度）的规则网格
+       同样崩。也不是内存（memory=4gb 无效），也不是 AVX 本身
+       （MKL_ENABLE_INSTRUCTIONS=SSE4_2 无效）。
+
+       MKL 11.x 在 AMD 上的 CPU 分派会挑到一条这颗 CPU 走不通的路；这个（未
+       公开的）变量强制它走 AVX2。MKL 2020 之后该变量被移除，届时设了也只是
+       被忽略，所以留着是安全的。
+
+       只在 AMD 上设：Intel 的 AVX-512 机器上强制 AVX2 只会变慢。用户自己
+       设过就不覆盖——他们可能有别的理由。
+    """
+    env = dict(os.environ if base is None else base)
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    if "MKL_DEBUG_CPU_TYPE" not in env and is_amd_cpu(env):
+        env["MKL_DEBUG_CPU_TYPE"] = "5"
+    return env
+
+
 def _run(cmd: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True,
-                              timeout=timeout)
+                              timeout=timeout, env=solver_environment())
     except FileNotFoundError as exc:
         raise AbaqusError(
             "找不到 abaqus 命令。从开始菜单打开「Abaqus Command」窗口再运行，"

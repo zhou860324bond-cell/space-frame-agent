@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 
+from abaqus_backend import solver_environment
 from console import use_utf8   # 见 src/console.py：别让一个字符打死一次成功的运行
 
 use_utf8()
@@ -59,7 +60,8 @@ def run_one(inp: Path, timeout: float, log) -> dict:
             run_dir = Path(temp)
             shutil.copy2(inp, run_dir / inp.name)
             proc = subprocess.run(cmd, cwd=str(run_dir), capture_output=True,
-                                  text=True, timeout=timeout)
+                                  text=True, timeout=timeout,
+                                  env=solver_environment())
             code = proc.returncode
             output = (proc.stdout or "") + (proc.stderr or "")
             for produced in run_dir.iterdir():

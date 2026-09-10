@@ -81,3 +81,39 @@ slope 明显为负即奇异特征。判定结果写在 `peak_convergence.verdict
 
 第一次在装有 Abaqus 的机器上跑之前，这个模块的实体分析结果**不应写进报告**；
 `dry_run` 那一段则已经可以引用。
+
+
+## 运行环境：AMD 上必须带 MKL_DEBUG_CPU_TYPE=5
+
+实测（AMD Ryzen 9 7940HX，Zen 4 / 2023；Abaqus 6.14-1，2014）：同一个输入文件，
+不设这个环境变量时 `standard.exe` 以系统错误码 **1073741795** 中止——`.dat` 里
+没有一条 `***ERROR`，`.sta` 根本不生成，`.odb` 是空壳；设上就
+`THE ANALYSIS HAS COMPLETED SUCCESSFULLY`。
+
+对照实验排除了另外三种解释：
+
+| 假设 | 对照 | 结果 |
+|---|---|---|
+| 网格质量 | 单元全等、畸变为零、10125 自由度的规则 C3D10 网格 | **同样崩** |
+| 内存 | `memory=4gb`（默认是 `90%`） | 无效 |
+| AVX 本身 | `MKL_ENABLE_INSTRUCTIONS=SSE4_2` | 无效 |
+| MKL 在 AMD 上的分派 | `MKL_DEBUG_CPU_TYPE=5`（强制 AVX2） | **跑通** |
+
+Abaqus 6.14 捆的是 Intel MKL 11.x，比这颗 CPU 早九年——6.14 发布时 Zen 架构还
+不存在。这个（未公开的）变量强制 MKL 走 AVX2 路径。MKL 2020 之后它被移除，
+届时设了也只是被忽略，所以留着是安全的。
+
+代码里由 `abaqus_backend.solver_environment()` 统一处理，**只在 AMD 上设**
+（Intel 的 AVX-512 机器上强制 AVX2 只会变慢），用户自己设过就不覆盖。
+局部实体、`solve_with_abaqus`、`abaqus_bench` 三个调用点全部走它；
+`tests/test_abaqus_amd_workaround.py` 用 AST 检查每个 `subprocess.run` 都传了 env。
+
+## 运行环境：路径不能含非 ASCII 字符
+
+同样是实测：同一个输入文件，ASCII 路径下跑通，含中文的路径下 `pre.exe` 以系统
+错误码 **529697949** 中止，同样不留任何 `***ERROR`。
+
+这个仓库的默认位置就带中文（`agent开发`）。局部实体分析本来就在临时目录里跑，
+不受影响；但 `abaqus_bench/run_jobs.py` 原来直接在 `.inp` 所在目录提交作业，
+那套对标基准会**静默失效**——而它是报告里"与商软对标"一节的全部证据。
+现已改为在 ASCII 临时目录里跑、产物复制回来。
