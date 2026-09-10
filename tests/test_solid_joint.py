@@ -404,3 +404,17 @@ def test_the_script_does_not_edit_a_default_output_request_that_may_not_exist():
     text = sj._script_text(spec, [50.0, 35.0, 24.0], "out.json")
     assert "fieldOutputRequests['F-Output-1']" not in text
     assert "FieldOutputRequest(name=" in text
+
+
+def test_the_script_checks_the_job_status_before_reading_the_odb():
+    """求解器静默中止时 .dat 里没有 ***ERROR、.sta 根本不生成。
+
+    不查状态就直接 openOdb，报错会出现在离死因很远的地方；查一下才能
+    一次跑完就知道为什么。
+    """
+    session = _l_joint()
+    spec = sj.prepare_joint_spec(session, node_id=2)
+    text = sj._script_text(spec, [50.0, 35.0, 24.0], "out.json")
+    assert "job.status != COMPLETED" in text
+    assert "waitForCompletion" in text
+    assert text.index("waitForCompletion") < text.index("openOdb(path=")

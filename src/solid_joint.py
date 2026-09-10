@@ -553,6 +553,23 @@ def build(index, size):
     job.writeInput(consistencyChecking=OFF)
     job.submit(consistencyChecking=OFF)
     job.waitForCompletion()
+    # A job that dies inside the solver leaves no ***ERROR in the .dat and no
+    # .sta at all. Without this check the script sails on to openOdb and fails
+    # far from the cause, so say what the status was and hand back whatever the
+    # driver actually wrote -- one run should be enough to find out why.
+    if job.status != COMPLETED:
+        detail = ['job status = ' + str(job.status)]
+        for suffix in ('.log', '.msg', '.dat'):
+            path = job_name+suffix
+            if os.path.isfile(path):
+                handle = open(path)
+                text = handle.read()
+                handle.close()
+                detail.append('--- ' + path + ' (tail) ---')
+                detail.append(text[-2500:])
+            else:
+                detail.append('--- ' + path + ' missing ---')
+        raise RuntimeError('\n'.join(detail))
     odb = openOdb(path=job_name+'.odb', readOnly=True)
     frame = odb.steps['Static'].frames[-1]
     region = odb.rootAssembly.instances['JOINT-1'].elementSets['HOTSPOT']
@@ -645,18 +662,29 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
                 capture_output=True, text=True, timeout=float(timeout), env=clean_env)
         except subprocess.TimeoutExpired as exc:
             raise SolidJointError(f"局部实体分析超过 {timeout:.0f} 秒") from exc
-        logs = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        console = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        logs = console
         for log_path in run_dir.glob("solid_joint_*.*"):
             if log_path.suffix.lower() in {".msg", ".dat", ".sta", ".log"}:
                 logs += "\n" + log_path.read_text(encoding="utf-8", errors="replace")
         scan = scan_log(logs)
         result_path = run_dir / "solid_joint_results.json"
         if proc.returncode != 0 or not scan["ok"] or not result_path.is_file():
-            detail = "；".join(scan["fatal"][:3]) or logs[-1000:]
             for path in run_dir.iterdir():
                 if path.is_file():
                     shutil.copy2(path, target / path.name)
-            raise SolidJointError("Abaqus 局部实体作业失败：" + detail)
+            # 控制台输出单独落盘、也单独进错误消息。原来把 .msg/.dat 拼在
+            # stdout 后面再取尾巴，**真正的报错反而被日志正文挤掉了**——
+            # 求解器静默中止时死因只在控制台里，那正是最不该丢的一段。
+            (target / "run_console.txt").write_text(
+                f"returncode = {proc.returncode}\n\n"
+                f"--- stdout ---\n{proc.stdout or ''}\n\n"
+                f"--- stderr ---\n{proc.stderr or ''}\n", encoding="utf-8")
+            detail = ("；".join(scan["fatal"][:3])
+                      or console.strip()[-1500:] or logs[-800:])
+            raise SolidJointError(
+                f"Abaqus 局部实体作业失败（返回码 {proc.returncode}）：{detail}"
+                f"\n完整控制台输出：{target / 'run_console.txt'}")
         payload = json.loads(result_path.read_text(encoding="utf-8"))
         for path in run_dir.iterdir():
             if path.is_file() and path.suffix.lower() in {
