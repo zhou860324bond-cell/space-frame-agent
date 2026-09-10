@@ -546,10 +546,17 @@ def member_local_displacements(model: Frame, member: Member,
     return q
 
 
-def solve(model: Frame, cases: list[str] | None = None) -> Solution:
+def solve(model: Frame, cases: list[str] | None = None,
+          factorize=None) -> Solution:
     """求解全部工况，再按线性叠加合成荷载组合。
 
     整体刚度阵只分解一次，各工况共用——这是多工况相对逐个求解的全部好处。
+
+    ``factorize`` 是**换求解器的唯一入口**：给一个可调用对象，接收
+    Jacobi 缩放后的 ``K_ff``（csc），返回一个带 ``.solve(vec)`` 的分解结果。
+    讲义的一维变带宽存储走的就是这条路（见 ``skyline.py``），这样两条路径
+    共用同一份装配、约束消元、沉降处理与反力回算，**只有分解这一步不同**，
+    对比才有意义；否则比出来的差异分不清是解法的还是装配的。
     """
     K, F, case_names = assemble(model, cases)
     n = model.num_dofs
@@ -586,21 +593,25 @@ def solve(model: Frame, cases: list[str] | None = None) -> Solution:
         jacobi = 1.0 / np.sqrt(diagonal)
         D = diags(jacobi)
         K_scaled = (D @ K_ff @ D).tocsc()
-        try:
-            lu = splu(K_scaled)
-        except RuntimeError as exc:
-            raise np.linalg.LinAlgError(
-                "求解失败：刚度矩阵奇异，约束不足或存在机构。"
-                "调用 diagnose_singularity 定位。"
-            ) from exc
-        # splu 遇到奇异矩阵不一定抛异常——若荷载恰好不激发那个刚体方向，
-        # 它会安静地返回一个错误答案。查一遍主元，把这种情况拦下来。
-        pivots = np.abs(lu.U.diagonal())
-        if pivots.size and pivots.min() <= _SINGULAR_PIVOT_RATIO * pivots.max():
-            raise np.linalg.LinAlgError(
-                "求解失败：刚度矩阵奇异（存在近零主元），约束不足或存在机构。"
-                "调用 diagnose_singularity 定位。"
-            )
+        if factorize is not None:
+            # 自带主元检查的求解器（如 skyline）自己抛，不再重复判据
+            lu = factorize(K_scaled)
+        else:
+            try:
+                lu = splu(K_scaled)
+            except RuntimeError as exc:
+                raise np.linalg.LinAlgError(
+                    "求解失败：刚度矩阵奇异，约束不足或存在机构。"
+                    "调用 diagnose_singularity 定位。"
+                ) from exc
+            # splu 遇到奇异矩阵不一定抛异常——若荷载恰好不激发那个刚体方向，
+            # 它会安静地返回一个错误答案。查一遍主元，把这种情况拦下来。
+            pivots = np.abs(lu.U.diagonal())
+            if pivots.size and pivots.min() <= _SINGULAR_PIVOT_RATIO * pivots.max():
+                raise np.linalg.LinAlgError(
+                    "求解失败：刚度矩阵奇异（存在近零主元），约束不足或存在机构。"
+                    "调用 diagnose_singularity 定位。"
+                )
         K_fs = K[free][:, fixed] if (fixed.size and has_settlement) else None
         for c in range(len(case_names)):
             rhs = F[free, c]
