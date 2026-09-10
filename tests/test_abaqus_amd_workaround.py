@@ -86,3 +86,70 @@ def test_every_place_that_launches_abaqus_passes_an_environment():
 def test_the_environment_actually_carries_the_workaround_on_this_kind_of_box():
     """光传 env 不够——传进去的必须真的带着那个开关。"""
     assert AB.solver_environment(AMD).get("MKL_DEBUG_CPU_TYPE") == "5"
+
+
+# ------------------------------------------------- 传给求解器进程
+
+def test_the_env_file_is_written_for_amd(tmp_path):
+    """光设子进程的环境变量不够。从 CAE 里 job.submit() 提交时，
+    standard.exe **不是 CAE 的直接子进程**——驱动会另起一个。
+
+    实测：直接 abaqus job= 带环境变量能跑通；同样的输入换成 CAE 提交
+    仍以 1073741795 中止。abaqus_v6.env 是驱动每次调用都会执行的文件。
+    """
+    path = AB.write_env_file(tmp_path, AMD)
+    assert path is not None and path.name == "abaqus_v6.env"
+    text = path.read_text(encoding="ascii")
+    assert "MKL_DEBUG_CPU_TYPE" in text and "'5'" in text
+    compile(text, "abaqus_v6.env", "exec")     # 驱动会执行它，语法必须对
+
+
+def test_no_env_file_on_intel(tmp_path):
+    """Intel 上既不需要，也不该在用户目录里留下多余文件。"""
+    assert AB.write_env_file(tmp_path, INTEL) is None
+    assert not (tmp_path / "abaqus_v6.env").exists()
+
+
+def test_no_env_file_when_the_user_already_set_the_variable(tmp_path):
+    assert AB.write_env_file(tmp_path, dict(AMD, MKL_DEBUG_CPU_TYPE="4")) is None
+
+
+def test_the_generated_cae_script_sets_it_too_on_amd():
+    """两条机制并存：驱动认哪一条，总有一条能过去。"""
+    import solid_joint as sj
+
+    from test_solid_joint import _l_joint
+
+    spec = sj.prepare_joint_spec(_l_joint(), node_id=2)
+    on_amd = sj._script_text(spec, [8.0, 6.4, 5.2], "out.json", amd=True)
+    on_intel = sj._script_text(spec, [8.0, 6.4, 5.2], "out.json", amd=False)
+    assert "MKL_DEBUG_CPU_TYPE" in on_amd
+    assert "MKL_DEBUG_CPU_TYPE" not in on_intel, "Intel 上强制 AVX2 只会变慢"
+    compile(on_amd, "build_joint.py", "exec")
+    compile(on_intel, "build_joint.py", "exec")
+
+
+def test_the_solid_joint_run_writes_the_env_file_before_launching():
+    """顺序错了等于没写：必须在起 Abaqus **之前**落盘。"""
+    import ast
+    import inspect
+
+    import solid_joint
+
+    import textwrap
+
+    source = textwrap.dedent(
+        inspect.getsource(solid_joint.run_joint_analysis))
+    tree = ast.parse(source)
+    write_line = launch_line = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = (func.attr if isinstance(func, ast.Attribute)
+                    else getattr(func, "id", ""))
+            if name == "write_env_file":
+                write_line = node.lineno
+            elif name == "run" and isinstance(func, ast.Attribute):
+                launch_line = node.lineno
+    assert write_line is not None, "根本没写 abaqus_v6.env"
+    assert launch_line is not None and write_line < launch_line

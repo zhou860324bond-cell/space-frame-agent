@@ -267,6 +267,35 @@ def solver_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def write_env_file(directory: Path, base: dict[str, str] | None = None) -> Path | None:
+    """在作业目录写一份 ``abaqus_v6.env``，把 MKL 开关带给求解器进程。
+
+    为什么光设子进程的环境变量不够：从 CAE 里 ``job.submit()`` 提交时，
+    **standard.exe 不是 CAE 的直接子进程**——CAE 写出 .com 再由 Abaqus 驱动
+    另起一个进程去跑。实测：直接 ``abaqus job=`` 带上环境变量能跑通，
+    同样的输入换成 ``abaqus cae noGUI=`` 里提交就仍然以 1073741795 中止。
+
+    ``abaqus_v6.env`` 是 Abaqus 驱动**每一次调用都会执行**的 Python 文件，
+    而且会读当前目录下的那一份。在里面直接改 os.environ，求解器那一次调用
+    也就带上了。
+
+    非 AMD 机器不写——那里既不需要，也不该在用户目录里留下多余文件。
+    """
+    env = dict(os.environ if base is None else base)
+    if "MKL_DEBUG_CPU_TYPE" in env or not is_amd_cpu(env):
+        return None
+    path = Path(directory) / "abaqus_v6.env"
+    path.write_text(
+        "# Written by abaqus_backend.write_env_file().\n"
+        "# Abaqus 6.14 bundles Intel MKL 11.x, which mis-dispatches on AMD Zen.\n"
+        "# Without this, standard.exe aborts with system error code 1073741795\n"
+        "# and leaves no ***ERROR in the .dat at all.\n"
+        "import os\n"
+        "os.environ['MKL_DEBUG_CPU_TYPE'] = '5'\n",
+        encoding="ascii")
+    return path
+
+
 def _run(cmd: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True,

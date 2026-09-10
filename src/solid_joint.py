@@ -366,9 +366,25 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
         nominal_normal_mpa=float(nominal), arms=tuple(arms), warnings=tuple(warnings))
 
 
-def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str) -> str:
-    """生成 Abaqus 6.14/Python 2.7 兼容脚本。"""
+def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str,
+                 amd: bool | None = None) -> str:
+    """生成 Abaqus 6.14/Python 2.7 兼容脚本。
+
+    ``amd`` 决定要不要在脚本里补 MKL 开关。只在 AMD 上补——Intel 的 AVX-512
+    机器上强制 AVX2 只会变慢；而且 solver_environment() 也是这个口径，
+    两处不一致比两处都错更难查。
+    """
+    from abaqus_backend import is_amd_cpu
+
     data = spec.to_dict()
+    mkl_block = ("""
+# Abaqus 6.14 bundles Intel MKL 11.x, which mis-dispatches on AMD Zen: without
+# this, standard.exe aborts with system error code 1073741795 and leaves no
+# ***ERROR anywhere. The job directory also carries an abaqus_v6.env saying the
+# same thing -- whichever mechanism the analysis driver honours, one gets through.
+if 'MKL_DEBUG_CPU_TYPE' not in os.environ:
+    os.environ['MKL_DEBUG_CPU_TYPE'] = '5'
+""" if (is_amd_cpu() if amd is None else amd) else "")
     return r'''# -*- coding: ascii -*-
 from abaqus import mdb, session
 from abaqusConstants import *
@@ -383,6 +399,7 @@ import part, material, section, assembly, step, interaction
 import load, mesh, job, sketch, visualization, connectorBehavior
 import regionToolset
 
+%s
 SPEC = json.loads(%s)
 MESH_SIZES = %s
 OUTPUT_JSON = %r
@@ -654,7 +671,8 @@ for i, size in enumerate(MESH_SIZES):
     results.append(build(i, size))
 with open(OUTPUT_JSON, 'w') as handle:
     json.dump({'meshes':results}, handle, indent=2, sort_keys=True)
-''' % (repr(json.dumps(data, ensure_ascii=True)),
+''' % (mkl_block,
+       repr(json.dumps(data, ensure_ascii=True)),
        repr([float(v) for v in mesh_sizes_mm]), output_json)
 
 
@@ -664,7 +682,8 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
                        output_dir: Path | str = "results/solid_joint",
                        timeout: float = 1800.0) -> dict[str, Any]:
     """建立、运行并验证两档网格的局部实体节点模型。"""
-    from abaqus_backend import find_abaqus, scan_log, solver_environment
+    from abaqus_backend import (find_abaqus, scan_log, solver_environment,
+                                write_env_file)
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member)
     reference = mesh_reference_length(spec)
@@ -695,6 +714,10 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
         script = run_dir / "build_joint.py"
         script.write_text(_script_text(spec, sizes, "solid_joint_results.json"),
                           encoding="ascii")
+        # 光设子进程环境变量不够：CAE 里 job.submit() 提交时 standard.exe
+        # 不是 CAE 的直接子进程，Abaqus 驱动会另起一个。abaqus_v6.env 是驱动
+        # 每次调用都会执行的文件，写在作业目录里，求解器那一次也就带上了。
+        write_env_file(run_dir)
         try:
             # 环境变量统一走 abaqus_backend.solver_environment()：清 PYTHONPATH，
             # 并在 AMD 上补 MKL_DEBUG_CPU_TYPE=5。三个调用点各写一份迟早会漏。
