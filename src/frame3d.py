@@ -67,6 +67,10 @@ class Material:
     hardening_ratio: float = 0.01     # 屈服后切线模量 / E
     # 线膨胀系数 1/℃。只有算温度应力时才用得上；留 0 表示不考虑温度。
     alpha: float = 0.0
+    # 许用应力，只有强度验算用得上。**拉压分开**：铸铁、砌体、木材抗拉抗压
+    # 相差数倍，合成一个 [σ] 会让受拉那侧漏判。钢材两者相同，可以只给拉。
+    allow_tension: float | None = None
+    allow_compression: float | None = None
 
     @property
     def G(self) -> float:
@@ -103,6 +107,10 @@ class Member:
     # 节点到可变形梁端的刚域偏移，使用全局坐标。零值保持旧模型行为。
     offset_i: tuple[float, float, float] = (0.0, 0.0, 0.0)
     offset_j: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # 计算长度系数（欧拉校核用），绕局部 y / z 轴各一个。留空时由杆端释放推定，
+    # 但推定只对无侧移结构成立——有侧移的框架柱必须显式给，见 strength.py。
+    mu_y: float | None = None
+    mu_z: float | None = None
 
     def released_indices(self) -> tuple[int, ...]:
         idx: set[int] = set()

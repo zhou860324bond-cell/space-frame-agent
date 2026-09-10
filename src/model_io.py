@@ -128,7 +128,10 @@ MODEL_SCHEMA: dict[str, Any] = {
                                "hardening_ratio": {"type": "number", "minimum": 0,
                                                    "exclusiveMaximum": 1},
                                # 线膨胀系数 1/℃，只有算温度应力时才用得上
-                               "alpha": {"type": "number", "minimum": 0}},
+                               "alpha": {"type": "number", "minimum": 0},
+                               # 许用应力，强度验算用。拉压分开给，见 strength.py
+                               "allow_tension": {"type": "number", "exclusiveMinimum": 0},
+                               "allow_compression": {"type": "number", "exclusiveMinimum": 0}},
             },
         },
         "sections": {
@@ -170,6 +173,9 @@ MODEL_SCHEMA: dict[str, Any] = {
                     "ref_vector": _VEC3,
                     "offset_i": _VEC3,
                     "offset_j": _VEC3,
+                    # 计算长度系数；不给则由杆端释放推定（仅无侧移适用）
+                    "mu_y": {"type": "number", "exclusiveMinimum": 0},
+                    "mu_z": {"type": "number", "exclusiveMinimum": 0},
                     "releases": {
                         "type": "object", "additionalProperties": False,
                         "properties": {"i": _RELEASE_LIST, "j": _RELEASE_LIST},
@@ -287,7 +293,9 @@ def from_dict(data: dict[str, Any]) -> Frame:
             m["name"], float(m["E"]), float(m["nu"]), float(m.get("density", 0.0)),
             float(m["yield_stress"]) if m.get("yield_stress") is not None else None,
             float(m.get("hardening_ratio", 0.01)),
-            float(m.get("alpha", 0.0)))
+            float(m.get("alpha", 0.0)),
+            float(m["allow_tension"]) if m.get("allow_tension") is not None else None,
+            float(m["allow_compression"]) if m.get("allow_compression") is not None else None)
     for s in data["sections"]:
         f.sections[s["name"]] = Section(
             s["name"], float(s["A"]), float(s["Iy"]), float(s["Iz"]), float(s["J"]),
@@ -306,6 +314,8 @@ def from_dict(data: dict[str, Any]) -> Frame:
             tuple(rel.get("i", ())), tuple(rel.get("j", ())),
             tuple(float(v) for v in m.get("offset_i", (0.0, 0.0, 0.0))),
             tuple(float(v) for v in m.get("offset_j", (0.0, 0.0, 0.0))),
+            float(m["mu_y"]) if m.get("mu_y") is not None else None,
+            float(m["mu_z"]) if m.get("mu_z") is not None else None,
         )
     for s in data["supports"]:
         f.supports[int(s["node"])] = tuple(int(v) for v in s["fix"])

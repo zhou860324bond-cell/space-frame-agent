@@ -153,6 +153,9 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                 member.releases_j if index == len(element_ids) - 1 else (),
                 member.offset_i if index == 0 else (0.0, 0.0, 0.0),
                 member.offset_j if index == len(element_ids) - 1 else (0.0, 0.0, 0.0),
+                # μ 是**整根构件**的属性，各段原样带上。稳定校核按物理构件整
+                # 根算（见 strength.py），这里带上只是让单元自己也说得清楚。
+                member.mu_y, member.mu_z,
             )
 
         boundaries = [0.0, *interior, length]

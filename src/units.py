@@ -134,7 +134,13 @@ def convert_model(model: dict, to: str) -> dict:
                          **({"density": m["density"] * f["density"]}
                             if "density" in m else {}),
                          **({"yield_stress": m["yield_stress"] * f["modulus"]}
-                            if "yield_stress" in m else {})}
+                            if "yield_stress" in m else {}),
+                         # 许用应力也是应力。漏掉它 Pa↔MPa 差 10⁶，
+                         # 而且只在换过单位的模型上才现形。
+                         **({"allow_tension": m["allow_tension"] * f["modulus"]}
+                            if "allow_tension" in m else {}),
+                         **({"allow_compression": m["allow_compression"] * f["modulus"]}
+                            if "allow_compression" in m else {})}
                         for m in model.get("materials", [])]
     out["sections"] = [{**s, "A": s["A"] * f["area"],
                         "Iy": s["Iy"] * f["inertia"], "Iz": s["Iz"] * f["inertia"],
