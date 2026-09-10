@@ -175,6 +175,37 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
         doc["skipped"]["屈曲分析"] = buck.payload.get(
             "error", str(buck.payload.get("errors", "")))[:120]
 
+    # --- 强度验算（讲义 §3-9 三）---
+    # 没给许用应力就不做，而不是估一个——报告里出现一个来路不明的应力比，
+    # 比这一节缺席危险得多。跳过的理由会写进"未包含的内容"。
+    strength = session.check_strength()
+    if strength.ok:
+        doc["strength"] = strength.payload
+    else:
+        doc["skipped"]["强度验算"] = str(
+            strength.payload.get("error")
+            or strength.payload.get("errors", ""))[:160]
+
+    # --- 对称性（讲义 §3-9 四）---
+    symmetry = session.check_symmetry(case=name)
+    if symmetry.ok and symmetry.payload.get("symmetric"):
+        doc["symmetry"] = symmetry.payload
+    elif symmetry.ok:
+        doc["skipped"]["对称性校核"] = "结构不关于任何坐标面对称"
+    else:
+        doc["skipped"]["对称性校核"] = str(
+            symmetry.payload.get("error")
+            or symmetry.payload.get("errors", ""))[:160]
+
+    # --- 编号与总刚存储（讲义 §3-9 八、§3-10、§4-6）---
+    numbering = session.check_numbering()
+    if numbering.ok:
+        doc["numbering"] = numbering.payload
+    else:
+        doc["skipped"]["编号与存储"] = str(
+            numbering.payload.get("error")
+            or numbering.payload.get("errors", ""))[:160]
+
     # --- 图 ---
     if figures:
         try:
@@ -327,8 +358,103 @@ def to_markdown(doc: dict[str, Any], path: Path | None = None) -> str:
           "不能直接当承载力用。")
         a("")
 
+    if doc.get("strength"):
+        s = doc["strength"]
+        a("## 八、强度验算与逐杆稳定校核")
+        a("")
+        a("逐杆取最不利截面的极端纤维正应力，**拉、压分别对各自的许用值**——"
+          "抗拉抗压不同的材料用一个 [σ] 去卡，受拉那侧会漏判。"
+          "受压杆再按欧拉公式 `Pcr = π²EI/(μl)²` 逐根校核。")
+        a("")
+        rows = []
+        for r in s["members"]:
+            row = {"杆件": r["member"], "截面": r["section"],
+                   "应力比 σ/[σ]": r["stress_ratio"], "控制": r["governs"],
+                   "结论": r["verdict"]}
+            if "buckling_ratio" in r:
+                row.update({"轴力 (kN)": r["axial_kN"],
+                            "Pcr (kN)": r["P_cr_kN"],
+                            "N/Pcr": r["buckling_ratio"],
+                            "λ": r["slenderness"], "μ": r["mu"]})
+            rows.append(row)
+        L.extend(_table(rows))
+        if s["failed_members"]:
+            a(f"**超限杆件**：{'、'.join(str(v) for v in s['failed_members'])}。")
+            a("")
+        if s["inconclusive_members"]:
+            a(f"**判不了的杆件**：{'、'.join(str(v) for v in s['inconclusive_members'])}"
+              "——这些杆 λ < λp，属于中小柔度，欧拉公式给出的 σcr 已超过屈服应力，"
+              "是个没有物理意义的大数。**既不是通过也不是不通过**，"
+              "它们的稳定要由强度或经验公式控制。把这一档算成「不合格」会让人"
+              "以为结构有问题，算成「合格」则是拿一个虚高的临界力盖章，"
+              "所以这里单独列出来。")
+            a("")
+        for w in s.get("warnings", []):
+            a(f"> {w}")
+            a("")
+        a(f"**边界**：{s['limitation']}")
+        a("")
+
+    if doc.get("symmetry"):
+        y = doc["symmetry"]
+        a("## 九、对称性")
+        a("")
+        a(y["advice"])
+        a("")
+        rc = y.get("response_check") or {}
+        if rc.get("checks"):
+            a("把对称性当**校核手段**用：结构与荷载都对称时，对称位置的位移必须"
+              "互为镜像。这条校核**不需要任何外部参照**——不用商软、不用手算、"
+              "不用金标准，结构自己就是自己的对照组。")
+            a("")
+            L.extend(_table([{"对称面": c["plane"], "工况": rc["case"],
+                              "类型": c["kind"],
+                              "最大相对偏差": f"{c['max_relative_difference']:.1e}",
+                              "结论": "通过" if c["ok"] else "未通过"}
+                             for c in rc["checks"]]))
+        a(y["note"])
+        a("")
+
+    if doc.get("numbering"):
+        n = doc["numbering"]
+        a("## 十、节点编号与总刚存储")
+        a("")
+        a(f"自由度 {n['dofs']} 个。一根杆两端的最大节点号差 "
+          f"{n['node_number_span']}，据此估计的半带宽 "
+          f"{n['estimated_half_bandwidth']}（上界，支座消元后更小）；"
+          f"矩阵的实际半带宽 {n['half_bandwidth']['current']}，"
+          f"RCM 重编号后 {n['half_bandwidth']['after_rcm']}。")
+        a("")
+        e = n["storage_entries"]
+        L.extend(_table([
+            {"存储方案": "满阵 n²", "存储量": e["full"],
+             "相对满阵": "100%"},
+            {"存储方案": "等带宽 n·b（§3-10）", "存储量": e["banded"],
+             "相对满阵": f"{e['banded'] / e['full']:.1%}"},
+            {"存储方案": "一维变带宽（§4-6，当前编号）",
+             "存储量": e["skyline_current"],
+             "相对满阵": f"{e['skyline_current'] / e['full']:.1%}"},
+            {"存储方案": "一维变带宽（RCM 重编号后）",
+             "存储量": e["skyline_after_rcm"],
+             "相对满阵": f"{e['skyline_after_rcm'] / e['full']:.1%}"},
+            {"存储方案": "稀疏（只存非零元，本程序默认）",
+             "存储量": e["sparse_nonzeros"],
+             "相对满阵": f"{e['sparse_nonzeros'] / e['full']:.1%}"}]))
+        a(n["lecture"])
+        a("")
+        v = n.get("verification")
+        if v:
+            a(f"用讲义的一维变带宽 LDLᵀ 把同一个方程组再解一遍，与默认的稀疏 LU "
+              f"相比最大相对偏差 **{v['max_relative_difference']:.1e}**"
+              f"（{'一致' if v['agrees'] else '不一致，需要排查'}）。"
+              "两条路径共用同一份装配、约束消元与反力回算，只有分解这一步不同，"
+              "所以这个差值只反映解法本身。")
+            a("")
+        a(n["note"])
+        a("")
+
     if doc["figures"]:
-        a("## 八、图")
+        a("## 十一、图")
         a("")
         for label, fig in doc["figures"].items():
             a(f"**{label}**")
@@ -521,8 +647,82 @@ def to_docx(doc: dict[str, Any], path: Path) -> Path:
              "真实结构有初始缺陷与残余应力，实际承载力低于此值——只能当上限，"
              "不能直接当承载力用。", italic=True, size=9, grey=True)
 
+    if doc.get("strength"):
+        s = doc["strength"]
+        heading("八、强度验算与逐杆稳定校核", 1)
+        para("逐杆取最不利截面的极端纤维正应力，拉、压分别对各自的许用值——"
+             "抗拉抗压不同的材料用一个 [σ] 去卡，受拉那侧会漏判。"
+             "受压杆再按欧拉公式 Pcr = π²EI/(μl)² 逐根校核。")
+        rows = []
+        for r in s["members"]:
+            row = {"杆件": r["member"], "截面": r["section"],
+                   "应力比 σ/[σ]": r["stress_ratio"], "控制": r["governs"],
+                   "结论": r["verdict"]}
+            if "buckling_ratio" in r:
+                row.update({"轴力 (kN)": r["axial_kN"], "Pcr (kN)": r["P_cr_kN"],
+                            "N/Pcr": r["buckling_ratio"],
+                            "λ": r["slenderness"], "μ": r["mu"]})
+            rows.append(row)
+        table(rows)
+        if s["failed_members"]:
+            para("超限杆件：" + "、".join(str(v) for v in s["failed_members"]),
+                 bold=True)
+        if s["inconclusive_members"]:
+            para("判不了的杆件："
+                 + "、".join(str(v) for v in s["inconclusive_members"])
+                 + "——这些杆 λ < λp，属于中小柔度，欧拉公式给出的 σcr 已超过屈服"
+                   "应力，是个没有物理意义的大数。既不是通过也不是不通过，"
+                   "它们的稳定要由强度或经验公式控制，所以单独列出来。")
+        for w in s.get("warnings", []):
+            para(w, italic=True, size=9, grey=True)
+        para("边界：" + s["limitation"], italic=True, size=9, grey=True)
+
+    if doc.get("symmetry"):
+        y = doc["symmetry"]
+        heading("九、对称性", 1)
+        para(y["advice"])
+        rc = y.get("response_check") or {}
+        if rc.get("checks"):
+            para("把对称性当校核手段用：结构与荷载都对称时，对称位置的位移必须"
+                 "互为镜像。这条校核不需要任何外部参照——结构自己就是自己的对照组。")
+            table([{"对称面": c["plane"], "工况": rc["case"], "类型": c["kind"],
+                    "最大相对偏差": f"{c['max_relative_difference']:.1e}",
+                    "结论": "通过" if c["ok"] else "未通过"}
+                   for c in rc["checks"]])
+        para(y["note"], italic=True, size=9, grey=True)
+
+    if doc.get("numbering"):
+        n = doc["numbering"]
+        e = n["storage_entries"]
+        heading("十、节点编号与总刚存储", 1)
+        para(f"自由度 {n['dofs']} 个。一根杆两端的最大节点号差 "
+             f"{n['node_number_span']}，据此估计的半带宽 "
+             f"{n['estimated_half_bandwidth']}（上界，支座消元后更小）；"
+             f"矩阵的实际半带宽 {n['half_bandwidth']['current']}，"
+             f"RCM 重编号后 {n['half_bandwidth']['after_rcm']}。")
+        table([{"存储方案": "满阵 n²", "存储量": e["full"], "相对满阵": "100%"},
+               {"存储方案": "等带宽 n·b（§3-10）", "存储量": e["banded"],
+                "相对满阵": f"{e['banded'] / e['full']:.1%}"},
+               {"存储方案": "一维变带宽（§4-6，当前编号）",
+                "存储量": e["skyline_current"],
+                "相对满阵": f"{e['skyline_current'] / e['full']:.1%}"},
+               {"存储方案": "一维变带宽（RCM 重编号后）",
+                "存储量": e["skyline_after_rcm"],
+                "相对满阵": f"{e['skyline_after_rcm'] / e['full']:.1%}"},
+               {"存储方案": "稀疏（只存非零元，本程序默认）",
+                "存储量": e["sparse_nonzeros"],
+                "相对满阵": f"{e['sparse_nonzeros'] / e['full']:.1%}"}])
+        para(n["lecture"], size=9, grey=True)
+        v = n.get("verification")
+        if v:
+            para(f"用讲义的一维变带宽 LDLᵀ 把同一个方程组再解一遍，与默认的稀疏 LU "
+                 f"相比最大相对偏差 {v['max_relative_difference']:.1e}"
+                 f"（{'一致' if v['agrees'] else '不一致，需要排查'}）。"
+                 "两条路径共用同一份装配、约束消元与反力回算，只有分解这一步不同。")
+        para(n["note"], italic=True, size=9, grey=True)
+
     if doc["figures"]:
-        heading("八、图", 1)
+        heading("十一、图", 1)
         for label, fig in doc["figures"].items():
             para(label, bold=True)
             try:

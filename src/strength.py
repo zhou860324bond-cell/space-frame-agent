@@ -50,6 +50,13 @@ MU_FIXED_FIXED = 0.5        # 两端固定
 # 判定某端「是不是铰」看的是绕两个主轴的弯矩释放
 _BENDING_DOFS = ("ry", "rz")
 
+# 稳定校核的四种结局。「判不了」自成一档：既不是通过也不是超限。
+BUCKLING_OK = "通过"
+BUCKLING_FAIL = "超限"
+BUCKLING_NA = "欧拉公式不适用"
+BUCKLING_UNKNOWN = "无法判定"
+BUCKLING_SLENDER = "长细比超限"
+
 
 class StrengthUnavailable(ValueError):
     """缺少验算所需的材料或截面数据。"""
@@ -161,12 +168,18 @@ def check_member(frame: Frame, solution, member_id: int, *,
     out["buckling"] = _euler(frame, member, section, material, length,
                              rel_i, rel_j, axial_min, axial_min_case,
                              slenderness_limit)
-    failed = [k for k in ("strength", "buckling")
-              if out[k] is not None and not out[k]["ok"]]
+    b = out["buckling"]
+    failed = []
+    if not out["strength"]["ok"]:
+        failed.append("强度超限")
+    if b is not None and not b["ok"]:
+        failed.append(b["status"] if b["status"] == BUCKLING_SLENDER
+                      else "稳定超限")
     out["ok"] = not failed
-    out["verdict"] = ("通过" if not failed else
-                      "、".join({"strength": "强度超限",
-                                 "buckling": "稳定超限"}[k] for k in failed))
+    out["conclusive"] = b is None or b["conclusive"]
+    out["verdict"] = ("、".join(failed) if failed else
+                      ("通过" if out["conclusive"] else
+                       f"强度通过，稳定{b['status']}"))
     return out
 
 
@@ -212,28 +225,49 @@ def _euler(frame, member, section, material, length, rel_i, rel_j,
         valid = slenderness >= lambda_p
 
     ratio = P / P_cr
-    ok = ratio <= 1.0
     warnings: list[str] = []
     if any(axes[t]["mu_source"] != "用户给定" for t in axes):
         warnings.append(
             "μ 由杆端释放推定，只对**无侧移**结构成立。有侧移的框架柱 μ>1"
             "（悬臂柱 2.0），此时推定值偏小、Pcr 偏大、判定偏不安全。"
             "请在杆件上显式给 mu_y / mu_z，或用特征值屈曲分析核对。")
-    if valid is False:
+
+    # 三种结局要分清楚：**通过、超限、判不了**。
+    # 把「判不了」算成「超限」会让一整片粗短柱报成不安全，用户会当成结构有问题；
+    # 算成「通过」更糟——那是拿一个超过屈服应力的 σcr 给不安全的杆盖章。
+    # 所以它自己是一档，ok 既不为真也不算失败，由调用方单独列出来。
+    if ratio > 1.0:
+        status = BUCKLING_FAIL
+    elif valid is False:
+        status = BUCKLING_NA
+        # 措辞里**不放本杆的 λ 和 N/Pcr**：那两个数每根都不同，会让汇总层
+        # 攒出十几条只差小数点的"同一句话"。逐杆的数在表里，警告只说结论。
         warnings.append(
-            f"λ={slenderness:.1f} 小于 λp={lambda_p:.1f}，属于中小柔度杆，"
+            f"部分杆件的长细比小于 λp={lambda_p:.1f}，属于中小柔度杆，"
             "欧拉公式不适用（算出的 σcr 已超过屈服应力）。"
-            "这类杆由强度或经验公式控制，**不能用这里的 Pcr 判稳定**。")
-        ok = False
+            "这类杆的稳定由强度或经验公式控制，**不能用这里的 Pcr 判**；"
+            "照着算出来的 N/Pcr 往往很小，正是「照着算就会误判通过」的情形。")
     elif valid is None:
+        status = BUCKLING_UNKNOWN
         warnings.append(
-            "材料未给 yield_stress，无法判断是否落在欧拉公式的适用范围内。")
+            "材料未给 yield_stress，无法判断是否落在欧拉公式的适用范围内。"
+            "补上 yield_stress 才能确认这个 Pcr 有没有物理意义。")
+    else:
+        status = BUCKLING_OK
+    if valid is False and ratio > 1.0:
+        # 既超限又不适用：超限的结论仍然成立（真值只会比欧拉值更低）
+        warnings.append("λ 小于 λp，实际临界力比欧拉值更低，超限的结论只会更严重。")
+
     if slenderness_limit is not None and slenderness > slenderness_limit:
         warnings.append(
             f"长细比 λ={slenderness:.1f} 超过限值 {slenderness_limit:g}。")
-        ok = False
+        status = BUCKLING_SLENDER
 
-    return {"ok": ok, "case": case, "P": P, "P_cr": P_cr, "ratio": ratio,
+    return {"ok": status not in (BUCKLING_FAIL, BUCKLING_SLENDER),
+            "status": status, "conclusive": status in (BUCKLING_OK,
+                                                       BUCKLING_FAIL,
+                                                       BUCKLING_SLENDER),
+            "case": case, "P": P, "P_cr": P_cr, "ratio": ratio,
             "sigma_cr": sigma_cr, "critical_axis": critical,
             "slenderness": slenderness, "lambda_p": lambda_p,
             "euler_applicable": valid, "axes": axes, "warnings": warnings}
@@ -280,6 +314,9 @@ def check_strength(frame: Frame, solution, *, mapping=None,
                  else list(solution.all_results()),
         "count": len(rows),
         "failed": [r["member"] for r in rows if not r["ok"]],
+        # 判不了的单独列出来。混进 failed 里会让一整片粗短柱看着像结构不安全。
+        "inconclusive": [r["member"] for r in rows
+                         if r["ok"] and not r["conclusive"]],
         "worst_strength": (None if strength_worst is None else
                            {"member": strength_worst["member"],
                             **strength_worst["strength"]}),

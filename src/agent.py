@@ -100,6 +100,16 @@ SYSTEM_PROMPT = """你是空间刚架结构分析助手。你的职责是把用�
     然后停止本轮。只有用户在**下一条消息**明确确认后才调用 apply_preview；你无权替用户
     确认，也不得在同一轮或同一批工具调用中预演并执行。
 
+11. 校核类工具（check_strength / check_symmetry / check_numbering）返回的
+    **限制与警告要原样转达**，不许只报好消息：
+    · check_strength 的 failed_members 是真的超限；inconclusive_members 是
+      「欧拉公式在这根杆上不适用」，**既不是通过也不是不通过**，
+      不要说成"不安全"，也不要说成"通过"。
+    · μ 标着"由杆端释放推定"时，必须说明它只对无侧移结构成立，
+      有侧移的框架柱要用户自己给 mu_y / mu_z。
+    · 强度验算只含正应力，不含剪应力与扭转，**不是规范意义上的承载力验算**。
+    · check_symmetry 的位移镜像校核通过，只说明结果自洽，不等于模型建对了。
+
 回答用中文，简洁，先给结论再给数据。"""
 
 
@@ -127,7 +137,22 @@ TOOLS: list[dict[str, Any]] = [
                                                      "description": "kg/m³，只有要算自重时才需要，"
                                                                     "钢约 7850、混凝土约 2500"},
                                                  "yield_stress": {"type": "number"},
-                                                 "hardening_ratio": {"type": "number"}}},
+                                                 "hardening_ratio": {"type": "number"},
+                                                 "alpha": {
+                                                     "type": "number",
+                                                     "description": "线膨胀系数 1/℃，"
+                                                                    "只有要算温度应力时才需要，"
+                                                                    "钢约 1.2e-5"},
+                                                 "allow_tension": {
+                                                     "type": "number",
+                                                     "description": "许用拉应力，"
+                                                                    "只有要做强度验算时才需要"},
+                                                 "allow_compression": {
+                                                     "type": "number",
+                                                     "description": "许用压应力；不给按钢材"
+                                                                    "惯例取与拉相同。铸铁、砌体、"
+                                                                    "木材抗压远大于抗拉，"
+                                                                    "**必须单独给**"}}},
                     },
                     "sections": {
                         "type": "array",
@@ -138,7 +163,15 @@ TOOLS: list[dict[str, Any]] = [
                                                  "Iz": {"type": "number"},
                                                  "J": {"type": "number"},
                                                  "Ay": {"type": "number"},
-                                                 "Az": {"type": "number"}}},
+                                                 "Az": {"type": "number"},
+                                                 "cy": {"type": "number",
+                                                        "description": "局部 y 向极端纤维距离，"
+                                                                       "算弯曲应力必需"},
+                                                 "cz": {"type": "number",
+                                                        "description": "局部 z 向极端纤维距离"},
+                                                 "circular": {"type": "boolean",
+                                                              "description": "圆形截面，"
+                                                                             "两向弯曲按平方和合成"}}},
                     },
                 },
             },
@@ -196,6 +229,13 @@ TOOLS: list[dict[str, Any]] = [
                                  "items": {"type": "number"}},
                     "offset_j": {"type": "array", "minItems": 3, "maxItems": 3,
                                  "items": {"type": "number"}},
+                    "mu_y": {"type": "number", "exclusiveMinimum": 0,
+                             "description": "绕局部 y 轴屈曲的计算长度系数。"
+                                            "不给则由杆端释放推定，而推定只对"
+                                            "**无侧移**结构成立——有侧移的框架柱"
+                                            "μ>1、悬臂柱 2.0，必须在这里显式给"},
+                    "mu_z": {"type": "number", "exclusiveMinimum": 0,
+                             "description": "绕局部 z 轴的计算长度系数"},
                 },
                 "additionalProperties": False,
             },
@@ -1181,6 +1221,76 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "check_strength",
+            "description":
+                "强度验算 + 逐杆稳定校核（讲义 §3-9 三）。"
+                "用户问「够不够」「安全吗」「应力比」「会不会压屈」「校核一下」时用这个。"
+                "逐杆给出：最不利截面的应力比 σ/[σ]（**拉压分别对各自的许用值**）、"
+                "受压杆的欧拉临界力 Pcr=π²EI/(μl)²、长细比 λ、回转半径。"
+                "需要材料定义了 allow_tension（许用拉应力）、截面定义了 cy/cz。"
+                "**这不是规范意义上的承载力验算**：只算正应力，没有剪应力与扭转；"
+                "回答时要把这一条说出来，也要把返回的 warnings 原样转达。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "members": {"type": "array", "items": {"type": "integer"},
+                                "description": "要验算的杆件号；留空表示全部"},
+                    "cases": {"type": "array", "items": {"type": "string"},
+                              "description": "参与包络的工况；留空表示全部"},
+                    "slenderness_limit": {"type": "number", "exclusiveMinimum": 0,
+                                          "description": "允许的最大长细比 [λ]，"
+                                                         "如钢压杆常取 150；留空不查"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_symmetry",
+            "description":
+                "对称性检测与对称性校核（讲义 §3-9 四）。"
+                "判断结构关于哪个坐标面镜像对称、各工况荷载是对称还是反对称；"
+                "已求解时还会检查对称位置的位移是否真的互为镜像——"
+                "**这是一条不需要任何外部参照的自校核**，能查出装配、坐标转换、"
+                "等效节点荷载里的一大类错误。"
+                "用户问「对称吗」「能不能取半结构」「结果对不对」时用这个。"
+                "本程序直接求解全结构，**不做半结构简化**，原因见返回的 note。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "case": {"type": "string",
+                             "description": "要做位移镜像校核的工况；留空取控制工况"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_numbering",
+            "description":
+                "节点编号与总刚存储方案对比（讲义 §3-9 八、§3-10、§4-6）。"
+                "给出当前编号的节点号差与半带宽、RCM 重编号后的改善，"
+                "以及满阵 / 等带宽 / 一维变带宽 / 稀疏四种存储量的对比。"
+                "verify=true 时再用讲义的变带宽 LDLᵀ 解一遍，与稀疏 LU 的结果对表。"
+                "用户问「带宽」「编号」「存储」「课上讲的一维存储」时用这个。"
+                "**不会改动模型里的节点号**——重编号只发生在求解内部。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "verify": {"type": "boolean",
+                               "description": "是否用变带宽 LDLᵀ 再解一遍对表，默认 true"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "diagnose_supports",
             "description": "当求解报告结构成为机构时，定位是哪些节点的哪些方向缺少约束。",
             "parameters": {"type": "object", "properties": {}},
@@ -1876,7 +1986,9 @@ class Session:
                     releases_j: list[str] | None = None,
                     ref_vector: list[float] | None | object = _UNSET,
                     offset_i: list[float] | None | object = _UNSET,
-                    offset_j: list[float] | None | object = _UNSET) -> ToolResult:
+                    offset_j: list[float] | None | object = _UNSET,
+                    mu_y: float | None | object = _UNSET,
+                    mu_z: float | None | object = _UNSET) -> ToolResult:
         """改一根杆件的截面、材料、局部轴向或端部释放。只传要改的项。
 
         释放传空列表表示**取消释放**（刚接）；不传表示不动它——
@@ -1990,6 +2102,29 @@ class Session:
                     target.pop(key, None)
                 else:
                     target[key] = vector
+
+        for key, raw in (("mu_y", mu_y), ("mu_z", mu_z)):
+            if raw is _UNSET:
+                continue
+            before = target.get(key)
+            if raw is None:
+                value = None
+            else:
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    return ToolResult(False, {"error": f"{key} 必须是数字"})
+                if not np.isfinite(value) or value <= 0.0:
+                    return ToolResult(False, {
+                        "error": f"{key} 必须是正数",
+                        "hint": "计算长度系数常用值：两端铰支 1.0、一端固定一端自由 2.0、"
+                                "一端固定一端铰支 0.7、两端固定 0.5"})
+            if before != value:
+                changed[key] = (before, value)
+                if value is None:
+                    target.pop(key, None)
+                else:
+                    target[key] = value
 
         if not changed:
             # **值没变就当没发生。** 属性面板每次重填表单都会把当前值
@@ -3675,6 +3810,224 @@ class Session:
                     "轴力不随变形改变。真实结构有初始缺陷与残余应力，"
                     "实际承载力低于此值——只能当上限，不能直接当承载力用。",
         })
+
+    def check_strength(self, members: list[int] | None = None,
+                       cases: list[str] | None = None,
+                       slenderness_limit: float | None = None) -> ToolResult:
+        """强度验算 + 逐杆稳定校核（讲义 §3-9 三）。
+
+        按**物理构件**验算：传编译映射进去，剖分过的杆件才会按整根算 Pcr。
+        按分段算会让临界力成倍偏大，而且不报错。
+        """
+        if self.solution is None:
+            solved = self.solve_model()
+            if not solved.ok:
+                return ToolResult(False, {"error": "还没有结果，且求解失败",
+                                          "detail": solved.payload})
+        try:
+            from strength import StrengthUnavailable, check_strength
+        except ImportError as exc:                      # pragma: no cover
+            return ToolResult(False, {"error": f"强度验算模块不可用：{exc}"})
+        try:
+            from stress import StressUnavailable
+        except ImportError as exc:                      # pragma: no cover
+            return ToolResult(False, {"error": f"应力模块不可用：{exc}"})
+
+        try:
+            got = check_strength(
+                self.frame, self.solution,
+                mapping=self.compilation.mapping,
+                members=[int(m) for m in members] if members else None,
+                cases=[str(c) for c in cases] if cases else None,
+                slenderness_limit=(None if slenderness_limit is None
+                                   else float(slenderness_limit)))
+        except StrengthUnavailable as exc:
+            return ToolResult(False, {
+                "error": str(exc),
+                "hint": "在 define_materials_and_sections 里给材料加 allow_tension"})
+        except StressUnavailable as exc:
+            return ToolResult(False, {
+                "error": str(exc),
+                "hint": "截面要给 cy/cz（极端纤维距离），否则算不出弯曲应力"})
+        except KeyError as exc:
+            return ToolResult(False, {"error": f"杆件不存在：{exc}"})
+
+        U = self.units
+        rows = []
+        for r in got["members"]:
+            row = {
+                "member": r["member"], "section": r["section"],
+                "length_m": round(r["length"] * U.length_to_m, 4),
+                "stress_ratio": round(r["strength"]["ratio"], 4),
+                "governs": r["strength"]["governs"],
+                "worst_case": r["strength"]["case"],
+                "at_x_m": round(r["strength"]["x"] * U.length_to_m, 3),
+                "verdict": r["verdict"],
+            }
+            b = r["buckling"]
+            if b is not None:
+                row.update({
+                    "axial_kN": round(-b["P"] * U.force_scale, 3),
+                    "P_cr_kN": round(b["P_cr"] * U.force_scale, 3),
+                    "buckling_ratio": round(b["ratio"], 4),
+                    "buckling_status": b["status"],
+                    "slenderness": round(b["slenderness"], 1),
+                    "mu": round(b["axes"][b["critical_axis"]]["mu"], 3),
+                    "mu_source": b["axes"][b["critical_axis"]]["mu_source"],
+                })
+            rows.append(row)
+
+        warnings: list[str] = []
+        for r in got["members"]:
+            if r["buckling"]:
+                for w in r["buckling"]["warnings"]:
+                    if w not in warnings:
+                        warnings.append(w)
+        return ToolResult(True, {
+            "cases": got["cases"], "count": got["count"],
+            "ok": got["ok"], "failed_members": got["failed"],
+            # 「判不了」不是「不合格」。粗短杆的欧拉临界力没有物理意义，
+            # 把它算进 failed 会让用户以为结构不安全。
+            "inconclusive_members": got["inconclusive"],
+            "members": rows,
+            "worst_strength": got["worst_strength"] and {
+                "member": got["worst_strength"]["member"],
+                "ratio": round(got["worst_strength"]["ratio"], 4),
+                "case": got["worst_strength"]["case"],
+                "governs": got["worst_strength"]["governs"]},
+            "worst_buckling": got["worst_buckling"] and {
+                "member": got["worst_buckling"]["member"],
+                "ratio": round(got["worst_buckling"]["ratio"], 4),
+                "slenderness": round(got["worst_buckling"]["slenderness"], 1)},
+            "notes": got["notes"],
+            "warnings": warnings,
+            "reading": "failed_members 是**真的超限**；inconclusive_members 是"
+                       "「欧拉公式在这根杆上不适用（λ<λp，中小柔度）」，"
+                       "既不是通过也不是不通过，转达时不要说成不安全。",
+            "limitation": "只算正应力（轴力 + 双向弯曲的极端纤维应力），"
+                          "**不含剪应力与扭转**，因此不是规范意义上的构件承载力验算。"
+                          "逐杆欧拉校核回答「这一根会不会先屈」，"
+                          "buckling_analysis 的特征值屈曲回答「整体什么时候失稳」，"
+                          "两者不能互相替代。",
+        })
+
+    def check_symmetry(self, case: str | None = None) -> ToolResult:
+        """对称性检测 + 把对称性当校核用（讲义 §3-9 四）。"""
+        errors = validate_payload(self.model)
+        if errors:
+            return ToolResult(False, {"errors": errors})
+        try:
+            from model_io import from_dict, migrate_payload
+            from symmetry import check_symmetric_response, detect_symmetry
+        except ImportError as exc:                      # pragma: no cover
+            return ToolResult(False, {"error": f"对称性模块不可用：{exc}"})
+
+        # 对着**物理模型**查：跨间集中力会生成内节点，剖分点不在对称面上时，
+        # 分析模型的几何就不再对称，物理上明明对称的结构会查不出来。
+        physical = from_dict(migrate_payload(self.model))
+        found = detect_symmetry(physical)
+        payload: dict[str, Any] = {
+            "symmetric": found["symmetric"],
+            "planes": [{"plane": p["plane"], "cases": p["cases"],
+                        "usable_cases": p["usable"]} for p in found["planes"]],
+            "advice": found["advice"],
+            "note": "**不做半结构简化**：对称面上的边界条件写错不报错，"
+                    "只会给出一个看着合理的错答案；而整解本来就很快，"
+                    "省下的算力不值这个风险。对称性在这里当**校核手段**用。",
+        }
+        if self.solution is not None:
+            name = case or self._controlling_case()
+            checked = check_symmetric_response(self.frame, self.solution, name)
+            payload["response_check"] = {
+                "case": checked["case"], "ok": checked["ok"],
+                "note": checked["note"],
+                "checks": [{"plane": c["plane"], "kind": c["kind"],
+                            "max_relative_difference": float(
+                                f"{c['max_relative_difference']:.2e}"),
+                            "worst_pair": c["worst_pair"], "ok": c["ok"]}
+                           for c in checked["checks"]],
+            }
+            if checked["checks"]:
+                payload["response_check"]["meaning"] = (
+                    "对称结构 + 对称荷载 ⇒ 对称位置的位移必须互为镜像。"
+                    "这条校核**不需要任何外部参照**，结构自己就是自己的对照组。")
+        else:
+            payload["response_check"] = {"note": "还没有结果，只做了几何与荷载判断"}
+        return ToolResult(True, payload)
+
+    def check_numbering(self, verify: bool = True) -> ToolResult:
+        """节点编号与总刚存储方案对比（讲义 §3-9 八、§3-10、§4-6）。"""
+        errors = validate_payload(self.model)
+        if errors:
+            return ToolResult(False, {"errors": errors})
+        try:
+            from frame3d import assemble, constrained_dofs, solve
+            from numbering import (estimated_half_bandwidth, matrix_bandwidth,
+                                   node_number_span, permute, rcm_order)
+            from skyline import Skyline, factory
+        except ImportError as exc:                      # pragma: no cover
+            return ToolResult(False, {"error": f"存储模块不可用：{exc}"})
+
+        if self.compilation is None:
+            try:
+                self.compilation = compile_model(self.model)
+            except CompilationError as exc:
+                return ToolResult(False, {"errors": list(exc.diagnostics)})
+        frame = self.compilation.analysis_model
+        K, _, _ = assemble(frame)
+        fixed = constrained_dofs(frame)
+        free = np.setdiff1d(np.arange(frame.num_dofs), fixed)
+        if free.size == 0:
+            return ToolResult(False, {"error": "没有自由自由度，无从谈带宽"})
+        Kff = K[free][:, free]
+        order = rcm_order(Kff)
+        before = Skyline.from_matrix(Kff).storage()
+        after = Skyline.from_matrix(permute(Kff, order)).storage()
+
+        payload: dict[str, Any] = {
+            "dofs": int(Kff.shape[0]),
+            "node_number_span": node_number_span(frame),
+            "estimated_half_bandwidth": estimated_half_bandwidth(frame),
+            "half_bandwidth": {"current": matrix_bandwidth(Kff),
+                               "after_rcm": matrix_bandwidth(permute(Kff, order))},
+            "storage_entries": {
+                "full": before["full"],
+                "banded": after["banded"],
+                "skyline_current": before["skyline"],
+                "skyline_after_rcm": after["skyline"],
+                "sparse_nonzeros": int(Kff.nnz)},
+            "note": "重编号**只在求解内部发生**，模型里的节点号一个都没变。",
+        }
+        # 讲义那句结论要按**这个模型的实际数**说，不能背台词。
+        # 小问题上稀疏的非零元数可能反而多于变带宽存储量（索引开销另算），
+        # 写死"稀疏更省"就会和自己给出的表打架。
+        sky, sparse = after["skyline"], int(Kff.nnz)
+        payload["lecture"] = (
+            "满阵→等带宽（§3-10）→一维变带宽（§4-6）是讲义的三步，"
+            "每一步都靠「非零元集中在对角线附近」这一点省下存储。"
+            + ("本例中稀疏存储只存非零元，比变带宽还省——变带宽的额外开销"
+               "全在「列内的零也要存」。" if sparse < sky else
+               "本例规模小，稀疏存储的非零元数反而多于变带宽存储量："
+               "刚架的带内几乎填满，变带宽存的零不多，而稀疏还要另付行列"
+               "索引的开销。规模一大、带宽相对变窄，稀疏才反超。"))
+        if verify:
+            try:
+                reference = solve(frame)
+                other = solve(frame, factorize=factory())
+            except np.linalg.LinAlgError as exc:
+                return ToolResult(False, {"error": f"求解失败：{exc}"})
+            worst = 0.0
+            for name in reference.all_results():
+                a, b = reference[name].U, other[name].U
+                scale = max(float(np.abs(a).max(initial=0.0)), 1e-30)
+                worst = max(worst, float(np.max(np.abs(a - b))) / scale)
+            payload["verification"] = {
+                "max_relative_difference": float(f"{worst:.2e}"),
+                "agrees": worst < 1e-8,
+                "note": "讲义的一维变带宽 LDLᵀ 与默认的稀疏 LU 解同一个方程组。"
+                        "两条路径共用同一份装配、约束消元与反力回算，"
+                        "**只有分解这一步不同**，所以这个差值只反映解法本身。"}
+        return ToolResult(True, payload)
 
     def write_report(self, case: str | None = None, fmt: str = "both",
                      filename: str = "报告") -> ToolResult:

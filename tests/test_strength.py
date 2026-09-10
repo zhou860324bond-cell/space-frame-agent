@@ -22,9 +22,10 @@ import pytest
 
 from frame3d import (Frame, LoadCase, Material, Member, Node, Section, solve)
 from model_compiler import compile_model
-from strength import (MU_FIXED_FIXED, MU_FIXED_PINNED, MU_PINNED_PINNED,
-                      StrengthUnavailable, check_member, check_strength,
-                      effective_length_factor)
+from strength import (BUCKLING_NA, BUCKLING_OK, BUCKLING_SLENDER,
+                      BUCKLING_UNKNOWN, MU_FIXED_FIXED, MU_FIXED_PINNED,
+                      MU_PINNED_PINNED, StrengthUnavailable, check_member,
+                      check_strength, effective_length_factor)
 
 E = 2.0e11
 AREA = 4.0e-3
@@ -144,10 +145,14 @@ def test_a_stocky_column_is_flagged_as_outside_the_euler_range():
     # 粗短：把回转半径放大到与杆长同量级，λ 掉到十几
     frame.sections["S"] = Section("S", A=AREA, Iy=1.0e-3, Iz=1.0e-3, J=2e-3,
                                   cy=0.05, cz=0.05)
-    got = check_member(frame, solve(frame), 1)["buckling"]
+    row = check_member(frame, solve(frame), 1)
+    got = row["buckling"]
     assert got["lambda_p"] == pytest.approx(math.pi * math.sqrt(E / 235e6))
     assert got["euler_applicable"] is False
-    assert not got["ok"], "欧拉公式不适用时不能判通过"
+    # 三种结局要分清楚：通过、超限、**判不了**。这一档是判不了。
+    assert got["status"] == BUCKLING_NA
+    assert not got["conclusive"], "欧拉公式不适用时不能给出结论"
+    assert not row["conclusive"] and row["ok"], "判不了不等于超限"
     assert got["ratio"] < 1.0, "本例的 Pcr 很大，正是「照着算就会误判通过」"
     assert any("不适用" in w for w in got["warnings"])
 
@@ -156,6 +161,7 @@ def test_without_a_yield_stress_the_applicability_is_unknown_not_assumed():
     frame = _bar(-10e3)
     got = check_member(frame, solve(frame), 1)["buckling"]
     assert got["euler_applicable"] is None
+    assert got["status"] == BUCKLING_UNKNOWN and not got["conclusive"]
     assert any("无法判断" in w for w in got["warnings"])
 
 
@@ -171,10 +177,10 @@ def test_a_slenderness_limit_can_fail_an_otherwise_safe_column():
                                   cy=0.05, cz=0.05)
     loose = check_member(frame, solve(frame), 1)["buckling"]
     assert loose["euler_applicable"] is True
-    assert loose["ok"]
+    assert loose["ok"] and loose["status"] == BUCKLING_OK
     tight = check_member(frame, solve(frame), 1,
                          slenderness_limit=loose["slenderness"] / 2)["buckling"]
-    assert not tight["ok"]
+    assert not tight["ok"] and tight["status"] == BUCKLING_SLENDER
     assert any("长细比" in w for w in tight["warnings"])
 
 
@@ -241,6 +247,8 @@ def test_the_summary_names_the_worst_member_and_the_failures():
     assert got["worst_strength"]["member"] == 1
     assert got["worst_buckling"]["member"] == 1
     assert got["ok"] == (got["failed"] == [])
+    # 判不了的杆件单独成一档，不混进 failed
+    assert set(got["inconclusive"]) & set(got["failed"]) == set()
 
 
 def test_allowable_stresses_follow_the_unit_system():

@@ -113,6 +113,15 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "analyze_joint_solid": (("node_id", "case"),
                             "节点局部实体：dry_run 只出规格；native 自研求解，"
                             "Abaqus 是可选对标后端"),
+    "check_strength": (("members", "ok", "failed_members",
+                        "inconclusive_members", "limitation"),
+                       "强度验算：逐杆一行；**「判不了」与「不合格」必须分开给**，"
+                       "限制说明也是契约的一部分，不许只报好消息"),
+    "check_symmetry": (("symmetric", "planes", "advice", "response_check"),
+                       "对称性：查出哪些面对称、各工况对称还是反对称，"
+                       "已求解时附位移镜像自校核"),
+    "check_numbering": (("dofs", "half_bandwidth", "storage_entries"),
+                        "编号与存储：当前带宽、RCM 后带宽、四种存储量对比"),
 }
 
 # 需要外部程序、测试里不实跑的
@@ -168,6 +177,57 @@ def test_no_contract_for_a_tool_that_does_not_exist():
     names = {f["function"]["name"] for f in TOOLS}
     stale = sorted(set(CONTRACTS) - names)
     assert not stale, f"这些契约对应的工具已经不存在：{stale}"
+
+
+def test_check_strength_reports_each_member_and_its_limits(solved):
+    """强度验算要能直接跑通，并且**把限制一起给出来**。"""
+    s = Session()
+    s.define_materials_and_sections(
+        materials=[{**MAT[0], "yield_stress": 355e6, "allow_tension": 215e6}],
+        sections=SEC)
+    g = s.generate_frame(spans=[6.0], storeys=[3.6],
+                         column_section="COLUMN", beam_section="BEAM",
+                         material="Q355")
+    s.set_load_cases(cases=[{"name": "D", "member_loads":
+                             [{"member": m, "w": [0, 0, -20e3]}
+                              for m in g.payload["beam_member_ids"]]}])
+    assert s.solve_model().ok
+    got = check(s.check_strength(), "check_strength")
+    assert got["members"] and all("stress_ratio" in r for r in got["members"])
+    # 「判不了」和「不合格」是两回事，任何一根杆不许同时落进两边
+    assert not (set(got["failed_members"]) & set(got["inconclusive_members"]))
+    assert "剪应力" in got["limitation"]
+
+
+def test_check_strength_refuses_without_allowable_stresses():
+    """没给许用应力就拒绝，并告诉用户去哪儿补——不是估一个了事。"""
+    s = Session()
+    s.define_materials_and_sections(MAT, SEC)
+    g = s.generate_frame(spans=[6.0], storeys=[3.6],
+                         column_section="COLUMN", beam_section="BEAM",
+                         material="Q355")
+    s.set_load_cases(cases=[{"name": "D", "member_loads":
+                             [{"member": m, "w": [0, 0, -20e3]}
+                              for m in g.payload["beam_member_ids"]]}])
+    s.solve_model()
+    bad = s.check_strength()
+    assert not bad.ok
+    assert "allow_tension" in bad.payload["hint"]
+
+
+def test_check_symmetry_finds_the_plane_and_checks_the_answer(solved):
+    got = check(solved.check_symmetry(), "check_symmetry")
+    assert got["symmetric"] and got["planes"]
+    assert got["response_check"]["ok"]
+
+
+def test_check_numbering_agrees_with_the_sparse_solver(solved):
+    got = check(solved.check_numbering(), "check_numbering")
+    assert got["verification"]["agrees"]
+    assert got["storage_entries"]["skyline_after_rcm"] <= got["storage_entries"]["full"]
+    # 重编号不许动模型里的节点号
+    assert [n["id"] for n in solved.model["nodes"]] == sorted(
+        n["id"] for n in solved.model["nodes"])
 
 
 def test_every_contract_explains_itself():
