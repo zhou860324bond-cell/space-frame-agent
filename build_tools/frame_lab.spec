@@ -51,6 +51,10 @@ except Exception as exc:
 hiddenimports += collect_submodules("scipy.sparse.linalg")
 hiddenimports += ["matplotlib.backends.backend_qtagg",
                   "matplotlib.backends.backend_agg"]
+# report.to_docx 是延迟导入的，静态分析看不见——不点名就不会被收进去，
+# 表现是打包成功、点「报告」才说缺 python-docx。
+hiddenimports += ["docx", "docx.enum.text", "docx.shared", "docx.oxml",
+                  "docx.oxml.ns"]
 
 # --- 不需要的东西 -----------------------------------------------------------
 # streamlit / plotly 是网页版那条路径，桌面端用不到，但它们会拖进
@@ -66,8 +70,11 @@ EXCLUDES = [
     # 而且栈顶指向 scipy，跟这份排除清单看上去毫无关系。
     "PyQt5", "PyQt6", "PySide2", "shiboken2",
     "IPython", "jupyter", "notebook", "nbformat",
-    "docx",          # 出 Word 报告用；留着会把 lxml 拖进来，需要时再放开
 ]
+# **python-docx 要留着。** 它会把 lxml 一起拖进来，但那是十几兆，
+# 相对七百多兆的包可以忽略；排掉的代价是界面上「报告」按钮点下去
+# 只能告诉用户"请 pip install python-docx"——而拿到 exe 的人根本没有
+# pip 可用。为省十几兆换一个点不动的按钮，不划算。
 
 a = Analysis(                                       # noqa: F821
     [str(ROOT / "build_tools" / "frame_lab_launcher.py")],

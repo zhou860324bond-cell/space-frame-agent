@@ -138,3 +138,16 @@ def test_no_stdlib_module_that_numpy_or_scipy_needs_is_excluded(module):
     excludes = text[start:text.index("]", start)]
     assert f'"{module}"' not in excludes, \
         f"{module} 是标准库且被运行时依赖，排掉会让打包体一启动就崩"
+
+
+def test_the_word_report_backend_is_bundled():
+    """`report.to_docx` 是延迟导入，静态分析看不见它。
+
+    不在 spec 里点名的话，打包一切正常，**点「报告」才说缺 python-docx**——
+    而拿到 exe 的人没有 pip，这个提示对他毫无用处。
+    """
+    text = _spec_text()
+    start = text.index("EXCLUDES = [")
+    excludes = text[start:text.index("]", start)]
+    assert '"docx"' not in excludes, "python-docx 被排掉了，Word 报告会点不动"
+    assert '"docx"' in text, "spec 没点名 docx，延迟导入的它不会被收进去"

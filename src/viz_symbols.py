@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import numpy as np
-import plotly.graph_objects as go
 
 import viz_theme as T
 from frame3d import span_loads_of
@@ -25,6 +24,25 @@ from span_loads import POINT
 
 # 只有约束住这么多个平动方向的节点才画支座符号
 _MIN_FIXED_TRANSLATIONS = 2
+
+
+def _go():
+    """延迟导入 plotly。
+
+    这个模块里真正被两端共用的是 `model_size` 和 `classify_support`——
+    纯几何，只用 numpy。plotly 只有网页端那三个 `*_traces` 函数要，
+    可桌面端 `desktop/scene.py` 也 import 本模块，于是**桌面端被迫依赖
+    一个它一行都不用的绘图后端**。
+
+    平时看不出来，打包成 exe 时就暴露了：排掉 plotly（网页端那条路径
+    桌面版用不到，它还会拖进 pyarrow、tornado 一大串）之后，程序一启动就
+    `ModuleNotFoundError: No module named 'plotly'`，栈顶指向 viz_symbols，
+    而那一行 import 看上去理所当然。
+
+    改成延迟导入，两端各取所需：桌面端不再碰 plotly，网页端行为不变。
+    """
+    import plotly.graph_objects as go
+    return go
 
 
 def model_size(frame) -> float:
@@ -110,6 +128,7 @@ def support_traces(frame, size: float | None = None) -> tuple[list, dict]:
             bucket.extend(part)
         drawn += 1
 
+    go = _go()
     # 深色视口上要用亮灰，原来那套浅底色号在这里几乎看不见
     colors = {"固接": T.VIEWPORT_INK, "铰接": T.VIEWPORT_INK,
               "部分约束": T.VIEWPORT_INK_MUTED}
@@ -126,6 +145,7 @@ def support_traces(frame, size: float | None = None) -> tuple[list, dict]:
 def _cone_trace(points, vectors, name, color, ref):
     if not points:
         return None
+    go = _go()
     pts = np.array(points)
     vec = np.array(vectors)
     return go.Cone(
