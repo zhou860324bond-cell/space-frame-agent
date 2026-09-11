@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from pathlib import Path
 
 ENV_VAR = "DEEPSEEK_API_KEY"
@@ -25,6 +26,14 @@ KEY_FILE = "deepseek.key"
 
 
 def _repo_root() -> Path:
+    """密钥文件该去哪儿找。
+
+    源码运行时是仓库根；**打包成 exe 之后是 exe 所在的那个目录**，
+    不是 `_MEIPASS`——那个临时解压目录每次启动都会重建，
+    用户把 `deepseek.key` 放进去也留不住，而且他根本找不到那个目录。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
     # src/credentials.py → 仓库根目录
     return Path(__file__).resolve().parent.parent
 
