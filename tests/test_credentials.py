@@ -24,3 +24,37 @@ def test_a_frozen_build_looks_for_the_key_next_to_the_exe(monkeypatch, tmp_path)
 
     assert credentials.load_api_key() == "sk-from-next-to-the-exe"
     assert credentials.source() == credentials.KEY_FILE
+
+
+def test_the_ui_names_a_real_path_not_a_vague_place(monkeypatch, tmp_path):
+    """界面上不能只说"项目根目录"。
+
+    拿到打包版的人手上只有一个 FrameLab 文件夹，既没有"项目"也没有
+    "根目录"，而真正该放的位置是 exe 旁边。与其让他猜，不如印绝对路径。
+    """
+    import credentials
+
+    exe = tmp_path / "FrameLab.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(credentials.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(credentials.sys, "executable", str(exe))
+
+    said = credentials.where_to_put_it()
+    assert said == str(tmp_path / "deepseek.key")
+    assert "根目录" not in said
+
+
+def test_the_chat_panel_stopped_saying_project_root():
+    """源码层面钉住：那句含糊的说明别被改回去。"""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for name in ("desktop/chat_panel.py", "desktop/demo_script.py"):
+        text = (root / name).read_text(encoding="utf-8")
+        # 注释里可以解释这段历史，界面文案里不行
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""'):
+                continue
+            assert "项目根目录" not in line and "根目录建" not in line, \
+                f"{name} 又在界面上说「根目录」了：{line.strip()}"

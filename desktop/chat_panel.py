@@ -243,8 +243,9 @@ class ChatPanel(QWidget):
             self._offline = True
             self.lbl_status.setText(
                 "未配置 API 密钥，当前为离线演示模式："
-                "对话按预设意图分派，但工具调用与求解均为实际执行。"
-                "配置方式见 README（在项目根目录创建 deepseek.key）。")
+                "对话按预设意图分派，但工具调用与求解均为实际执行。\n"
+                f"要开启自由对话：新建文本文件 {credentials.where_to_put_it()}，"
+                "里面只写你自己的 API key 一行，存成 UTF-8，然后重开程序。")
 
     def _toggle_router_config(self, checked):
         self.router_panel.setVisible(checked)

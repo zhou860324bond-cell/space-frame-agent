@@ -151,3 +151,18 @@ def test_the_word_report_backend_is_bundled():
     excludes = text[start:text.index("]", start)]
     assert '"docx"' not in excludes, "python-docx 被排掉了，Word 报告会点不动"
     assert '"docx"' in text, "spec 没点名 docx，延迟导入的它不会被收进去"
+
+
+def test_the_zip_step_refuses_to_ship_a_key():
+    """打包体里放过密钥是最容易犯、后果最重的一个错。
+
+    `build_exe.bat` 只在**构建时**扫一遍，而"为了自己试用把 key 放到
+    exe 旁边"恰恰发生在构建之后、压包之前——那一步没人拦就会直接发出去。
+    """
+    zipper = ROOT / "package_zip.bat"
+    assert zipper.exists(), "package_zip.bat 不见了"
+    text = zipper.read_text(encoding="utf-8", errors="replace")
+    assert "*.key" in text and "REFUSED" in text, \
+        "压包脚本不再拦密钥了"
+    assert "DEEPSEEK_API_KEY" in text, \
+        "拦下之后要告诉用户改用环境变量，否则他只会把文件挪来挪去"

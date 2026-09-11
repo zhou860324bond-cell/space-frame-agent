@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import credentials
+
 DEMO_PROMPT = ("单跨 24 米门式刚架，檐口高 7.5 米，屋脊比檐口高 1.2 米，"
                "柱脚铰接，Q355。屋面恒载 8 kN/m、活载 5 kN/m、风吸 3 kN/m，"
                "建模求解并看看挠跨比。")
@@ -120,7 +122,8 @@ class DemoProvider:
             return [], (
                 "离线演示模式只认得几类问题：建模求解、挠度、控制组合、"
                 "稳定、自振、出报告。你可以点工具栏的「演示问题」填一句试试。\n"
-                "配置密钥（根目录建 deepseek.key）之后就能随便说了。")
+                f"配置密钥（新建 {credentials.where_to_put_it()}）之后"
+                "就能随便说了。")
 
         if intent == "build":
             return self._build_plan(), (

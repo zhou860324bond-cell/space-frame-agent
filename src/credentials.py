@@ -63,6 +63,17 @@ def source(root: Path | None = None) -> str:
     return "未配置"
 
 
+def where_to_put_it(root: Path | None = None) -> str:
+    """密钥文件该放哪儿——**给界面直接印出来的一句话，带真实路径。**
+
+    原来界面上写的是"在项目根目录创建 deepseek.key"。跑源码的人看得懂，
+    拿到打包版的人看不懂：他手上只有一个 `FrameLab` 文件夹，
+    既没有"项目"也没有"根目录"，而真正该放的位置是 exe 旁边。
+    与其让他猜，不如把那一行的绝对路径直接印出来。
+    """
+    return str((root or _repo_root()) / KEY_FILE)
+
+
 def fingerprint(key: str | None) -> str:
     """密钥的短指纹。用于回答"是不是换了一把钥匙"，且不可还原。"""
     if not key:
