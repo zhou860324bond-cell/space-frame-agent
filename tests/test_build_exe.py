@@ -120,3 +120,21 @@ def test_the_workflow_hook_override_is_in_place():
         "src/workflow.py 没了的话这个让路钩子也该一并删掉"
     assert 'hookspath=[str(ROOT / "build_tools" / "hooks")]' in _spec_text(), \
         "spec 没挂 hooks 目录，让路钩子不会生效"
+
+
+@pytest.mark.parametrize("module", ["unittest", "test", "email", "logging",
+                                    "json", "ctypes", "importlib"])
+def test_no_stdlib_module_that_numpy_or_scipy_needs_is_excluded(module):
+    """排除清单里不能有这些标准库。
+
+    `unittest` 是踩出来的：它看着只是测试用的，实际上 `numpy.testing` 在
+    模块顶层就 `import unittest`，而 scipy 的 array_api_compat 会 clone
+    整个 numpy 命名空间、顺手碰到 `numpy.testing`。排掉之后打包照样成功，
+    **一启动就 ModuleNotFoundError**，栈顶还指向 scipy——
+    跟这份排除清单看上去毫无关系，很难想到是自己排掉的。
+    """
+    text = _spec_text()
+    start = text.index("EXCLUDES = [")
+    excludes = text[start:text.index("]", start)]
+    assert f'"{module}"' not in excludes, \
+        f"{module} 是标准库且被运行时依赖，排掉会让打包体一启动就崩"

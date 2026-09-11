@@ -58,7 +58,12 @@ hiddenimports += ["matplotlib.backends.backend_qtagg",
 EXCLUDES = [
     "streamlit", "plotly", "pyarrow", "tornado",
     "pytest", "_pytest", "pluggy",
-    "tkinter", "test", "unittest",
+    "tkinter",
+    # **不要排 unittest，也不要排 test。** 它们看着只是测试用的，实际是
+    # numpy/scipy 的运行时依赖：`numpy.testing` 在模块顶层 `import unittest`，
+    # 而 scipy 的 array_api_compat 会 clone 整个 numpy 命名空间、顺手碰到
+    # `numpy.testing`。排掉的表现是打包成功、**一启动就 ModuleNotFoundError**，
+    # 而且栈顶指向 scipy，跟这份排除清单看上去毫无关系。
     "PyQt5", "PyQt6", "PySide2", "shiboken2",
     "IPython", "jupyter", "notebook", "nbformat",
     "docx",          # 出 Word 报告用；留着会把 lxml 拖进来，需要时再放开
