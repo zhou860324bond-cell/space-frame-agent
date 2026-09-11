@@ -1,0 +1,57 @@
+# 打包与依赖声明。
+#
+# 加这个文件的理由只有一个：**别人 clone 下来要能跑**。在此之前依赖散在
+# requirements.txt 里、全用 `>=`，装出来是哪一套版本全看运行的那天 PyPI 上
+# 有什么。自己机器上能跑不算数——那只说明自己机器上那套版本能跑。
+#
+# 分组是按"要做什么"分的，不是按"哪个包"分的：只想跑内核和测试的人不该被
+# 拖去装 Qt 和 VTK。
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "space-frame-agent"
+version = "0.2.0"
+description = "空间刚架智能计算 Agent：自然语言 → 结构模型 → 求解 → 自校验 → 出图"
+readme = "README.md"
+requires-python = ">=3.10"          # 与 desktop/doctor.py 的 MIN_PYTHON 一致
+license = { text = "MIT" }
+
+# 内核：求解、校验、出图、报告。没有这几个什么都跑不了。
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "jsonschema>=4.20",
+    "matplotlib>=3.8",
+    "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+# 桌面端（PySide6 + PyVista 的 CAE 式界面）
+desktop = ["PySide6>=6.6", "pyvista>=0.44", "pyvistaqt>=0.11", "vtk>=9.3"]
+# 网页端
+web = ["streamlit>=1.40", "plotly>=5.20"]
+# 节点局部实体子模型：Gmsh 只生成二次四面体网格，刚度与求解均为自研
+solid = ["gmsh>=4.11"]
+# 接真实大模型（离线测试与演示都不需要）
+llm = ["openai>=1.40", "mcp>=2.1"]
+dev = ["pytest>=8.0"]
+# 一次装全
+all = [
+    "space-frame-agent[desktop]",
+    "space-frame-agent[web]",
+    "space-frame-agent[solid]",
+    "space-frame-agent[llm]",
+    "space-frame-agent[dev]",
+]
+
+[tool.setuptools]
+# 源码在 src/ 与 desktop/ 两处，不是标准布局；这里显式列出来，
+# 免得 setuptools 去猜（猜错了会把 tests 也打进包里）。
+packages = ["desktop"]
+py-modules = []
+
+[tool.setuptools.package-dir]
+desktop = "desktop"
