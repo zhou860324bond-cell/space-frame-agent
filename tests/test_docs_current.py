@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import pathlib
 import re
 
@@ -143,20 +144,46 @@ def test_report_gold_case_count_matches_the_frozen_list():
 
 
 def test_report_test_total_matches_the_full_run(request):
-    """报告附录 C 里写的回归条数，必须等于这次真正收集到的条数。
+    """报告里**每一处**回归条数，都必须等于这次真正收集到的条数。
 
     用 `request.session.items`：pytest 先收集完再开跑，所以这里拿到的
     就是全量条数。跑子集时数不出来，直接跳过而不是瞎断言。
+
+    刻意查全文而不是只查附录 C——这条闸第一次跑起来就抓到正文 2.1 节
+    和 5.x 节各还留着一处旧数字，只盯一处是盯不住的。
     """
     collected = len(request.session.items)
     if collected < 800:
         pytest.skip("只有跑全量回归时才数得出总条数")
-    claimed = {int(n) for n in re.findall(r"全量回归\s*([\d,]+)\s*项",
-                                          _text(REPORT).replace(",", ""))}
-    assert claimed, "《课程报告》附录 C 里找不到「全量回归 N 项」这句话了"
+    flat = _text(REPORT).replace(",", "").replace("，", "，")
+    claimed = {int(n) for n in re.findall(r"回归\s*\*{0,2}\s*(\d{3,})\s*项", flat)}
+    assert claimed, "《课程报告》里找不到「回归 N 项」这句话了"
     assert claimed == {collected}, (
-        f"《课程报告》说全量回归 {sorted(claimed)} 项，这次实际收集 {collected} 项。"
-        f"加了测试就要把报告里的数字改成 {collected}。")
+        f"《课程报告》里写着回归 {sorted(claimed)} 项，这次实际收集 {collected} 项。"
+        f"加了测试就要把报告里**每一处**数字都改成 {collected}。")
+
+
+@pytest.mark.parametrize("folder", ["src", "tests", "desktop", "tools"])
+def test_report_code_scale_table_is_not_stale(folder):
+    """2.1 节那张代码规模表：文件数必须精确对上，行数允许 5% 漂移。
+
+    文件数卡死是因为它只在**加减模块**时才变，那种改动本来就该顺手更新报告。
+    行数给 5% 的余量则是刻意的：改三行代码就逼人去改一次报告，
+    这道闸会被当成噪音关掉，那就一点用都没有了。
+    """
+    row = re.search(rf"^\|\s*`{folder}`\s*\|\s*([\d,]+)\s*\|\s*([\d,]+)\s*\|",
+                    _text(REPORT), re.M)
+    assert row, f"《课程报告》的代码规模表里没有 `{folder}` 这一行了"
+    said_files, said_lines = (int(g.replace(",", "")) for g in row.groups())
+
+    files = sorted((ROOT / folder).glob("*.py"))
+    lines = sum(len(f.read_text(encoding="utf-8").splitlines()) for f in files)
+
+    assert said_files == len(files), (
+        f"报告说 `{folder}` 有 {said_files} 个文件，实际 {len(files)} 个")
+    assert abs(said_lines - lines) <= max(20, lines * 0.05), (
+        f"报告说 `{folder}` 有 {said_lines:,} 行，实际 {lines:,} 行，"
+        f"差得超过 5% 了——把表里的数字改成 {lines:,}")
 
 
 # ------------------------------------------------------- 金标准清单
@@ -232,3 +259,37 @@ def test_readme_regression_baseline_matches_the_full_run(request):
     assert stated == collected, (
         f"README 写的是 {hit.group(1)} 通过 + {hit.group(2)} 跳过 = {stated} 项，"
         f"这次实际收集 {collected} 项——跑完 pytest 要把这句话改过来。")
+
+
+# ------------------------------------------------------------ Word 版
+
+def test_word_exports_are_not_behind_the_markdown():
+    """`docs/word/` 里的 Word 版必须是从当前 Markdown 导出的。
+
+    交作业交的是 Word。正文改完忘了重新导出，交上去的就是旧版——
+    这种错最难自己发现，因为 Markdown 看着是对的。
+
+    时间戳过不了 git，所以比的是内容哈希：`tools/build_docx.py`
+    每次导出会把两份 Markdown 的 sha256 写进 `docs/word/来源指纹.json`。
+    对不上就说明该重新跑一次导出了。
+    """
+    import json
+
+    stamp_path = ROOT / "docs" / "word" / "来源指纹.json"
+    assert stamp_path.exists(), (
+        "找不到 docs/word/来源指纹.json——先跑一次 `python tools/build_docx.py`")
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+
+    stale = []
+    for name, recorded in stamp.items():
+        source = ROOT / "docs" / name
+        assert source.exists(), f"指纹里记着 {name}，但这份文档不在了"
+        now = hashlib.sha256(source.read_bytes()).hexdigest()
+        if now != recorded:
+            stale.append(name)
+        assert (ROOT / "docs" / "word" / (source.stem + ".docx")).exists(), \
+            f"{name} 的 Word 版不见了"
+
+    assert not stale, (
+        f"这几份文档改过了，但 Word 版还是旧的：{stale}。"
+        "跑一次 `python tools/build_docx.py` 重新导出。")
