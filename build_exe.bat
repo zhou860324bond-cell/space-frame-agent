@@ -73,7 +73,13 @@ exit /b 1
 echo.
 echo ===================== Build failed =====================
 echo Copy the LAST 40 lines above and send them over.
-echo Most failures here are a missing hidden import.
+echo.
+echo Two failure shapes are common here:
+echo   ImportErrorWhenRunningHook / PackageNotFoundError
+echo       a local module name collides with a PyPI package of the
+echo       same name - fix is an empty override in build_tools\hooks
+echo   ModuleNotFoundError at runtime, not at build time
+echo       a hidden import is missing from the spec
 echo ========================================================
 echo.
 pause

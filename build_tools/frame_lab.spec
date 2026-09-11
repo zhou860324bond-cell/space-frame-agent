@@ -14,7 +14,8 @@
 import os
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import (collect_all, collect_dynamic_libs,
+                                     collect_submodules)
 
 ROOT = Path(SPECPATH).parent            # noqa: F821  (SPECPATH 由 PyInstaller 注入)
 
@@ -22,15 +23,30 @@ ROOT = Path(SPECPATH).parent            # noqa: F821  (SPECPATH 由 PyInstaller 
 # 它们都在运行时动态 import 子模块，静态分析抓不全：漏一个的表现是
 # 界面起来了、一点云图就闪退，而不是构建期报错。
 datas, binaries, hiddenimports = [], [], []
-for package in ("pyvista", "vtkmodules", "pyvistaqt", "gmsh"):
-    try:
-        d, b, h = collect_all(package)
-    except Exception as exc:                       # gmsh 没装就跳过
-        print(f"[spec] 跳过 {package}：{exc}")
-        continue
+for package in ("pyvista", "vtkmodules", "pyvistaqt"):
+    d, b, h = collect_all(package)
     datas += d
     binaries += b
     hiddenimports += h
+
+# gmsh 单独处理：它的 wheel 装出来是**一个顶层模块 `gmsh.py` 加一个原生库**，
+# 不是包。`collect_all` 对模块会抛，抛了就整块跳过，结果是"构建成功、
+# 一点节点实体就 ImportError"。所以失败时退回只收原生库，并且把
+# 跳过与否打出来——静默丢掉一整块功能是最难查的一类打包问题。
+try:
+    d, b, h = collect_all("gmsh")
+    datas += d
+    binaries += b
+    hiddenimports += h
+    print("[spec] gmsh: collect_all 成功")
+except Exception as exc:
+    try:
+        binaries += collect_dynamic_libs("gmsh")
+        hiddenimports += ["gmsh"]
+        print(f"[spec] gmsh: collect_all 失败（{exc}），已退回只收原生库")
+    except Exception as exc2:
+        print(f"[spec] gmsh 完全收不进来（{exc2}）——"
+              "打出来的程序将没有节点实体子模型功能")
 
 hiddenimports += collect_submodules("scipy.sparse.linalg")
 hiddenimports += ["matplotlib.backends.backend_qtagg",
@@ -54,7 +70,10 @@ a = Analysis(                                       # noqa: F821
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    # 自带钩子里有按**模块名**匹配的地雷：PyPI 上有个不相干的包也叫
+    # workflow，而我们有 src/workflow.py。详见 hooks/hook-workflow.py。
+    # hookspath 的优先级高于自带钩子，同名放一个空的即可让开。
+    hookspath=[str(ROOT / "build_tools" / "hooks")],
     runtime_hooks=[str(ROOT / "build_tools" / "runtime_hook.py")],
     excludes=EXCLUDES,
     noarchive=False,

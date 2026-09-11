@@ -95,3 +95,28 @@ def test_a_frozen_build_is_documented_as_a_folder_not_a_single_file():
     notes = (PACKAGING / "分发说明.md").read_text(encoding="utf-8")
     assert "onefile" in _spec_text() or "单文件" in _spec_text()
     assert "整个文件夹" in notes, "分发说明没写清楚不能只发 exe"
+
+
+def test_the_workflow_hook_override_is_in_place():
+    """`src/workflow.py` 和 PyPI 上一个不相干的 `workflow` 包重名。
+
+    pyinstaller-hooks-contrib 为那个包写了 stdhook，内容是
+    `copy_metadata('workflow')`；PyInstaller 按模块名匹配钩子，
+    不看这个模块是谁的，于是构建以 `PackageNotFoundError` 中止，
+    报错里一个字都没提"你有个同名模块"。
+
+    这条守两件事：空钩子还在，spec 还把 hooks 目录挂上了。
+    少任何一件，构建在跑满两分半之后才失败。
+    """
+    override = PACKAGING / "hooks" / "hook-workflow.py"
+    assert override.exists(), "hook-workflow.py 让路钩子不见了"
+    # 只看代码不看文档字符串——说明里当然要写清楚绕的是哪一句
+    tree = ast.parse(override.read_text(encoding="utf-8"))
+    calls = [node.func.id for node in ast.walk(tree)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    assert "copy_metadata" not in calls, \
+        "让路钩子不能真去找包元数据，那正是要绕开的东西"
+    assert (ROOT / "src" / "workflow.py").exists(), \
+        "src/workflow.py 没了的话这个让路钩子也该一并删掉"
+    assert 'hookspath=[str(ROOT / "build_tools" / "hooks")]' in _spec_text(), \
+        "spec 没挂 hooks 目录，让路钩子不会生效"
