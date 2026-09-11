@@ -535,10 +535,24 @@ def test_the_contour_is_drawn_from_banded_cell_colours(qt_app):
     mesh = contour["mesh"]
     assert contour["scalars"] in mesh.cell_data
     assert contour["scalars"] not in mesh.point_data
-    # 默认打柔和的光（圆管得看得出是圆的），但环境光必须压倒漫反射，
-    # 否则同一个数值在向光面和背光面差一级颜色，色标就读不准了。
+    # 默认打光——圆管得看得出是圆的。环境光要托得住底（背光面不能黑掉，
+    # 否则同一个数值在两面差出一级颜色），但也不能高到把明暗差压没：
+    # 那正是"打了光还是看不出是圆的"的原因。
     assert contour["lighting"] is True
-    assert contour["ambient"] > contour["diffuse"]
+    assert 0.3 <= contour["ambient"] <= 0.5
+    assert contour["diffuse"] > contour["ambient"]
+
+
+def test_the_contour_tube_is_thick_enough_to_read_as_round(qt_app):
+    """云图管的粗细是**功能参数**，不是审美偏好。
+
+    太细时整屏视角下只有几个像素宽，明暗跨不过三四个像素，
+    再怎么调光照也读不出弧面——这条线守的就是那次加粗别被人调回去。
+    """
+    from desktop import scene
+
+    assert scene.CONTOUR_TUBE_RATIO >= 0.012
+    assert scene.CONTOUR_TUBE_RATIO > scene.TUBE_RATIO * 3
 
 
 def test_turning_off_contour_shading_gives_flat_colour(qt_app):

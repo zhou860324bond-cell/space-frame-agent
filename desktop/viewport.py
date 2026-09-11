@@ -969,10 +969,15 @@ class Viewport(QWidget):
         # 颜色，而看图的人正是拿杆件上的颜色去对色标读数的；完全不打光，
         # 圆管就是一条扁色带，看不出这是根三维杆件。
         #
-        # 折中是**高环境光、低漫反射、几乎不要高光**：形体还在，色偏很小。
-        # Abaqus 的云图也是打光的。要精确读数可以关掉（set_contour_shading）。
-        shade = dict(lighting=True, ambient=0.66, diffuse=0.34,
-                     specular=0.05, specular_power=20, smooth_shading=True)
+        # 折中是**环境光托底 + 适度漫反射 + 一点高光**：弧面读得出来，
+        # 每一级的颜色仍然认得出是哪一级。Abaqus 的云图也是打光的。
+        # 要严格照色标读数可以关掉（set_contour_shading），那时是纯平涂。
+        #
+        # 环境光别调得太高。原来取 0.66/0.34 想把色偏压到最小，结果是
+        # 明暗差被压没了，管子看上去还是一条扁色带——光照参数救不了太细的管，
+        # 真正起作用的是 scene.CONTOUR_TUBE_RATIO 那一次加粗。
+        shade = dict(lighting=True, ambient=0.42, diffuse=0.58,
+                     specular=0.22, specular_power=30, smooth_shading=True)
         self.plotter.add_mesh(
             tubes, scalars=component + scene.BAND_SUFFIX,
             cmap=cmap, clim=clim, n_colors=n, show_scalar_bar=False,
