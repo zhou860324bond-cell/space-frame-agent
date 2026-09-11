@@ -114,6 +114,14 @@ COMMANDS: tuple[Command, ...] = (
     Command("labels", "编号标注", "labels",
             "在视口中显示节点与杆件编号。定位报错和结果时必需",
             "toggle_labels", "L", True),
+    # 荷载数值标注单独给一个开关。模型一大，几十个数字糊成一片，
+    # 遮住的正是它们要说明的那根杆件——这时候能关掉比标得全更重要。
+    Command("load_labels", "荷载数值", "load",
+            "在荷载箭头旁标出数值。模型大时可以关掉，只看箭头方向和分布",
+            "toggle_load_labels", "Shift+L", True),
+    Command("lang", "中 / EN", "units",
+            "在中文与英文界面之间切换（功能区、菜单、状态栏；对话框仍为中文）",
+            "toggle_language", "", True),
 
     Command("analysis_step", "分析步", "timeline",
             "选择线性静力、P-Delta 或双线性轴向材料非线性及增量参数", "edit_analysis_step"),

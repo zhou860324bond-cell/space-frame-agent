@@ -355,6 +355,9 @@ class MainWindow(QMainWindow):
         self.act_report = self.actions_by_name["report"]
         self.act_chat = self.actions_by_name["chat"]
         self.act_chat.setChecked(True)
+        # 这两个开关的初值必须和视口的实际状态一致，否则第一次点是反的
+        self.actions_by_name["load_labels"].setChecked(self.viewport.load_labels)
+        self.actions_by_name["lang"].setChecked(False)
 
         # 四个显示模式做成互斥的一组。**看得见当前在哪个模式**，
         # 比按了之后靠图猜要好——变形图和模型图在小位移下长得很像
@@ -498,8 +501,8 @@ class MainWindow(QMainWindow):
                  ("结果", ("model", "deformed", "contour", "diagram", None,
                            "envelope", "clear_results", "labels")),
                  ("视图", ("iso", "front", "side", "top", "fit", None,
-                           "bg_settings", "grid_floor", "labels", "camera", None,
-                           "chat", "props")))
+                           "bg_settings", "grid_floor", "labels", "load_labels",
+                           "camera", None, "lang", None, "chat", "props")))
         root = QMenu(self)
         root.setTitle("主菜单")
         for title, names in menus:
@@ -979,8 +982,16 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(what, 5000)
 
     def _on_result_display_changed(self, options: dict) -> None:
-        """结果显示选项只改变视图，不触碰求解数据。"""
+        """结果显示选项只改变视图，不触碰求解数据。
+
+        色系和打光是**视口的状态**，在这里就落到视口上，不放在 redraw 里：
+        redraw 在没有结果时会提前返回去画模型图，选项就悄悄丢了——
+        用户下次真的出云图，看到的还是上上次那套配色。
+        """
         self.result_display_options = dict(options)
+        self.viewport.set_contour_palette(
+            options.get("palette", theme.DEFAULT_PALETTE))
+        self.viewport.set_contour_shading(options.get("shading", True))
         if self.mode == "云图" and self.session.solution is not None:
             self.redraw()
 
@@ -1202,6 +1213,43 @@ class MainWindow(QMainWindow):
     def toggle_labels(self) -> None:
         on = self.actions_by_name["labels"].isChecked()
         self.viewport.set_labels(on)
+
+    def toggle_load_labels(self) -> None:
+        """荷载箭头旁边标不标数值。
+
+        模型一大，几十个数字糊成一片，遮住的正是它们要说明的那根杆件。
+        关掉之后箭头还在——方向和分布照样看得见，只是不再有字。
+        """
+        on = self.actions_by_name["load_labels"].isChecked()
+        if self.viewport.set_load_labels(on):
+            self.redraw()
+        self.statusBar().showMessage(
+            "荷载数值：显示" if on else "荷载数值：隐藏（箭头仍在）", 3000)
+
+    def toggle_language(self) -> None:
+        """中英文界面切换。
+
+        勾上是英文。翻的只有界面骨架——功能区、菜单、面板标题、状态提示；
+        对话框正文和报错仍是中文，这一点在命令提示里就写明了，
+        不让用户切过去之后才发现只翻了一半。
+        """
+        from . import i18n
+
+        want = "en" if self.actions_by_name["lang"].isChecked() else "zh"
+        if not i18n.set_language(want):
+            return
+        self.menu_button.setText(i18n.tr("☰  菜单"))
+        i18n.retranslate(
+            (self.ribbon, self.quickbar, self.workflow_bar, self.results,
+             self.chat_dock, self.results_dock, self.diagram_dock,
+             self.timeline_dock, self.tree_dock),
+            self.actions_by_name.values())
+        # 流程条自己翻自己（步骤名后面还挂着算出来的 ✓ / !3），
+        # 所以切完语言要让它按当前模型状态重画一次。
+        self.workflow_bar.update_state(self.session)
+        self.statusBar().showMessage(
+            "Interface language: English (dialogs remain in Chinese)"
+            if want == "en" else "界面语言：中文", 4000)
 
     # --- 人工建模 ---
 

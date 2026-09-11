@@ -75,6 +75,7 @@ LOCAL_AXES = {"x": "#e05a5a", "y": "#55b86a", "z": "#4f87d8"}
 # 需要色标时调 sequential_cmap() / diverging_cmap()。
 SEQUENTIAL_ANCHORS = V.VIEWPORT_SEQUENTIAL
 DIVERGING_ANCHORS = V.VIEWPORT_DIVERGING
+RAINBOW_ANCHORS = V.VIEWPORT_RAINBOW
 
 # 云图默认分几级。12 是 CAE 后处理的通行值：再少读不出梯度，
 # 再多人眼分辨不出相邻两级的色差，等于回到连续渐变。
@@ -105,6 +106,43 @@ def diverging_cmap(steps: int = 256):
     from matplotlib.colors import LinearSegmentedColormap
     return LinearSegmentedColormap.from_list(
         "viewport_diverging", DIVERGING_ANCHORS, N=steps)
+
+
+def rainbow_cmap(steps: int = 256):
+    """Abaqus 式彩虹色标：蓝(低) → 青 → 绿 → 黄 → 橙 → 红(高)。
+
+    两端比蓝红双色标拉得开，中间还多出绿黄两段，同样 12 级下相邻两级的
+    色差明显更大——这正是"分不清哪一级是哪一级"的解法。
+
+    代价要说清楚：彩虹谱的明度不单调，**色盲用户和黑白打印都读不出顺序**。
+    所以它是可选项不是唯一项，蓝—灰—红那套发散色标仍然保留。
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+    return LinearSegmentedColormap.from_list(
+        "viewport_rainbow", RAINBOW_ANCHORS, N=steps)
+
+
+#: 云图可选色系。键是内部名，值是给界面看的中文名。
+CONTOUR_PALETTES = {
+    "rainbow": "彩虹（Abaqus 式）",
+    "diverging": "蓝—灰—红（发散）",
+    "sequential": "单蓝（顺序）",
+}
+DEFAULT_PALETTE = "rainbow"
+
+
+def palette_cmap(palette: str, component: str = ""):
+    """按色系名取连续色标。
+
+    ``diverging`` 这一项对合量（V/M，定义上非负）没有意义——发散色标的
+    中点代表零，而合量的零在量程端点上，用了会把"最小"画成中性灰。
+    所以合量在选了发散时自动退回顺序色标。
+    """
+    if palette == "rainbow":
+        return rainbow_cmap()
+    if palette == "sequential":
+        return sequential_cmap()
+    return sequential_cmap() if component in {"V", "M"} else diverging_cmap()
 
 
 def banded(cmap, levels: int = CONTOUR_LEVELS):

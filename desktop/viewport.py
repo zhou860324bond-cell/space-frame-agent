@@ -128,6 +128,15 @@ class Viewport(QWidget):
             self.plotter.enable_anti_aliasing("fxaa")
         self._first_render = True
 
+        # 云图显示选项。三样都做成状态而不是每次调用的参数：用户在功能区
+        # 上改一次，后面每张云图都跟着走，不用每次重新选。
+        self.contour_palette = theme.DEFAULT_PALETTE
+        self.contour_shading = True
+        self._contour_last: dict = {}
+        # 荷载数值标注。模型一大，几十个数字糊成一片，比不标还难看——
+        # 所以给一个开关，而不是把"标不标"写死。
+        self.load_labels = True
+
         # 左下角坐标系指示器
         from .axis_indicator import AxisIndicator
         self.axis_indicator = AxisIndicator(self)
@@ -742,6 +751,49 @@ class Viewport(QWidget):
         except Exception:      # 图例画不出来不该让整个视口刷新失败
             pass
 
+    def _member_ink(self) -> tuple[str, str]:
+        """杆件本体色与棱边色，按底色深浅各给一套。
+
+        深底上那套钢灰蓝画到浅底上会发灰发糊；反过来浅底那套画在深底上
+        又太亮，抢走结果的注意力。同一个颜色配两种底色，总有一边是错的。
+        """
+        return (("#6e8098", "#3c4a5a") if self._is_light_bg()
+                else (theme.MEMBER, "#4a5764"))
+
+    def _add_members(self, frame):
+        """画杆件本体。**形状始终是圆管**——粗细和形态不随截面变，
+        改的只有随底色深浅走的本体色。返回网格，空模型返回 None。"""
+        body, _edge = self._member_ink()
+        mesh = scene.member_tubes(frame)
+        if mesh.n_points:
+            self.plotter.add_mesh(mesh, color=body, smooth_shading=True,
+                                  pbr=True, metallic=0.28, roughness=0.58,
+                                  ambient=0.18, diffuse=0.82)
+        return mesh
+
+    def set_contour_palette(self, palette: str) -> bool:
+        """切换云图色系。返回是否真的变了，省得上层白刷一次视口。"""
+        if palette not in theme.CONTOUR_PALETTES or palette == self.contour_palette:
+            return False
+        self.contour_palette = palette
+        return True
+
+    def set_contour_shading(self, on: bool) -> bool:
+        """云图打不打光。关掉是平涂，颜色和色标严格一一对应。"""
+        on = bool(on)
+        if on == self.contour_shading:
+            return False
+        self.contour_shading = on
+        return True
+
+    def set_load_labels(self, on: bool) -> bool:
+        """荷载旁边标不标数值。"""
+        on = bool(on)
+        if on == self.load_labels:
+            return False
+        self.load_labels = on
+        return True
+
     def show_model(self, frame, case: str | None = None,
                    supports: bool = True, loads: bool = True) -> dict:
         """求解前的模型视图。"""
@@ -751,12 +803,7 @@ class Viewport(QWidget):
             return {"render_skipped": "QT_QPA_PLATFORM=offscreen"}
         self.clear()
         info: dict = {}
-        tubes = scene.member_tubes(frame)
-        if tubes.n_points:
-            self.plotter.add_mesh(
-                tubes, color=theme.MEMBER, smooth_shading=True,
-                pbr=True, metallic=0.28, roughness=0.58,
-                ambient=0.18, diffuse=0.82)
+        tubes = self._add_members(frame)
         links = scene.rigid_link_polylines(frame)
         if links.n_points:
             self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
@@ -780,8 +827,8 @@ class Viewport(QWidget):
                     shape=None, always_visible=True, show_points=False)
             info["supports"] = {k: 1 for k in glyphs}
         legend: list[tuple[str, str]] = []
-        if tubes.n_points:
-            legend.append((_LEGEND_TEXT["杆件"], theme.MEMBER))
+        if tubes is not None and tubes.n_points:
+            legend.append((_LEGEND_TEXT["杆件"], self._member_ink()[0]))
         if hinges.n_points:
             legend.append((_LEGEND_TEXT["杆端铰"], theme.HINGE))
         if supports:
@@ -800,7 +847,7 @@ class Viewport(QWidget):
             # **数值直接标在旁边。** 四类荷载用四种颜色跑不过 all-pairs 校验，
             # 而且颜色只回答"哪一类"、回答不了"多大"——后者才是工程师要看的。
             points, texts = scene.load_labels(frame, case)
-            if points:
+            if points and self.load_labels:
                 self.plotter.add_point_labels(
                     # 文字用文字色，不用系列色：标注是说明，不是又一个分类。
                     # 力矩标成橙色而箭头是绿色，本身就自相矛盾。
@@ -913,18 +960,23 @@ class Viewport(QWidget):
         clim = scene.contour_clim(line, component, percentile=percentile)
         clipped = scene.clim_is_clipped(line, component, clim)
         n = scene.contour_levels(levels)
-        base = (theme.sequential_cmap() if component in {"V", "M"}
-                else theme.diverging_cmap())
+        base = theme.palette_cmap(self.contour_palette, component)
         cmap = theme.banded(base, n)
         tubes = scene.banded_tubes(
             line, component, clim, n,
             radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame))
+        # 打光与读数是一对矛盾：打了光，同一个数值在向光面和背光面是两个
+        # 颜色，而看图的人正是拿杆件上的颜色去对色标读数的；完全不打光，
+        # 圆管就是一条扁色带，看不出这是根三维杆件。
+        #
+        # 折中是**高环境光、低漫反射、几乎不要高光**：形体还在，色偏很小。
+        # Abaqus 的云图也是打光的。要精确读数可以关掉（set_contour_shading）。
+        shade = dict(lighting=True, ambient=0.66, diffuse=0.34,
+                     specular=0.05, specular_power=20, smooth_shading=True)
         self.plotter.add_mesh(
             tubes, scalars=component + scene.BAND_SUFFIX,
-            cmap=cmap, clim=clim, n_colors=n,
-            # **不打光。** 打了光同一个数值在向光面和背光面是两个颜色，
-            # 而看图的人正是拿模型上的颜色去对色标读数的——阴影会让他读错一级。
-            lighting=False, show_scalar_bar=False)
+            cmap=cmap, clim=clim, n_colors=n, show_scalar_bar=False,
+            **(shade if self.contour_shading else {"lighting": False}))
         # 色标竖着放在右侧：横放时 VTK 把标题和刻度挤在同一条带上（实测重叠），
         # 而且十几级的刻度横向根本排不开。
         #
@@ -945,6 +997,8 @@ class Viewport(QWidget):
                 self.plotter.add_mesh(over, color=theme.HIGHLIGHT,
                                       lighting=False, show_scalar_bar=False,
                                       name="_contour_out_of_range")
+        self._contour_last = dict(palette=self.contour_palette,
+                                  shading=self.contour_shading, bands=n)
         # 标题自己画。交给 VTK 画会和最上面那个刻度撞在一起。
         # 披露文字用 ASCII：VTK 的色标与文字用自己的字体引擎，默认字体没有
         # 中文字形（实测中文渲染成方块）。写成方块等于没披露。

@@ -77,6 +77,7 @@ class WorkflowBar(QWidget):
                 row.addWidget(arrow)
             button = QPushButton(text, self)
             button.setProperty("workflowStage", stage)
+            button.setProperty("i18nSelfManaged", True)   # 见 i18n.retranslate
             button.setProperty("workflowState", "pending")
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(
@@ -84,10 +85,12 @@ class WorkflowBar(QWidget):
             row.addWidget(button)
             self.buttons[stage] = button
         self.guidance = QLabel("", self)
+        self.guidance.setProperty("i18nSelfManaged", True)
         self.guidance.setProperty("workflow", "guidance")
         self.guidance.setMinimumWidth(260)
         row.addWidget(self.guidance, 1)
         self.next_button = QPushButton("开始建模", self)
+        self.next_button.setProperty("i18nSelfManaged", True)
         self.next_button.setProperty("role", "primary")
         self.next_button.clicked.connect(self._request_next)
         row.addWidget(self.next_button)
@@ -98,7 +101,10 @@ class WorkflowBar(QWidget):
     def _set_state(button: QPushButton, state: str, suffix: str = "") -> None:
         base = next(text for stage, text in WorkflowBar.STAGES
                     if stage == button.property("workflowStage"))
-        button.setText(base + suffix)
+        from . import i18n
+        # 步骤名要**每次重刷时现翻**：后缀（✓ / !3）是算出来的，
+        # 把翻好的整串缓存起来，下一次状态变了就还原成上一次的语言。
+        button.setText(i18n.tr(base) + suffix)
         button.setProperty("workflowState", state)
         button.style().unpolish(button)
         button.style().polish(button)
@@ -145,9 +151,10 @@ class WorkflowBar(QWidget):
             elif state == "pending":
                 tip += "（可直接点击跳到该步）"
             button.setToolTip(tip)
-        self.guidance.setText(message)
+        from . import i18n
+        self.guidance.setText(i18n.tr(message))
         self.guidance.setToolTip("\n".join(status.validation_errors))
-        self.next_button.setText(action)
+        self.next_button.setText(i18n.tr(action))
 
     def _request_next(self) -> None:
         self.stage_requested.emit(self._next_stage)

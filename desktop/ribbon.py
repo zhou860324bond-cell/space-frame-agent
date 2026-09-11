@@ -253,6 +253,9 @@ class QuickBar(QWidget):
 
         row.addWidget(QLabel("工况"))
         self.cases = QComboBox(self)
+        # 工况名是用户自己起的，是**内容不是界面**：真有人把工况叫"全部"，
+        # 切英文时也不能把它翻成 "All"。让 i18n 绕开这一个下拉。
+        self.cases.setProperty("i18nSelfManaged", True)
         self.cases.setMinimumWidth(132)
         self.cases.setToolTip("切换显示哪个荷载工况或组合的结果")
         self.cases.currentTextChanged.connect(self._on_case)
@@ -383,8 +386,11 @@ def build(window) -> Ribbon:
     g.add_large(a["bg_settings"])
     g = p.group("参考显示")
     g.add_large(a["grid_floor"])
+    g.add_small(a["load_labels"])
     g = p.group("视角管理")
     g.add_small(a["camera"])
+    g = p.group("语言")
+    g.add_small(a["lang"])
 
     # ========== 项目 ==========
     p = r.page("项目")

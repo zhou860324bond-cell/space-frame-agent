@@ -101,6 +101,7 @@ def test_result_panel_controls_are_wired_to_contour_options(qt_app):
     window.results.levels.setCurrentText("8 级")
     options = window.result_display_options
     assert options == {"percentile": None, "sign": "positive", "levels": 8,
+                       "palette": "rainbow", "shading": True,
                        "overlay_deformed": True, "show_extrema": True}
 
 
@@ -185,3 +186,14 @@ def test_a_section_without_fibre_distances_refuses_the_stress_contour(qt_app):
     diagram = member_diagram(frame, sol, mid, sol.primary, stations=5)
     with pytest.raises(StressUnavailable):
         scene.member_scalar(frame, frame.members[mid], diagram, scene.STRESS)
+
+
+def test_the_palette_and_shading_controls_reach_the_viewport(qt_app):
+    """色系和"立体"是显示选项，必须一路走到视口，不能停在面板上。"""
+    window = MainWindow(solved())
+    window.results.palette.setCurrentIndex(
+        window.results.palette.findData("diverging"))
+    window.results.shading.setChecked(False)
+    window.set_mode("云图")
+    assert window.viewport.contour_palette == "diverging"
+    assert window.viewport.contour_shading is False

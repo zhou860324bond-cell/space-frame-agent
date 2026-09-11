@@ -130,6 +130,25 @@ class ResultPanel(QWidget):
             "云图分成几级色块。连续渐变只看得出「这边比那边红」，"
             "分级之后每一段颜色对应色标上一个可读的区间。")
         controls.addWidget(self.levels)
+        controls.addWidget(QLabel("色系"))
+        self.palette = QComboBox(self)
+        from . import theme as _theme
+        for key, label in _theme.CONTOUR_PALETTES.items():
+            self.palette.addItem(label, key)
+        self.palette.setCurrentIndex(
+            max(0, self.palette.findData(_theme.DEFAULT_PALETTE)))
+        self.palette.setToolTip(
+            "彩虹谱是 Abaqus 的经典色序，相邻两级色差最大、最好分。\n"
+            "代价是明度不单调：色盲用户和黑白打印读不出高低顺序，\n"
+            "那两种场合用「蓝—灰—红」或「单蓝」。")
+        controls.addWidget(self.palette)
+        self.shading = QCheckBox("立体", self)
+        self.shading.setChecked(True)
+        self.shading.setToolTip(
+            "给云图打一层柔和的光，圆管看得出是圆的。\n"
+            "要严格照色标读数就关掉：打光后同一个数值在向光面和背光面\n"
+            "会差出一点色差。")
+        controls.addWidget(self.shading)
         controls.addWidget(QLabel("符号"))
         self.sign_mode = QComboBox(self)
         self.sign_mode.addItem("全部", "all")
@@ -149,8 +168,9 @@ class ResultPanel(QWidget):
         controls.addWidget(self.btn_stress)
         controls.addStretch(1)
         box.addLayout(controls)
-        for widget in (self.range_mode, self.sign_mode, self.levels):
+        for widget in (self.range_mode, self.sign_mode, self.levels, self.palette):
             widget.currentIndexChanged.connect(self._emit_display_options)
+        self.shading.stateChanged.connect(self._emit_display_options)
         self.overlay_deformed.stateChanged.connect(self._emit_display_options)
         self.show_extrema.stateChanged.connect(self._emit_display_options)
 
@@ -168,6 +188,8 @@ class ResultPanel(QWidget):
         return {"percentile": self.range_mode.currentData(),
                 "sign": self.sign_mode.currentData(),
                 "levels": self.levels.currentData(),
+                "palette": self.palette.currentData(),
+                "shading": self.shading.isChecked(),
                 "overlay_deformed": self.overlay_deformed.isChecked(),
                 "show_extrema": self.show_extrema.isChecked()}
 

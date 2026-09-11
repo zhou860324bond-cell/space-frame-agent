@@ -532,10 +532,52 @@ def test_the_contour_is_drawn_from_banded_cell_colours(qt_app):
     contour = calls[0]
     assert contour["scalars"] == "Mz" + scene.BAND_SUFFIX
     assert contour["n_colors"] == 8
-    assert contour["lighting"] is False, "打了光颜色就对不上色标"
     mesh = contour["mesh"]
     assert contour["scalars"] in mesh.cell_data
     assert contour["scalars"] not in mesh.point_data
+    # 默认打柔和的光（圆管得看得出是圆的），但环境光必须压倒漫反射，
+    # 否则同一个数值在向光面和背光面差一级颜色，色标就读不准了。
+    assert contour["lighting"] is True
+    assert contour["ambient"] > contour["diffuse"]
+
+
+def test_turning_off_contour_shading_gives_flat_colour(qt_app):
+    """要精确对色标读数时可以关掉打光，这时必须是纯平涂。"""
+    window = solved(MainWindow(built()))
+    calls: list[dict] = []
+    window.viewport.plotter.add_mesh = lambda mesh=None, **kw: calls.append(kw)
+    import desktop.viewport as vp
+
+    assert window.viewport.set_contour_shading(False) is True
+    assert window.viewport.set_contour_shading(False) is False, "没变就不该说变了"
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        window.viewport.show_contour(window.session.frame,
+                                     window.session.solution, "D", "Mz")
+    finally:
+        vp.CAN_RENDER = was
+    assert calls[0]["lighting"] is False
+    assert "ambient" not in calls[0]
+
+
+def test_the_contour_palette_defaults_to_the_abaqus_rainbow(qt_app):
+    """云图默认用 Abaqus 式彩虹谱，并且能换回蓝—灰—红那套。
+
+    换色系是**显示选项**，不该改动任何数值：这里只认色标本身变了没有。
+    """
+    from desktop import theme
+
+    window = solved(MainWindow(built()))
+    assert window.viewport.contour_palette == "rainbow"
+    rainbow = theme.palette_cmap("rainbow")
+    diverging = theme.palette_cmap("diverging", "Mz")
+    assert rainbow(0.0) != diverging(0.0)
+    assert window.viewport.set_contour_palette("diverging") is True
+    assert window.viewport.set_contour_palette("diverging") is False
+    assert window.viewport.set_contour_palette("不存在的色系") is False
+    # 合量定义上非负，发散色标的中点代表零，在它身上没有意义——自动退回顺序色标
+    assert theme.palette_cmap("diverging", "M")(0.5) == theme.sequential_cmap()(0.5)
 
 
 def test_the_stress_contour_is_refused_at_the_click_not_after_switching(
