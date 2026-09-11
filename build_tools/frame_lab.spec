@@ -70,6 +70,14 @@ EXCLUDES = [
     # 而且栈顶指向 scipy，跟这份排除清单看上去毫无关系。
     "PyQt5", "PyQt6", "PySide2", "shiboken2",
     "IPython", "jupyter", "notebook", "nbformat",
+    # pyvista 的网页/笔记本后端。桌面端走的是 Qt，用不到，装也没装。
+    # 不排的话构建日志里会刷一条吓人的 WARNING：
+    #   Failed to collect submodules for 'pyvista.trame' ... No module named 'trame'
+    # 那条是**无害的**——collect_all 逐个试探子模块，探到没装的就跳过。
+    # 但构建日志里一条大写 WARNING 足以让人停下来以为出事了，
+    # 明确排掉比让人每次重新判断一遍划算。
+    "trame", "trame_vtk", "trame_vuetify", "ipywidgets", "jupyter_core",
+    "pyvista.trame", "pyvista.jupyter",
 ]
 # **python-docx 要留着。** 它会把 lxml 一起拖进来，但那是十几兆，
 # 相对七百多兆的包可以忽略；排掉的代价是界面上「报告」按钮点下去
