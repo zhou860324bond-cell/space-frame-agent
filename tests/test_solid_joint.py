@@ -624,3 +624,42 @@ def test_gmsh_generates_positive_c3d10_and_cut_faces_when_available():
         _B, det = __import__("solid3d")._b_matrix(
             mesh.nodes[conn], np.full(4, 0.25))
         assert det > 0.0
+
+
+def test_a_stable_but_wobbly_sequence_is_not_called_inconclusive():
+    """非结构网格每档独立重剖分，已经收敛的问题峰值也会抖零点几个百分点。
+
+    这三个数是带孔板的**实测值**（2.5 / 1.8 / 1.2 mm 三档）：明明稳得很，
+    但"逐次变化逐档缩小"不成立——先降后升。判据只会报 inconclusive，
+    于是一个已经验证过的算例反而拿不到结论。所以补了"全程稳定"这条通道。
+    """
+    got = sj.diagnose_peak_convergence(
+        _levels([2.5, 1.8, 1.2], [2.614, 2.609, 2.620]))
+    assert got["verdict"] == "converging"
+    assert got["value_span"] < 0.01
+    assert "散布" in got["reason"]
+
+
+def test_never_call_it_converged_without_actually_refining_the_mesh():
+    """**没真的细化过网格，就没有资格说收敛。**
+
+    三档几乎一样粗的网格当然彼此接近，那只说明它们一样粗，不说明峰值有极限。
+    这和"只比最后两档"是同一类错误的两个面：都是拿一个太弱的证据下结论。
+    """
+    got = sj.diagnose_peak_convergence(_levels([2.0, 1.9, 1.8],
+                                               [100.0, 101.0, 100.5]))
+    assert got["verdict"] == "inconclusive"
+    assert "没有真正细化" in got["reason"]
+
+
+def test_the_stable_channel_does_not_let_a_singular_peak_through():
+    """新通道不能把奇异问题放进来。
+
+    σ ~ h^(-λ) 在两倍细化下的散布远大于容差；而且纯幂律是单调上升、逐次变化
+    不缩小的，发散判据先拦掉它。两道门都试一遍。
+    """
+    for lam in (0.1, 0.2, 0.3, 0.5):
+        sizes = [8.0, 4.0, 2.0, 1.0]
+        got = sj.diagnose_peak_convergence(
+            _levels(sizes, [100.0 * h ** -lam for h in sizes]))
+        assert got["verdict"] == "diverging", lam

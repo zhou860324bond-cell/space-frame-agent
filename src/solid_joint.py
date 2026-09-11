@@ -183,6 +183,11 @@ def _mesh_reference_reason(spec: JointSpec) -> str:
     return "参考尺寸取自实心圆直径的 1/10。"
 
 
+# "全程稳定"通道要求的最小细化倍数。不设这道门槛的话，三档几乎一样粗的网格
+# 也会因为散布小而被判成收敛——那等于什么都没验。
+_STABLE_REFINEMENT = 2.0
+
+
 def diagnose_peak_convergence(meshes: list[dict[str, Any]],
                               key: str = "max_abs_principal_mpa",
                               tolerance: float = 0.05) -> dict[str, Any]:
@@ -196,6 +201,10 @@ def diagnose_peak_convergence(meshes: list[dict[str, Any]],
     三档以上才能分辨这件事：真收敛时逐次变化会**逐档变小**（大致等比缩小），
     发散时逐次变化不缩小甚至变大，且峰值单调上升。同时用
     ``log(sigma) ~ -lambda * log(h)`` 拟合出指数：lambda 明显为正就是奇异特征。
+
+    还有一条"全程稳定"的通道，见下面 ``span`` 那一段：非结构网格每档独立重剖分，
+    已经收敛的问题峰值也会抖动零点几个百分点，"逐次变化逐档缩小"这个判据
+    反而不成立。
 
     返回 verdict 之一：``converging`` / ``diverging`` / ``inconclusive``。
     """
@@ -213,6 +222,8 @@ def diagnose_peak_convergence(meshes: list[dict[str, Any]],
 
     changes = [(values[i] - values[i - 1]) / abs(values[i])
                for i in range(1, len(values))]
+    span = (max(values) - min(values)) / max(abs(v) for v in values)
+    refinement = sizes[0] / sizes[-1] if sizes[-1] > 0 else 1.0
     monotone_up = all(change > 0.0 for change in changes)
     last, prev = abs(changes[-1]), abs(changes[-2])
     shrinking = last < 0.6 * prev
@@ -230,16 +241,37 @@ def diagnose_peak_convergence(meshes: list[dict[str, Any]],
             f"峰值随网格加密单调上升且逐次变化不缩小"
             f"（{prev:.1%} → {last:.1%}），log-log 斜率 {slope:.3f}；"
             "这是应力奇异点的特征，峰值不存在有限极限")
+    elif refinement < _STABLE_REFINEMENT:
+        # **没真的细化过网格，就没有资格说收敛。** 三档几乎一样粗的网格当然
+        # 彼此接近，那只说明它们一样粗，不说明峰值有极限。这一条和上面那条
+        # "只比最后两档"是同一类错误的两个面。
+        verdict, reason = "inconclusive", (
+            f"最粗与最细只差 {refinement:.2f} 倍（不足 {_STABLE_REFINEMENT:g} 倍），"
+            "网格没有真正细化过，不能判定收敛")
     elif last <= tolerance and shrinking:
         verdict, reason = "converging", (
             f"逐次变化在缩小（{prev:.1%} → {last:.1%}）且最后一档 "
             f"≤ {tolerance:.0%}")
+    elif span <= tolerance and refinement >= _STABLE_REFINEMENT:
+        # 非结构网格每档是独立重新剖分的，峰值会有零点几个百分点的抖动，
+        # 于是"逐次变化逐档缩小"这个判据在**已经收敛**的问题上反而不成立
+        # ——带孔板实测 2.614 → 2.609 → 2.620 就是这样，明明稳得很，
+        # 判据却只能报 inconclusive。
+        #
+        # 补一条"全程稳定"的通道：整个细化区间内的散布都在容差以内，
+        # 且网格确实细了一倍以上。这不会把奇异问题放进来：sigma ~ h^(-λ)
+        # 在两倍细化下的散布通常远大于容差；何况纯幂律是单调上升且逐次变化
+        # 不缩小的，上面那条发散判据先把它拦掉了。
+        verdict, reason = "converging", (
+            f"网格细化 {refinement:.1f} 倍，全部档位的峰值散布 {span:.1%} "
+            f"≤ {tolerance:.0%}（逐次变化非单调，是非结构网格重剖分的抖动）")
     else:
         verdict, reason = "inconclusive", (
             f"逐次变化 {prev:.1%} → {last:.1%}，既不满足收敛判据也不构成"
             "明确的发散特征；需要更多网格档位")
     return {"verdict": verdict, "reason": reason, "levels": len(rows),
             "relative_changes": [float(c) for c in changes],
+            "value_span": float(span), "refinement_ratio": float(refinement),
             "log_log_slope": float(slope), "tolerance": float(tolerance)}
 
 
