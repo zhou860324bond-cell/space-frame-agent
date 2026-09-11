@@ -28,6 +28,7 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MANUAL = ROOT / "docs" / "使用手册.md"
+TUTORIAL = ROOT / "docs" / "大学生教程.md"
 REPORT = ROOT / "docs" / "课程报告.md"
 GOLD = ROOT / "docs" / "BETA_0.1_GOLD_CASES.md"
 README = ROOT / "README.md"
@@ -83,7 +84,8 @@ def test_manual_exists():
 
 @pytest.mark.parametrize("name", sorted({
     part.strip()
-    for whole in re.findall(r"「([^」]+)」", _text(MANUAL))
+    for doc in (MANUAL, TUTORIAL)
+    for whole in re.findall(r"「([^」]+)」", _text(doc))
     for part in whole.split("→")
     if part.strip()
 }))
@@ -98,10 +100,15 @@ def test_manual_ui_names_still_exist_in_the_code(name):
         "要么界面改了名而手册没跟上，要么手册写错了——两种都得改。")
 
 
-@pytest.mark.parametrize("cited", _cited_paths(_text(MANUAL)))
+@pytest.mark.parametrize("cited", sorted(set(
+    _cited_paths(_text(MANUAL)) + _cited_paths(_text(TUTORIAL)))))
 def test_manual_file_paths_still_exist(cited):
     assert (ROOT / cited).exists(), \
-        f"《使用手册》让读者去找 {cited}，但这个文件不在仓库里"
+        f"手册或教程让读者去找 {cited}，但这个文件不在仓库里"
+
+
+def test_the_tutorial_exists():
+    assert TUTORIAL.exists(), "《大学生教程》不在了；它是交付物之一，不能删"
 
 
 def test_manual_screenshots_are_all_present():

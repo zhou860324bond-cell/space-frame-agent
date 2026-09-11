@@ -52,6 +52,14 @@ JOBS = [
         "toc_depth": 2,
     },
     {
+        "source": "大学生教程.md",
+        "title": "空间刚架智能计算 Agent 上手教程",
+        "subtitle": "大学生版 ｜ 功能全景与判读要点",
+        "heading": "空间刚架智能计算 Agent · 上手教程（大学生版）",
+        "lead": None,
+        "toc_depth": 2,
+    },
+    {
         "source": "使用手册.md",
         "title": "空间刚架智能计算 Agent 使用手册",
         "subtitle": "从零开始的操作指南",
