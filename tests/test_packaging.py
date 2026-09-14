@@ -46,6 +46,12 @@ def test_the_packaging_metadata_is_readable_and_declares_a_python_floor():
     assert floor == f">={major}.{minor}", (
         "pyproject 的 Python 下限要和自检里的 MIN_PYTHON 一致，"
         "否则装得上却过不了自检")
+    configured = set(data["tool"]["setuptools"]["py-modules"])
+    actual = {path.stem for path in (ROOT / "src").glob("*.py")}
+    assert configured == actual, (
+        "pyproject 的 py-modules 与 src 不一致；缺少 "
+        f"{sorted(actual - configured)}，多出 {sorted(configured - actual)}")
+    assert data["tool"]["setuptools"]["package-dir"].get("") == "src"
 
 
 def test_every_runtime_import_is_declared_somewhere():
@@ -59,8 +65,10 @@ def test_every_runtime_import_is_declared_somewhere():
     for group in data["project"]["optional-dependencies"].values():
         declared += " " + " ".join(group)
     declared = declared.lower()
-    for package in ("numpy", "scipy", "jsonschema", "matplotlib",
-                    "pyvista", "pyside6", "gmsh", "streamlit"):
+    for package in ("numpy", "scipy", "jsonschema", "matplotlib", "pillow",
+                    "pyvista", "pyside6", "gmsh", "streamlit", "plotly",
+                    "openai", "anthropic", "mcp", "python-docx",
+                    "pypandoc_binary"):
         assert package in declared, f"{package} 没有出现在 pyproject 的依赖里"
 
 

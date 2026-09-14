@@ -34,8 +34,8 @@ from viz_symbols import classify_support, model_size            # noqa: E402
 
 # 分析梁只表达中心线与连续实体感，不冒充真实截面。细长比例接近 CAE 梁单元，
 # 避免高饱和粗圆管产生“塑料玩具”观感；云图仍有足够表面积显示颜色。
-TUBE_RATIO = 0.0032
-# 云图用更粗的管。**这不是审美**：0.0032 的管在整屏视角下直径只有几个像素，
+TUBE_RATIO = 0.0055
+# 云图用更粗的管。**这不是审美**：普通模型管在整屏视角下仍只有几个像素，
 # 一根杆件上的几级色块挤成一条细缝，分级就白分了。模型视图仍用细管，
 # 那里要看的是几何不是数值。
 #
@@ -48,26 +48,25 @@ CONTOUR_TUBE_RATIO = 0.0145
 # 支座符号比管子大，但不该大到反客为主。原值 0.020 是管半径的五倍，
 # 加上近白的颜色，支座成了画面上最抢眼的东西。
 SYMBOL_RATIO = 0.0145   # 配合细圆杆，支座可辨认但不压过结构主体
-# 每根杆件沿长度取几个点。云图和变形都靠它，取太少弯矩渐变会变成折线
-STATIONS = 21
-# 挠度积分的分辨率。画形状 21 个点就够，但做两次梯形积分不够——
+# 每根杆件沿长度取几个**显示点**。这不是分析网格：求解仍使用原来的梁单元，
+# 这里只把解析恢复出来的跨内变形和内力画得更细。21 点在大窗口里已经能看，
+# 但斜视角下色带边界和变形曲线仍有轻微折线感；41 点基本消除它，代价只在
+# VTK 网格生成，远小于把分析单元真的剖细。
+STATIONS = 41
+# 挠度积分的分辨率。显示用 41 个点，但做两次梯形积分仍不够——
 # 分开取，画得快、算得准
 DEFLECTION_STATIONS = 201
 
 
 def preferred_view(frame) -> str:
-    """平面结构返回其正投影视图，空间结构返回等轴测。"""
-    if frame is None or not frame.nodes:
-        return "isometric"
-    coords = np.array([node.xyz for node in frame.nodes.values()], dtype=float)
-    extents = np.ptp(coords, axis=0)
-    span = float(extents.max())
-    if span <= 1e-12:
-        return "isometric"
-    flat_axis = int(np.argmin(extents))
-    if extents[flat_axis] > span * 1e-8:
-        return "isometric"
-    return ("yz", "xz", "xy")[flat_axis]
+    """自动视角采用带透视的等轴测，平面模型也保留可见厚度。
+
+    旧逻辑会把平面刚架自动转到严格正投影。它对核对几何最直接，却把圆管、
+    支座和云图的所有深度压成零，模型因此像二维动画片。工具栏仍保留前/侧/顶
+    三个正投影视图，用户要精确核对轴线时随时可切；“自动/适合窗口”则优先
+    给出能读出实体感的工程透视图。
+    """
+    return "isometric"
 
 
 def auto_deformation_scale(frame, solution, case: str,
@@ -204,7 +203,7 @@ def member_polylines(frame, solution=None, case: str | None = None,
 
         if scale and solution is not None:
             # 挠度用**高分辨率**积分再插到显示点上。两件事的分辨率要求不同：
-            # 21 个点足够画出一条光滑的曲线，但拿 21 个点做两次梯形积分，
+            # 41 个点足够画出一条光滑的曲线，但拿显示点做两次梯形积分，
             # 跨中挠度会差 0.4%——形状看着没问题，数是错的
             x, recovered = member_displacement(
                 frame, solution, mid, name, DEFLECTION_STATIONS)

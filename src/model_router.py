@@ -94,6 +94,9 @@ class _OpenAICompatibleProvider:
     def __repr__(self) -> str:
         return f"OpenAICompatibleProvider(model={self._model!r})"
 
+    def set_temperature(self, value: float) -> None:
+        self._temperature = min(1.0, max(0.0, float(value)))
+
     def complete(self, messages: list[dict], tools: list[dict]) -> dict:
         response = self._client.chat.completions.create(
             model=self._model, messages=messages, tools=tools,
@@ -222,6 +225,14 @@ class ModelRouter:
     def fallback_count(self) -> int:
         """累计降级次数（降级后成功的调用数）。"""
         return self._fallback_count
+
+    def set_temperature(self, value: float) -> None:
+        """同步更新尚未创建和已经创建的全部后端。"""
+        temperature = min(1.0, max(0.0, float(value)))
+        for config in self._configs:
+            config.temperature = temperature
+        for provider in self._providers.values():
+            provider.set_temperature(temperature)
 
     def last_call_summary(self) -> str:
         """最近一次调用的摘要，用于界面展示。"""

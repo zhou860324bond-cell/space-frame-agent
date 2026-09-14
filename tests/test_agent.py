@@ -5,10 +5,11 @@
 """
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from agent import Session, ScriptedProvider, TOOLS, run_turn
+from agent import DeepSeekProvider, Session, ScriptedProvider, TOOLS, run_turn
 
 MATERIALS = [{"name": "STEEL", "E": 2.1e11, "nu": 0.3}]
 SECTIONS = [
@@ -23,6 +24,37 @@ def call(cid, name, **args):
 
 def text(content):
     return {"content": content}
+
+
+def test_deepseek_stream_reassembles_fragmented_tool_calls():
+    chunks = [
+        SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=SimpleNamespace(
+            content=None, tool_calls=[SimpleNamespace(
+                index=0, id="call-1", function=SimpleNamespace(
+                    name="solve_", arguments='{"analysis":'))]))]),
+        SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=SimpleNamespace(
+            content=None, tool_calls=[SimpleNamespace(
+                index=0, id=None, function=SimpleNamespace(
+                    name="model", arguments='"linear"}'))]))]),
+    ]
+
+    class Completions:
+        def create(self, **kwargs):
+            assert kwargs["stream"] is True
+            return chunks
+
+    provider = DeepSeekProvider.__new__(DeepSeekProvider)
+    provider._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions()))
+    provider._model = "test"
+    provider._temperature = 0.18
+    provider.usage = {"prompt_tokens": 0, "completion_tokens": 0,
+                      "cache_hit_tokens": 0, "calls": 0}
+
+    reply = provider.complete_stream([], [], None)
+    assert reply["tool_calls"] == [{
+        "id": "call-1", "name": "solve_model",
+        "arguments": {"analysis": "linear"}}]
 
 
 # --------------------------------------------------------------- 工具本身

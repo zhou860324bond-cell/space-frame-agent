@@ -130,7 +130,7 @@ def test_the_key_is_never_shown(qt_app, monkeypatch):
     monkeypatch.setattr(credentials, "load_api_key", lambda *a, **k: secret)
     w = MainWindow()
     w.chat._refresh_status()
-    text = w.chat.lbl_status.text()
+    text = w.chat.lbl_status.text() + w.chat.lbl_status.toolTip()
     assert secret not in text
     assert credentials.fingerprint(secret) in text, "但要能看出换没换钥匙"
 
@@ -167,8 +167,9 @@ def test_the_tool_calls_are_shown(qt_app, monkeypatch):
     w.chat.send()
     assert w.runner.wait(60000)
     shown = w.chat.view.toPlainText()
-    for tool in ("generate_portal_frame", "set_load_cases", "solve_model"):
-        assert tool in shown, f"{tool} 没显示出来"
+    for action in ("生成门式刚架", "设置荷载工况", "运行结构求解"):
+        assert action in shown, f"{action} 没显示出来"
+    assert "generate_portal_frame" not in shown, "内部函数名不应占据用户界面"
 
 
 def test_the_input_is_locked_while_thinking(qt_app):
@@ -224,6 +225,73 @@ def test_turn_latency_breakdown_is_visible(qt_app):
     })
     w.chat._update_call_status(result)
     shown = w.chat.lbl_call_status.text()
-    assert "模型等待 5.0s" in shown
-    assert "工具 0.14s" in shown
+    assert "模型等待 5.0 秒" in shown
+    assert "工具 0.14 秒" in shown
     assert "4 次模型往返" in shown
+
+
+def test_agent_panel_exposes_response_modes_and_live_text(qt_app):
+    w = MainWindow()
+    assert w.chat.profile.currentData() == "balanced"
+    assert [w.chat.profile.itemData(i) for i in range(w.chat.profile.count())] == [
+        "fast", "balanced", "explore"]
+
+    w.chat._tool_done("__assistant_delta__", "先检查模型", True)
+    assert not w.chat.live_response.isHidden()
+    assert w.chat.lbl_stream.text() == "先检查模型"
+
+
+def test_switching_agent_mode_updates_context_without_rebuilding_model(qt_app):
+    from conversation import Conversation
+    from agent import ScriptedProvider
+
+    w = MainWindow()
+    w.chat.conversation = Conversation(ScriptedProvider([]), session=w.session)
+    session_before = w.chat.conversation.session
+    w.chat.profile.setCurrentIndex(w.chat.profile.findData("fast"))
+    assert w.chat.conversation.session is session_before
+    assert w.chat.conversation.keep_turns == 3
+    assert w.chat.conversation.context_chars == 12_000
+
+
+def test_next_step_suggestions_follow_the_model_state(qt_app):
+    w = MainWindow()
+    empty_labels = [button.text() for button in w.chat.suggestion_buttons]
+    assert "门式刚架" not in "".join(empty_labels)
+    assert empty_labels == ["参数化建模", "从图纸开始", "手动建模步骤"]
+
+    w.session.add_nodes([[0, 0, 0], [6, 0, 0]])
+    w.session.add_members([[1, 2]])
+    w.chat.refresh_suggestions()
+    draft_labels = [button.text() for button in w.chat.suggestion_buttons
+                    if not button.isHidden()]
+    assert "补全材料截面" in draft_labels
+    assert "设置边界条件" in draft_labels
+
+
+def test_next_step_suggestions_follow_the_selected_engineering_object(qt_app):
+    w = MainWindow()
+    w.session.add_nodes([[0, 0, 0], [6, 0, 0]])
+    w.session.add_members([[1, 2]])
+    w.chat.set_workspace_selection("member", 1)
+    labels = [button.text() for button in w.chat.suggestion_buttons
+              if not button.isHidden()]
+    assert labels[0] == "编辑杆件荷载"
+
+
+def test_tool_activity_is_human_readable_without_decorative_symbols(qt_app):
+    w = MainWindow()
+    w.chat._append_tool("solve_model", {}, True)
+    shown = w.chat.view.toPlainText()
+    assert "步骤 1，完成：运行结构求解" in shown
+    assert "阶段：运行分析" in shown
+    assert "solve_model" not in shown
+    assert not any(symbol in shown for symbol in "✓✕⚙●")
+
+
+def test_agent_markdown_noise_is_rendered_as_plain_numbered_content(qt_app):
+    w = MainWindow()
+    w.chat._append_agent("### 结论\n- **模型通过** ✅\n- `solve_model` 已完成")
+    shown = w.chat.view.toPlainText()
+    assert "结论" in shown and "1. 模型通过" in shown
+    assert not any(symbol in shown for symbol in ("###", "**", "`", "✅"))

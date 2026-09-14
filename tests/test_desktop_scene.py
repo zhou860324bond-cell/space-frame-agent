@@ -57,8 +57,8 @@ def beam() -> Session:
 
 # ------------------------------------------------- 几何
 
-def test_planar_models_use_their_true_orthographic_plane_and_3d_uses_iso():
-    assert scene.preferred_view(portal().frame) == "xz"
+def test_auto_view_uses_perspective_iso_even_for_planar_models():
+    assert scene.preferred_view(portal().frame) == "isometric"
     spatial = scene.Frame(nodes={
         1: scene.Node(1, 0.0, 0.0, 0.0),
         2: scene.Node(2, 2.0, 0.0, 0.0),
@@ -66,6 +66,15 @@ def test_planar_models_use_their_true_orthographic_plane_and_3d_uses_iso():
         4: scene.Node(4, 0.0, 0.0, 4.0),
     })
     assert scene.preferred_view(spatial) == "isometric"
+
+
+def test_display_sampling_is_dense_without_refining_the_analysis_mesh():
+    """显示加密和分析剖分是两件事；这一档只改善曲线/色块，不改刚度方程。"""
+    s = beam()
+    assert len(s.frame.members) == 1
+    line = scene.member_polylines(s.frame, s.solution, "D", scalars="Mz")
+    assert line.n_points == scene.STATIONS
+    assert scene.STATIONS >= 41
 
 
 def test_polylines_start_and_end_at_the_real_nodes():

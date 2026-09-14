@@ -12,7 +12,8 @@
 import pytest
 
 from agent import ScriptedProvider, Session
-from conversation import Conversation, check_pairing, tool_message_content
+from conversation import (Conversation, check_pairing, tool_message_content,
+                          tools_for_turn)
 
 MATERIALS = [{"name": "STEEL", "E": 2.1e11, "nu": 0.3, "density": 7850.0}]
 SECTIONS = [{"name": "COLUMN", "A": 0.012, "Iy": 8e-5, "Iz": 2.4e-4, "J": 1e-6},
@@ -237,6 +238,34 @@ def test_common_engineering_commands_do_not_need_a_model_round_trip(
     assert out.metrics["provider_calls"] == 0
     assert provider.seen == []
     assert out.tool_calls[0][0] == expected_tool
+
+
+def test_low_frequency_tool_schemas_are_loaded_only_for_matching_intent():
+    ordinary = {tool["function"]["name"]
+                for tool in tools_for_turn("检查当前模型并求解")}
+    joint = {tool["function"]["name"]
+             for tool in tools_for_turn("继续做节点实体分析")}
+    assert "analyze_joint_solid" not in ordinary
+    assert "analyze_joint_solid" in joint
+    assert len(ordinary) < len(joint) <= 49
+
+
+def test_conversation_uses_streaming_provider_when_available():
+    class StreamingProvider:
+        def complete(self, *_args):
+            raise AssertionError("有流式接口时不应退回完整等待")
+
+        def complete_stream(self, messages, tools, on_text):
+            on_text("正在")
+            on_text("完成")
+            return {"content": "正在完成"}
+
+    chunks = []
+    out = Conversation(StreamingProvider()).ask(
+        "给我一个简短说明", on_text=chunks.append)
+    assert chunks == ["正在", "完成"]
+    assert out.reply == "正在完成"
+    assert out.metrics["tool_schema_count"] < out.metrics["all_tool_count"]
 
 
 # ------------------------------------------------- 其他

@@ -714,7 +714,9 @@ class Viewport(QWidget):
         else:
             self.plotter.enable_parallel_projection()
         getattr(self.plotter, f"view_{name}", self.plotter.view_isometric)()
-        self.plotter.camera.zoom(1.3)
+        # 透视图本身会让近端变大，沿用正投影的 1.3 倍会裁掉柱脚/支座。
+        # 等轴测稍微留白，正投影仍紧凑显示轴线。
+        self.plotter.camera.zoom(1.0 if name == "isometric" else 1.3)
 
     def reset_camera(self) -> None:
         if not CAN_RENDER:
@@ -767,8 +769,8 @@ class Viewport(QWidget):
         mesh = scene.member_tubes(frame)
         if mesh.n_points:
             self.plotter.add_mesh(mesh, color=body, smooth_shading=True,
-                                  pbr=True, metallic=0.28, roughness=0.58,
-                                  ambient=0.18, diffuse=0.82)
+                                  pbr=True, metallic=0.12, roughness=0.50,
+                                  ambient=0.28, diffuse=0.72)
         return mesh
 
     def set_contour_palette(self, palette: str) -> bool:

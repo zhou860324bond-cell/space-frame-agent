@@ -14,7 +14,8 @@ python tools\\build_docx.py
 正文宋体五号、标题黑体、1.5 倍行距、正文首行缩进两字、表格加了边框和表头底纹。
 模板是二进制，直接改模板文件即可，不用动这个脚本。
 
-依赖 pandoc。没装的话脚本会直说，而不是丢一个 FileNotFoundError。
+依赖 pandoc。优先使用系统命令，也支持 `space-frame-agent[docs]` 安装的便携版；
+两者都没有时脚本会直说，而不是丢一个 FileNotFoundError。
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+from zipfile import BadZipFile, ZipFile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
@@ -99,13 +101,39 @@ def strip_front_matter(text: str, heading: str, lead: str | None) -> str:
     return PAGE_BREAK + "\n\n" + "\n".join(out).lstrip("\n")
 
 
-def build(job: dict, *, keep_temp: bool = False) -> pathlib.Path:
+def find_pandoc() -> str:
+    """找到系统 Pandoc，或 pypandoc_binary 随包携带的可执行文件。"""
+    executable = shutil.which("pandoc")
+    if executable:
+        return executable
+    try:
+        import pypandoc
+
+        executable = pypandoc.get_pandoc_path()
+    except (ImportError, OSError):
+        executable = ""
+    if executable:
+        candidate = pathlib.Path(executable)
+        if candidate.is_file():
+            return str(candidate)
+        # pypandoc_binary 在 Windows 上返回不带 .exe 的资源路径。
+        windows_candidate = candidate.with_suffix(".exe")
+        if windows_candidate.is_file():
+            return str(windows_candidate)
+    raise SystemExit(
+        "没找到 pandoc。可执行 pip install -e \".[docs]\"，"
+        "或按 https://pandoc.org/installing.html 安装。")
+
+
+def build(job: dict, pandoc: str, *, keep_temp: bool = False) -> pathlib.Path:
     source = DOCS / job["source"]
     if not source.exists():
         raise SystemExit(f"找不到 {source}——文档被删或改名了，先确认再导出")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     target = OUT_DIR / (source.stem + ".docx")
+    pending = OUT_DIR / (source.stem + ".building.docx")
+    pending.unlink(missing_ok=True)
 
     # pandoc 按**输入文件所在目录**解析图片相对路径，所以临时文件要放在 docs/ 下
     temp = DOCS / f".{source.stem}.docx.md"
@@ -114,7 +142,7 @@ def build(job: dict, *, keep_temp: bool = False) -> pathlib.Path:
                     encoding="utf-8")
 
     cmd = [
-        "pandoc", temp.name, "-o", str(target),
+        pandoc, temp.name, "-o", str(pending),
         "-f", "gfm+raw_attribute",
         f"--reference-doc={TEMPLATE}",
         "--toc", f"--toc-depth={job['toc_depth']}",
@@ -131,7 +159,25 @@ def build(job: dict, *, keep_temp: bool = False) -> pathlib.Path:
             temp.unlink(missing_ok=True)
 
     if proc.returncode != 0:
+        pending.unlink(missing_ok=True)
         raise SystemExit(f"pandoc 失败（退出码 {proc.returncode}）：\n{proc.stderr}")
+    try:
+        with ZipFile(pending) as archive:
+            damaged = archive.testzip()
+            names = set(archive.namelist())
+    except (BadZipFile, OSError) as exc:
+        pending.unlink(missing_ok=True)
+        raise SystemExit(f"Word 临时文件校验失败：{exc}") from exc
+    if damaged or "word/document.xml" not in names:
+        pending.unlink(missing_ok=True)
+        raise SystemExit(
+            f"Word 临时文件结构不完整：{damaged or '缺少 word/document.xml'}")
+    try:
+        pending.replace(target)
+    except PermissionError as exc:
+        raise SystemExit(
+            f"{target.name} 正被 Word 或预览程序占用，旧文件保持不变。\n"
+            f"已生成并校验新版：{pending}\n关闭占用程序后重新运行本脚本即可替换。") from exc
     for line in proc.stderr.splitlines():
         if "Could not fetch resource" in line:
             print(f"  ⚠ {line.strip()}", file=sys.stderr)
@@ -146,18 +192,19 @@ def main() -> None:
 
     if not TEMPLATE.exists():
         raise SystemExit(f"找不到样式模板 {TEMPLATE}")
-    if shutil.which("pandoc") is None:
-        raise SystemExit("没找到 pandoc。装一个再来：https://pandoc.org/installing.html")
+    pandoc = find_pandoc()
 
     stamp = {}
     for job in JOBS:
-        target = build(job, keep_temp=args.keep_temp)
+        target = build(job, pandoc, keep_temp=args.keep_temp)
         size = target.stat().st_size
         stamp[job["source"]] = fingerprint(DOCS / job["source"])
         print(f"已导出 {target.relative_to(ROOT)}（{size / 1024:.0f} KB）")
-    STAMP.write_text(json.dumps(stamp, ensure_ascii=False, indent=2) + "\n",
-                     encoding="utf-8")
-    print(f"\nWord 里打开后按 Ctrl+A、F9 更新一次目录，页码才会填上。")
+    pending_stamp = STAMP.with_name(".来源指纹.building.json")
+    pending_stamp.write_text(
+        json.dumps(stamp, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    pending_stamp.replace(STAMP)
+    print("\nWord 里打开后按 Ctrl+A、F9 更新一次目录，页码才会填上。")
 
 
 if __name__ == "__main__":

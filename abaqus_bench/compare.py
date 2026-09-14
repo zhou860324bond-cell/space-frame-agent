@@ -117,10 +117,11 @@ def render(reports: list[dict], element: str) -> str:
         lines += ["B33 是 Abaqus 的三次梁单元，不计横向剪切变形，与本程序的 "
                   "Euler-Bernoulli 格式属于同一套理论，误差应落在数值精度量级。", ""]
     else:
-        lines += ["B31 是一点缩减积分的 Timoshenko 梁，含剪切变形与细长度补偿，"
-                  "与本程序存在**格式差异导致的系统性偏差**，不是误差。", ""]
+        lines += ["B31 是两节点一次 Timoshenko 梁。粗网格结果同时包含低阶离散误差"
+                  "和剪切柔度，不能把两者统称为梁理论差异；网格细化证据见 "
+                  "`benchmark_B31_refinement.md`。", ""]
 
-    lines += ["| 算例 | 节点数 | 最大位移 本程序 / Abaqus (mm) | e(\\|U\\|) | e(U3) | e(RF3) |",
+    lines += ["| 算例 | 节点数 | 最大节点位移 本程序 / Abaqus (mm) | e(\\|U\\|) | e(U3) | e(RF3) |",
               "|---|---|---|---|---|---|"]
     for r in reports:
         if r.get("error"):

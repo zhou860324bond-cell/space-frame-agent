@@ -225,26 +225,66 @@ def deflection(payload: dict) -> Rows:
 
 
 def solid_joint(payload: dict) -> Rows:
-    """节点实体结果：每档网格一行，结论与可复核文件留在标题里。"""
+    """节点实体结果：主表同时交代网格代价、热点响应和发布状态。"""
     meshes = payload.get("meshes") or []
-    cols = ["网格尺寸 (mm)", "节点数", "C3D10 单元数",
-            "最大 Mises (MPa)", "最大绝对主应力 (MPa)", "P99 主应力 (MPa)"]
-    rows = [[_r(m.get("mesh_size_mm")), m.get("nodes"), m.get("elements"),
-             _r(m.get("max_mises_mpa")), _r(m.get("max_abs_principal_mpa")),
-             _r(m.get("p99_abs_principal_mpa"))] for m in meshes]
-    diagnosis = payload.get("peak_convergence") or {}
+    hotspot = payload.get("hot_spot_convergence") or {}
+    governing = payload.get("governing_arm")
+    display_arm = str(governing) if governing is not None else (
+        sorted(hotspot, key=str)[0] if hotspot else None)
+    diagnosis = hotspot.get(display_arm, {}) if display_arm else {}
+    fallback_values = {
+        round(float(item["hotspot_mesh_size_mm"]), 9): item.get("hot_spot_mpa")
+        for item in diagnosis.get("values") or []
+        if item.get("hotspot_mesh_size_mm") is not None
+    }
+    changes = diagnosis.get("relative_changes") or []
+    published = (isinstance(payload.get("stress_concentration_factor"),
+                            (int, float))
+                 and payload.get("hot_spot_all_converged") is True)
+    cols = ["档位", "全局网格 (mm)", "热点网格 (mm)", "节点数",
+            "C3D10 单元数", "最大 Mises (MPa)",
+            "控制热点应力 (MPa)", "相邻变化率 (%)", "证据状态"]
+    rows = []
+    for index, mesh in enumerate(meshes):
+        local_size = mesh.get("hotspot_mesh_size_mm", mesh.get("mesh_size_mm"))
+        extrapolation = mesh.get("hot_spot_extrapolation") or {}
+        hot_value = (extrapolation.get(display_arm) or {}).get("hot_spot_mpa")
+        if hot_value is None and local_size is not None:
+            hot_value = fallback_values.get(round(float(local_size), 9))
+        final = index == len(meshes) - 1
+        if final and published:
+            state = "Kt 已发布"
+        elif final and diagnosis.get("verdict") == "converging":
+            state = "热点已稳定，Kt 未发布"
+        elif final:
+            state = "证据不足"
+        else:
+            state = "细化记录"
+        rows.append([
+            f"第 {index + 1} 档",
+            _r(mesh.get("global_mesh_size_mm", mesh.get("mesh_size_mm"))),
+            _r(local_size), mesh.get("nodes"), mesh.get("elements"),
+            _r(mesh.get("max_mises_mpa")), _r(hot_value),
+            _r(100.0 * changes[index - 1], 2)
+            if index and index - 1 < len(changes) else None,
+            state,
+        ])
+    peak_diagnosis = payload.get("peak_convergence") or {}
     verdict = {"converging": "峰值趋于收敛", "diverging": "峰值呈奇异发散",
                "inconclusive": "峰值收敛性未定"}.get(
-                   diagnosis.get("verdict"), "峰值收敛性未知")
+                   peak_diagnosis.get("verdict"), "峰值收敛性未知")
     kt = payload.get("stress_concentration_factor")
     kt_text = f"Kt={_r(kt, 3)}" if isinstance(kt, (int, float)) else "Kt 未给出"
     backend = payload.get("backend") or "未标明后端"
+    arm_text = f"控制杆臂 {governing}" if governing is not None else (
+        f"诊断杆臂 {display_arm}" if display_arm is not None else "没有热点路径")
     title = (f"{backend}　节点 {payload.get('node_id')}，工况 {payload.get('case', '')}　"
              f"名义正应力 {_r(payload.get('nominal_normal_mpa'))} MPa　"
-             f"{kt_text}　{verdict}")
+             f"{kt_text}　{arm_text}　{verdict}")
     refused = payload.get("stress_concentration_refused")
     if refused:
-        title += f"\n{refused}"
+        title += f"\n{clean(refused, limit=260)}"
+    title += "\n相贯线最大值只用于识别奇异性；正式 Kt 只采用三档稳定的 0.4t/1.0t 热点外推。"
     contour = (payload.get("files") or {}).get("contour_png")
     if contour:
         title += f"\nMises 云图：{contour}"
@@ -258,8 +298,9 @@ def strength(payload: dict) -> Rows:
     把它标成"不合格"会让人以为结构有问题，标成"合格"则是拿一个虚高的临界力
     盖章。所以「结论」这一列原样用内核给的三态，标题里也分开点名。
     """
-    cols = ["杆件", "截面", "应力比 σ/[σ]", "控制", "轴力 (kN)",
-            "Pcr (kN)", "N/Pcr", "长细比 λ", "μ", "μ 来源", "结论"]
+    cols = ["杆件", "截面", "应力比 σ/[σ]", "控制状态", "轴力 N (kN)",
+            "Euler 临界力 Pcr (kN)", "稳定利用率 N/Pcr", "长细比 λ",
+            "计算长度系数 μ", "计算长度依据", "校核结论"]
     rows, loc = [], []
     for r in payload.get("members") or []:
         rows.append([r.get("member"), r.get("section"),
@@ -398,7 +439,20 @@ def _symmetry_marks(payload: dict) -> list[str | None]:
     return out
 
 
-_MARKERS = {"strength": _strength_marks, "symmetry": _symmetry_marks}
+def _solid_marks(payload: dict) -> list[str | None]:
+    meshes = payload.get("meshes") or []
+    if not meshes:
+        return []
+    kt = payload.get("stress_concentration_factor")
+    if isinstance(kt, (int, float)):
+        final = PASS if payload.get("hot_spot_all_converged") is True else FAIL
+    else:
+        final = UNCLEAR
+    return [None] * (len(meshes) - 1) + [final]
+
+
+_MARKERS = {"strength": _strength_marks, "symmetry": _symmetry_marks,
+            "solid_joint": _solid_marks}
 
 
 def row_marks(kind: str, payload: dict) -> list[str | None]:

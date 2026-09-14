@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 from typing import Any
@@ -10,9 +9,13 @@ from typing import Any
 import numpy as np
 
 import solid3d
-from solid_joint import (JointSpec, SolidJointError, diagnose_peak_convergence,
-                         hot_spot_stress_linear, mesh_reference_length,
-                         prepare_joint_spec)
+from solid_joint import (JointSpec, SolidJointError, diagnose_hotspot_convergence,
+                         diagnose_peak_convergence, evaluate_hotspot_meshes,
+                         mesh_reference_length, prepare_joint_spec)
+from solid_cache import (make_solid_cache_identity, start_solid_run,
+                         write_solid_summary)
+
+__all__ = ["diagnose_hotspot_convergence", "run_native_joint_analysis"]
 
 
 def _gmsh_module():
@@ -234,31 +237,6 @@ def surface_samples(spec: JointSpec, mesh: solid3d.SolidMesh,
     return output
 
 
-def diagnose_hotspot_convergence(values: list[tuple[float, float]],
-                                 tolerance: float = 0.05) -> dict[str, Any]:
-    """热点应力只有在局部网格加密后稳定，才能用来计算 Kt。"""
-    clean = [(float(h), float(s)) for h, s in values
-             if math.isfinite(float(h)) and h > 0.0 and math.isfinite(float(s))]
-    if len(clean) < 3:
-        return {"verdict": "inconclusive", "levels": len(clean),
-                "relative_changes": [],
-                "reason": "至少需要三档局部网格才能判断热点应力收敛"}
-    changes = [abs(b[1] - a[1]) / max(abs(b[1]), abs(a[1]), 1e-12)
-               for a, b in zip(clean, clean[1:])]
-    stable = changes[-1] <= tolerance
-    improving = len(changes) < 2 or changes[-1] <= changes[-2] + 1e-12
-    if stable and improving:
-        verdict = "converging"
-        reason = f"最后两档热点应力变化 {changes[-1]:.1%}，已进入稳定区"
-    else:
-        verdict = "inconclusive"
-        reason = (f"热点应力逐档变化为 "
-                  + " → ".join(f"{v:.1%}" for v in changes)
-                  + f"，未满足 {tolerance:.0%} 稳定性门禁")
-    return {"verdict": verdict, "levels": len(clean),
-            "relative_changes": changes, "tolerance": tolerance, "reason": reason}
-
-
 def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               anchor_member: int | None = None,
                               mesh_sizes_mm: list[float] | None = None,
@@ -274,8 +252,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
              else sorted({float(v) for v in mesh_sizes_mm}, reverse=True))
     if not sizes or any(not math.isfinite(v) or v <= 0.0 for v in sizes):
         raise SolidJointError("native-solid 网格尺寸必须为正数")
-    target = Path(output_dir).resolve() / f"node_{spec.node_id}_{spec.case}"
-    target.mkdir(parents=True, exist_ok=True)
+    run = start_solid_run(output_dir, spec.node_id, spec.case)
+    target = run["run_dir"]
     levels: list[dict[str, Any]] = []
     for index, size in enumerate(sizes):
         # 三档远场网格 40/30/20 mm 对应焊趾 16/12/8 mm；C3D10 的
@@ -333,22 +311,6 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         }
         samples = surface_samples(spec, mesh, result, hotspot_size)
         row["surface_samples"] = samples
-        row_hotspots: dict[str, Any] = {}
-        for arm in spec.arms:
-            if arm.member_id == spec.anchor_member:
-                continue
-            arm_samples = samples.get(str(arm.member_id))
-            if not arm_samples:
-                row_hotspots[str(arm.member_id)] = {
-                    "error": "该臂没有取到表面应力样本"}
-                continue
-            try:
-                row_hotspots[str(arm.member_id)] = hot_spot_stress_linear(
-                    [(sample[0], sample[1]) for sample in arm_samples],
-                    arm.wall_thickness_mm)
-            except SolidJointError as exc:
-                row_hotspots[str(arm.member_id)] = {"error": str(exc)}
-        row["hot_spot_extrapolation"] = row_hotspots
         np.savez_compressed(
             stem.with_suffix(".npz"), nodes=mesh.nodes, elements=mesh.elements,
             displacement=result.displacement, reaction=result.reaction,
@@ -357,27 +319,11 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             gauss_stress=result.gauss_stress)
         levels.append(row)
 
-    hot_spots = levels[-1]["hot_spot_extrapolation"]
-    hotspot_convergence: dict[str, Any] = {}
-    for arm in spec.arms:
-        if arm.member_id == spec.anchor_member:
-            continue
-        mid = str(arm.member_id)
-        values = []
-        for level in levels:
-            item = level["hot_spot_extrapolation"].get(mid, {})
-            if "hot_spot_mpa" in item:
-                values.append((level["hotspot_mesh_size_mm"], item["hot_spot_mpa"]))
-        hotspot_convergence[mid] = diagnose_hotspot_convergence(values)
-        hotspot_convergence[mid]["values"] = [
-            {"hotspot_mesh_size_mm": h, "hot_spot_mpa": value}
-            for h, value in values]
-    usable = {
-        mid: item["hot_spot_mpa"] for mid, item in hot_spots.items()
-        if "hot_spot_mpa" in item
-        and hotspot_convergence.get(mid, {}).get("verdict") == "converging"
-    }
-    if usable and spec.nominal_normal_mpa > 1e-12:
+    hotspot = evaluate_hotspot_meshes(spec, levels)
+    hot_spots = hotspot["finest"]
+    hotspot_convergence = hotspot["convergence"]
+    usable = hotspot["usable"]
+    if hotspot["all_converged"] and spec.nominal_normal_mpa > 1e-12:
         governing = max(usable, key=lambda mid: abs(usable[mid]))
         kt = abs(usable[governing]) / spec.nominal_normal_mpa
         kt_basis = f"native C3D10 0.4t/1.0t 热点外推（控制臂 {governing}）/ 名义正应力"
@@ -385,12 +331,16 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
     else:
         governing, kt, kt_basis = None, None, None
         kt_refused = (
-            "未给出正式应力集中系数：0.4t/1.0t 热点路径未覆盖，"
-            "或三档局部网格下的热点应力尚未收敛。保留试算值供诊断，"
+            "未给出正式应力集中系数：至少一条候选杆臂的 0.4t/1.0t 热点路径"
+            "未覆盖，或三档局部网格下的热点应力尚未收敛。保留试算值供诊断，"
             "但不使用相贯线奇异峰值或未稳定外推值替代正式 Kt。")
     summary = {
         "schema": "solid-joint-analysis/native-v1",
         "backend": "native-c3d10+gmsh",
+        "run_id": run["run_id"],
+        "generated_at": run["generated_at"],
+        "cache_identity": make_solid_cache_identity(
+            session.model, spec, sizes),
         "node_id": spec.node_id,
         "case": spec.case,
         "anchor_member": spec.anchor_member,
@@ -398,6 +348,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         "peak_convergence": diagnose_peak_convergence(levels),
         "hot_spot_extrapolation": hot_spots,
         "hot_spot_convergence": hotspot_convergence,
+        "hot_spot_required_arms": hotspot["required_arms"],
+        "hot_spot_all_converged": hotspot["all_converged"],
         "governing_arm": governing,
         "stress_concentration_factor": kt,
         "stress_concentration_basis": kt_basis,
@@ -410,6 +362,5 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             "finest_vtu": levels[-1]["vtu"],
         },
     }
-    (target / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_solid_summary(summary, run["case_dir"], target)
     return summary

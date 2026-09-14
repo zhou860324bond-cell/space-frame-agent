@@ -5,6 +5,7 @@
 真正的对标数值要在装了 Abaqus 的机器上跑出来。
 """
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -15,8 +16,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "abaqus_bench"))
 from compare import compare_one, normalized_error, our_results   # noqa: E402
 from export_inp import write_inp                                 # noqa: E402
 from frame3d import check_equilibrium, solve                     # noqa: E402
+from inp_writer import resolve_element                           # noqa: E402
 from model_io import from_dict, validate_payload                 # noqa: E402
-from models import all_models, cantilever_strong_axis, space_frame  # noqa: E402
+from models import (all_models, cantilever_strong_axis,
+                    refine_uniform_members, space_frame)  # noqa: E402
 
 
 @pytest.mark.parametrize("model", all_models(), ids=lambda m: m["name"])
@@ -72,6 +75,55 @@ def test_vertical_members_get_the_fallback_reference_axis(tmp_path):
     assert "\n 0, 0, 1\n" in text, "水平杆件应当写出 n1 = (0, 0, 1)"
 
 
+def test_b31_exports_native_shear_areas_as_abaqus_stiffness(tmp_path):
+    """本程序 Ay/Az 必须映射成 Abaqus 数据顺序 K23/K13，且关闭补偿。"""
+    model = deepcopy(cantilever_strong_axis())
+    section = model["sections"][0]
+    section["Ay"] = 0.009
+    section["Az"] = 0.007
+    material = model["materials"][0]
+    shear_modulus = material["E"] / (2.0 * (1.0 + material["nu"]))
+
+    lines = write_inp(model, "B31", tmp_path / "matched.inp").read_text(
+        encoding="ascii").splitlines()
+    keyword = lines.index("*TRANSVERSE SHEAR STIFFNESS")
+    k23, k13, compensation = (float(value) for value in lines[keyword + 1].split(","))
+
+    assert k23 == pytest.approx(shear_modulus * section["Az"])
+    assert k13 == pytest.approx(shear_modulus * section["Ay"])
+    assert compensation == 0.0
+
+
+def test_b33_does_not_export_transverse_shear_stiffness(tmp_path):
+    model = deepcopy(cantilever_strong_axis())
+    model["sections"][0].update(Ay=0.009, Az=0.007)
+    text = write_inp(model, "B33", tmp_path / "euler.inp").read_text(encoding="ascii")
+    assert "*TRANSVERSE SHEAR STIFFNESS" not in text
+
+
+def test_b31_rejects_a_half_defined_shear_area(tmp_path):
+    model = deepcopy(cantilever_strong_axis())
+    model["sections"][0]["Ay"] = 0.009
+    model["sections"][0].pop("Az", None)
+    with pytest.raises(ValueError, match="Ay.*Az"):
+        write_inp(model, "B31", tmp_path / "ambiguous.inp")
+
+
+def test_auto_element_follows_the_native_section_theory():
+    euler = deepcopy(cantilever_strong_axis())
+    timoshenko = deepcopy(euler)
+    timoshenko["sections"][0].update(Ay=0.01, Az=0.01)
+    assert resolve_element(euler, "auto") == "B33"
+    assert resolve_element(timoshenko, "auto") == "B31"
+
+
+def test_auto_element_rejects_mixed_section_theories():
+    model = deepcopy(space_frame())
+    model["sections"][0].update(Ay=0.01, Az=0.01)
+    with pytest.raises(ValueError, match="混用了"):
+        resolve_element(model, "auto")
+
+
 def test_normalized_error_is_zero_for_identical_fields():
     assert normalized_error([1.0, -2.0, 3.0], [1.0, -2.0, 3.0]) == pytest.approx(0.0)
 
@@ -94,3 +146,10 @@ def test_comparing_our_results_against_themselves_gives_zero(model):
     worst = max((v for v in r["errors"].values() if v is not None), default=0.0)
     assert worst < 1e-12
     assert r["nodes_compared"] == len(model["nodes"])
+    refined = refine_uniform_members(model, 2)
+    original = our_results(model)
+    subdivided = our_results(refined)
+    for node in original:
+        for component in ("u1", "u2", "u3", "ur1", "ur2", "ur3"):
+            assert subdivided[node][component] == pytest.approx(
+                original[node][component], abs=1e-12)

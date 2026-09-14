@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -339,6 +340,74 @@ def test_native_hotspot_one_mesh_is_explicitly_inconclusive():
     assert "三档" in got["reason"]
 
 
+def test_native_hotspot_rejects_three_nearly_identical_mesh_sizes():
+    from native_joint import diagnose_hotspot_convergence
+
+    got = diagnose_hotspot_convergence([(10.0, 100.0), (9.8, 100.1),
+                                        (9.6, 100.2)])
+    assert got["verdict"] == "inconclusive"
+    assert "过于接近" in got["reason"]
+
+
+def test_both_solid_backends_publish_kt_only_from_a_converged_hotspot_series():
+    spec = sj.prepare_joint_spec(_l_joint(), node_id=2)
+    arm = next(item for item in spec.arms
+               if item.member_id != spec.anchor_member)
+    thickness = arm.wall_thickness_mm
+    meshes = []
+    for size, stress in ((8.0, 100.0), (5.6, 103.0), (4.0, 104.0)):
+        meshes.append({
+            "mesh_size_mm": size,
+            "surface_samples": {str(arm.member_id): [
+                [0.4 * thickness, stress], [1.0 * thickness, stress],
+            ]},
+        })
+
+    got = sj.evaluate_hotspot_meshes(spec, meshes)
+    assert got["convergence"][str(arm.member_id)]["verdict"] == "converging"
+    assert got["usable"][str(arm.member_id)] == pytest.approx(104.0)
+    assert all("hot_spot_extrapolation" in mesh for mesh in meshes)
+
+
+def test_an_abaqus_hotspot_from_only_the_finest_mesh_is_not_publishable():
+    spec = sj.prepare_joint_spec(_l_joint(), node_id=2)
+    arm = next(item for item in spec.arms
+               if item.member_id != spec.anchor_member)
+    thickness = arm.wall_thickness_mm
+    meshes = [{
+        "mesh_size_mm": 4.0,
+        "surface_samples": {str(arm.member_id): [
+            [0.4 * thickness, 104.0], [1.0 * thickness, 104.0],
+        ]},
+    }]
+
+    got = sj.evaluate_hotspot_meshes(spec, meshes)
+    assert got["usable"] == {}
+    assert got["convergence"][str(arm.member_id)]["verdict"] == "inconclusive"
+
+
+def test_every_candidate_arm_must_converge_before_kt_can_be_published():
+    """一条臂收敛不代表整个节点的控制热点已经找全。"""
+    original = sj.prepare_joint_spec(_l_joint(), node_id=2)
+    arm = next(item for item in original.arms
+               if item.member_id != original.anchor_member)
+    missing_arm = replace(arm, member_id=99)
+    spec = replace(original, arms=original.arms + (missing_arm,))
+    thickness = arm.wall_thickness_mm
+    meshes = [{
+        "mesh_size_mm": size,
+        "surface_samples": {str(arm.member_id): [
+            [0.4 * thickness, stress], [1.0 * thickness, stress],
+        ]},
+    } for size, stress in ((8.0, 100.0), (5.6, 103.0), (4.0, 104.0))]
+
+    got = sj.evaluate_hotspot_meshes(spec, meshes)
+
+    assert got["usable"] == {str(arm.member_id): pytest.approx(104.0)}
+    assert got["required_arms"] == [str(arm.member_id), "99"]
+    assert got["all_converged"] is False
+
+
 def test_dry_run_returns_the_spec_without_needing_abaqus():
     """本机没装 Abaqus 时，这个工具仍应给出杆端力和名义应力——
     那是 Kt 的分母，能手算核对。"""
@@ -579,6 +648,14 @@ def test_desktop_solid_result_is_a_mesh_convergence_table():
     payload = {
         "node_id": 2, "case": "LC1", "nominal_normal_mpa": 296.4,
         "stress_concentration_factor": 10.15,
+        "governing_arm": "2", "hot_spot_all_converged": True,
+        "hot_spot_convergence": {"2": {
+            "verdict": "converging", "relative_changes": [0.03],
+            "values": [
+                {"hotspot_mesh_size_mm": 8.0, "hot_spot_mpa": 3000.0},
+                {"hotspot_mesh_size_mm": 6.4, "hot_spot_mpa": 3009.0},
+            ],
+        }},
         "peak_convergence": {"verdict": "diverging"},
         "files": {"contour_png": "joint.png"},
         "meshes": [
@@ -592,8 +669,11 @@ def test_desktop_solid_result_is_a_mesh_convergence_table():
     }
     title, columns, rows, locators = result_rows.to_rows("solid_joint", payload)
     assert "Kt=10.15" in title and "奇异发散" in title
-    assert "C3D10 单元数" in columns and len(rows) == 2
+    assert "C3D10 单元数" in columns and "控制热点应力 (MPa)" in columns
+    assert rows[-1][-1] == "Kt 已发布"
+    assert len(rows) == 2
     assert locators == [("node", 2), ("node", 2)]
+    assert result_rows.row_marks("solid_joint", payload) == [None, "pass"]
 
 
 def test_agent_routes_the_default_solid_backend_to_native(monkeypatch):

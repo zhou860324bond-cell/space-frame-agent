@@ -110,6 +110,10 @@ SYSTEM_PROMPT = """你是空间刚架结构分析助手。你的职责是把用�
     · 强度验算只含正应力，不含剪应力与扭转，**不是规范意义上的承载力验算**。
     · check_symmetry 的位移镜像校核通过，只说明结果自洽，不等于模型建对了。
 
+12. 回答按人能直接阅读的工程表达组织：先给结论，再说明已执行的操作和关键结果，
+    最后给下一步建议。不要输出 emoji、装饰性符号、Markdown 星号或成段 JSON；
+    三项以上内容使用普通数字编号。工具内部字段要翻译成中文工程名称。
+
 回答用中文，简洁，先给结论再给数据。"""
 
 
@@ -963,9 +967,9 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "case": {"type": "string", "description": "工况名；留空取第一个"},
-                    "element": {"type": "string", "enum": ["B33", "B31"],
-                                "description": "截面未给 Ay/Az 时用 B33 对标；"
-                                               "启用 Timoshenko 剪切面积时用 B31"},
+                    "element": {"type": "string", "enum": ["auto", "B33", "B31"],
+                                "description": "默认 auto：截面未给 Ay/Az 时用 B33；"
+                                               "全部给出 Ay/Az 时用同参数 B31"},
                 },
             },
         },
@@ -1021,8 +1025,8 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "case": {"type": "string", "description": "工况名；留空取第一个"},
-                    "element": {"type": "string", "enum": ["B33", "B31"],
-                                "description": "Euler-Bernoulli 分支用 B33；"
+                    "element": {"type": "string", "enum": ["auto", "B33", "B31"],
+                                "description": "默认 auto：Euler-Bernoulli 用 B33；"
                                                "给 Ay/Az 的 Timoshenko 分支用 B31"},
                 },
             },
@@ -3230,7 +3234,7 @@ class Session:
         return ToolResult(True, payload)
 
     def solve_with_abaqus(self, case: str | None = None,
-                          element: str = "B33") -> ToolResult:
+                          element: str = "auto") -> ToolResult:
         """用 Abaqus 求解。结果格式与 solve_model 对齐，便于直接比对。"""
         errors = validate_payload(self.model)
         if errors:
@@ -3244,15 +3248,18 @@ class Session:
         try:
             summary = abaqus_backend.solve(self.model, out_dir, case=case,
                                            element=element)
-        except KeyError as exc:
+        except (KeyError, ValueError) as exc:
             return ToolResult(False, {"error": str(exc)})
         except abaqus_backend.AbaqusError as exc:
             return ToolResult(False, {"error": str(exc),
                                       "hint": "自研求解器 solve_model 不需要 Abaqus，"
                                               "可以改用它"})
-        summary["note"] = ("这是 Abaqus 的结果。与 solve_model 的结果比对时请注意单元格式："
-                           "B33 与本程序同为 Euler-Bernoulli，误差应到数值精度量级；"
-                           "B31 含剪切变形，偏差是格式差异不是错误。")
+        if summary["element"] == "B31":
+            summary["note"] = ("这是 Abaqus B31 结果；截面 Ay/Az 已映射为 K13/K23，"
+                               "剩余偏差主要来自一次单元离散，需用网格细化判断。")
+        else:
+            summary["note"] = ("这是 Abaqus B33 结果，与未给 Ay/Az 的本程序 "
+                               "Euler-Bernoulli 分支属于同一理论。")
         return ToolResult(True, summary)
 
     def analyze_joint_solid(self, node_id: int, case: str | None = None,
@@ -3317,7 +3324,7 @@ class Session:
         return rows
 
     def compare_solvers(self, case: str | None = None,
-                        element: str = "B33") -> ToolResult:
+                        element: str = "auto") -> ToolResult:
         """自研 + Abaqus 各算一遍，逐分量给归一化偏差。"""
         errors = validate_payload(self.model)
         if errors:
@@ -3347,7 +3354,7 @@ class Session:
         worst = max((v["e"] for v in cmp["errors"].values() if v["e"] is not None),
                     default=None)
         return ToolResult(True, {
-            "case": name, "element": element,
+            "case": name, "element": ab.payload["element"],
             "nodes_compared": cmp["nodes_compared"],
             "errors": {k: (None if v["e"] is None else float(f"{v['e']:.3e}"))
                        for k, v in cmp["errors"].items()},
@@ -3355,8 +3362,8 @@ class Session:
             "peak_displacement": cmp["peak"],
             "metric": "全场归一化相对误差 sqrt(Σ(a−b)²)/sqrt(Σb²)，以 Abaqus 为参考；"
                       "该分量参考解整体为零时记 null（归一化无意义），不是没算",
-            "note": ("B33 与本程序同为 Euler-Bernoulli，偏差应在 1e-5 以下；"
-                     "B31 含剪切变形，偏差随杆件越粗越大，那是格式差异不是错误。"),
+            "note": ("B33 对应未给 Ay/Az 的 Euler-Bernoulli 分支；B31 会把 Ay/Az "
+                     "映射成相同 K13/K23，剩余偏差主要是一次单元离散误差。"),
         })
 
     def query_results(self, what: str, case: str | None = None,
@@ -4252,6 +4259,14 @@ class DeepSeekProvider:
     def __repr__(self) -> str:              # 防止密钥随对象打印泄露
         return f"DeepSeekProvider(model={self._model!r})"
 
+    @property
+    def temperature(self) -> float:
+        return self._temperature
+
+    def set_temperature(self, value: float) -> None:
+        """切换回答风格；求解器本身始终保持确定性。"""
+        self._temperature = min(1.0, max(0.0, float(value)))
+
     def complete(self, messages: list[dict], tools: list[dict]) -> dict:
         response = self._client.chat.completions.create(
             model=self._model, messages=messages, tools=tools,
@@ -4275,6 +4290,58 @@ class DeepSeekProvider:
                 calls.append({"id": c.id, "name": c.function.name, "arguments": args})
             return {"tool_calls": calls}
         return {"content": message.content or ""}
+
+    def complete_stream(self, messages: list[dict], tools: list[dict],
+                        on_text=None) -> dict:
+        """流式读取正文，同时完整拼回可能分片到达的工具调用。"""
+        response = self._client.chat.completions.create(
+            model=self._model, messages=messages, tools=tools,
+            temperature=self._temperature, stream=True,
+        )
+        content: list[str] = []
+        pending: dict[int, dict[str, str]] = {}
+        for chunk in response:
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                self.usage["calls"] += 1
+                self.usage["prompt_tokens"] += (
+                    getattr(usage, "prompt_tokens", 0) or 0)
+                self.usage["completion_tokens"] += (
+                    getattr(usage, "completion_tokens", 0) or 0)
+                self.usage["cache_hit_tokens"] += (
+                    getattr(usage, "prompt_cache_hit_tokens", 0) or 0)
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            delta = choices[0].delta
+            text = getattr(delta, "content", None) or ""
+            if text:
+                content.append(text)
+                if on_text is not None:
+                    on_text(text)
+            for call in getattr(delta, "tool_calls", None) or []:
+                index = int(getattr(call, "index", 0) or 0)
+                item = pending.setdefault(index, {
+                    "id": "", "name": "", "arguments": ""})
+                item["id"] += getattr(call, "id", None) or ""
+                function = getattr(call, "function", None)
+                if function is not None:
+                    item["name"] += getattr(function, "name", None) or ""
+                    item["arguments"] += (
+                        getattr(function, "arguments", None) or "")
+
+        if pending:
+            calls = []
+            for index, item in sorted(pending.items()):
+                try:
+                    arguments = json.loads(item["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    arguments = {"__invalid_json__": item["arguments"]}
+                calls.append({"id": item["id"] or f"call_{index}",
+                              "name": item["name"],
+                              "arguments": arguments})
+            return {"tool_calls": calls}
+        return {"content": "".join(content)}
 
 
 # --------------------------------------------------------------------------- 主循环

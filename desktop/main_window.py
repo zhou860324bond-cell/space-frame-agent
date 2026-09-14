@@ -14,7 +14,7 @@ import sys
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QFile, QSettings, Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QDialog, QDockWidget, QFrame, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QPushButton,
@@ -89,6 +89,12 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
     return factors
 
 
+def _move_to_system_trash(path: str) -> bool:
+    """兼容 PySide6 不同版本的 bool / (bool, 新路径) 返回形式。"""
+    result = QFile.moveToTrash(path)
+    return bool(result[0]) if isinstance(result, tuple) else bool(result)
+
+
 # 视口显示模式。切模式时整个场景重建。
 MODES = ("模型", "分析网格", "变形", "云图", "模态")
 
@@ -98,6 +104,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.session = session or Session()
         self.result = None
+        self._last_convergence_payload: dict | None = None
+        self._solid_backend_payloads: dict[tuple[int, str, str], dict] = {}
+        self._solid_history_payloads: dict[str, dict] = {}
+        self._solid_orphan_payloads: dict[str, dict] = {}
+        self._solid_storage_payloads: dict[str, dict] = {}
         self.case: str | None = None
         self.mode = "模型"
         # 空间结构里各杆局部轴不同，默认用旋转不变量合弯矩。需要核对有符号
@@ -149,6 +160,17 @@ class MainWindow(QMainWindow):
         self.results.display_changed.connect(self._on_result_display_changed)
         self.results.extreme_requested.connect(self.locate_current_extreme)
         self.results.stress_requested.connect(self.show_section_stress)
+        self.results.trust_requested.connect(self.show_result_trust)
+        self.results.convergence_requested.connect(self.show_convergence_workspace)
+        self.results.analysis_mesh_requested.connect(self.show_analysis_mesh)
+        self.results.history_compare_requested.connect(
+            self.show_solid_history_compare)
+        self.results.history_manage_requested.connect(
+            self.toggle_solid_history_management)
+        self.results.history_remove_requested.connect(
+            self.remove_solid_history)
+        self.results.history_protection_changed.connect(
+            self._refresh_solid_history_management_if_visible)
         self.result_display_options = self.results.display_options()
         self._last_probe = None
         self.results_dock = QDockWidget("结果", self)
@@ -157,10 +179,9 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
                            self.results_dock)
         self.results_dock.hide()
-        # 结果面板是配角，不该抢视口的地方。给个偏小的初始高度，
-        # 用户想看细节自己拖大
-        self.results.setMinimumHeight(120)
-        self.results.setMaximumHeight(260)
+        # 结果表是可审查数据，不是状态栏。允许用户继续拖大，默认至少露出
+        # 摘要和约 7 行数据；原先 260 px 的硬上限会把它永远压成三四行。
+        self.results.setMinimumHeight(230)
 
         self.diagram = DiagramPanel(self)
         self.diagram.locate.connect(self.locate)
@@ -192,7 +213,7 @@ class MainWindow(QMainWindow):
         self.props_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea
                                         | Qt.DockWidgetArea.LeftDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.props_dock)
-        # 属性面板默认隐藏，选中对象后自动显示
+        # 稍后与模型树合并为左侧任务页签，不单独占据窗口空间。
         self.props_dock.setVisible(False)
 
         # 手绘草图 → 模型：隐藏，通过 Part 模块的"草图建模"按钮弹出对话框
@@ -221,9 +242,8 @@ class MainWindow(QMainWindow):
         self.bc_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.bc_scroll.setWidget(self.bc)
         self.bc_dock.setWidget(self.bc_scroll)
-        self.bc_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea
-                                      | Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.bc_dock)
+        self.bc_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.bc_dock)
         self.bc_dock.setVisible(False)
 
         self.viewport.picked.connect(self._on_picked)
@@ -243,6 +263,15 @@ class MainWindow(QMainWindow):
                              | Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self.tree_dock = dock
+        # 模型树、属性和边界条件属于同一类“任务编辑器”，固定在左侧共用一组
+        # 页签。边界条件不再因为创建顺序被 Qt 自动塞到右侧 Agent 的下方。
+        # Qt 不会为 hidden 状态的 dock 建立页签关系，因此先登记为显示，
+        # 完成 tabify 后再恢复默认隐藏状态。
+        self.props_dock.show()
+        self.bc_dock.show()
+        self.tabifyDockWidget(self.tree_dock, self.props_dock)
+        self.tabifyDockWidget(self.tree_dock, self.bc_dock)
+        self.tree_dock.raise_()
         self._tree_auto_hidden = False
 
         # ===== 最后创建浮动按钮，确保它在所有组件之上 =====
@@ -496,7 +525,8 @@ class MainWindow(QMainWindow):
                  ("载荷", ("create_bc", "support", None,
                            "create_load", "gravity", None,
                            "load", "combo")),
-                 ("分析", ("solve", None, "modal", "buckling", "solid_joint", None,
+                 ("分析", ("solve", None, "modal", "buckling", "solid_joint",
+                           "solid_storage", None,
                            "diagnose", "analysis_mesh")),
                  ("结果", ("model", "deformed", "contour", "diagram", None,
                            "envelope", "clear_results", "labels")),
@@ -582,6 +612,7 @@ class MainWindow(QMainWindow):
 
     def set_mode(self, name: str) -> None:
         self.mode = name
+        self.chat.set_workspace_mode(name)
         if name in {"变形", "云图"} and self.session.solution is not None:
             self.viewport.set_pick_mode("member")
         act = self.mode_actions.get(name)
@@ -598,12 +629,15 @@ class MainWindow(QMainWindow):
     def _replace_session(self, session: Session) -> None:
         """让所有会修改模型的面板指向同一个新会话。"""
         self.session = session
+        self._last_convergence_payload = None
+        self._solid_backend_payloads.clear()
         self._selected_kind = self._selected_id = None
         self.viewport.set_selection(None, None)
         self.viewport.set_problem_refs([])
         self._last_probe = None
         self.chat.session = session
         self.chat.conversation = None
+        self.chat.set_workspace_selection(None, None)
         self.properties.session = session
         self.properties.clear()
         self.bc.session = session
@@ -636,6 +670,10 @@ class MainWindow(QMainWindow):
 
     def _solved(self, result) -> None:
         self.result = result
+        # 重新运行整体分析后，旧节点实体子模型不再自动继承有效性；即使几何
+        # 没变，工况或分析类型也可能已经切换。
+        self._last_convergence_payload = None
+        self._solid_backend_payloads.clear()
         self._on_busy(False)
         self.statusBar().clearMessage()
         if result.ok:
@@ -687,7 +725,7 @@ class MainWindow(QMainWindow):
         self.results_dock.setVisible(True)
         self.results.show_rows(
             f"模型校验未通过，共 {len(rows)} 条。点击一行可在视口中定位。",
-            ["编号", "问题"], rows, loc)
+            ["编号", "问题"], rows, loc, context="validation")
         hint = payload.get("hint")
         if hint:
             self.statusBar().showMessage(str(hint)[:200], 10000)
@@ -698,12 +736,246 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("当前没有需要清除的计算结果。", 4000)
             return
         self.result = None
+        self._last_convergence_payload = None
+        self._solid_backend_payloads.clear()
         self.case = None
         self.session.solution = None
         self.results.show_message("计算结果已清除", "模型、材料、约束与荷载均未修改，可重新求解。")
         self.set_mode("模型")
         self.refresh()
         self.statusBar().showMessage("计算结果已清除，模型保持不变。", 5000)
+
+    def show_result_trust(self) -> None:
+        """把基础可信度检查摊成可审查表，不用一个含糊的绿灯代替证据。"""
+        from .result_inspector import assess_result_trust, assess_solid_result
+
+        if (self.results.context in {"solid_joint", "solid_history", "convergence",
+                                     "solid_history_manage"}
+                and self._last_convergence_payload):
+            assessment = assess_solid_result(self._last_convergence_payload)
+        else:
+            assessment = assess_result_trust(self.session, scene.STATIONS)
+        self.results.set_trust_assessment(assessment)
+        self.results.show_rows(
+            f"{assessment['label']}\n{assessment['summary']}",
+            ["检查项", "状态", "说明"], assessment["rows"],
+            marks=assessment["marks"], context="trust")
+        self.results_dock.show()
+        self.results_dock.raise_()
+
+    def show_convergence_workspace(self) -> None:
+        """只汇总已有专项证据；入口本身不悄悄启动分钟级重计算。"""
+        from convergence import build_workspace
+        from .result_inspector import solid_result_provenance
+
+        analysis = (getattr(self.session.solution, "analysis", None)
+                    if self.session.solution is not None else None)
+        workspace = build_workspace(
+            analysis=analysis,
+            solid_payload=self._last_convergence_payload,
+            solid_payloads=(self._matching_solid_backend_payloads()
+                            if self._last_convergence_payload else None),
+            case=self.case)
+        self.results.show_rows(
+            f"{workspace['label']}\n{workspace['summary']}",
+            workspace["columns"], workspace["rows"],
+            marks=workspace["marks"], context="convergence")
+        self.results.set_solid_provenance(
+            solid_result_provenance(self._last_convergence_payload)
+            if self._last_convergence_payload else None)
+        self._refresh_solid_history()
+        self.results_dock.show()
+        self.results_dock.raise_()
+
+    def _refresh_solid_history(self) -> None:
+        """刷新当前节点的历史选择器；只读摘要，不打开大型 ODB/VTU。"""
+        from solid_cache import load_solid_history, solid_history_cleanup_state
+        from .result_inspector import solid_history_label
+
+        payload = self._last_convergence_payload
+        if not payload:
+            self._solid_history_payloads = {}
+            self._solid_orphan_payloads = {}
+            self.results.set_solid_history([])
+            return
+        try:
+            history = load_solid_history(
+                int(payload["node_id"]), str(payload.get("case") or ""))
+        except (KeyError, TypeError, ValueError, OSError):
+            history = []
+        self._solid_orphan_payloads = {}
+        self._solid_history_payloads = {
+            str(item["_history_id"]): item for item in history
+            if item.get("_history_id")
+        }
+        entries = [
+            (identifier, solid_history_label(item))
+            for identifier, item in self._solid_history_payloads.items()
+        ]
+        cleanup_eligible = set()
+        for identifier, item in self._solid_history_payloads.items():
+            state = solid_history_cleanup_state(item)
+            if state.get("valid") is True and state.get("latest") is False:
+                cleanup_eligible.add(identifier)
+        self.results.set_solid_history(entries, cleanup_eligible)
+
+    def show_solid_history_compare(self, left_id: str, right_id: str) -> None:
+        """在现有结果表比较两个历史版本，不另开遮挡视口的对话框。"""
+        from .result_inspector import compare_solid_history
+
+        left = self._solid_history_payloads.get(left_id)
+        right = self._solid_history_payloads.get(right_id)
+        if left is None or right is None:
+            self.statusBar().showMessage("历史记录已变化，请刷新后重新选择。", 6000)
+            return
+        comparison = compare_solid_history(left, right)
+        self.results.show_rows(
+            f"{comparison['label']}\n{comparison['summary']}",
+            comparison["columns"], comparison["rows"],
+            marks=comparison["marks"], context="solid_history")
+        self.results_dock.show()
+        self.results_dock.raise_()
+
+    def toggle_solid_history_management(self) -> None:
+        """历史占用与版本对比在同一结果页切换，不叠加新的浮窗。"""
+        if self.results.context == "solid_history_manage":
+            self.show_convergence_workspace()
+        else:
+            self.show_solid_history_management()
+
+    def show_solid_history_management(self) -> None:
+        from solid_cache import load_solid_orphans
+        from .result_inspector import (build_solid_history_management,
+                                       solid_history_label,
+                                       solid_orphan_label)
+
+        history = list(self._solid_history_payloads.values())
+        payload = self._last_convergence_payload or {}
+        try:
+            orphans = load_solid_orphans(
+                int(payload["node_id"]), str(payload.get("case") or ""))
+        except (KeyError, TypeError, ValueError, OSError):
+            orphans = []
+        self._solid_orphan_payloads = {
+            str(item["_history_id"]): item for item in orphans
+            if item.get("_history_id")
+        }
+        protected = self.results.history_protected_ids()
+        management = build_solid_history_management(history, protected, orphans)
+        cleanup_entries = [
+            (identifier, solid_history_label(item))
+            for identifier, item in self._solid_history_payloads.items()
+        ] + [
+            (identifier, solid_orphan_label(item))
+            for identifier, item in self._solid_orphan_payloads.items()
+        ]
+        self.results.set_solid_cleanup_entries(
+            cleanup_entries, set(management["removable_ids"]))
+        self.results.show_rows(
+            f"{management['label']}\n{management['summary']}",
+            management["columns"], management["rows"],
+            marks=management["marks"], context="solid_history_manage")
+        self.results_dock.show()
+        self.results_dock.raise_()
+
+    def show_global_solid_storage(self) -> None:
+        """从分析入口审查全部实体运行，包括从未生成 latest 的首次失败。"""
+        from solid_cache import load_all_solid_records
+        from .result_inspector import (build_solid_history_management,
+                                       solid_history_label,
+                                       solid_orphan_label,
+                                       solid_storage_provenance)
+
+        records = load_all_solid_records()
+        history = list(records["history"])
+        orphans = list(records["orphans"])
+        self._solid_storage_payloads = {
+            str(item["_history_id"]): item for item in history + orphans
+            if item.get("_history_id")
+        }
+        management = build_solid_history_management(
+            history, set(), orphans, include_target=True)
+        cleanup_entries = [
+            (str(item["_history_id"]),
+             solid_history_label(item, include_target=True))
+            for item in history if item.get("_history_id")
+        ] + [
+            (str(item["_history_id"]),
+             solid_orphan_label(item, include_target=True))
+            for item in orphans if item.get("_history_id")
+        ]
+        # 全局中心不提供跨节点 A/B 比较；比较仍留在单节点收敛工作区。
+        self.results.set_solid_history([])
+        self.results.set_solid_cleanup_entries(
+            cleanup_entries, set(management["removable_ids"]))
+        self.results.set_trust_assessment(None)
+        self.results.set_solid_provenance(
+            solid_storage_provenance(records, management))
+        self.results.show_rows(
+            f"{management['label']}\n{management['summary']}",
+            management["columns"], management["rows"],
+            marks=management["marks"], context="solid_storage")
+        self.results_dock.show()
+        self.results_dock.raise_()
+        self.statusBar().showMessage(
+            "实体结果中心已刷新；本次只扫描摘要与目录，没有启动求解器。", 6000)
+
+    def _refresh_solid_history_management_if_visible(self) -> None:
+        if self.results.context == "solid_history_manage":
+            self.show_solid_history_management()
+
+    def remove_solid_history(self, history_id: str) -> None:
+        """经明确确认后清理单次旧运行；底层仍会重新核对所有保护条件。"""
+        from solid_cache import (SolidHistoryCleanupError,
+                                 move_solid_history_to_trash,
+                                 move_solid_orphan_to_trash,
+                                 solid_history_storage)
+        from .result_inspector import (format_storage_size, solid_history_label,
+                                       solid_orphan_label)
+
+        global_storage = self.results.context == "solid_storage"
+        payload = (self._solid_storage_payloads.get(history_id)
+                   if global_storage else
+                   (self._solid_history_payloads.get(history_id)
+                    or self._solid_orphan_payloads.get(history_id)))
+        if payload is None:
+            self.statusBar().showMessage("历史记录已变化，请刷新后重新选择。", 6000)
+            return
+        is_orphan = payload.get("_orphan") is True
+        storage = (dict(payload) if is_orphan else solid_history_storage(payload))
+        size = format_storage_size(int(storage.get("bytes") or 0))
+        run_label = (solid_orphan_label(
+            payload, include_target=global_storage) if is_orphan else
+            solid_history_label(payload, include_target=global_storage))
+        answer = QMessageBox.question(
+            self, "确认清理实体历史",
+            f"即将把以下旧运行及其全部结果文件移入 Windows 回收站：\n\n"
+            f"{run_label}\n目录占用：{size}\n\n"
+            "后端最新成功结果和当前版本 A/B 始终受保护。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if is_orphan:
+                removed = move_solid_orphan_to_trash(
+                    payload, _move_to_system_trash)
+            else:
+                removed = move_solid_history_to_trash(
+                    payload, (set() if global_storage
+                              else self.results.history_protected_ids()),
+                    _move_to_system_trash)
+        except SolidHistoryCleanupError as exc:
+            QMessageBox.warning(self, "未清理实体历史", str(exc))
+            return
+        if global_storage:
+            self.show_global_solid_storage()
+        else:
+            self._refresh_solid_history()
+            self.show_solid_history_management()
+        self.statusBar().showMessage(
+            f"旧运行已移入 Windows 回收站，释放约 "
+            f"{format_storage_size(int(removed['bytes']))}。", 7000)
 
     def _solve_failed(self, kind: str, message: str) -> None:
         """求解器自己抛异常。守门拦不住的（比如奇异矩阵）会走到这里。"""
@@ -733,12 +1005,16 @@ class MainWindow(QMainWindow):
         """
         if not touched_model:
             return
+        self._last_convergence_payload = None
+        self._solid_backend_payloads.clear()
         self._adopt_session_solution()
         self.refresh()
 
     def _on_sketch_loaded(self, model: dict) -> None:
         """手绘草图识别成功并加载为当前模型后，刷新界面。"""
         self.result = None
+        self._last_convergence_payload = None
+        self._solid_backend_payloads.clear()
         self.case = None
         self.section_opt.refresh_sections()
         self.refresh()
@@ -854,6 +1130,22 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_model.setText("模型：空")
         self.lbl_solve.setText(self._solve_text())
+        if self.results.context != "solid_storage":
+            from .result_inspector import (assess_result_trust,
+                                           assess_solid_result,
+                                           solid_result_provenance)
+            if (self.results.context in {"solid_joint", "solid_history",
+                                         "convergence", "solid_history_manage"}
+                    and self._last_convergence_payload):
+                trust = assess_solid_result(self._last_convergence_payload)
+            else:
+                trust = (assess_result_trust(self.session, scene.STATIONS)
+                         if self.session.solution is not None else None)
+            self.results.set_trust_assessment(trust)
+            self.results.set_solid_provenance(
+                solid_result_provenance(self._last_convergence_payload)
+                if self._last_convergence_payload else None)
+            self._refresh_solid_history()
         cases = (list(self.result.payload["cases"])
                  if self.result is not None and self.result.ok else [])
         self.quickbar.set_cases(cases, self.case)
@@ -872,6 +1164,7 @@ class MainWindow(QMainWindow):
             self.lbl_last.setText("最近：尚未建模")
         self.act_solve.setEnabled(bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
+        self.chat.refresh_suggestions()
         self.redraw()
         has_model = bool(model.get("nodes"))
         self._sync_model_tree(has_model)
@@ -882,11 +1175,15 @@ class MainWindow(QMainWindow):
     def _sync_model_tree(self, has_model: bool) -> None:
         """Give an empty viewport its width back, then reveal real model data."""
         if not has_model:
-            if not self.tree_dock.isHidden():
-                self.tree_dock.hide()
+            for dock in (self.tree_dock, self.props_dock, self.bc_dock):
+                dock.hide()
             self._tree_auto_hidden = True
         elif self._tree_auto_hidden:
-            self.tree_dock.show()
+            for dock in (self.tree_dock, self.props_dock, self.bc_dock):
+                dock.show()
+            # 从空项目恢复时，hide 会移除 Qt 的页签关系，需要重新建立。
+            self.tabifyDockWidget(self.tree_dock, self.props_dock)
+            self.tabifyDockWidget(self.tree_dock, self.bc_dock)
             self.tree_dock.raise_()
             self._tree_auto_hidden = False
 
@@ -973,6 +1270,8 @@ class MainWindow(QMainWindow):
         不清的话，界面会拿着旧模型的位移去画新模型的变形图。
         """
         self.result = None
+        self._last_convergence_payload = None
+        self._solid_backend_payloads.clear()
         self.case = None
         self._last_probe = None
         self.results.show_message(
@@ -1005,28 +1304,41 @@ class MainWindow(QMainWindow):
                             member_id, point, self.case)
         self._last_probe = data
         rows = []
+        force_labels = {
+            "N": ("轴力 N", "沿杆件局部 x 轴，受拉为正"),
+            "Vy": ("剪力 Vy", "沿杆件局部 y 轴"),
+            "Vz": ("剪力 Vz", "沿杆件局部 z 轴"),
+            "T": ("扭矩 T", "绕杆件局部 x 轴"),
+            "My": ("弯矩 My", "绕杆件局部 y 轴"),
+            "Mz": ("弯矩 Mz", "绕杆件局部 z 轴"),
+        }
         for component in ("N", "Vy", "Vz", "T", "My", "Mz"):
             unit = (data["moment_unit"] if component in {"T", "My", "Mz"}
                     else data["force_unit"])
-            rows.append([component, data["forces"][component], unit,
-                         "杆件局部分量"])
-        for prefix, values in (("U(global)", data["global_displacement"]),
-                               ("U(local)", data["local_displacement"])):
+            label, convention = force_labels[component]
+            rows.append(["截面内力", label, data["forces"][component], unit,
+                         convention])
+        for coordinate, values in (("全局坐标", data["global_displacement"]),
+                                   ("杆件局部坐标", data["local_displacement"])):
             for axis, value in zip("xyz", values):
-                rows.append([f"{prefix}.{axis}", float(value),
-                             data["displacement_unit"], "中心线位移"])
+                rows.append(["中心线位移", f"{coordinate}位移 U{axis}",
+                             float(value), data["displacement_unit"],
+                             f"沿{coordinate} {axis} 方向"])
         if data["stress"] is not None:
-            rows += [["sigma_min", data["stress"]["min"], "MPa", "受压端"],
-                     ["sigma_max", data["stress"]["max"], "MPa", "受拉端"]]
+            rows += [["截面正应力", "最小正应力 σmin",
+                      data["stress"]["min"], "MPa", "截面最不利受压点"],
+                     ["截面正应力", "最大正应力 σmax",
+                      data["stress"]["max"], "MPa", "截面最不利受拉点"]]
         else:
-            rows.append(["截面正应力", "不可用", "", data["stress_error"]])
+            rows.append(["截面正应力", "正应力分布", "不可用", "—",
+                         data["stress_error"]])
         self.results_dock.setVisible(True)
         self.results_dock.raise_()
         self.results.show_rows(
             f"结果探针：杆件 {member_id}，工况 {data['case']}，"
             f"距 i 端 x={data['x']:.4g}/{data['length']:.4g}",
-            ["结果量", "值", "单位", "约定"], rows,
-            [("member", member_id)] * len(rows))
+            ["类别", "结果量", "值", "单位", "方向 / 约定"], rows,
+            [("member", member_id)] * len(rows), context="probe")
         self.viewport.set_result_marker(
             data["point"], f"PROBE M{member_id} x={data['x']:.3g}")
 
@@ -1049,7 +1361,8 @@ class MainWindow(QMainWindow):
             f"{self.component} 全结构绝对极值，工况 {extreme['case']}",
             ["杆件", "距 i 端 x", "值", "单位"],
             [[extreme["member"], extreme["x"], extreme["value"],
-              extreme["unit"]]], [("member", extreme["member"])])
+              extreme["unit"]]], [("member", extreme["member"])],
+            context="extreme")
 
     def show_section_stress(self) -> None:
         """打开当前探针截面的轴力+双向弯曲正应力图。"""
@@ -1108,7 +1421,8 @@ class MainWindow(QMainWindow):
         self.results.show_rows(
             f"检出 {len(modes)} 个刚体模态：以下节点方向缺少足够约束。"
             "点击一行可在视口中定位。",
-            ["模态", "节点", "方向", "参与幅值"], rows, loc)
+            ["模态", "节点", "方向", "参与幅值"], rows, loc,
+            context="diagnosis")
 
     # ------------------------------------------------- 撤销与时间线
 
@@ -1136,6 +1450,8 @@ class MainWindow(QMainWindow):
         旧模型的内力——数字都在，就是对不上，而且看不出来。
         """
         self.result = None
+        self._last_convergence_payload = None
+        self._solid_backend_payloads.clear()
         self.case = None
         self.results.show_message(
             what, "模型状态已变更，原有分析结果已失效并清除，请重新求解。")
@@ -1282,6 +1598,7 @@ class MainWindow(QMainWindow):
         """建节点时点在了已有节点附近：吸附过去，不重复建节点。"""
         self._selected_kind = "node"
         self._selected_id = nid
+        self.chat.set_workspace_selection("node", nid)
         self._describe_selection("node", nid)
         self.statusBar().showMessage(
             f"已吸附到已有节点 {nid}，未重复创建（鼠标靠近已有节点会自动吸附）", 4000)
@@ -1298,6 +1615,7 @@ class MainWindow(QMainWindow):
         self._apply_model_mode()
         self._apply_pick_mode()
         self.viewport.set_selection(None, None)
+        self.chat.set_workspace_selection(None, None)
         if changed:
             self.statusBar().showMessage("已退出当前操作，回到浏览", 3000)
 
@@ -1378,6 +1696,7 @@ class MainWindow(QMainWindow):
         node_id = int(result.payload["input_node_ids"][0])
         if result.payload.get("no_change"):
             self._selected_kind, self._selected_id = "node", node_id
+            self.chat.set_workspace_selection("node", node_id)
             self.viewport.set_selection("node", node_id)
             self._describe_selection("node", node_id)
             self.statusBar().showMessage(
@@ -1441,6 +1760,7 @@ class MainWindow(QMainWindow):
             self.viewport.set_selection(None, None)
             self.bc.set_selection(None, None)
             self.properties.clear()
+            self.chat.set_workspace_selection(None, None)
             label = "节点" if kind == "node" else "杆件"
             self._after_manual_edit(f"已删除{label} {ident}")
         else:
@@ -1497,17 +1817,23 @@ class MainWindow(QMainWindow):
     def _on_picked(self, kind: str, ident: int) -> None:
         self._selected_kind = kind
         self._selected_id = ident
+        self.chat.set_workspace_selection(kind, ident)
         if self.viewport.selection != (kind, ident):
             self.viewport.set_selection(kind, ident)
         self._sync_selection_actions()
         self._describe_selection(kind, ident)
         # **选中就显示属性。** 这一步是把"拾取"这条路走完：
         # 之前点中一根杆只能看到它多长，改不了
-        self.properties.show_object(kind, ident)
-        self.props_dock.show()
-        self.props_dock.raise_()
         # 边界条件面板也更新
         self.bc.set_selection(kind, ident)
+        self.properties.show_object(kind, ident)
+        if self.bc_dock.isVisibleTo(self):
+            # 正在做边界/荷载任务时，连续选点选杆都留在当前任务页；
+            # 不能每选一次就被“属性”页抢走焦点。
+            self.bc_dock.raise_()
+        else:
+            self.props_dock.show()
+            self.props_dock.raise_()
         # 点中一根杆，内力图就切到它——**这是"在哪"和"多大"接起来的一步**
         if kind == "member" and self.diagram_dock.isVisible():
             self.diagram.member.setCurrentText(str(ident))
@@ -1563,11 +1889,18 @@ class MainWindow(QMainWindow):
         self._after_manual_edit(
             f"已将自重写入 {result.payload['case']} 工况（{result.payload['members']} 根杆件）")
 
-    def show_bc_panel(self) -> None:
-        """打开边界条件面板。"""
+    def show_bc_panel(self, cmd=None) -> None:
+        """在左侧任务区打开边界条件管理器，并进入合适的选择模式。"""
         self.bc_dock.setVisible(True)
         self.bc_dock.raise_()
+        self.resizeDocks([self.bc_dock], [330], Qt.Orientation.Horizontal)
         self.bc.refresh()
+        if getattr(self, "_selected_kind", None) not in {"node", "member"}:
+            self.actions_by_name["pick_node"].setChecked(True)
+            self._apply_pick_mode()
+        self.set_prompt(
+            "边界条件任务：在视口中选择节点设置支座、位移或集中力；"
+            "选择杆件设置分布荷载。面板保持在左侧当前页。")
 
     def edit_materials_sections(self) -> None:
         """弹出材料与截面编辑对话框，直接修改模型的材料和截面定义。"""
@@ -2555,7 +2888,7 @@ class MainWindow(QMainWindow):
                    f"{p['split_nodes']} 个切分节点。点击一行定位物理杆件。")
         self.results_dock.setVisible(True)
         self.results.show_rows(caption, ["分析杆段", "物理杆件", "节点 i", "节点 j"],
-                               rows, locations)
+                               rows, locations, context="analysis_mesh")
         self.set_mode("分析网格")
         self.statusBar().showMessage(caption, 8000)
 
@@ -2567,6 +2900,7 @@ class MainWindow(QMainWindow):
         if self._needs_solution():
             self.results_dock.setVisible(True)
             self.results_dock.raise_()
+            self.results.set_context("contour")
             self.set_mode("云图")
 
     def pick_component(self) -> None:
@@ -2642,9 +2976,8 @@ class MainWindow(QMainWindow):
     def run_solid_joint(self) -> None:
         """对当前节点运行自研 C3D10 局部实体子模型。
 
-        这是分钟级作业，必须复用统一后台 runner。入口还同时卡住三个容易
-        造成“按钮点了却不知道为什么不算”的前置条件：选中节点、整体梁模型
-        已求解、当前没有别的作业。
+        这是分钟级作业，先让用户看到后端、证据等级和实际网格档位，再复用
+        统一后台 runner。入口还同时卡住选中节点、整体梁模型和忙碌状态。
         """
         if getattr(self, "_selected_kind", None) != "node":
             self.set_prompt("节点实体：请先用“选择节点”在视口中选中一个节点")
@@ -2655,10 +2988,34 @@ class MainWindow(QMainWindow):
             return
         node_id = int(self._selected_id)
         case = self.case
+        from abaqus_backend import abaqus_available
+        from solid_joint import (SolidJointError, mesh_reference_length,
+                                 prepare_joint_spec)
+        from .convergence_dialog import SolidConvergenceDialog
+
+        try:
+            spec = prepare_joint_spec(self.session, node_id, case)
+            reference = mesh_reference_length(spec)
+        except SolidJointError as exc:
+            QMessageBox.information(self, "节点实体", str(exc))
+            return
+        dialog = SolidConvergenceDialog(
+            node_id, str(spec.case), reference,
+            has_abaqus=abaqus_available(), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        backend = dialog.backend()
+        if backend == "compare":
+            self._run_solid_backend_pair(spec, dialog.mesh_plans())
+            return
+        mesh_sizes = dialog.mesh_sizes()
         title = f"节点 {node_id} 局部实体"
         self._analyse(
             "solid_joint", title,
-            lambda: self.session.analyze_joint_solid(node_id=node_id, case=case))
+            lambda: self.session.analyze_joint_solid(
+                node_id=node_id, case=spec.case,
+                anchor_member=spec.anchor_member, backend=backend,
+                mesh_sizes_mm=mesh_sizes))
 
     # --- 校核 ---
 
@@ -2707,12 +3064,22 @@ class MainWindow(QMainWindow):
                     f"{title}未完成",
                     self._explain(result.payload))
             else:
+                if kind == "solid_joint":
+                    self._store_solid_payload(result.payload, origin="computed")
                 caption, cols, rows, loc = result_rows.to_rows(
                     kind, result.payload)
-                self.results.show_rows(f"{title}　{caption}", cols, rows, loc,
-                                       result_rows.row_marks(kind,
-                                                             result.payload))
+                self.results.show_rows(
+                    f"{title}　{caption}", cols, rows, loc,
+                    result_rows.row_marks(kind, result.payload), context=kind)
             self.refresh()
+            if kind == "solid_joint" and result.ok:
+                if len(self._matching_solid_backend_payloads()) >= 2:
+                    self.statusBar().showMessage(
+                        "同一节点与工况的 native/Abaqus 结果已齐；"
+                        "点击“收敛诊断”查看同尺度与收敛解对标。", 12000)
+                else:
+                    self.statusBar().showMessage(
+                        "实体结果及收敛证据已保存；可在“收敛诊断”中审查。", 8000)
 
         def failed(kind_: str, message: str) -> None:
             self._on_busy(False)
@@ -2721,6 +3088,141 @@ class MainWindow(QMainWindow):
                                       f"{kind_}：{message[:400]}")
 
         self.runner.submit(fn, on_done=done, on_failed=failed)
+
+    def _store_solid_payload(self, payload: dict, *, origin: str | None = None) -> None:
+        saved = dict(payload)
+        if origin is not None:
+            saved["_result_origin"] = origin
+        self._last_convergence_payload = saved
+        backend = str(saved.get("backend") or "").lower()
+        family = ("abaqus" if "abaqus" in backend else
+                  "native" if "native" in backend else backend)
+        key = (int(saved.get("node_id")), str(saved.get("case") or ""), family)
+        self._solid_backend_payloads[key] = saved
+
+    def _run_solid_backend_pair(self, spec, plans: dict[str, list[float]]) -> None:
+        """顺序运行两个实体后端；取消只阻止下一阶段，绝不强杀求解器。"""
+        from threading import Event
+
+        from PySide6.QtWidgets import QProgressDialog
+
+        from agent import ToolResult
+        from solid_cache import load_solid_cache, solid_cache_matches
+        from .solid_task import run_backend_pair
+
+        if self.runner.busy:
+            return
+        cancelled = Event()
+        progress = QProgressDialog(
+            "准备双后端实体对标…", "取消后续阶段", 0, 2, self)
+        progress.setWindowTitle("节点实体双后端对标")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(cancelled.set)
+        progress.show()
+
+        disk_cache = load_solid_cache(
+            self.session.model, spec, plans)
+        for payload in disk_cache["usable"].values():
+            self._store_solid_payload(payload, origin="disk")
+        cached = {
+            backend: payload for (node_id, case, backend), payload
+            in self._solid_backend_payloads.items()
+            if node_id == spec.node_id and case == str(spec.case)
+            and backend in plans
+            and solid_cache_matches(
+                payload, backend, self.session.model, spec, plans[backend])
+        }
+
+        def run_backend(backend: str, sizes: list[float]):
+            return self.session.analyze_joint_solid(
+                node_id=spec.node_id, case=spec.case,
+                anchor_member=spec.anchor_member, backend=backend,
+                mesh_sizes_mm=sizes)
+
+        def job(report):
+            outcome = run_backend_pair(
+                run_backend, plans, cached=cached,
+                is_cancelled=cancelled.is_set, report=report)
+            return ToolResult(bool(outcome["ok"]), outcome)
+
+        def on_progress(name: str, data: dict, _ok: bool) -> None:
+            backend = "自研 C3D10" if data["backend"] == "native" else "Abaqus 6.14"
+            stage = int(data["stage"])
+            if name == "cached":
+                progress.setValue(stage)
+                progress.setLabelText(f"{backend}：复用已完成结果")
+            elif name == "started":
+                progress.setValue(stage - 1)
+                progress.setLabelText(
+                    f"阶段 {stage}/2：{backend} 计算中\n"
+                    "取消将在当前阶段安全结束后生效。")
+            else:
+                progress.setValue(stage)
+                progress.setLabelText(f"阶段 {stage}/2：{backend} 已完成")
+            self.statusBar().showMessage(progress.labelText())
+
+        def done(result) -> None:
+            self._on_busy(False)
+            progress.close()
+            outcome = result.payload
+            for backend, payload in outcome.get("completed", {}).items():
+                if backend not in cached:
+                    origin = "computed"
+                elif cached[backend].get("_result_origin") == "disk":
+                    origin = "disk"
+                else:
+                    origin = "memory"
+                self._store_solid_payload(payload, origin=origin)
+            if outcome.get("completed"):
+                self.show_convergence_workspace()
+            else:
+                self.results.show_message("双后端对标未完成", outcome.get("error") or "没有结果")
+            if result.ok:
+                self.statusBar().showMessage(
+                    "双后端实体对标完成；收敛诊断已显示同尺度记录和正式 Kt 差异。", 12000)
+            elif outcome.get("cancelled"):
+                self.statusBar().showMessage(
+                    "已在阶段边界取消；已完成的后端结果保留，下次会自动续跑。", 10000)
+            else:
+                failed = outcome.get("failed_backend") or "未知"
+                QMessageBox.warning(
+                    self, "双后端对标未完整完成",
+                    f"{failed} 阶段失败：{outcome.get('error')}\n\n"
+                    "已经完成的后端结果已保留；重新启动双后端任务时会自动跳过。")
+
+        def failed(kind: str, message: str) -> None:
+            self._on_busy(False)
+            progress.close()
+            self.results.show_message("双后端对标出错", f"{kind}：{message}")
+
+        self._on_busy(True)
+        self.results_dock.setVisible(True)
+        restored = len(disk_cache["usable"])
+        ignored = len(disk_cache["ignored"])
+        if restored:
+            preparation = f"已从磁盘恢复 {restored} 个可信阶段；准备续跑剩余阶段…"
+        elif ignored:
+            preparation = f"发现 {ignored} 个不可复用的旧结果；按当前输入重新计算…"
+        else:
+            preparation = "准备运行 native 与 Abaqus…"
+        self.results.show_message("节点实体双后端对标", preparation)
+        if not self.runner.submit(job, on_done=done, on_failed=failed,
+                                  on_progress=on_progress):
+            self._on_busy(False)
+            progress.close()
+
+    def _matching_solid_backend_payloads(self) -> list[dict]:
+        """返回与最后一次实体任务同节点、同工况的后端结果。"""
+        if not self._last_convergence_payload:
+            return []
+        node = int(self._last_convergence_payload.get("node_id"))
+        case = str(self._last_convergence_payload.get("case") or "")
+        return [payload for (node_id, case_name, _backend), payload
+                in self._solid_backend_payloads.items()
+                if node_id == node and case_name == case]
 
     @staticmethod
     def _explain(payload: dict) -> str:

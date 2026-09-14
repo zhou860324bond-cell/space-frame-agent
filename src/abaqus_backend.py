@@ -27,7 +27,7 @@ import numpy as np
 from pathlib import Path
 from typing import Any
 
-from inp_writer import write_inp
+from inp_writer import resolve_element, write_inp
 from units import of as unit_system_of
 
 HERE = Path(__file__).resolve().parent
@@ -309,9 +309,10 @@ def _run(cmd: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProce
 
 
 def solve(model: dict[str, Any], workdir: Path, case: str | None = None,
-          element: str = "B33", job: str = "agentjob",
+          element: str = "auto", job: str = "agentjob",
           timeout: float = 900.0) -> dict[str, Any]:
     """跑一次 Abaqus，返回与 solve_model 对齐的结果摘要。"""
+    element = resolve_element(model, element)
     exe = find_abaqus()
     if exe is None:
         raise AbaqusError(

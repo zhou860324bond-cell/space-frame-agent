@@ -41,6 +41,34 @@ DEFAULT_KEEP_TURNS = 6
 DEFAULT_CONTEXT_CHARS = 24_000
 TOOL_MESSAGE_MAX_CHARS = 6_000
 
+# 这些工具体积大、使用频率低，只在用户近期明确提到对应任务时放进模型上下文。
+# 工具仍然全部存在于 Session；这里只减少每次网络往返重复上传的 JSON schema。
+_SPECIAL_TOOL_HINTS = {
+    "solve_with_abaqus": ("abaqus", "外部求解器"),
+    "analyze_joint_solid": ("实体节点", "实体分析", "节点实体"),
+    "compare_solvers": ("对比求解器", "求解器对比", "abaqus对比"),
+    "modal_analysis": ("模态", "频率", "振型"),
+    "buckling_analysis": ("屈曲", "稳定特征值"),
+    "sweep": ("扫参", "参数扫描", "敏感性"),
+    "write_report": ("报告", "导出报告"),
+    "export_learning_trace": ("学习轨迹", "训练数据"),
+    "check_symmetry": ("对称", "镜像"),
+    "check_numbering": ("编号", "重编号"),
+}
+_SPECIAL_TOOL_NAMES = frozenset(_SPECIAL_TOOL_HINTS)
+
+
+def tools_for_turn(user_text: str, recent_user_text: str = "") -> list[dict]:
+    """按近期意图移除不相关的低频工具，降低每轮请求体积。"""
+    intent = f"{recent_user_text}\n{user_text}".lower().replace(" ", "")
+    enabled = {
+        name for name, hints in _SPECIAL_TOOL_HINTS.items()
+        if any(hint.lower().replace(" ", "") in intent for hint in hints)
+    }
+    return [tool for tool in TOOLS
+            if tool["function"]["name"] not in _SPECIAL_TOOL_NAMES
+            or tool["function"]["name"] in enabled]
+
 _CONTINUATION_HINT = """
 你正在一次**多轮对话**中。此前的模型状态还在：材料、截面、节点、杆件、荷载
 都保留着，不必重建。用户说"改一下""再算一遍"时，用 add_members、set_load_cases、
@@ -374,7 +402,7 @@ class Conversation:
 
     # --- 主循环 ---
 
-    def ask(self, user_text: str, on_tool=None) -> TurnResult:
+    def ask(self, user_text: str, on_tool=None, on_text=None) -> TurnResult:
         """问一轮。工具调用循环与单轮一致，区别只在带着历史进去。
 
         `on_tool(name, args, ok)` 在**每个工具跑完的那一刻**回调一次。
@@ -400,6 +428,13 @@ class Conversation:
         provider_ms = 0.0
         tool_ms = 0.0
         prompt_chars = 0
+        recent_text = "\n".join(ex.user for ex in self.history[-2:])
+        turn_tools = tools_for_turn(user_text, recent_text)
+        tool_metrics = {
+            "tool_schema_count": len(turn_tools),
+            "all_tool_count": len(TOOLS),
+            "tool_schema_chars": _message_chars(turn_tools),
+        }
 
         for round_index in range(self.max_rounds):
             if self._cancelled:
@@ -413,7 +448,11 @@ class Conversation:
                                   stopped_by_limit=True)
             prompt_chars += _message_chars(messages)
             provider_started = time.perf_counter()
-            reply = self.provider.complete(messages, TOOLS)
+            stream = getattr(self.provider, "complete_stream", None)
+            if on_text is not None and callable(stream):
+                reply = stream(messages, turn_tools, on_text)
+            else:
+                reply = self.provider.complete(messages, turn_tools)
             provider_ms += (time.perf_counter() - provider_started) * 1000
             if not reply.get("tool_calls"):
                 text = reply.get("content", "")
@@ -428,6 +467,7 @@ class Conversation:
                                       "provider_calls": round_index + 1,
                                       "prompt_chars": prompt_chars,
                                       "fast_path": False,
+                                      **tool_metrics,
                                   })
 
             assistant = {
@@ -478,6 +518,7 @@ class Conversation:
                               "provider_calls": self.max_rounds,
                               "prompt_chars": prompt_chars,
                               "fast_path": False,
+                              **tool_metrics,
                           })
 
     # --- 观察 ---

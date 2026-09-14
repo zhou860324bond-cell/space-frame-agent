@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import shutil
 import subprocess
 import tempfile
@@ -25,6 +24,8 @@ from typing import Any
 import numpy as np
 
 from frame3d import local_axes
+from solid_cache import (make_solid_cache_identity, start_solid_run,
+                         write_solid_summary)
 
 
 class SolidJointError(RuntimeError):
@@ -273,6 +274,95 @@ def diagnose_peak_convergence(meshes: list[dict[str, Any]],
             "relative_changes": [float(c) for c in changes],
             "value_span": float(span), "refinement_ratio": float(refinement),
             "log_log_slope": float(slope), "tolerance": float(tolerance)}
+
+
+def diagnose_hotspot_convergence(values: list[tuple[float, float]],
+                                 tolerance: float = 0.05) -> dict[str, Any]:
+    """热点应力须经历至少三档、两倍局部细化且趋稳，才能用于 Kt。"""
+    clean = sorted(
+        [(float(h), float(s)) for h, s in values
+         if math.isfinite(float(h)) and h > 0.0 and math.isfinite(float(s))],
+        key=lambda item: -item[0])
+    if len(clean) < 3:
+        return {"verdict": "inconclusive", "levels": len(clean),
+                "relative_changes": [],
+                "reason": "至少需要三档局部网格才能判断热点应力收敛"}
+    changes = [abs(b[1] - a[1]) / max(abs(b[1]), abs(a[1]), 1e-12)
+               for a, b in zip(clean, clean[1:])]
+    refinement = clean[0][0] / clean[-1][0]
+    stable = changes[-1] <= tolerance
+    improving = changes[-1] <= changes[-2] + 1e-12
+    if refinement < _STABLE_REFINEMENT:
+        verdict = "inconclusive"
+        reason = (f"最粗与最细局部网格只差 {refinement:.2f} 倍；"
+                  "三档尺寸过于接近，不能据此确认热点应力收敛")
+    elif stable and improving:
+        verdict = "converging"
+        reason = f"最后两档热点应力变化 {changes[-1]:.1%}，已进入稳定区"
+    else:
+        verdict = "inconclusive"
+        reason = ("热点应力逐档变化为 "
+                  + " → ".join(f"{value:.1%}" for value in changes)
+                  + f"，未满足 {tolerance:.0%} 稳定性门禁")
+    return {"verdict": verdict, "levels": len(clean),
+            "relative_changes": changes, "refinement_ratio": refinement,
+            "tolerance": tolerance, "reason": reason}
+
+
+def evaluate_hotspot_meshes(spec: JointSpec, meshes: list[dict[str, Any]]
+                            ) -> dict[str, Any]:
+    """逐档外推热点应力，并判断所有候选杆臂是否都足以发布 Kt。"""
+    required_arms = [str(arm.member_id) for arm in spec.arms
+                     if arm.member_id != spec.anchor_member]
+    for mesh in meshes:
+        extrapolated: dict[str, Any] = {}
+        samples_by_arm = mesh.get("surface_samples") or {}
+        for arm in spec.arms:
+            if arm.member_id == spec.anchor_member:
+                continue
+            samples = samples_by_arm.get(str(arm.member_id))
+            if not samples:
+                extrapolated[str(arm.member_id)] = {
+                    "error": "该臂没有取到表面应力样本"}
+                continue
+            try:
+                extrapolated[str(arm.member_id)] = hot_spot_stress_linear(
+                    [(row[0], row[1]) for row in samples], arm.wall_thickness_mm)
+            except SolidJointError as exc:
+                extrapolated[str(arm.member_id)] = {"error": str(exc)}
+        mesh["hot_spot_extrapolation"] = extrapolated
+
+    convergence: dict[str, Any] = {}
+    for arm in spec.arms:
+        if arm.member_id == spec.anchor_member:
+            continue
+        member_id = str(arm.member_id)
+        values = []
+        for mesh in meshes:
+            item = (mesh.get("hot_spot_extrapolation") or {}).get(member_id, {})
+            if item.get("hot_spot_mpa") is not None:
+                size = mesh.get("hotspot_mesh_size_mm", mesh.get("mesh_size_mm"))
+                values.append((float(size), float(item["hot_spot_mpa"])))
+        diagnosis = diagnose_hotspot_convergence(values)
+        diagnosis["values"] = [
+            {"hotspot_mesh_size_mm": size, "hot_spot_mpa": stress}
+            for size, stress in values]
+        convergence[member_id] = diagnosis
+
+    finest = meshes[-1].get("hot_spot_extrapolation", {}) if meshes else {}
+    usable = {
+        member_id: item["hot_spot_mpa"]
+        for member_id, item in finest.items()
+        if item.get("hot_spot_mpa") is not None
+        and convergence.get(member_id, {}).get("verdict") == "converging"
+    }
+    # 不能只因某一条臂收敛就发布 Kt：尚未收敛的另一条臂仍可能成为控制臂。
+    # 因此正式发布要求所有非锚固臂都进入稳定区；usable 仍保留，供界面展示
+    # 哪些杆臂已经具备证据。
+    all_converged = bool(required_arms) and all(
+        member_id in usable for member_id in required_arms)
+    return {"finest": finest, "convergence": convergence, "usable": usable,
+            "required_arms": required_arms, "all_converged": all_converged}
 
 
 def _physical_end_force(session, member: dict[str, Any], node_id: int,
@@ -740,7 +830,7 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
     reference = mesh_reference_length(spec)
     # 三档，不是两档。两档只能算出"最后一次变化有多大"，而奇异点上相邻两档
     # 的变化本来就可以很小——三档才能看出这个变化是在缩小还是不缩小。
-    sizes = ([reference, reference / 1.25, reference / 1.55]
+    sizes = ([reference, 0.7 * reference, 0.5 * reference]
              if mesh_sizes_mm is None else [float(value) for value in mesh_sizes_mm])
     if len(sizes) < 3 or any(not math.isfinite(value) or value <= 0.0 for value in sizes):
         raise SolidJointError("mesh_sizes_mm 至少需要三个正数：两档分辨不了收敛与发散")
@@ -758,8 +848,8 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
     if executable is None:
         raise SolidJointError("找不到 Abaqus 6.14 命令，无法运行局部实体分析")
 
-    target = Path(output_dir).resolve() / f"node_{spec.node_id}_{spec.case}"
-    target.mkdir(parents=True, exist_ok=True)
+    run = start_solid_run(output_dir, spec.node_id, spec.case)
+    target = run["run_dir"]
 
     def keep_everything(run_dir: Path) -> None:
         for path in run_dir.iterdir():
@@ -863,30 +953,18 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
     nominal = spec.nominal_normal_mpa
     diagnosis = diagnose_peak_convergence(meshes)
 
-    # 热点应力外推。取样在 Abaqus 侧完成，可能失败（几何退化、表面点太少），
-    # 失败时脚本会写 surface_samples=null——那不该让整个作业作废，这里逐臂
-    # 兜住，把原因记下来继续。
-    hot_spots: dict[str, Any] = {}
-    for arm in spec.arms:
-        if arm.member_id == spec.anchor_member:
-            continue
-        samples = (fine.get("surface_samples") or {}).get(str(arm.member_id))
-        if not samples:
-            hot_spots[str(arm.member_id)] = {"error": "该臂没有取到表面应力样本"}
-            continue
-        try:
-            hot_spots[str(arm.member_id)] = hot_spot_stress_linear(
-                [(row[0], row[1]) for row in samples], arm.wall_thickness_mm)
-        except SolidJointError as exc:
-            hot_spots[str(arm.member_id)] = {"error": str(exc)}
+    # 三档都做热点外推，再用和 native 后端完全相同的稳定性门禁。以前 Abaqus
+    # 这里只看最细一档就发布 Kt，同一张结果页因此存在两套可信标准。
+    hotspot = evaluate_hotspot_meshes(spec, meshes)
+    hot_spots = hotspot["finest"]
+    hotspot_convergence = hotspot["convergence"]
 
     # Kt 只在**站得住**的时候给。几何里没有焊缝倒圆，相贯线是应力奇异点；
     # 拿峰值或 P99 去除名义应力得到的"应力集中系数"是网格的函数，不是结构的
     # 性质。所以：有热点外推值就用它算 Kt；没有就明确拒绝并说明理由，
     # 绝不退回去用峰值凑一个数。
-    usable = {mid: item.get("hot_spot_mpa") for mid, item in hot_spots.items()
-              if item.get("hot_spot_mpa") is not None}
-    if usable and nominal > 1e-12:
+    usable = hotspot["usable"]
+    if hotspot["all_converged"] and nominal > 1e-12:
         governing = max(usable, key=lambda mid: abs(usable[mid]))
         kt: float | None = abs(usable[governing]) / nominal
         kt_basis = (f"IIW 0.4t/1.0t 线性外推热点应力（控制臂 {governing}）/ 名义正应力")
@@ -896,19 +974,26 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
         kt_refused = (
             "未给出应力集中系数：" + (
                 "名义正应力接近零" if nominal <= 1e-12 else
-                "没有拿到可用的热点外推值") +
+                "至少一条候选杆臂的热点外推未覆盖三档网格，或尚未进入稳定区") +
             "。几何未建焊缝倒圆，相贯线在线弹性下是应力奇异点，"
             "峰值/P99 随网格加密无上界，不能作为 Kt 的分子。")
 
     summary = {
         "schema": "solid-joint-analysis/v2",
         "backend": "abaqus-6.14",
+        "run_id": run["run_id"],
+        "generated_at": run["generated_at"],
+        "cache_identity": make_solid_cache_identity(
+            session.model, spec, sizes),
         "node_id": spec.node_id,
         "case": spec.case,
         "anchor_member": spec.anchor_member,
         "nominal_normal_mpa": nominal,
         "peak_convergence": diagnosis,
         "hot_spot_extrapolation": hot_spots,
+        "hot_spot_convergence": hotspot_convergence,
+        "hot_spot_required_arms": hotspot["required_arms"],
+        "hot_spot_all_converged": hotspot["all_converged"],
         "governing_arm": governing,
         "stress_concentration_factor": kt,
         "stress_concentration_basis": kt_basis,
@@ -926,6 +1011,5 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
             "finest_odb": str(target / f"solid_joint_{len(sizes)-1}.odb"),
         },
     }
-    (target / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_solid_summary(summary, run["case_dir"], target)
     return summary

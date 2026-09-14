@@ -125,6 +125,8 @@ def test_every_check_returns_a_verdict_and_a_sentence():
         ok, note = check()                                # 崩了这条就红
         assert isinstance(ok, bool), label
         assert isinstance(note, str) and note.strip(), label
+    assert [name for name, _ in doctor.CI_CHECKS] == [
+        name for name, _ in doctor.CHECKS if name != "OpenGL"]
 
 
 def test_the_report_runs_end_to_end_and_says_something(capsys):

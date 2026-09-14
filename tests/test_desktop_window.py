@@ -27,6 +27,7 @@ pytestmark = pytest.mark.skipif(                             # noqa: E402
     not opengl_available(),
     reason="无可用 OpenGL，桌面端 VTK 视口无法初始化，跳过")
 
+from PySide6.QtCore import Qt                               # noqa: E402
 from PySide6.QtWidgets import QApplication                  # noqa: E402
 
 from agent import Session                                   # noqa: E402
@@ -298,6 +299,30 @@ def test_a_singular_model_is_reported_not_crashed(qt_app):
     assert w.results.table.rowCount() > 0, "每条错误该是一行"
 
 
+def test_boundary_manager_is_a_left_task_tab_not_below_the_agent(qt_app):
+    w = MainWindow(built())
+    w.show()
+    w.show_bc_panel()
+    QApplication.processEvents()
+    assert w.dockWidgetArea(w.bc_dock) == Qt.DockWidgetArea.LeftDockWidgetArea
+    assert w.bc_dock in w.tabifiedDockWidgets(w.props_dock)
+    assert w.actions_by_name["pick_node"].isChecked()
+
+
+def test_boundary_task_keeps_focus_and_switches_tabs_with_selection(qt_app):
+    w = MainWindow(built())
+    w.show()
+    w.show_bc_panel()
+    w._on_picked("member", 1)
+    QApplication.processEvents()
+    assert w.bc.tabs.currentWidget() is w.bc.group_member
+    assert w.bc_dock.isVisibleTo(w)
+    w._on_picked("node", 1)
+    QApplication.processEvents()
+    assert w.bc.tabs.currentWidget() is w.bc.group_support
+    assert w.bc_dock.isVisibleTo(w), "连续选对象时不能被属性页抢走"
+
+
 def test_new_model_clears_everything(qt_app):
     w = MainWindow(built())
     solved(w)
@@ -552,7 +577,14 @@ def test_the_contour_tube_is_thick_enough_to_read_as_round(qt_app):
     from desktop import scene
 
     assert scene.CONTOUR_TUBE_RATIO >= 0.012
-    assert scene.CONTOUR_TUBE_RATIO > scene.TUBE_RATIO * 3
+    assert scene.CONTOUR_TUBE_RATIO > scene.TUBE_RATIO * 2.5
+
+
+def test_the_model_tube_is_thick_enough_to_show_depth(qt_app):
+    """普通模型也必须有可读的侧面；太细会退化成二维线稿。"""
+    from desktop import scene
+
+    assert scene.TUBE_RATIO >= 0.005
 
 
 def test_turning_off_contour_shading_gives_flat_colour(qt_app):

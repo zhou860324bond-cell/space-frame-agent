@@ -87,40 +87,74 @@ def build() -> Session:
 
 def plotter() -> pv.Plotter:
     p = pv.Plotter(off_screen=True, window_size=(1400, 900))
-    p.set_background(theme.VIEWPORT_BG)
+    p.set_background("#14181e", top="#2a3644")
+    p.enable_anti_aliasing("fxaa")
     return p
 
 
 def shot(p: pv.Plotter, name: str) -> None:
-    p.camera_position = "xz"
-    p.camera.azimuth = -35
-    p.camera.elevation = 18
+    # 与界面“自动/适合窗口”一致：平面刚架也用透视等轴测，才能看出管子的
+    # 侧面和支座深度。精确核对轴线时，界面仍可一键切回前视正投影。
+    p.disable_parallel_projection()
+    p.view_isometric()
+    p.camera.azimuth = -12
+    p.camera.elevation = 6
     p.reset_camera()
-    p.camera.zoom(1.25)              # reset_camera 留白太多；再大支座会被裁掉
+    p.camera.zoom(0.96)              # 透视近端会放大，给柱脚和支座留边
     path = OUT / name
     p.screenshot(str(path))
     p.close()
     print("已输出", path)
 
 
-def _bar_title(tubes, component: str, clim, base: str) -> str:
-    """与 viewport.show_contour 同一条披露规则：裁剪了就写在色标上。"""
-    if scene.clim_is_clipped(tubes, component, clim):
-        return f"{base}  [clip p{scene.CONTOUR_PERCENTILE:.0f}]"
-    return base
-
-
-def _scaled_tubes(frame, solution, component: str):
-    """带工程显示单位的云图管。与 viewport.show_contour 同一套换算——
+def _scaled_line(frame, solution, component: str):
+    """带工程显示单位的云图折线。与 viewport.show_contour 同一套换算——
     脚本若略过它，核对的就不是用户真正看到的那张图。"""
     from units import of as unit_system
-    tubes = scene.member_tubes(frame, solution, "D", scalars=component)
     system = unit_system(frame)
-    tubes[component] = tubes[component] * (
-        system.moment_scale if component in {"T", "My", "Mz", "M"}
-        else system.force_scale)
-    clim = scene.contour_clim(tubes, component)
-    return tubes, clim, system
+    value_scale = (system.moment_scale
+                   if component in {"T", "My", "Mz", "M"}
+                   else system.force_scale)
+    line = scene.contour_line(frame, solution, "D", component,
+                              value_scale=value_scale)
+    # 与结果面板的新默认一致：先展示真实全量程；P95 只作为用户主动开启的
+    # 显示增强，不应成为验收截图里难以解释的橙色断段。
+    clim = scene.contour_clim(line, component, percentile=None)
+    return line, clim, system
+
+
+def add_contour(p: pv.Plotter, frame, solution, component: str) -> None:
+    """复用真实界面的分级、管径、色系和光照参数。"""
+    line, clim, system = _scaled_line(frame, solution, component)
+    levels = theme.CONTOUR_LEVELS
+    tube = scene.banded_tubes(
+        line, component, clim, levels,
+        radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame))
+    cmap = theme.banded(theme.palette_cmap("rainbow", component), levels)
+    p.add_mesh(
+        tube, scalars=component + scene.BAND_SUFFIX, cmap=cmap, clim=clim,
+        n_colors=levels, show_scalar_bar=False, lighting=True,
+        ambient=0.42, diffuse=0.58, specular=0.22, specular_power=30,
+        smooth_shading=True)
+    p.add_scalar_bar(
+        title="", n_labels=levels + 1, n_colors=levels, vertical=True,
+        fmt="%.3g", color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
+        width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+    clipped = scene.clim_is_clipped(line, component, clim)
+    if clipped:
+        over = scene.out_of_range_tubes(
+            line, component, clim,
+            radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame) * 1.02)
+        if over.n_cells:
+            p.add_mesh(over, color=theme.HIGHLIGHT, lighting=False,
+                       show_scalar_bar=False)
+    unit = (system.moment_unit if component in {"T", "My", "Mz", "M"}
+            else system.force_unit)
+    note = f"{component}  [{unit}]\n{levels} bands"
+    if clipped:
+        note += f"\nclip p{scene.CONTOUR_PERCENTILE:.0f}\noff scale: orange"
+    p.add_text(note, position=(0.795, 0.735), viewport=True,
+               color=theme.VIEWPORT_INK, font_size=10)
 
 
 def main() -> None:
@@ -130,8 +164,10 @@ def main() -> None:
 
     # 1. 模型视图：杆件管 + 节点 + 铰 + 支座 + 荷载，与 viewport.show_model 一致
     p = plotter()
-    p.add_mesh(scene.member_tubes(frame), color=theme.MEMBER, smooth_shading=True)
-    p.add_mesh(scene.node_points(frame), color=theme.INK,
+    p.add_mesh(scene.member_tubes(frame), color=theme.MEMBER, smooth_shading=True,
+               pbr=True, metallic=0.12, roughness=0.50,
+               ambient=0.28, diffuse=0.72)
+    p.add_mesh(scene.node_points(frame), color=theme.VIEWPORT_INK,
                point_size=6, render_points_as_spheres=True)
     hinges = scene.hinge_glyphs(frame)
     if hinges.n_points:
@@ -144,32 +180,16 @@ def main() -> None:
         p.add_mesh(mesh, color=color)
     shot(p, "vp_model.png")
 
-    # 2. 合弯矩云图：顺序色标，从零起
+    # 2. 合弯矩云图：与真实界面一样的 Abaqus 式 12 级彩虹色带
     p = plotter()
-    tubes, clim, system = _scaled_tubes(frame, solution, "M")
-    p.add_mesh(tubes, scalars="M", cmap=theme.sequential_cmap(), clim=clim,
-               smooth_shading=True,
-               scalar_bar_args=dict(title=_bar_title(tubes, "M", clim,
-                                                     f"|M| ({system.moment_unit})"),
-                                    color=theme.INK_MUTED,
-                                    title_font_size=14, label_font_size=12,
-                                    n_labels=5, width=0.30, height=0.045,
-                                    position_x=0.66, position_y=0.03))
+    add_contour(p, frame, solution, "M")
     for mesh in scene.support_glyphs(frame).values():
         p.add_mesh(mesh, color=theme.SUPPORT)
     shot(p, "vp_contour_M.png")
 
-    # 3. 轴力云图：发散色标，关于零对称
+    # 3. 轴力云图：同一套 12 级色带；量程仍保持关于零对称
     p = plotter()
-    tubes, clim, system = _scaled_tubes(frame, solution, "N")
-    p.add_mesh(tubes, scalars="N", cmap=theme.DIVERGING, clim=clim,
-               smooth_shading=True,
-               scalar_bar_args=dict(title=_bar_title(tubes, "N", clim,
-                                                     f"N ({system.force_unit})"),
-                                    color=theme.INK_MUTED,
-                                    title_font_size=14, label_font_size=12,
-                                    n_labels=5, width=0.30, height=0.045,
-                                    position_x=0.66, position_y=0.03))
+    add_contour(p, frame, solution, "N")
     for mesh in scene.support_glyphs(frame).values():
         p.add_mesh(mesh, color=theme.SUPPORT)
     shot(p, "vp_contour_N.png")

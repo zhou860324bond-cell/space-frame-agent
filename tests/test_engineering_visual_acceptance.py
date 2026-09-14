@@ -59,11 +59,11 @@ def test_cantilever_acceptance_matches_pl_and_global_downward_load():
     assert check_equilibrium(frame, solution)["ok"]
 
 
-def test_portal_acceptance_is_planar_balanced_and_keeps_load_directions():
+def test_portal_acceptance_is_perspective_balanced_and_keeps_load_directions():
     frame = frame_of(portal_frame)
     solution = solve(frame)
     labels = scene.load_labels(frame, solution.primary)[1]
-    assert scene.preferred_view(frame) == "xz"
+    assert scene.preferred_view(frame) == "isometric"
     assert "Fx=+15 kN [global]" in labels
     assert labels.count("wz=-20 kN/m [global]") == 4
     assert all("U1 U2 U3 UR1 UR2 UR3" in label

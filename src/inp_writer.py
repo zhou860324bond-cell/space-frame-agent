@@ -5,6 +5,8 @@
 两个关键决定：
 
 **截面用 SECTION=GENERAL。** 直接给 A、I11、I12、I22、J，绕开截面形状换算的差异。
+对 B31，截面同时给出 Ay/Az 时再显式写 K23=G*Az、K13=G*Ay，并把 Abaqus
+默认的细长梁补偿系数设为 0；这样两侧比较的是同一组 Timoshenko 参数。
 
 **局部坐标系显式给出 n1。** Abaqus 梁的局部 1 轴由数据行的方向余弦指定，
 局部 2 轴 = t × n1。本程序的局部 y 取作 Abaqus 的 n1，于是 I11 = Iy、I22 = Iz。
@@ -24,6 +26,33 @@ DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
 
 
 _LOAD_KEYS = ("nodal_loads", "member_loads", "member_spans", "settlements")
+
+
+def resolve_element(model: dict, element: str) -> str:
+    """把 ``auto`` 解析成与自研梁理论一致的 Abaqus 单元类型。"""
+    if element in {"B31", "B33"}:
+        return element
+    if element != "auto":
+        raise ValueError(f"不支持的 Abaqus 梁单元 {element!r}，应为 auto、B31 或 B33")
+
+    sections = {section["name"]: section for section in model.get("sections", [])}
+    used = {member["section"] for member in model.get("members", [])}
+    shear_modes = []
+    for name in sorted(used):
+        section = sections[name]
+        has_y = section.get("Ay") is not None
+        has_z = section.get("Az") is not None
+        if has_y != has_z:
+            raise ValueError(
+                f"截面 {name!r} 只给了 Ay/Az 中的一个，无法自动选择 Abaqus 单元")
+        shear_modes.append(has_y)
+    if shear_modes and all(shear_modes):
+        return "B31"
+    if not any(shear_modes):
+        return "B33"
+    raise ValueError(
+        "当前模型混用了带 Ay/Az 与不带 Ay/Az 的截面，无法用一种 Abaqus 梁单元"
+        "与自研模型完全一致；请统一截面剪切参数，或显式选择 B31/B33。")
 
 
 def _loads_of(model: dict, case: str | None) -> dict[str, list]:
@@ -70,16 +99,24 @@ def write_inp(model: dict, element: str = "B33", path: Path | None = None,
               case: str | None = None) -> Path:
     """按模型写出一个 .inp。
 
-    element 取 B33（Euler-Bernoulli，与本程序同一套理论）或 B31（Timoshenko）。
+    element 取 B33（Euler-Bernoulli）、B31（Timoshenko）或 auto（按 Ay/Az 选择）。
     case 指定取哪个荷载工况；留空则用顶层 nodal_loads / member_loads，
     没有顶层荷载时取 load_cases 的第一个。一个 .inp 只写一个分析步。
     """
+    element = resolve_element(model, element)
     # 模型字典未必带 name（Session 里的模型就没有），退回一个中性名字
     name = "%s_%s" % (model.get("name", "model"), element)
     path = Path(path or f"{name}.inp")
     nodes = {int(n["id"]): n for n in model["nodes"]}
     sections = {s["name"]: s for s in model["sections"]}
     materials = {m["name"]: m for m in model["materials"]}
+
+    if element == "B31":
+        for section in sections.values():
+            if (section.get("Ay") is None) != (section.get("Az") is None):
+                raise ValueError(
+                    f"截面 {section['name']!r} 只给了 Ay/Az 中的一个；"
+                    "B31 同参数导出要求两个方向同时给出，避免 Abaqus 自动复制非零值。")
 
     L: list[str] = []
     L.append("*HEADING")
@@ -112,7 +149,15 @@ def write_inp(model: dict, element: str = "B33", path: Path | None = None,
                                           _fmt(sec["Iz"]), _fmt(sec["J"])))
         L.append(" %s, %s, %s" % (_fmt(n1[0]), _fmt(n1[1]), _fmt(n1[2])))
         mat = materials[m["material"]]
-        L.append(" %s, %s" % (_fmt(mat["E"]), _fmt(mat["E"] / (2.0 * (1.0 + mat["nu"])))))
+        shear_modulus = mat["E"] / (2.0 * (1.0 + mat["nu"]))
+        L.append(" %s, %s" % (_fmt(mat["E"]), _fmt(shear_modulus)))
+        if element == "B31" and sec.get("Ay") is not None:
+            # Abaqus 的梁轴是局部 3；本程序局部 y/z 分别对应其局部 1/2。
+            # 关键字数据顺序固定为 K23, K13, slenderness compensation factor。
+            # 设补偿系数为 0，关闭 Abaqus 默认 0.25 的网格相关柔化。
+            L.append("*TRANSVERSE SHEAR STIFFNESS")
+            L.append(" %s, %s, 0." % (_fmt(shear_modulus * sec["Az"]),
+                                       _fmt(shear_modulus * sec["Ay"])))
 
     L.append("*NSET, NSET=ALLN, GENERATE")
     L.append(" %d, %d, 1" % (min(nodes), max(nodes)))
@@ -173,5 +218,3 @@ def write_inp(model: dict, element: str = "B33", path: Path | None = None,
 
     path.write_text("\n".join(L) + "\n", encoding="ascii")
     return path
-
-

@@ -140,6 +140,9 @@ COMMANDS: tuple[Command, ...] = (
             "选中已求解的圆管节点，用自研 C3D10 局部实体求解器计算应力；"
             "Gmsh只负责网格，Abaqus保留为独立对标后端",
             "run_solid_joint"),
+    Command("solid_storage", "实体结果中心", "report",
+            "扫描所有受管理的 native/Abaqus 运行目录，查看正式结果、首次失败残留与磁盘占用",
+            "show_global_solid_storage"),
 
     # --- 结果 ---
     Command("model", "模型", "geometry", "显示几何、支座与荷载符号",

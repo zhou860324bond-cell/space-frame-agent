@@ -9,7 +9,7 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QVBoxLayout, QWidget)
+                               QPushButton, QTabWidget, QVBoxLayout, QWidget)
 
 from . import theme
 
@@ -39,11 +39,6 @@ class BCPanel(QWidget):
         box.setContentsMargins(8, 8, 8, 8)
         box.setSpacing(8)
 
-        # 标题
-        title = QLabel("边界条件")
-        title.setStyleSheet(f"font-weight:650; font-size:10pt; color:{theme.INK};")
-        box.addWidget(title)
-
         flow = QLabel("支座约束作用于 Initial；给定位移和荷载作用于当前分析步。")
         flow.setWordWrap(True)
         flow.setStyleSheet(f"color:{theme.INK_MUTED};")
@@ -66,9 +61,16 @@ class BCPanel(QWidget):
         self.lbl_selection.setWordWrap(True)
         self.lbl_selection.setStyleSheet(f"color:{theme.INK_MUTED}; font-size:8pt;")
         box.addWidget(self.lbl_selection)
+        box.addLayout(case_row)
+
+        # 每类任务占一个清晰页签，不把四张长表从上到下堆进滚动面板。
+        # 选择节点/杆件后会自动切到最常用的对应页。
+        self.tabs = QTabWidget(self)
+        self.tabs.setObjectName("boundaryTaskTabs")
+        box.addWidget(self.tabs, 1)
 
         # 支座设置
-        self.group_support = QGroupBox("边界条件（Initial）")
+        self.group_support = QGroupBox("节点基础约束（Initial）")
         support_layout = QVBoxLayout(self.group_support)
         self.txt_bc_name = QLineEdit("BC-1")
         self.txt_bc_name.setPlaceholderText("边界条件名称")
@@ -87,8 +89,7 @@ class BCPanel(QWidget):
         support_buttons.addWidget(self.btn_apply_support)
         support_buttons.addWidget(self.btn_clear_support)
         support_layout.addLayout(support_buttons)
-        box.addWidget(self.group_support)
-        box.addLayout(case_row)
+        self.tabs.addTab(self.group_support, "支座")
 
         # 分析步边界条件：支座沉降/主动位移。它和 Initial 支座不是一回事。
         self.group_settlement = QGroupBox("给定位移（当前分析步）")
@@ -110,7 +111,7 @@ class BCPanel(QWidget):
         settlement_btn_row.addWidget(self.btn_apply_settlement)
         settlement_btn_row.addWidget(self.btn_clear_settlement)
         settlement_layout.addRow(settlement_btn_row)
-        box.addWidget(self.group_settlement)
+        self.tabs.addTab(self.group_settlement, "给定位移")
 
         # 节点荷载
         self.group_nodal = QGroupBox("节点集中力")
@@ -141,7 +142,7 @@ class BCPanel(QWidget):
         nodal_btn_row.addWidget(self.btn_copy_nodal)
         nodal_btn_row.addWidget(self.btn_clear_nodal)
         nodal_layout.addRow(nodal_btn_row)
-        box.addWidget(self.group_nodal)
+        self.tabs.addTab(self.group_nodal, "节点荷载")
 
         # 杆件荷载
         self.group_member = QGroupBox("杆件均布荷载")
@@ -166,9 +167,7 @@ class BCPanel(QWidget):
         member_btn_row.addWidget(self.btn_copy_member)
         member_btn_row.addWidget(self.btn_clear_member)
         member_layout.addRow(member_btn_row)
-        box.addWidget(self.group_member)
-
-        box.addStretch()
+        self.tabs.addTab(self.group_member, "杆件荷载")
 
         self.refresh()
 
@@ -223,10 +222,13 @@ class BCPanel(QWidget):
             self._current_node = ident
             self._current_member = None
             self.lbl_selection.setText(f"当前选中：节点 {ident}")
+            if self.tabs.currentWidget() is self.group_member:
+                self.tabs.setCurrentWidget(self.group_support)
         elif kind == "member":
             self._current_node = None
             self._current_member = ident
             self.lbl_selection.setText(f"当前选中：杆件 {ident}")
+            self.tabs.setCurrentWidget(self.group_member)
         else:
             self._current_node = None
             self._current_member = None
@@ -244,6 +246,9 @@ class BCPanel(QWidget):
 
         # 节点：支座 + 节点荷载
         if self._current_node is not None:
+            for index in range(3):
+                self.tabs.setTabEnabled(index, True)
+            self.tabs.setTabEnabled(3, False)
             self.group_support.setEnabled(True)
             self.group_settlement.setEnabled(True)
             self.group_nodal.setEnabled(True)
@@ -292,6 +297,9 @@ class BCPanel(QWidget):
                 spin.setValue(float(value))
         # 杆件：杆件荷载
         elif self._current_member is not None:
+            for index in range(3):
+                self.tabs.setTabEnabled(index, False)
+            self.tabs.setTabEnabled(3, True)
             self.group_support.setEnabled(False)
             self.group_settlement.setEnabled(False)
             self.group_nodal.setEnabled(False)
@@ -308,6 +316,8 @@ class BCPanel(QWidget):
             for sp, val in zip([self.spn_wx, self.spn_wy, self.spn_wz], load):
                 sp.setValue(float(val))
         else:
+            for index in range(self.tabs.count()):
+                self.tabs.setTabEnabled(index, False)
             self.group_support.setEnabled(False)
             self.group_settlement.setEnabled(False)
             self.group_nodal.setEnabled(False)

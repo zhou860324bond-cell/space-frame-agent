@@ -1,6 +1,7 @@
-# Beta 0.1 能力矩阵
+# v0.2.0-rc1 能力矩阵
 
-> 更新：2026-09-08。此文件是 Beta 0.1 的能力边界；早期 Alpha 路线图中的数量和缺口描述仅作历史记录。
+> 更新：2026-09-14。文件名为兼容既有链接暂时保留；本文记录 v0.2.0-rc1 的能力边界，
+> 早期 Alpha/Beta 0.1 路线图中的数量和缺口描述仅作历史记录。
 
 状态定义：**支持**表示已进入正式主链路并有自动测试；**实验性**表示代码可用但未作为本轮承诺；**延期**表示本轮明确不实现。
 
@@ -14,13 +15,16 @@
 | 均布/梯形荷载随剖分转换 | 支持 | 均布复制到各段；梯形荷载按段端位置插值 | `tests/test_model_compiler.py` |
 | 杆端释放映射 | 支持 | 仅保留在物理构件最外端，内部生成端不继承释放 | `tests/test_model_compiler.py` |
 | 分析网格预览 | 支持（GUI/Agent） | GUI 在“分析→分析网格”叠加物理构件、分析单元与切分节点；`preview_analysis_mesh` 提供同一份只读映射；均不覆盖已有结果 | `tests/test_model_compiler.py`, `tests/test_tool_contracts.py`, `tests/test_desktop_scene.py`, `tests/test_desktop_window.py` |
-| 节点局部实体应力 | 支持（圆钢/圆管，GUI/Agent） | 默认自研 C3D10 求解器，Gmsh仅划网格；自研与 Abaqus 均有 IIW 0.4t/1.0t 路径，native Kt 只在三档热点应力通过 5% 稳定性门禁后发布；无焊缝倒圆时不拿奇异峰值冒充 Kt | `tests/test_solid3d.py`, `tests/test_solid_joint.py`, `docs/SOLID_JOINT_SCOPE.md` |
+| 节点局部实体应力 | 支持（圆钢/圆管，GUI/Agent） | 默认自研 C3D10 求解器，Gmsh仅划网格；两后端共用 IIW 0.4t/1.0t 三档门禁；双后端任务按模型、节点六分量输入和网格计划指纹跨重启续跑，并核验 VTU/ODB 完整性；每次运行独立保存，结果页可同屏比较并管理占用；全局实体结果中心可跨节点/工况发现首次失败残留，中断目录最近 24 小时禁止清理，回收站门禁强制保护各后端 latest 与当前 A/B；无焊缝倒圆时不拿奇异峰值冒充 Kt | `tests/test_solid3d.py`, `tests/test_solid_joint.py`, `tests/test_solid_cache.py`, `tests/test_result_inspector.py`, `docs/SOLID_JOINT_SCOPE.md` |
 | 初应变：装配内力与温度应力 | 支持 | 讲义 §3-9 五、六。装配误差 Δl 与温度 ΔT 归一为初应变 ε₀，等效节点力 `EA·ε₀` 进右端项、回算内力时减掉；自由伸缩的杆轴力为零，被约束住才产生内力。剖分后各段原样继承。材料缺 `alpha` 时拒绝算温度应力 | `tests/test_initial_strain.py`（13 项闭式解） |
 | 精确人工建模 | 支持（GUI） | 支持工作平面及偏移、网格捕捉、已有节点吸附和带单位的 x/y/z 坐标建点；重复坐标为只读复用，不清除结果或污染撤销历史 | `tests/test_desktop_manual_model.py`, `tests/test_agent.py` |
 | Agent 工作流状态 v1 | 支持 | 每轮由 Session 确定性推导 `empty/draft/ready/solved`；工具执行后即时刷新校验错误与推荐工具，不依赖模型自述 | `tests/test_workflow.py`, `tests/test_conversation.py` |
+| Agent 确定性下一步建议 v1 | 支持（基础） | 按工作流阶段、模型缺项、当前节点/杆件选择和工作区模式生成；尚未纳入最近操作、求解错误、未处理警告和风险评分 | `tests/test_agent_guidance.py` |
 | Agent 变更预演与确认 v1 | 支持 | 写操作可在隔离 Session 预演并返回实体级 diff/前后哈希；Agent 删除已有节点或杆件时由代码强制预演，只有后续用户消息明确确认且模型未变化才可应用 | `tests/test_change_preview.py`, `tests/test_conversation.py` |
 | 线性静力 Result DB | 支持 | `Analysis→Step→Frame→FieldOutput`；U/UR/RF/RM/N/Vy/Vz/T/My/Mz | `tests/test_result_db.py` |
 | 结果元数据 | 支持 | 单位、位置、坐标系、平均规则、模型哈希、求解状态 | `tests/test_result_db.py` |
+| 工程结果工作区 v1 | 支持（基础） | 摘要结论、云图控制、可定位明细、可信度与实体溯源已进入主界面；最大/最小/危险点固定结论栏和高级字段折叠仍待下一阶段 | `tests/test_result_inspector.py`, `tests/test_desktop_window.py` |
+| 梁结果专业云图 v1 | 支持（分区色带） | 6/8/10/12/16/20/24 级、工程配色、自动对称色标、P95/满量程、极值与变形叠加；连续色带、自定义上下限和节点平均控制尚未实现 | `tests/test_desktop_scene.py`, `tests/test_engineering_visual_acceptance.py` |
 | 物理构件结果聚合 | 支持 | 首末物理端结果不平均；跨分析段连续恢复内力与挠度 | `tests/test_model_compiler.py` |
 | 查询、绘图、报告同源 | 支持 | 三者由 Result DB 的只读结果视图和同一映射消费 | `tests/test_result_db.py`, `tests/test_model_compiler.py` |
 | 28 个金标准算例 | 支持 | 独立经典梁理论、静力平衡与闭合解特征值真值；覆盖线性静力 12、自振 5、屈曲 9、二阶弹性与轴向塑性 2 | `run_gold.bat`, `docs/BETA_0.1_GOLD_CASES.md` |
@@ -51,4 +55,4 @@ Domain IR 物理构件
 → query_results / query_diagram / plot_results / write_report
 ```
 
-Beta 0.1 可用于受能力边界约束的梁柱刚架研究与演示，不能替代规范校核、工程审图或商业有限元软件认证。
+v0.2.0-rc1 可用于受能力边界约束的梁柱刚架研究与演示，不能替代规范校核、工程审图或商业有限元软件认证。

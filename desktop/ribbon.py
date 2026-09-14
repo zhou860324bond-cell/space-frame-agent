@@ -358,7 +358,7 @@ def build(window) -> Ribbon:
     g = p.group("特征值")
     g.add_small(a["buckling"])
     g = p.group("局部实体")
-    g.add_large(a["solid_joint"])
+    g.add_large(a["solid_joint"]); g.add_small(a["solid_storage"])
     g = p.group("检查")
     g.add_small(a["diagnose"]); g.add_small(a["analysis_mesh"])
     g = p.group("历史")

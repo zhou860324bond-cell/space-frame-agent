@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 STEEL = {"name": "STEEL", "E": 2.1e11, "nu": 0.3}
@@ -115,3 +116,81 @@ BENCHMARKS = [cantilever_strong_axis, cantilever_weak_axis,
 
 def all_models() -> list[dict[str, Any]]:
     return [factory() for factory in BENCHMARKS]
+
+
+def with_uniform_shear_areas(model: dict[str, Any], factor: float = 5.0 / 6.0
+                             ) -> dict[str, Any]:
+    """复制模型，并用 ``Ay=Az=factor*A`` 启用同参数 Timoshenko 对标。
+
+    这是对标参数化工具，不声称 ``5A/6`` 对所有真实截面都是精确剪切面积。
+    原始 B33 基线保持不变。
+    """
+    if not 0.0 < float(factor) <= 1.0:
+        raise ValueError("剪切面积系数必须在 (0, 1] 内")
+    out = deepcopy(model)
+    for section in out.get("sections", []):
+        section["Ay"] = float(factor) * float(section["A"])
+        section["Az"] = float(factor) * float(section["A"])
+    return out
+
+
+def refine_uniform_members(model: dict[str, Any], divisions: int) -> dict[str, Any]:
+    """把对标模型的每根杆等分，保持原节点、荷载强度与属性不变。
+
+    这是 B31 网格收敛诊断用的离散变换，不是通用模型编译器。对标模型没有
+    杆端释放、刚域偏移或跨间集中荷载；遇到这些需要端点语义的字段就明确拒绝，
+    避免生成一个看似可算、实际已经改变物理含义的模型。
+    """
+    divisions = int(divisions)
+    if divisions < 1:
+        raise ValueError("divisions 必须至少为 1")
+    out = deepcopy(model)
+    if divisions == 1:
+        return out
+    if out.get("member_spans") or out.get("load_cases"):
+        raise ValueError("细化诊断目前只支持顶层均布杆件荷载")
+    forbidden = {"releases", "offset_i", "offset_j"}
+    if any(forbidden & set(member) for member in out.get("members", [])):
+        raise ValueError("带杆端释放或刚域偏移的模型不能用此诊断细化")
+
+    nodes = {int(node["id"]): node for node in out["nodes"]}
+    new_nodes = list(out["nodes"])
+    next_node = max(nodes) + 1
+    next_member = 1
+    new_members = []
+    mapping: dict[int, list[int]] = {}
+
+    for member in out["members"]:
+        start, end = nodes[int(member["i"])], nodes[int(member["j"])]
+        chain = [int(member["i"])]
+        for index in range(1, divisions):
+            ratio = index / float(divisions)
+            new_nodes.append({
+                "id": next_node,
+                "x": start["x"] + ratio * (end["x"] - start["x"]),
+                "y": start["y"] + ratio * (end["y"] - start["y"]),
+                "z": start["z"] + ratio * (end["z"] - start["z"]),
+            })
+            chain.append(next_node)
+            next_node += 1
+        chain.append(int(member["j"]))
+        properties = {key: deepcopy(value) for key, value in member.items()
+                      if key not in {"id", "i", "j"}}
+        mapping[int(member["id"])] = []
+        for i, j in zip(chain, chain[1:]):
+            new_members.append({"id": next_member, "i": i, "j": j,
+                                **deepcopy(properties)})
+            mapping[int(member["id"])].append(next_member)
+            next_member += 1
+
+    new_loads = []
+    for load in out.get("member_loads", []):
+        for member_id in mapping[int(load["member"])]:
+            item = deepcopy(load)
+            item["member"] = member_id
+            new_loads.append(item)
+    out["nodes"] = new_nodes
+    out["members"] = new_members
+    if "member_loads" in out:
+        out["member_loads"] = new_loads
+    return out

@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.10", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -46,14 +46,51 @@ jobs:
           pip install -r requirements.txt
           pip install PySide6 pyvista pyvistaqt gmsh
 
-      - name: 跑全量回归
+      - name: 跑候选增量回归
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch' }}
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: src:evalset:abaqus_bench
+          MPLBACKEND: Agg
+        run: python tools/run_incremental_tests.py --candidate
+
+      - name: 候选发布前全量回归
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
         env:
           QT_QPA_PLATFORM: offscreen
           PYTHONPATH: src:evalset:abaqus_bench
           MPLBACKEND: Agg
         run: pytest -q
 
+      - name: 验证安装包包含内核与桌面端
+        run: |
+          pip install --no-deps --force-reinstall .
+          cd "$(mktemp -d)"
+          python -c "import agent, frame3d, desktop"
+
       - name: 桌面端自检（顺带验证入口脚本本身没坏）
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m desktop.doctor || true
+        run: python -m desktop.doctor --ci
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装项目与桌面依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[desktop]"
+
+      - name: Windows 安装包与桌面链路冒烟
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -c "import agent, frame3d, desktop"
+          python -m desktop.doctor --ci

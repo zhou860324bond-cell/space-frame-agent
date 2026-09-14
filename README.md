@@ -2,7 +2,11 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **1652 项通过、1 项按环境跳过**，Agent 注册 **49 个确定性工具**。
+当前版本身份为 **v0.2.0-rc1 候选版**（Python 包版本 `0.2.0rc1`），回归清单共收集
+1728 项；最近一次完整基线为
+**1727 项通过、1 项按环境跳过**。本候选先按影响域执行增量回归，发布标签创建前只再
+执行一次全量回归。当前四组增量并集为 **718 项通过、2 项按环境跳过**。
+Agent 注册 **49 个确定性工具**。
 核心原则只有一条：
 **大模型只产结构，不产数值**——报告里每个数字都能溯源到某次工具调用。
 
@@ -34,6 +38,20 @@
 
 回归由 `.github/workflows/tests.yml` 在干净机器上自动跑——**"我这边跑过了"
 不是证据**。
+
+日常修改优先运行增量组，避免每次都重复执行全仓测试：
+
+```bat
+run_incremental.bat agent
+run_incremental.bat frontend
+run_incremental.bat solver
+run_incremental.bat docs
+run_incremental.bat --candidate
+```
+
+分组文件和当前候选的完整归属见
+[`docs/CANDIDATE_0.2.0_CHANGESET.md`](docs/CANDIDATE_0.2.0_CHANGESET.md)。
+`--candidate` 是四个增量组的并集，不是全量回归。
 
 手动跑（cmd。**注意 `set` 后面不加引号，PowerShell 语法在 cmd 里不认**）：
 
@@ -68,11 +86,13 @@ src/frame3d.py        求解内核：3D 梁单元、坐标变换、杆端释放�
                       内力回算、静力平衡校核、奇异诊断
 src/solid3d.py        自研 C3D10 实体内核：形函数、积分、稀疏组装与应力恢复
 src/native_joint.py   Gmsh圆管节点网格、六分量切割面载荷与 native-solid 结果输出
+src/solid_cache.py    实体结果输入指纹、磁盘完整性校验与跨重启安全续跑
+src/convergence.py    B31、实体热点与非线性增量的统一收敛诊断（只读已有记录）
 src/model_io.py       版本化 Domain IR：JSON Schema、v0→v1 迁移与校验
 src/model_compiler.py 物理构件→分析单元编译、集中荷载自动剖分与双向映射
 src/result_db.py      统一结果层：Step / Frame / FieldOutput 与结果元数据
 src/generator.py      参数化生成器：参数 -> 节点与杆件拓扑
-src/agent.py          Agent 层：45 个工具、会话状态、对话循环、模型后端
+src/agent.py          Agent 层：49 个工具、会话状态、对话循环、模型后端
 src/plot3d.py         三维绘图：变形图、轴力图
 
 tests/                回归基线见文首；主体离线且不需要密钥
@@ -98,7 +118,7 @@ examples/             示例模型、端到端脚本、离线演示、探针题
 
 ## Agent 工具
 
-45 个工具的返回合同由 `tests/test_tool_contracts.py` 统一约束。下面只列正式演示
+49 个工具的返回合同由 `tests/test_tool_contracts.py` 统一约束。下面只列正式演示
 主链路；其余工具覆盖编辑、集合、扫参、包络、模态、屈曲和 Abaqus 对比。
 
 每次模型调用都会收到由当前 `Session` 确定性推导的工作流状态：`empty`、
@@ -135,6 +155,10 @@ examples/             示例模型、端到端脚本、离线演示、探针题
 | 工况 | 线性多工况/组合；二阶弹性 P-Δ；非线性增量与收敛记录 |
 | 生成 | 规则多层多跨多开间空间刚架 |
 | 自校验 | 模型合法性、静力平衡、奇异模态定位、位移量级 |
+| 收敛诊断 | B31 多档离散、实体热点/奇异峰值、非线性增量记录统一审阅 |
+| 实体双后端任务 | 一次提交 native + Abaqus；阶段进度、安全取消、跨重启指纹续跑和收敛解对标 |
+| 实体结果溯源 | 结果同页显示本次计算/磁盘恢复、生成时间、双输入指纹、提交网格和 VTU/ODB 状态 |
+| 实体计算历史 | 每次运行写入独立目录；同页比较两版并管理占用；“分析→实体结果中心”可跨节点/工况发现首次失败残留；最近 24 小时禁止清理，latest 与当前 A/B 强制保护 |
 | 出图 | 梁中心线变形、振型/失稳模态、内力曲线与云图 |
 
 **仍有限制**：材料非线性当前只含轴向双线性塑性，弯曲塑性需要纤维截面；
@@ -172,9 +196,10 @@ P-Δ 是小应变二阶弹性，不是通用有限转动 NLGEOM；温度与接�
 详见 [`docs/带孔板验证.md`](docs/带孔板验证.md)，工具
 `tools/verify_plate_with_hole.py`。
 
-**第三层 与 Abaqus 对标。** 见 `abaqus_bench/README.md`。主对标用 **B33**
-（截面未给 Ay/Az 时与本程序的 Euler-Bernoulli 分支同理论）；给 Ay/Az 的
-Timoshenko 模型应改用 B31 对标。
+**第三层 与 Abaqus 对标。** 见 `abaqus_bench/README.md`。后端默认自动匹配理论：
+截面未给 `Ay/Az` 时用 B33 对标 Euler-Bernoulli；全部给出 `Ay/Az` 时用 B31，
+并将其映射为相同的 `K13/K23`。七档同参数 B31 细化到 64× 后，门架与空间框架
+全场位移误差分别降至 0.00277% 和 0.0173%。
 
 > **复现这一层前先读两条环境约束**，见
 > [`docs/SOLID_JOINT_SCOPE.md`](docs/SOLID_JOINT_SCOPE.md) 末两节。两条都

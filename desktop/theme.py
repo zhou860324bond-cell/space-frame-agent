@@ -288,6 +288,89 @@ QHeaderView::section {{
     font-size: 8pt;
 }}
 
+QLabel#resultCaption {{
+    background: {PANEL_ALT};
+    border: 1px solid {BORDER};
+    border-left: 3px solid {ACCENT};
+    border-radius: {RADIUS_SM};
+    padding: 7px 9px;
+    color: {INK};
+}}
+QFrame#resultSummary {{
+    background: transparent;
+    border: none;
+}}
+QFrame[role="resultMetric"] {{
+    background: {PANEL_RAISED};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS_SM};
+}}
+QFrame[role="resultMetric"] QLabel {{
+    background: transparent;
+    border: none;
+}}
+QLabel[role="resultMetricLabel"] {{
+    color: {INK_DIM};
+    font-size: 8pt;
+}}
+QLabel[role="resultMetricValue"] {{
+    color: {INK};
+    font-weight: 600;
+}}
+QLabel[role="resultMetricValue"][severity="fail"] {{ color: {ERROR}; }}
+QLabel[role="resultMetricValue"][severity="unclear"] {{ color: {WARN}; }}
+QLabel[role="resultMetricValue"][severity="pass"] {{ color: {SUCCESS}; }}
+QToolButton#resultCaptionToggle {{
+    color: {ACCENT_DIM};
+    background: transparent;
+    border: none;
+    padding: 1px 5px;
+    font-size: 8pt;
+}}
+QToolButton#resultCaptionToggle:hover {{
+    color: {ACCENT};
+    text-decoration: underline;
+}}
+QFrame#resultControls {{
+    background: {PANEL_RAISED};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS_SM};
+}}
+QFrame#resultControls QLabel {{
+    border: none;
+    background: transparent;
+    color: {INK_MUTED};
+}}
+QFrame#resultControls QLabel[role="section"] {{
+    color: {INK};
+    font-weight: 600;
+    padding-right: 5px;
+}}
+QLabel#displayScopeNotice {{
+    color: {INK_DIM};
+    background: {PANEL_ALT};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS_SM};
+    padding: 5px 7px;
+}}
+QTableWidget#resultTable {{
+    background: {PANEL_ALT};
+    alternate-background-color: {PANEL};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS_SM};
+}}
+QTableWidget#resultTable::item {{
+    padding: 5px 7px;
+    border-bottom: 1px solid {BORDER};
+}}
+QTableWidget#resultTable::item:hover {{
+    background: {PANEL_HOVER};
+}}
+QTableWidget#resultTable::item:selected {{
+    background: {SELECTION};
+    color: {INK};
+}}
+
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background: {PANEL_ALT};
     border: 1px solid {BORDER};
@@ -492,14 +575,14 @@ QLabel[panel="hint"] {{
     color: {INK_MUTED};
 }}
 QPushButton[role="suggestion"] {{
-    background: {PANEL_ALT};
-    border-color: {BORDER};
-    color: {INK_MUTED};
-    padding: 4px 8px;
+    background: transparent;
+    border: none;
+    color: {ACCENT_DIM};
+    padding: 3px 5px;
+    text-align: left;
 }}
 QPushButton[role="suggestion"]:hover {{
     color: {ACCENT_DIM};
-    border-color: {ACCENT};
     background: {SELECTION};
 }}
 QWidget[ribbonGroup="true"] {{
@@ -515,6 +598,68 @@ QLabel[toolbar="section"] {{
 }}
 QLabel[status="active"] {{
     color: {ACCENT_HOVER};
+}}
+QLabel#agentTitle {{
+    color: {INK};
+    font-size: 11pt;
+    font-weight: 650;
+}}
+QComboBox#agentProfile {{
+    min-width: 58px;
+    padding: 2px 5px;
+    background: transparent;
+    border: none;
+    color: {INK_MUTED};
+}}
+QToolButton#agentHeaderAction {{
+    background: transparent;
+    border: none;
+    color: {INK_MUTED};
+    padding: 3px 4px;
+}}
+QToolButton#agentHeaderAction:hover,
+QToolButton#agentHeaderAction:checked {{
+    color: {ACCENT_DIM};
+    background: {SELECTION};
+}}
+QLabel#agentConnectionStatus {{
+    padding: 1px 4px;
+    font-size: 8pt;
+}}
+QLabel#agentConnectionStatus[connection="online"] {{
+    color: {SUCCESS};
+    background: transparent;
+}}
+QLabel#agentConnectionStatus[connection="offline"] {{
+    color: {WARN};
+    background: transparent;
+}}
+QTextBrowser#assistantConversation {{
+    background: {PANEL};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS_MD};
+    padding: 5px;
+}}
+QFrame#agentLiveResponse {{
+    background: {PANEL_ALT};
+    border: 1px solid {ACCENT_DIM};
+    border-left: 3px solid {ACCENT};
+    border-radius: {RADIUS_MD};
+}}
+QFrame#agentLiveResponse QLabel {{
+    border: none;
+    background: transparent;
+    color: {INK};
+}}
+QFrame#agentLiveResponse QLabel[role="agent"] {{
+    color: {ACCENT};
+    font-weight: 600;
+    font-size: 8pt;
+}}
+QLabel#agentSuggestionCaption {{
+    color: {INK_DIM};
+    font-size: 8pt;
+    padding: 2px 3px 0 3px;
 }}
 
 QSplitter::handle {{

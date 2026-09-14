@@ -156,7 +156,7 @@ def test_exact_coordinate_reuses_an_existing_node_without_crashing(qt_app):
 
 # ---------------------------------------------------------- 主窗口早期链路
 
-def test_early_manual_modeling_flow(qt_app):
+def test_early_manual_modeling_flow(qt_app, monkeypatch):
     from conftest import opengl_available
     if not opengl_available():
         pytest.skip("无可用 OpenGL，跳过主窗口链路")
@@ -185,6 +185,86 @@ def test_early_manual_modeling_flow(qt_app):
     vp._on_pick([4.95, 0.03, 0.0])
     members = w.session.model.get("members", [])
     assert len(members) == 1 and members[0]["i"] == 1 and members[0]["j"] == 2
+
+    # 再连一根，避免留下会让全局刚度矩阵出现零行的孤立节点。
+    vp._on_pick([5.02, 0.01, 0.0])
+    vp._on_pick([5.01, 3.98, 0.0])
+    assert [(m["i"], m["j"]) for m in w.session.model["members"]] == [(1, 2), (2, 3)]
+
+    # 走主窗口实际对话框入口，覆盖材料 → 截面 → 指派 → 支座 → 荷载。
+    from PySide6.QtWidgets import QDialog
+    from desktop import (assignment_dialog, bc_dialog, load_dialog,
+                         material_dialog, section_dialog)
+
+    class Accepted:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    class Material(Accepted):
+        def get_material(self):
+            return {"name": "Q355", "E": 2.06e11, "nu": 0.3,
+                    "density": 7850.0}
+
+    class Section(Accepted):
+        def get_section(self):
+            return {"name": "B", "type": "矩形", "A": 0.02,
+                    "Iy": 6e-4, "Iz": 8e-4, "J": 1e-5,
+                    "cy": 0.1, "cz": 0.15, "circular": False}
+
+    class Assignment(Accepted):
+        def get_assignment(self):
+            return "B", "Q355"
+
+    class Boundary(Accepted):
+        def get_fix(self):
+            return [1, 1, 1, 1, 1, 1]
+
+        def get_name(self):
+            return "Fixed-1"
+
+    class Load(Accepted):
+        def get_load_type(self):
+            return "concentrated"
+
+        def get_load(self):
+            return [0, 0, -1000, 0, 0, 0]
+
+        def get_name(self):
+            return "Tip-load"
+
+        def get_case(self):
+            return "Load-1"
+
+    monkeypatch.setattr(material_dialog, "MaterialDialog", Material)
+    monkeypatch.setattr(section_dialog, "SectionDialog", Section)
+    monkeypatch.setattr(assignment_dialog, "AssignmentDialog", Assignment)
+    monkeypatch.setattr(bc_dialog, "BCDialog", Boundary)
+    monkeypatch.setattr(load_dialog, "LoadDialog", Load)
+
+    w.create_material()
+    w.create_section()
+    for member_id in (1, 2):
+        w.locate("member", member_id)
+        w.assign_section()
+    w.locate("node", 1)
+    w.create_bc()
+    w.locate("node", 3)
+    w.create_load()
+
+    assert w.session.validate_model().ok
+    w.solve()
+    assert w.runner.wait(30000), "人工建模后的求解没有在时限内完成"
+    assert w.result is not None and w.result.ok
+    assert w.mode == "变形" and w.case == "Load-1"
+    assert "1 个工况" in w.lbl_solve.text()
+
+    # 求解成功之后，结果必须能从视口落到可审查的数值表。
+    w.probe_member_result(2, np.array([5.0, 2.0, 0.0]))
+    assert w.results.table.rowCount() >= 12
+    assert "结果探针" in w.results.caption.text()
     # Esc 退出
     w.cancel_interaction()
     assert not w.actions_by_name["model_member"].isChecked()

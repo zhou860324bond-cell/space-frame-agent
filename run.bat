@@ -45,7 +45,7 @@ if errorlevel 1 (
 
 echo [3/3] running tests and the example
 set "PYTHONPATH=%~dp0src"
-"%VPY%" -m pytest --basetemp="%~dp0.pytest-tmp"
+"%VPY%" -m pytest
 if errorlevel 1 (
   echo ERROR: tests failed. Examples were not run.
   exit /b 1

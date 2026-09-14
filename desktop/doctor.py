@@ -223,19 +223,21 @@ def _opengl() -> tuple[bool, str]:
 CHECKS = (("Python", _python), ("内核依赖", _numeric), ("求解器", _kernel),
           ("Qt", _qt), ("Qt 绑定", _binding), ("PyVista", _pyvista),
           ("云图链路", _contour), ("OpenGL", _opengl))
+CI_CHECKS = tuple(item for item in CHECKS if item[0] != "OpenGL")
 
 # 这几项挂了，后面的必然跟着挂，报完根因就停
 FATAL = {"Python", "Qt", "PyVista"}
 
 
-def report() -> int:
+def report(checks=None) -> int:
     """逐项检查并打印。全通过返回 0，否则返回 1。"""
+    checks = CHECKS if checks is None else checks
     print("空间刚架智能计算　桌面端自检")
     print(f"  {platform.platform()}")
     print(f"  {sys.executable}")
     print()
     failed = []
-    for label, check in CHECKS:
+    for label, check in checks:
         try:
             ok, note = check()
         except Exception as exc:                  # noqa: BLE001
@@ -257,4 +259,4 @@ def report() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(report())
+    raise SystemExit(report(CI_CHECKS if "--ci" in sys.argv[1:] else None))
