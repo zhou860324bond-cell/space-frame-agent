@@ -331,7 +331,10 @@ def test_the_panel_streams_instead_of_dumping_at_the_end(qt_app, monkeypatch):
     assert w.runner.wait(60000)
     text = w.chat.view.toPlainText()
     assert w.chat._streamed > 0, "一条流式进度都没收到"
-    # 每个工具只出现一次——出现两次就是收尾又补打了一遍
-    assert text.count("generate_portal_frame") == 1, text
-    assert text.count("solve_model") == 1
+    # 每个中文动作只出现一次——出现两次就是收尾又补打了一遍；内部函数名
+    # 只进开发日志，不能重新泄漏到正常界面。
+    assert text.count("生成门式刚架") == 1, text
+    assert text.count("运行结构求解") == 1
+    assert "generate_portal_frame" not in text
+    assert "solve_model" not in text
     w.close()

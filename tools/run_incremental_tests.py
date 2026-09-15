@@ -17,10 +17,12 @@ GROUPS: dict[str, tuple[str, ...]] = {
         "tests/test_agent_guidance.py",
         "tests/test_tool_contracts.py",
         "tests/test_desktop_chat.py",
+        "tests/test_sets_and_streaming.py",
     ),
     "frontend": (
         "tests/test_console_and_doctor.py",
         "tests/test_desktop_manual_model.py",
+        "tests/test_desktop_locate.py",
         "tests/test_desktop_scene.py",
         "tests/test_desktop_window.py",
         "tests/test_engineering_visual_acceptance.py",

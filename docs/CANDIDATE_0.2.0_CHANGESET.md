@@ -1,10 +1,11 @@
 # v0.2.0-rc1 候选变更清单
 
-> 冻结日期：2026-09-14。基线提交：`8beba37`。候选分支：
+> 冻结日期：2026-09-15。基线提交：`8beba37`。候选分支：
 > `codex/release-0.2.0-rc1`。以下按主要责任域唯一归类；跨域文件只列一次。
 
 开始稳定化时共有 69 个修改或新增文件。稳定化本身新增本清单、增量回归脚本和
-Windows 入口，因此候选工作区共 72 个变化文件。
+Windows 入口；候选全量又更新了 Agent 中文事件合同的既有测试，因此候选共73个
+变化文件。定位交互使用已有回归覆盖，测试文件本身无需修改。
 
 ## 求解器与对标（21）
 
@@ -30,7 +31,7 @@ Windows 入口，因此候选工作区共 72 个变化文件。
 - `tests/test_solid_cache.py`
 - `tests/test_solid_task.py`
 
-## Agent（9）
+## Agent（10）
 
 - `desktop/chat_panel.py`
 - `desktop/agent_guidance.py`
@@ -41,6 +42,7 @@ Windows 入口，因此候选工作区共 72 个变化文件。
 - `tests/test_agent_guidance.py`
 - `tests/test_conversation.py`
 - `tests/test_desktop_chat.py`
+- `tests/test_sets_and_streaming.py`
 
 ## 前端交互（13）
 
@@ -97,11 +99,13 @@ Windows 入口，因此候选工作区共 72 个变化文件。
 
 | 变化域 | 命令 | 当前结果 |
 |---|---|---|
-| Agent | `run_incremental.bat agent` | 157 项通过 |
-| 前端交互、云图与三维显示 | `run_incremental.bat frontend` | 154 项通过 |
+| Agent | `run_incremental.bat agent` | 178 项通过 |
+| 前端交互、云图与三维显示 | `run_incremental.bat frontend` | 177 项通过 |
 | 求解器与对标 | `run_incremental.bat solver` | 246 项通过，含28项金标准；当前解已重新对比冻结的 B33/B31 `.dat`，未启动新 Abaqus 作业 |
 | 文档与打包 | `run_incremental.bat docs` | 161 项通过、2 项按环境跳过 |
-| 当前候选全部增量 | `run_incremental.bat --candidate` | 718 项通过、2 项按环境跳过；不等于全量回归 |
+| 当前候选全部增量 | `run_incremental.bat --candidate` | 762 项通过、2 项按环境跳过；不等于全量回归 |
 
 发布标签只能在候选工作区完成一次全量回归后创建。增量测试通过只说明本轮直接受影响
 的合同未回退，不能替代全仓状态耦合检查。
+
+2026-09-15 候选全量复验结果：1728项收集，1727项通过、1项按环境跳过。

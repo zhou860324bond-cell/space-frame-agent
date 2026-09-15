@@ -1827,9 +1827,10 @@ class MainWindow(QMainWindow):
         # 边界条件面板也更新
         self.bc.set_selection(kind, ident)
         self.properties.show_object(kind, ident)
-        if self.bc_dock.isVisibleTo(self):
+        if self.bc_dock.isVisible():
             # 正在做边界/荷载任务时，连续选点选杆都留在当前任务页；
-            # 不能每选一次就被“属性”页抢走焦点。
+            # 不能每选一次就被“属性”页抢走焦点。这里只认当前真正可见的页签；
+            # isVisibleTo() 会把藏在模型树后面的已登记页签也误判为可见。
             self.bc_dock.raise_()
         else:
             self.props_dock.show()
