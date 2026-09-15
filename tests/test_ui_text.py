@@ -164,6 +164,10 @@ def test_check_results_do_not_leak_field_names_to_the_interface():
         found = leftover.search(text)
         assert not found, f"{kind} 的界面文字里漏出了字段名：{found.group(0)}"
         assert "**" not in text, f"{kind} 的界面文字里留着 Markdown 记号"
+    strength_summary = result_rows.engineering_summary(
+        "strength", payloads["strength"])
+    assert strength_summary["solve_status"] == "已完成 · 存在待复核项"
+    assert strength_summary["severity"] == "unclear"
 
 
 def test_a_failed_member_is_never_tinted_as_passing():

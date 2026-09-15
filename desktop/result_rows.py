@@ -473,3 +473,84 @@ def to_rows(kind: str, payload: dict) -> Rows:
         return (f"结果解析失败：{type(exc).__name__}（数据本身在下面）",
                 ["项", "值"],
                 [[k, str(v)[:100]] for k, v in (payload or {}).items()], [])
+
+
+def engineering_summary(kind: str, payload: dict) -> dict:
+    """把结构化结果压成顶部工程结论，不从标题文本或表格列名猜语义。"""
+    data = payload or {}
+    summary: dict[str, Any] = {"solve_status": "已完成"}
+    if kind == "deflection":
+        value = data.get("magnitude_mm")
+        summary.update(
+            maximum=f"{_r(value, 4)}" if isinstance(value, (int, float)) else "—",
+            minimum="不适用",
+            location=(f"杆件 {data.get('at_member')} · 距 i 端 "
+                      f"{_r(data.get('at_x_m'))} m"),
+            case=data.get("case") or "—", unit="mm")
+    elif kind == "envelope":
+        peak = data.get("peak")
+        summary.update(
+            maximum=f"{_r(peak, 4)}" if isinstance(peak, (int, float)) else "—",
+            minimum="见上下包线",
+            location=(f"杆件 {data.get('at_member')} · 距 i 端 "
+                      f"{_r(data.get('at_x_m'))} m"
+                      if data.get("at_member") is not None else
+                      "未提供控制杆件"),
+            case=data.get("governing_case") or "多工况包络",
+            unit=data.get("unit") or "—")
+    elif kind == "strength":
+        ratios = [row.get("stress_ratio") for row in data.get("members") or []
+                  if isinstance(row.get("stress_ratio"), (int, float))]
+        worst = data.get("worst_strength") or {}
+        failed = data.get("failed_members") or []
+        unclear = data.get("inconclusive_members") or []
+        if failed:
+            severity, status = "fail", "已完成 · 存在超限"
+        elif unclear:
+            severity, status = "unclear", "已完成 · 存在待复核项"
+        else:
+            severity, status = "pass", "已完成 · 未发现超限"
+        summary.update(
+            maximum=f"{_r(max(ratios), 4)}" if ratios else "—",
+            minimum=f"{_r(min(ratios), 4)}" if ratios else "—",
+            location=(f"杆件 {worst.get('member')} · "
+                      f"{worst.get('governs') or '控制截面'}"
+                      if worst else "未发现控制杆件"),
+            case="、".join(data.get("cases") or []) or "—",
+            unit="应力比",
+            severity=severity, solve_status=status)
+    elif kind == "buckling":
+        factors = [v for v in data.get("factors") or []
+                   if isinstance(v, (int, float))]
+        summary.update(
+            maximum=f"{_r(max(factors), 4)}" if factors else "—",
+            minimum=f"{_r(min(factors), 4)}" if factors else "—",
+            location=(f"杆件 {data.get('most_compressed_member')} · 最大受压"
+                      if data.get("most_compressed_member") is not None
+                      else "未提供控制杆件"),
+            case=data.get("case") or "—", unit="屈曲因子 λ")
+    elif kind == "modal":
+        frequencies = [mode.get("frequency_Hz")
+                       for mode in data.get("modes") or []
+                       if isinstance(mode.get("frequency_Hz"), (int, float))]
+        summary.update(
+            maximum=f"{_r(max(frequencies), 4)}" if frequencies else "—",
+            minimum=f"{_r(min(frequencies), 4)}" if frequencies else "—",
+            location="第 1 阶振型" if frequencies else "未生成振型",
+            case="与荷载工况无关", unit="Hz")
+    elif kind == "solid_joint":
+        stresses = [mesh.get("max_mises_mpa")
+                    for mesh in data.get("meshes") or []
+                    if isinstance(mesh.get("max_mises_mpa"), (int, float))]
+        summary.update(
+            maximum=f"{_r(max(stresses), 4)}" if stresses else "—",
+            minimum=f"{_r(min(stresses), 4)}" if stresses else "—",
+            location=(f"节点 {data.get('node_id')} · 控制杆臂 "
+                      f"{data.get('governing_arm')}"),
+            case=data.get("case") or "—", unit="MPa",
+            severity="pass" if data.get("hot_spot_all_converged") is True
+            else "unclear",
+            solve_status=("已完成 · 热点已收敛"
+                          if data.get("hot_spot_all_converged") is True
+                          else "已完成 · 热点待复核"))
+    return summary

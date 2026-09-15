@@ -203,6 +203,9 @@ def test_envelope_reads_the_real_payload(solved_session):
     assert rows, "全结构包络摊出来是空表——多半是键名对不上"
     assert "kN·m" in title, "单位要从 payload 自带的 unit 取，不要写死"
     assert any(x for x in loc), "峰值所在的杆件要能点回视口"
+    summary = result_rows.engineering_summary("envelope", r.payload)
+    assert summary["unit"] == r.payload["unit"]
+    assert f"杆件 {r.payload['at_member']}" in summary["location"]
 
 
 def test_single_member_envelope_reads_the_real_payload(solved_session):
@@ -221,6 +224,9 @@ def test_buckling_reads_the_real_payload(solved_session):
     assert len(rows) == 3
     assert "临界因子" in title and "受压杆件" in title
     assert loc[0] and loc[0][0] == "member"
+    summary = result_rows.engineering_summary("buckling", r.payload)
+    assert summary["minimum"] != "—"
+    assert summary["case"] == r.payload["case"]
 
 
 def test_modal_reads_the_real_payload(solved_session):
@@ -230,6 +236,9 @@ def test_modal_reads_the_real_payload(solved_session):
     assert len(rows) == 3
     assert all(isinstance(row[1], float) for row in rows), "频率要保持数值"
     assert "有效质量比" in title, "取的阶数够不够，靠它判断"
+    summary = result_rows.engineering_summary("modal", r.payload)
+    assert summary["unit"] == "Hz"
+    assert summary["location"] == "第 1 阶振型"
 
 
 def test_deflection_reads_the_real_payload(solved_session):
@@ -238,6 +247,9 @@ def test_deflection_reads_the_real_payload(solved_session):
     title, cols, rows, loc = result_rows.to_rows("deflection", r.payload)
     assert len(rows) == 1 and loc[0] and loc[0][0] == "member"
     assert any("mm" in c for c in cols)
+    summary = result_rows.engineering_summary("deflection", r.payload)
+    assert summary["maximum"] != "—"
+    assert summary["case"] == r.payload["case"]
 
 
 def test_the_kernel_note_is_carried_through(solved_session):

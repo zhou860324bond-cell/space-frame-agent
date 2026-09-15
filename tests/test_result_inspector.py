@@ -20,7 +20,8 @@ from desktop.convergence_dialog import SolidConvergenceDialog      # noqa: E402
 from desktop.result_inspector import (assess_result_trust, assess_solid_result,
                                       build_solid_history_management,
                                       compare_solid_history,
-                                      global_extreme, probe_member, projected_station,
+                                      global_extreme, global_range, probe_member,
+                                      projected_station,
                                       solid_result_provenance,
                                       section_stress_grid)          # noqa: E402
 from sections import rectangle                                     # noqa: E402
@@ -79,6 +80,16 @@ def test_global_extreme_returns_a_traceable_member_station_and_point():
     assert extreme["point"] == pytest.approx([0, 0, 0])
 
 
+def test_global_range_reports_signed_limits_and_absolute_control_location():
+    session = solved()
+    limits = global_range(session.frame, session.solution, "Mz", "P")
+    assert limits["unit"] == "kN·m"
+    assert limits["minimum"]["value"] == pytest.approx(-300.0)
+    assert limits["maximum"]["value"] == pytest.approx(0.0)
+    assert limits["control"]["member"] == 1
+    assert limits["control"]["x"] == pytest.approx(0.0)
+
+
 def test_circular_stress_grid_masks_points_outside_the_real_section():
     class Circular:
         name = "Tube"
@@ -128,17 +139,32 @@ def test_result_panel_only_shows_tools_relevant_to_current_result(qt_app):
     assert not window.results.btn_extreme.isHidden()
 
 
-def test_result_panel_summarizes_type_rows_and_engineering_status(qt_app):
+def test_result_panel_puts_engineering_conclusion_before_table_statistics(qt_app):
     window = MainWindow(solved())
     window.results.show_rows(
         "强度校核，共 2 根杆件", ["杆件", "校核结论"],
         [[1, "通过"], [2, "超限"]], marks=["pass", "fail"],
         context="strength")
 
-    assert window.results.summary_type.text() == "强度校核"
-    assert window.results.summary_count.text() == "2 行"
-    assert window.results.summary_status.text() == "1 项超限"
+    assert window.results.summary_maximum.text() == "不适用"
+    assert window.results.summary_minimum.text() == "不适用"
+    assert window.results.summary_location.text() == "未提供可定位的控制点"
+    assert window.results.summary_status.text() == "已完成 · 1 项超限"
     assert window.results.summary_status.property("severity") == "fail"
+
+
+def test_contour_summary_uses_unclipped_solver_values(qt_app):
+    window = MainWindow(solved())
+    window._adopt_session_solution()
+    window.component = "Mz"
+    window.set_mode("云图")
+
+    assert window.results.summary_maximum.text() == "+0"
+    assert window.results.summary_minimum.text() == "-300"
+    assert window.results.summary_location.text() == "杆件 1 · 距 i 端 0 m"
+    assert window.results.summary_case.text() == "P"
+    assert window.results.summary_unit.text() == "kN·m"
+    assert window.results.summary_status.text() == "已完成"
 
 
 def test_linear_solution_trust_separates_display_sampling_from_analysis_mesh():

@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         # 空间结构里各杆局部轴不同，默认用旋转不变量合弯矩。需要核对有符号
         # 局部分量时再切到 My/Mz；默认直接画 Mz 会让不同方向杆件看起来乱跳色。
         self.component = "M"
+        self._contour_summary_cache: tuple[object, str | None, str, dict] | None = None
         self.scale = 0.0
         self.analysis_type = "linear"
         self.analysis_options = {"increments": 10, "max_iter": 40,
@@ -615,6 +616,8 @@ class MainWindow(QMainWindow):
         self.chat.set_workspace_mode(name)
         if name in {"变形", "云图"} and self.session.solution is not None:
             self.viewport.set_pick_mode("member")
+        if name == "云图" and self.session.solution is not None:
+            self.results.set_context("contour")
         act = self.mode_actions.get(name)
         if act is not None:
             act.setChecked(True)
@@ -1103,6 +1106,8 @@ class MainWindow(QMainWindow):
                     levels=options.get("levels"),
                     overlay_deformed=options["overlay_deformed"],
                     show_extrema=options["show_extrema"])
+            if self.results.context == "contour":
+                self._update_contour_engineering_summary(frame)
         elif self.mode == "模态":
             got = self.session.modal_analysis(num_modes=6)
             if not got.ok:
@@ -1119,6 +1124,32 @@ class MainWindow(QMainWindow):
     def _auto_scale(self, frame) -> float:
         return scene.auto_deformation_scale(frame, self.session.solution,
                                             self.case)
+
+    def _update_contour_engineering_summary(self, frame) -> None:
+        """让结果页顶部引用真实恢复值；显示量程和色带不参与计算。"""
+        from .result_inspector import global_range
+
+        cached = self._contour_summary_cache
+        if (cached is None or cached[0] is not self.session.solution
+                or cached[1] != self.case or cached[2] != self.component):
+            data = global_range(frame, self.session.solution, self.component,
+                                self.case)
+            control = data.get("control") or {}
+            maximum = data.get("maximum") or {}
+            minimum = data.get("minimum") or {}
+            summary = {
+                "maximum": f"{maximum.get('value', 0.0):+.4g}",
+                "minimum": f"{minimum.get('value', 0.0):+.4g}",
+                "location": (
+                    f"杆件 {control.get('member')} · 距 i 端 "
+                    f"{control.get('x', 0.0):.4g} m"),
+                "case": data.get("case") or "—",
+                "unit": data.get("unit") or "—",
+                "solve_status": "已完成",
+            }
+            cached = (self.session.solution, self.case, self.component, summary)
+            self._contour_summary_cache = cached
+        self.results.set_engineering_summary(cached[3])
 
     def refresh(self) -> None:
         self.tree.rebuild(self.session, self.result)
@@ -1362,7 +1393,14 @@ class MainWindow(QMainWindow):
             ["杆件", "距 i 端 x", "值", "单位"],
             [[extreme["member"], extreme["x"], extreme["value"],
               extreme["unit"]]], [("member", extreme["member"])],
-            context="extreme")
+            context="extreme", engineering={
+                "maximum": f"{extreme['value']:+.4g}",
+                "minimum": "不适用",
+                "location": (f"杆件 {extreme['member']} · 距 i 端 "
+                             f"{extreme['x']:.4g} m"),
+                "case": extreme["case"], "unit": extreme["unit"],
+                "solve_status": "已完成",
+            })
 
     def show_section_stress(self) -> None:
         """打开当前探针截面的轴力+双向弯曲正应力图。"""
@@ -3071,7 +3109,9 @@ class MainWindow(QMainWindow):
                     kind, result.payload)
                 self.results.show_rows(
                     f"{title}　{caption}", cols, rows, loc,
-                    result_rows.row_marks(kind, result.payload), context=kind)
+                    result_rows.row_marks(kind, result.payload), context=kind,
+                    engineering=result_rows.engineering_summary(
+                        kind, result.payload))
             self.refresh()
             if kind == "solid_joint" and result.ok:
                 if len(self._matching_solid_backend_payloads()) >= 2:

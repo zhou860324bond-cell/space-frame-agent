@@ -642,6 +642,64 @@ def global_extreme(frame, solution, component: str,
     return best
 
 
+def global_range(frame, solution, component: str,
+                 case: str | None = None, stations: int = 101) -> dict:
+    """全结构指定云图分量的有符号上下界与绝对控制位置。
+
+    顶部结论必须来自和云图相同的杆件恢复结果，不能从当前色带量程反推；
+    否则启用 P95 或正负筛选后，界面会把显示截断值冒充计算极值。
+    """
+    from internal_forces import member_diagram
+
+    from .scene import STRESS, member_scalar
+
+    name = case or solution.primary
+    low = high = control = None
+    for member_id in sorted(frame.members):
+        diagram = member_diagram(frame, solution, member_id, name,
+                                 stations=stations)
+        values = member_scalar(frame, frame.members[member_id], diagram,
+                               component)
+        if not len(values):
+            continue
+        low_index = int(np.argmin(values))
+        high_index = int(np.argmax(values))
+        candidates = (
+            (float(values[low_index]), float(diagram.x[low_index]), member_id),
+            (float(values[high_index]), float(diagram.x[high_index]), member_id),
+        )
+        for value, x, mid in candidates:
+            item = {"raw_value": value, "member": mid, "x": x}
+            if low is None or value < low["raw_value"]:
+                low = item
+            if high is None or value > high["raw_value"]:
+                high = item
+            if control is None or abs(value) > abs(control["raw_value"]):
+                control = item
+
+    system = _display_system(frame)
+    if component == STRESS:
+        scale, unit = system.stress_scale, system.stress_unit
+    elif component in MOMENTS:
+        scale, unit = system.moment_scale, system.moment_unit
+    else:
+        scale, unit = system.force_scale, system.force_unit
+
+    def finish(item: dict | None) -> dict | None:
+        if item is None:
+            return None
+        return {
+            "value": item["raw_value"] * scale,
+            "member": item["member"],
+            "x": item["x"],
+            "point": point_on_member(frame, item["member"], item["x"]),
+        }
+
+    return {"component": component, "case": name, "unit": unit,
+            "minimum": finish(low), "maximum": finish(high),
+            "control": finish(control)}
+
+
 def show_stress_dialog(parent, probe: dict) -> None:
     """显示探针截面的线性正应力分布；剪应力不在当前截面契约内。"""
     from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout

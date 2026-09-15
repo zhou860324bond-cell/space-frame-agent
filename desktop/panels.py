@@ -183,39 +183,38 @@ class ResultPanel(QWidget):
     history_remove_requested = Signal(str)
     history_protection_changed = Signal()
 
-    _CONTEXT_NAMES = {
-        "message": "结果说明", "table": "结果明细", "contour": "结果云图",
-        "probe": "截面探针", "strength": "强度校核",
-        "deflection": "位移校核", "envelope": "结果包络",
-        "buckling": "屈曲分析", "modal": "模态分析",
-        "symmetry": "对称性检查", "numbering": "编号检查",
-        "analysis_mesh": "分析网格", "solid_joint": "节点实体分析",
-        "trust": "结果可信度", "convergence": "专项收敛诊断",
-        "solid_history": "实体历史对比",
-        "solid_history_manage": "实体历史管理",
-        "solid_storage": "实体结果中心",
-    }
-
     def __init__(self, parent=None):
         super().__init__(parent)
         box = QVBoxLayout(self)
         box.setContentsMargins(6, 6, 6, 6)
         box.setSpacing(4)
 
-        # 首屏只回答三个问题：现在看的是什么、有多少数据、能否直接采用。
-        # 详细公式和限制仍放在下方标题区，避免把结果面板重新堆成仪表盘。
+        # 首屏先给工程结论，不再用“结果类型 / 数据量”占掉最宝贵的位置。
+        # 类型已经写在标题里；工程师真正先找的是极值、控制位置、工况和单位。
         self.summary = QFrame(self)
         self.summary.setObjectName("resultSummary")
-        summary_row = QHBoxLayout(self.summary)
-        summary_row.setContentsMargins(0, 0, 0, 0)
-        summary_row.setSpacing(6)
-        self.summary_type = self._summary_metric(summary_row, "结果类型")
-        self.summary_count = self._summary_metric(summary_row, "数据量")
-        self.summary_status = self._summary_metric(summary_row, "当前结论")
-        self.summary_trust = self._summary_metric(summary_row, "结果可信度", stretch=1)
+        summary_box = QVBoxLayout(self.summary)
+        summary_box.setContentsMargins(0, 0, 0, 0)
+        summary_box.setSpacing(4)
+        headline = QHBoxLayout()
+        headline.setSpacing(6)
+        self.summary_maximum = self._summary_metric(headline, "最大值")
+        self.summary_minimum = self._summary_metric(headline, "最小值")
+        self.summary_location = self._summary_metric(
+            headline, "控制位置", stretch=2)
+        summary_box.addLayout(headline)
+        facts = QHBoxLayout()
+        facts.setSpacing(6)
+        self.summary_case = self._summary_metric(facts, "工况 / 组合")
+        self.summary_unit = self._summary_metric(facts, "单位")
+        self.summary_status = self._summary_metric(facts, "求解状态")
+        self.summary_trust = self._summary_metric(
+            facts, "结果可信度", stretch=2)
+        summary_box.addLayout(facts)
         box.addWidget(self.summary)
         self._result_row_count = 0
         self._result_marks: list[str | None] = []
+        self._engineering_summary: dict | None = None
         self._trust: dict | None = None
 
         self.caption = QLabel("尚无分析结果")
@@ -633,23 +632,34 @@ class ResultPanel(QWidget):
             self.history_remove_requested.emit(str(identifier))
 
     def _refresh_summary(self) -> None:
-        self.summary_type.setText(self._CONTEXT_NAMES.get(
-            self.context, "分析结果"))
-        self.summary_count.setText(
-            f"{self._result_row_count} 行" if self._result_row_count else "暂无")
+        engineering = self._engineering_summary or {}
+
+        def text(key: str, fallback: str) -> str:
+            value = engineering.get(key)
+            return fallback if value is None or value == "" else str(value)
+
+        self.summary_maximum.setText(text("maximum", "不适用"))
+        self.summary_minimum.setText(text("minimum", "不适用"))
+        self.summary_location.setText(text(
+            "location", "未提供可定位的控制点"))
+        self.summary_case.setText(text("case", "—"))
+        self.summary_unit.setText(text("unit", "—"))
         failed = self._result_marks.count("fail")
         unclear = self._result_marks.count("unclear")
         passed = self._result_marks.count("pass")
-        if failed:
-            text, severity = f"{failed} 项超限", "fail"
+        if engineering.get("solve_status"):
+            text = str(engineering["solve_status"])
+            severity = str(engineering.get("severity") or "ready")
+        elif failed:
+            text, severity = f"已完成 · {failed} 项超限", "fail"
         elif unclear:
-            text, severity = f"{unclear} 项待复核", "unclear"
+            text, severity = f"已完成 · {unclear} 项待复核", "unclear"
         elif passed:
-            text, severity = "检查通过", "pass"
+            text, severity = "已完成 · 检查通过", "pass"
         elif self._result_row_count:
-            text, severity = "数据就绪", "ready"
+            text, severity = "已完成", "ready"
         else:
-            text, severity = "待生成", "idle"
+            text, severity = "未生成", "idle"
         self.summary_status.setText(text)
         self.summary_status.setProperty("severity", severity)
         self.summary_status.style().unpolish(self.summary_status)
@@ -669,6 +679,11 @@ class ResultPanel(QWidget):
         self.summary_trust.setToolTip(trust_tip)
         self.summary_trust.style().unpolish(self.summary_trust)
         self.summary_trust.style().polish(self.summary_trust)
+
+    def set_engineering_summary(self, summary: dict | None) -> None:
+        """设置顶部工程结论；值由结果生产者显式给出，面板不猜字段语义。"""
+        self._engineering_summary = dict(summary) if summary else None
+        self._refresh_summary()
 
     def set_trust_assessment(self, assessment: dict | None) -> None:
         self._trust = assessment
@@ -740,13 +755,15 @@ class ResultPanel(QWidget):
                   rows: list[list[Any]],
                   locators: list[tuple[str, int] | None] | None = None,
                   marks: list[str | None] | None = None,
-                  context: str = "table") -> None:
+                  context: str = "table",
+                  engineering: dict | None = None) -> None:
         """填表。
 
         `locators[i]` 说明第 i 行对应视口里的哪个对象，可为 None。
         `marks[i]` 是该行的严重度（fail / unclear / pass），用来着色——
         校核表动辄十几行，逐格去读"结论"那一列不现实，超限的行要自己跳出来。
         """
+        self._engineering_summary = dict(engineering) if engineering else None
         self.set_context(context)
         self._result_row_count = len(rows)
         self._result_marks = list(marks or [])
@@ -825,5 +842,6 @@ class ResultPanel(QWidget):
         self.table.setColumnCount(0)
         self._result_row_count = 0
         self._result_marks = []
+        self._engineering_summary = None
         self._set_caption(f"{title}\n{text}")
         self._refresh_summary()
