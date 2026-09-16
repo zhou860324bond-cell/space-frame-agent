@@ -92,7 +92,7 @@ def test_convergence_is_monotone_from_above(ends):
     exact = exact_factor(ends)
     got = [buckling(column(n, ends), num_modes=1).critical for n in (2, 4, 8, 16)]
     assert all(v > exact for v in got), got
-    assert all(a > b for a, b in zip(got, got[1:])), got
+    assert all(a > b for a, b in zip(got, got[1:], strict=False)), got
 
 
 @pytest.mark.gold

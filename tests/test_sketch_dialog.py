@@ -34,7 +34,7 @@ def test_rectangle_like_operation_undoes_as_one_step(qt_app):
     canvas._remember()
     ids = [canvas._get_or_add_node(point) for point in
            ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0))]
-    for n1, n2 in zip(ids, ids[1:] + ids[:1]):
+    for n1, n2 in zip(ids, ids[1:] + ids[:1], strict=False):
         canvas._add_line(n1, n2)
     canvas.undo()
     assert canvas.nodes == [] and canvas.lines == []

@@ -53,7 +53,7 @@ def _profile_z(profile: Sequence[tuple[float, float]], x: float) -> float:
             f"柱的位置 x={x:g} 落在屋面折线 "
             f"[{pts[0][0]:g}, {pts[-1][0]:g}] 之外。"
             "若要做悬挑，请把折线两端延伸出去，而不是把柱移出去。")
-    for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+    for (x0, z0), (x1, z1) in zip(pts, pts[1:], strict=False):
         if x0 - TOL <= x <= x1 + TOL:
             if abs(x1 - x0) < TOL:
                 return max(z0, z1)
@@ -184,14 +184,14 @@ def generate_bent(
         for z, nid in zip(cuts, ids):
             if z in level_nodes:
                 level_nodes[z].append(nid)
-        for a, b in zip(ids, ids[1:]):
+        for a, b in zip(ids, ids[1:], strict=False):
             column_ids.append(add(a, b, column_section))
 
     # --- 楼层梁：同一标高上相邻两柱之间 ---
     beam_ids: list[int] = []
     for z in levels:
         ids = level_nodes[z]
-        for a, b in zip(ids, ids[1:]):
+        for a, b in zip(ids, ids[1:], strict=False):
             beam_ids.append(add(a, b, beam_section))
 
     # --- 顶层：沿折线逐段相连，折线拐点自然成为节点 ---
@@ -199,7 +199,7 @@ def generate_bent(
     breaks = sorted({p[0] for p in pts} | set(xs))
     roof_nodes = [node_at(x, _profile_z(pts, x)) for x in breaks]
     rafter_ids = [add(a, b, beam_section)
-                  for a, b in zip(roof_nodes, roof_nodes[1:])]
+                  for a, b in zip(roof_nodes, roof_nodes[1:], strict=False)]
 
     supports: list[dict[str, Any]] = []
     fixed_at: dict[int, list[int]] = {}
@@ -290,7 +290,7 @@ def extrude_bents(model: dict[str, Any], bays: Sequence[float], *,
                if int(node["id"]) not in base_nodes}
     for original in sorted(connect):
         chain = ids[original]
-        for a, b in zip(chain, chain[1:]):
+        for a, b in zip(chain, chain[1:], strict=False):
             members.append({"id": len(members) + 1, "i": a, "j": b,
                             "section": tie, "material": mat})
             tie_ids.append(members[-1]["id"])
@@ -428,7 +428,7 @@ def add_bracing(model: dict[str, Any], *,
     panels = 0
     for key in sorted(grid):
         cols = sorted(grid[key])
-        for (x0, left), (x1, right) in zip(cols, cols[1:]):
+        for (x0, left), (x1, right) in zip(cols, cols[1:], strict=False):
             panels += 1
             if kind == "single":
                 brace_ids.append(add(left["low"]["id"], right["high"]["id"]))

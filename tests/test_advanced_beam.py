@@ -151,7 +151,7 @@ def test_pdelta_converges_to_the_exact_second_order_solution():
         errors.append(abs(abs(tip) - abs(exact)) / abs(exact))
 
     assert errors[-1] < 1e-5                       # 8 单元贴合精确解
-    assert all(a > b for a, b in zip(errors, errors[1:])), errors   # 单调收敛
+    assert all(a > b for a, b in zip(errors, errors[1:], strict=False)), errors   # 单调收敛
 
 
 def test_pdelta_reduces_to_the_linear_solution_without_axial_force():

@@ -36,7 +36,7 @@ def rectangle_torsion_factor(ratio: float) -> float:
         return _BETA_TABLE[0][1]
     if ratio >= _BETA_TABLE[-1][0]:
         return 1.0 / 3.0
-    for (r0, b0), (r1, b1) in zip(_BETA_TABLE, _BETA_TABLE[1:]):
+    for (r0, b0), (r1, b1) in zip(_BETA_TABLE, _BETA_TABLE[1:], strict=False):
         if r0 <= ratio <= r1:
             t = (ratio - r0) / (r1 - r0)
             return b0 + t * (b1 - b0)
