@@ -33,6 +33,21 @@ MCP 客户端配置示例（Claude Desktop / Cursor）：
     get_capsule          获取胶囊详情
     diff_capsules        对比两个胶囊
 """
+
+# 为什么这里一律宽泛捕获（每个 handler 一处，共 10 处）
+#
+# 这是**进程边界**：MCP 客户端在另一个进程里，它只认 JSON。任何没被接住的
+# 异常都会让这一路请求变成连接层面的失败——客户端拿到的是"服务挂了"，
+# 而不是"这次调用出了什么事"。所以每个 handler 都把异常收口成
+#
+#     {"ok": false, "error": <异常类名>, "message": <异常文本>}
+#
+# **信息没有丢**：类名和消息都回给了调用方，这不是静默失败（对照
+# docs/SILENT_FAILURES.md 的判据：出了问题却没人报）。
+#
+# 想缩窄成具体异常类型是做不到的：handler 背后是整个求解链路，
+# 能抛的东西从 KeyError 到 numpy 的 LinAlgError 都有，漏掉一种的代价
+# 就是整个服务在那一路上不可用。
 from __future__ import annotations
 
 import argparse
@@ -196,7 +211,7 @@ def solve_frame(model_json: str, label: str = "", save_capsule_flag: bool = True
             }
 
         return _json_response(response)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -231,7 +246,7 @@ def validate_frame(model_json: str) -> str:
                 "combos": len(model.combos),
             },
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -316,7 +331,7 @@ def query_result(model_json: str, case: str = "", what: str = "all") -> str:
                 out.setdefault(cname, {})["member_forces"] = forces
 
         return _json_response({"ok": True, "case": case or "all", "what": what, "data": out})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -390,7 +405,7 @@ def diagnose_supports(model_json: str) -> str:
             "missing_rotation": missing_rot,
             "issues": issues,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -438,7 +453,7 @@ def modal_analysis(model_json: str, num_modes: int = 6) -> str:
                 for i, (f, p) in enumerate(zip(freqs, periods))
             ],
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -489,7 +504,7 @@ def buckling_analysis(model_json: str, case: str = "", num_modes: int = 4) -> st
             "controlling_compression_member": controlling_member,
             "controlling_compression_force_kN": float(max_compression / 1000.0) if controlling_member else None,
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -528,7 +543,7 @@ def detect_silent_failures_tool(model_json: str) -> str:
             "findings": findings,
             "text_report": format_findings(findings, verbose=True),
         })
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -549,7 +564,7 @@ def list_capsules_tool(limit: int = 20) -> str:
     try:
         capsules = list_capsules()[:limit]
         return _json_response({"ok": True, "count": len(capsules), "capsules": capsules})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -569,7 +584,7 @@ def get_capsule_tool(capsule_id: str) -> str:
             return _json_response({"ok": False, "error": "not_found", "message": f"未找到胶囊: {capsule_id}"})
         cap = load_capsule(path)
         return _json_response({"ok": True, "capsule": cap.to_dict()})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
@@ -596,7 +611,7 @@ def diff_capsules_tool(capsule_id1: str, capsule_id2: str) -> str:
             return _json_response({"ok": False, "error": "not_found", "message": f"未找到胶囊: {', '.join(missing)}"})
         report = diff_capsules(p1, p2)
         return _json_response({"ok": True, "diff": report})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」
         return _json_response({"ok": False, "error": type(e).__name__, "message": str(e)})
 
 
