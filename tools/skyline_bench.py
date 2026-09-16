@@ -134,7 +134,7 @@ def shuffled(payload: dict, seed: int = 0) -> dict:
     ids = [int(n["id"]) for n in payload["nodes"]]
     shuffled_ids = list(ids)
     np.random.default_rng(seed).shuffle(shuffled_ids)
-    remap = dict(zip(ids, shuffled_ids))
+    remap = dict(zip(ids, shuffled_ids, strict=True))
 
     out = dict(payload)
     out["nodes"] = [{**n, "id": remap[int(n["id"])]} for n in payload["nodes"]]

@@ -106,7 +106,8 @@ def plate_mesh(local_size: float, global_size: float = 10.0):
         xyz = np.asarray(flat_xyz, dtype=float).reshape((-1, 3))
         index = {int(tag): i for i, tag in enumerate(node_tags)}
         rows = []
-        for kind, flat in zip(*gmsh.model.mesh.getElements(3)[::2]):
+        # getElements 的类型表与节点表按单元类型一一对应，是 Gmsh 的 API 约定
+        for kind, flat in zip(*gmsh.model.mesh.getElements(3)[::2], strict=True):
             if int(kind) != 11:                  # 11 = tetrahedron10
                 continue
             for tags_row in np.asarray(flat, dtype=np.int64).reshape((-1, 10)):
@@ -188,7 +189,7 @@ def _through_thickness(mesh, on_hole: np.ndarray,
     bins = max(4, int(round(THICKNESS / 2.0)))
     edges = np.linspace(0.0, THICKNESS, bins + 1)
     rows: list[tuple[float, float]] = []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in zip(edges[:-1], edges[1:], strict=False):
         band = [k for k in near if lo - 1e-9 <= mesh.nodes[on_hole[k], 2] <= hi + 1e-9]
         if band:
             rows.append((float(0.5 * (lo + hi)),

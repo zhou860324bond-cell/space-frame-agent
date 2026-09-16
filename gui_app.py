@@ -236,7 +236,7 @@ def _section_input(label: str, name: str, default_kind: str,
         preset = PRESET_COL if key == "col" else PRESET_BEAM
         out = {"name": name}
         cols = st.columns(4)
-        for c, k in zip(cols, ("A", "Iy", "Iz", "J")):
+        for c, k in zip(cols, ("A", "Iy", "Iz", "J"), strict=True):
             with c:
                 out[k] = st.number_input(k, value=float(preset[k]), format="%.3g",
                                          key=f"{key}_{k}")
@@ -245,7 +245,7 @@ def _section_input(label: str, name: str, default_kind: str,
     builder, keys, labels = S.BUILDERS[kind]
     values = []
     cols = st.columns(len(keys))
-    for c, k, lab, default in zip(cols, keys, labels, S.DEFAULT_DIMENSIONS[kind]):
+    for c, k, lab, default in zip(cols, keys, labels, S.DEFAULT_DIMENSIONS[kind], strict=True):
         with c:
             values.append(st.number_input(lab, value=float(default), step=0.005,
                                           format="%.3f", key=f"{key}_{k}"))
@@ -608,7 +608,8 @@ with tab_pre:
                 st.caption(f"工具 `{_step.tool}`　·　{_step.changed}"
                            + ("" if _step.ok else f"　·　未通过：{_step.error}"))
                 _cols = st.columns(4)
-                for _c, (_k, _v) in zip(_cols * 2, list(_step.stats.items())[:4]):
+                # 左边 8 个格子、右边最多 4 项，本来就不等长
+                for _c, (_k, _v) in zip(_cols * 2, list(_step.stats.items())[:4], strict=False):
                     _c.metric(_k, _v)
                 try:
                     # 用那一步的快照重建，画出当时的模型——这才是"过程"

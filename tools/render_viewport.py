@@ -62,7 +62,7 @@ def build() -> Session:
     for node, mask in ((nid[(0, 0)], [1, 1, 1, 1, 1, 1]),    # 固接
                        (nid[(1, 0)], [1, 1, 1, 0, 0, 0]),    # 铰接
                        (nid[(2, 0)], [0, 1, 1, 0, 0, 0])):   # 滚动
-        fixes[node] = [max(a, b) for a, b in zip(fixes[node], mask)]
+        fixes[node] = [max(a, b) for a, b in zip(fixes[node], mask, strict=True)]
 
     model = {
         "units": "N-m-Pa",
