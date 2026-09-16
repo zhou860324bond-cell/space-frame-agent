@@ -121,7 +121,8 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
         tag_to_index = {int(tag): i for i, tag in enumerate(node_tags)}
         types, _element_tags, element_nodes = gmsh.model.mesh.getElements(3)
         rows = []
-        for kind, flat in zip(types, element_nodes):
+        # getElements 的三个返回值按单元类型一一对应，是 Gmsh 的 API 约定
+        for kind, flat in zip(types, element_nodes, strict=True):
             if int(kind) != 11:                 # Gmsh type 11 = tetrahedron10
                 continue
             tags = np.asarray(flat, dtype=np.int64).reshape((-1, 10))

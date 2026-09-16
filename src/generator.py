@@ -25,7 +25,7 @@ _OUT_OF_PLANE = (0, 1, 0, 1, 0, 1)
 
 
 def _merge_fix(a, b):
-    return [1 if (x or y) else 0 for x, y in zip(a, b)]
+    return [1 if (x or y) else 0 for x, y in zip(a, b, strict=True)]
 
 
 def _add_plane_restraints(supports: list[dict[str, Any]],

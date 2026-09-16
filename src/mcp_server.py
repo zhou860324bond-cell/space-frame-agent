@@ -450,7 +450,7 @@ def modal_analysis(model_json: str, num_modes: int = 6) -> str:
                     "effective_mass_y": float(eff_mass[i][1]) if eff_mass else None,
                     "effective_mass_z": float(eff_mass[i][2]) if eff_mass else None,
                 }
-                for i, (f, p) in enumerate(zip(freqs, periods))
+                for i, (f, p) in enumerate(zip(freqs, periods, strict=True))
             ],
         })
     except Exception as e:  # noqa: BLE001  见文件顶部「为什么这里一律宽泛捕获」

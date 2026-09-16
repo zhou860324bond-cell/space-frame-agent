@@ -124,7 +124,7 @@ def support_traces(frame, size: float | None = None) -> tuple[list, dict]:
         kind = classify_support(mask)
         p = frame.nodes[nid].xyz
         xs, ys, zs = _box(p, r) if kind == "固接" else _cone(p, r)
-        for bucket, part in zip(groups[kind], (xs, ys, zs)):
+        for bucket, part in zip(groups[kind], (xs, ys, zs), strict=True):
             bucket.extend(part)
         drawn += 1
 
@@ -200,7 +200,7 @@ def load_traces(frame, case: str, size: float | None = None,
         peak = float(mag.max()) or 1.0
         # 归一到 [0.35, 1]：太小的箭头看不见，但也不能让它们和最大的一样长
         scaled = [v / peak * (0.35 + 0.65 * m / peak) * span * 0.10
-                  for v, m in zip(vec, mag)]
+                  for v, m in zip(vec, mag, strict=True)]
         t = _cone_trace(pts, scaled, name, color, ref=1.0)
         if t is not None:
             traces.append(t)

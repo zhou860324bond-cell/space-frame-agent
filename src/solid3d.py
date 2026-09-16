@@ -233,8 +233,8 @@ def nodal_abs_principal_envelope(mesh: SolidMesh,
     if field.shape != (len(mesh.elements), 4, 6):
         raise Solid3DError("积分点应力数量与实体网格不一致")
     out = np.full(len(mesh.nodes), np.nan, dtype=float)
-    for conn, element_field in zip(mesh.elements, field):
-        for node, stress in zip(conn, extrapolate_element_nodal_stress(element_field)):
+    for conn, element_field in zip(mesh.elements, field, strict=True):
+        for node, stress in zip(conn, extrapolate_element_nodal_stress(element_field), strict=True):
             _vm, principal = _stress_measures(stress)
             if math.isnan(out[node]) or principal > out[node]:
                 out[node] = principal

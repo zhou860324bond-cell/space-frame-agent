@@ -216,7 +216,7 @@ def physical_member_diagram(frame: Frame, solution, mapping,
         return np.concatenate([diagram.component(name) for diagram in diagrams])
 
     x = np.concatenate([diagram.x + offset
-                        for diagram, offset in zip(diagrams, offsets)])
+                        for diagram, offset in zip(diagrams, offsets, strict=True)])
     name = case or solution.primary
     return MemberDiagram(
         member=physical_member_id, case=name,
@@ -374,7 +374,7 @@ def max_deflection(frame: Frame, solution, case: str | None = None,
                      for element_id in element_ids]
             offsets = np.cumsum([0.0] + [part[0][-1] for part in parts[:-1]])
             x = np.concatenate([part[0] + offset
-                                for part, offset in zip(parts, offsets)])
+                                for part, offset in zip(parts, offsets, strict=True)])
             v = np.concatenate([part[1] for part in parts])
             w = np.concatenate([part[2] for part in parts])
         mag = np.hypot(v, w)

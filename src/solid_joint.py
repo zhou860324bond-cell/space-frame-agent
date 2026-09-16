@@ -231,7 +231,7 @@ def diagnose_peak_convergence(meshes: list[dict[str, Any]],
     mean_x = sum(math.log(s) for s in sizes) / len(sizes)
     mean_y = sum(math.log(abs(v)) for v in values) / len(values)
     num = sum((math.log(s) - mean_x) * (math.log(abs(v)) - mean_y)
-              for s, v in zip(sizes, values))
+              for s, v in zip(sizes, values, strict=True))
     den = sum((math.log(s) - mean_x) ** 2 for s in sizes)
     slope = num / den if den > 1e-15 else 0.0
 
