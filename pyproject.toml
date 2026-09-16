@@ -70,14 +70,22 @@ exclude = [
     "abaqus_bench/extract_odb.py",
 ]
 
-# 只选"错了就是错了"的两类：E9 语法错误、F pyflakes（未定义名、未用导入、
-# 重复定义、未用变量）。第一次跑就是 F821 把 desktop/viewport.py 里一个
-# 真 bug 翻出来的——set_result_marker 用了别的方法里的局部 pv，真机上
-# 必 NameError，而回归因为跑在 offscreen 下永远碰不到那一行。
+# 只选"错了就是错了"的那几类：E9 语法错误、F pyflakes（未定义名、未用导入、
+# 重复定义、未用变量）、BLE 宽泛捕获、B905 zip 不写 strict。第一次跑就是
+# F821 把 desktop/viewport.py 里一个真 bug 翻出来的——set_result_marker
+# 用了别的方法里的局部 pv，真机上必 NameError，而回归因为跑在 offscreen
+# 下永远碰不到那一行。
+#
+# （B905 原先也在下面的「没选」清单里，写着"得一处处看"。看完了，全仓库
+#  85 处逐一问过同一个问题：这两个序列的长度，是由同一个不变量保证相等的
+#  吗？是就写 strict=True——不变量来自 MODEL_SCHEMA 的 minItems=maxItems、
+#  一方由另一方推导、紧挨着的显式长度校验，或者按固定名字表建出来的控件；
+#  不是就写 strict=False 并在旁边说明为什么允许不等（成对滑窗、按节点对
+#  配对时两边本来就可能不等长）。
+#  **这条规则不要用 --fix 或 --unsafe-fixes**：它改的是运行时行为，
+#  判错一处就是用户点某个按钮时崩，而不是静态检查多报一条。）
 #
 # 刻意没选的，和理由：
-#   B905  zip 不写 strict —— 68 处。strict=True 会在长度不等时抛异常，
-#         那是行为改变，不能靠一次批量替换糊上去，得一处处看。
 #   （BLE001 原先在这个「没选」清单里，写着"值得专门查一轮"。查完了，
 #    34 处逐一看过，现在它在 select 里。留着这段是为了记住结论：其中
 #    **一处都没有**真在吞错误——10 处是 MCP 的进程边界、10 处把异常
@@ -89,10 +97,10 @@ exclude = [
 #         写的；几处模块中段的 import 是为了让重导出挨着解释它的注释。
 #   UP/SIM/C4 —— 风格偏好，同上，收益不抵改动量。
 #
-# 这四类现在是全绿的。**保持全绿**：新增违例要么改代码，要么在那一行写
+# 这几类现在是全绿的。**保持全绿**：新增违例要么改代码，要么在那一行写
 # `# noqa: XXX` 并说明为什么——别往这个列表里减规则。
 [tool.ruff.lint]
-select = ["E9", "F", "BLE"]
+select = ["E9", "F", "BLE", "B905"]
 
 [tool.ruff.lint.per-file-ignores]
 # pytest 的 fixture 用法天生会踩 F811：fixture 从别的测试模块 import 进来，
