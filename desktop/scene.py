@@ -662,11 +662,20 @@ def clim_is_clipped(mesh: pv.PolyData, name: str,
 
 
 def contour_caption(component: str, unit: str, clipped: bool = False,
-                    sign_filter: str = "all", levels: int | None = None) -> str:
+                    sign_filter: str = "all", levels: int | None = None,
+                    scale_max: float | None = None,
+                    true_peak: float | None = None) -> str:
     """梁中心线结果的自描述文字；明确它不是截面实体应力云图。
 
     ``σ`` 那一档尤其要写清楚：它是**极端纤维正应力**，由梁内力和截面几何
     算出来的，不含剪应力与扭转，也不是实体单元的截面应力场。
+
+    **裁剪时要把数字写出来。** 原先只写 "display clipped at pXX"——它说了
+    "裁过"，没说"裁到哪儿"。实测一个门式刚架 p95 只有真实峰值的 58%，
+    照色标读数会低估四成，而光看 "clipped at p95" 是猜不到这个幅度的。
+    给了 scale_max 与 true_peak 就连数字一起印。
+
+    文字一律 ASCII：VTK 的默认字体没有中文字形（见 STRESS_LABEL_ASCII）。
     """
     if component == STRESS:
         head = "BEAM EXTREME-FIBRE NORMAL STRESS (from beam forces)"
@@ -675,7 +684,12 @@ def contour_caption(component: str, unit: str, clipped: bool = False,
         head = "BEAM CENTERLINE INTERNAL-FORCE RESULT"
         convention = ("magnitude (nonnegative)" if component in {"M", "V"}
                       else "signed in member local axes")
-    suffix = f" - display clipped at p{CONTOUR_PERCENTILE:.0f}" if clipped else ""
+    suffix = ""
+    if clipped:
+        suffix = f" - clipped at p{CONTOUR_PERCENTILE:.0f}"
+        if scale_max is not None and true_peak:
+            suffix += (f": scale max {scale_max:.3g} vs true peak {true_peak:.3g}"
+                       f" ({100.0 * scale_max / true_peak:.0f}%)")
     if sign_filter != "all" and component not in {"M", "V"}:
         suffix += f" - {sign_filter} values only"
     if levels:

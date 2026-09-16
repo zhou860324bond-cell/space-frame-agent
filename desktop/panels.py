@@ -120,6 +120,22 @@ class ResultPanel(QWidget):
         self.range_mode = QComboBox(self)
         self.range_mode.addItem("95% 裁剪", 95.0)
         self.range_mode.addItem("满量程", None)
+        # 这个下拉框最需要解释，原先却是这一排里唯一没有 tooltip 的：
+        # 默认裁剪意味着色标上限**不是**真实峰值（实测一个门式刚架，
+        # p95 只有峰值的 58%），照色标读数会低估。不写出来没人猜得到。
+        self.range_mode.setToolTip(
+            """色标上限取哪个值。
+
+95% 裁剪（默认）：上限取 |值| 的 95 分位，超出部分饱和成极值色。
+刚架内力是重尾分布——实测一个两层两跨框架，55% 的样点落在色带最底下
+的 20%。满量程画出来，绝大多数构件是同一个颜色，云图等于没有信息。
+代价是：色标上限不是真实峰值，照色标读数会低估。
+
+满量程：上限取真实峰值，颜色可以直接对着色标读数，代价是大部分构件
+挤在色带低端。要照图读具体数值时用这个。
+
+两种模式下峰值本身都不受影响：「标注极值」的标签给的始终是真实峰值、
+以及它所在的杆件与位置。""")
         controls.addWidget(self.range_mode)
         controls.addWidget(QLabel("分级"))
         self.levels = QComboBox(self)
