@@ -121,7 +121,8 @@ def test_each_probe_matches_solving_that_model_by_hand():
     values = [2e-4, 7e-4]
     r = s.sweep(what="section_property", target="BEAM", prop="Iz",
                 values=values, metric="max_deflection", case="DL")
-    for value, row in zip(values, r.payload["rows"]):
+    # 扫描必须一个取值对一行，少一行就该在这里炸而不是少验一遍
+    for value, row in zip(values, r.payload["rows"], strict=True):
         manual = solved()
         for sec in manual.model["sections"]:
             if sec["name"] == "BEAM":
@@ -191,9 +192,11 @@ def test_bigger_is_better_for_the_buckling_factor():
     assert r.ok, r.payload
     got = [row["metric"] for row in r.payload["rows"]]
     assert got[0] < got[1] < got[2], "截面越大越不容易失稳"
+    # satisfying_values 为空时 got[-0:] 是整个列表，两边长度对不上；
+    # strict=True 让这种情况当场炸，而不是让 all() 对空序列返回 True
     assert all(v >= 1000.0
                for value, v in zip(r.payload["satisfying_values"], got[-len(
-                   r.payload["satisfying_values"]):]))
+                   r.payload["satisfying_values"]):], strict=True))
     assert r.payload["smallest_sufficient"] == min(r.payload["satisfying_values"])
 
 

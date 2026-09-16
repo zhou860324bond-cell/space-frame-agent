@@ -230,7 +230,7 @@ def test_extrapolation_refuses_a_section_without_a_wall_thickness():
 
 def _levels(sizes, values):
     return [{"mesh_size_mm": h, "max_abs_principal_mpa": v}
-            for h, v in zip(sizes, values)]
+            for h, v in zip(sizes, values, strict=True)]
 
 
 def test_a_singular_peak_is_called_diverging_not_converged():

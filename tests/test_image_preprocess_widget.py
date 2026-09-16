@@ -27,7 +27,7 @@ def test_widget_emits_derived_image_and_confirmed_plane(qt_app, tmp_path):
     widget.work_plane_confirmed.connect(planes.append)
     widget.set_source(str(source))
     widget.rotate_clockwise()
-    for box, value in zip(widget.crop_boxes, (1, 1, 7, 5)):
+    for box, value in zip(widget.crop_boxes, (1, 1, 7, 5), strict=True):
         box.setValue(value)
     widget.apply_crop.click()
     widget.plane.setCurrentText("YZ")
