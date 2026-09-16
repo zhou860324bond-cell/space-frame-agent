@@ -1,0 +1,31 @@
+# 换行符口径。
+#
+# 加这个文件的理由：**同一份文件在两台机器上不该有两种字节**。
+# Git 在 Windows 上默认 `core.autocrlf=true`，检出时把 LF 换成 CRLF。
+# 于是 `docs/word/来源指纹.json` 里记的 sha256 只对导出时那台机器成立：
+# 文档漂移闸（tests/test_docs_current.py）在 Linux 上绿、在 Windows 上红，
+# 而红的理由和"忘了重新导出 Word"长得一模一样，根本分不开。
+#
+# 指纹两侧（build_docx.fingerprint 与那条测试）已经先把 CRLF 归一成 LF，
+# 那才是真正的修法；这里是第二道，从源头把口径钉死，免得将来再写一处
+# 按字节比内容的校验时又踩一遍。
+#
+# 只声明源码和文档，不写 `* text=auto`：仓库里 63 个 json、10 个 .inp、
+# 10 个 .dat 现在在索引里就是 CRLF，一刀切会让下一次 `git add` 顺手把
+# 这 90 多个文件整份重写，把一个两行的修复变成一次看不懂的大 diff。
+# .inp/.dat 是 Abaqus 的输入与结果留档，按原样留着更稳妥。
+
+*.md            text eol=lf
+*.py            text eol=lf
+*.toml          text eol=lf
+*.ini           text eol=lf
+*.yml           text eol=lf
+
+# cmd.exe 对 LF 行尾的批处理有过解析上的怪毛病，明确要 CRLF。
+*.bat           text eol=crlf
+
+# 二进制，别碰。
+*.docx          binary
+*.png           binary
+*.jpg           binary
+*.odb           binary

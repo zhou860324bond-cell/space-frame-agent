@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from frame3d import solve
 from model_compiler import compile_model

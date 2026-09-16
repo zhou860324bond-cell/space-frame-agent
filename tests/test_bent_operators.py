@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import math
 
 import pytest
 
@@ -505,9 +504,9 @@ def test_generate_bent_keeps_the_unit_system():
 def test_removing_members_through_the_session_cleans_orphans():
     s = Session()
     s.define_materials_and_sections(MAT, SEC)
-    g = s.generate_frame(spans=[6.0, 6.0], storeys=[3.6],
-                         column_section="COLUMN", beam_section="BEAM",
-                         material="Q355")
+    s.generate_frame(spans=[6.0, 6.0], storeys=[3.6],
+                     column_section="COLUMN", beam_section="BEAM",
+                     material="Q355")
     before = len(s.model["nodes"])
     cols = s.select_members(orientation="vertical",
                             x_range=[-0.1, 0.1]).payload["member_ids"]

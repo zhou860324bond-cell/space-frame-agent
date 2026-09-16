@@ -237,7 +237,6 @@ def figure_member_diagram(frame, solution, member_id: int, component: str = "Mz"
     values = d.component(component) * value_scale
     shown_x = d.x * units.length_to_m
     x_at, peak = d.extreme(component)
-    warm = component in _IS_MOMENT
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=shown_x, y=values, mode="lines", name=component,

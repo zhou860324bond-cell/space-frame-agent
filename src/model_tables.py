@@ -24,7 +24,7 @@ from typing import Any
 from frame3d import DEFAULT_CASE, LOCAL_DOF_NAMES
 from span_loads import KINDS as SPAN_KINDS
 from span_loads import POINT, TRAPEZOID
-from units import NAMES as UNIT_SYSTEMS
+from units import NAMES as UNIT_SYSTEMS  # noqa: F401  同上，gui_app 用 MT.UNIT_SYSTEMS
 from units import convert_model  # noqa: F401  界面从这里取，不必再 import units
 
 NODE_COLUMNS = ("id", "x", "y", "z")

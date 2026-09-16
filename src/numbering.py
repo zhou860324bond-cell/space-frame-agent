@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 from scipy.sparse import csr_matrix, issparse

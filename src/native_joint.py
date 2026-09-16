@@ -252,7 +252,7 @@ def diagnose_hotspot_convergence(values: list[tuple[float, float]],
         reason = f"最后两档热点应力变化 {changes[-1]:.1%}，已进入稳定区"
     else:
         verdict = "inconclusive"
-        reason = (f"热点应力逐档变化为 "
+        reason = ("热点应力逐档变化为 "
                   + " → ".join(f"{v:.1%}" for v in changes)
                   + f"，未满足 {tolerance:.0%} 稳定性门禁")
     return {"verdict": verdict, "levels": len(clean),

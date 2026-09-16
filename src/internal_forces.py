@@ -31,7 +31,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from frame3d import (DEFAULT_CASE, Frame, local_axes, member_endpoints,
+from frame3d import (Frame, local_axes, member_endpoints,
                      member_local_displacements, span_loads_of)
 from span_loads import POINT, span_force
 
@@ -278,7 +278,6 @@ def member_deflection(frame: Frame, solution, member_id: int,
 
     pi, pj = member_endpoints(frame, member)
     _, rot = local_axes(pi, pj, member.ref_vector)
-    res = solution[name]
     q = _result_local_displacements(frame, solution, member, name)
     ui, uj = q[:3], q[6:9]
 

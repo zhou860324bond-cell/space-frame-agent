@@ -19,7 +19,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 pytest.importorskip("gmsh", reason="未安装 gmsh，跳过实体网格验证")

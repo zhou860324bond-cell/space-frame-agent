@@ -1564,7 +1564,7 @@ class SketchPanel(QWidget):
             self.btn_load.setEnabled(False)
             warnings = result.payload.get("warnings") or []
             self.lbl_status.setText(
-                f"V2 草稿已原子加载（1 个撤销步骤）"
+                "V2 草稿已原子加载（1 个撤销步骤）"
                 + (f"；仍有 {len(warnings)} 项工程属性待补全。" if warnings else "。"))
             self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
             self._set_stage(4, "识别草稿已写入当前计算模型；后续修改由模型历史管理")

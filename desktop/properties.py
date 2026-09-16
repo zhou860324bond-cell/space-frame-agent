@@ -21,12 +21,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox,
-                               QFormLayout, QFrame, QGridLayout, QLabel,
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox,
+                               QFormLayout, QFrame, QLabel,
                                QLineEdit, QVBoxLayout, QWidget)
 
-from . import theme
 
 # 六个局部自由度，顺序与模型里的 fix 数组一致
 DOF = ("ux", "uy", "uz", "rx", "ry", "rz")

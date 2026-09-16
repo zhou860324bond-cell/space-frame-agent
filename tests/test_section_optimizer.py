@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from section_optimizer import SectionOptimizer, EvaluationPoint, OptimizationResult
+from section_optimizer import SectionOptimizer, EvaluationPoint
 
 
 # 一个简单的单跨单层框架模型

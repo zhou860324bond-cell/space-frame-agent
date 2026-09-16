@@ -7,7 +7,6 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "evalset"))
 
@@ -169,7 +168,6 @@ def test_combo_check_no_longer_depends_on_model_chosen_names():
     assert "numeric" not in case["checks"], "不该再按名字查数值"
     assert case["checks"]["all_cases_equilibrium"]
 
-    beams = (17, 18, 19, 20, 21, 22)
     script = [
         call("1", "define_materials_and_sections", materials=MATERIALS, sections=SECTIONS),
         call("2", "generate_frame", spans=[6, 6, 6], storeys=[3.6, 3.6],

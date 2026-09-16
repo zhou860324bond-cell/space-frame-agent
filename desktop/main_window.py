@@ -484,7 +484,6 @@ class MainWindow(QMainWindow):
         The full menu hierarchy remains intact for documentation and keyboard
         use, but no longer consumes a dedicated row above the ribbon.
         """
-        from . import commands
         from PySide6.QtWidgets import QToolButton
 
         menus = (("文件", ("new", "open", "save", None, "report", "learning_trace")),
@@ -1332,7 +1331,7 @@ class MainWindow(QMainWindow):
 
     def create_node_exact(self) -> None:
         """输入精确坐标建节点（Abaqus 式坐标输入，弥补鼠标点选不精确）。"""
-        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout,
+        from PySide6.QtWidgets import (QDialog, QFormLayout,
                                        QDoubleSpinBox)
         dlg = QDialog(self)
         unit = self.session.units.length
@@ -1571,7 +1570,7 @@ class MainWindow(QMainWindow):
 
     def edit_materials_sections(self) -> None:
         """弹出材料与截面编辑对话框，直接修改模型的材料和截面定义。"""
-        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QTabWidget,
+        from PySide6.QtWidgets import (QDialog, QTabWidget,
                                        QTableWidget, QTableWidgetItem, QVBoxLayout)
         dlg = QDialog(self)
         dlg.setWindowTitle("材料与截面")
@@ -1709,7 +1708,7 @@ class MainWindow(QMainWindow):
 
     def edit_units(self) -> None:
         """弹出单位制选择对话框。"""
-        from PySide6.QtWidgets import QDialog, QComboBox, QDialogButtonBox, QFormLayout
+        from PySide6.QtWidgets import QDialog, QComboBox, QFormLayout
         dlg = QDialog(self)
         dlg.setWindowTitle("单位制")
         form = QFormLayout(dlg)
@@ -1733,7 +1732,7 @@ class MainWindow(QMainWindow):
 
     def edit_load_combos(self) -> None:
         """弹出荷载组合编辑对话框。"""
-        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QTableWidget,
+        from PySide6.QtWidgets import (QDialog, QTableWidget,
                                        QTableWidgetItem, QVBoxLayout, QLabel)
         dlg = QDialog(self)
         dlg.setWindowTitle("荷载组合")
@@ -2307,7 +2306,7 @@ class MainWindow(QMainWindow):
     def _show_diagnose_result(self, issues: list, suggestions: list,
                               locations: list[list[tuple[str, int]]] | None = None) -> None:
         """显示模型检查结果。"""
-        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout,
+        from PySide6.QtWidgets import (QDialog, QHBoxLayout,
                                        QLabel, QListWidget, QPushButton,
                                        QVBoxLayout)
         dlg = QDialog(self)
@@ -2820,7 +2819,6 @@ class MainWindow(QMainWindow):
         外壳用 Qt 抓，视口用 plotter 自己的 screenshot，然后贴回它的位置。
         答辩截图和报告插图都走这条路。
         """
-        from PySide6.QtCore import QBuffer, QIODevice
         from PySide6.QtGui import QImage
 
         chrome = self.grab().toImage()

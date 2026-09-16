@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel,
                                QPushButton, QVBoxLayout, QWidget)
 

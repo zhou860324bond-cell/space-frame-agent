@@ -121,7 +121,6 @@ def test_real_world_freeze_hash_binds_a_complete_case(tmp_path):
     metadata.update(consent_to_evaluate=True, subset_labels=["clear"])
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     truth_path = tmp_path / "ground_truth" / "site_photo.json"
-    truth = json.loads(truth_path.read_text(encoding="utf-8"))
     fixture_truth = json.loads((ROOT / "ground_truth" / "seed_01_portal.json")
                                .read_text(encoding="utf-8"))
     fixture_truth.update(image_id="site_photo", annotation_status="verified")
