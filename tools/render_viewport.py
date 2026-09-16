@@ -110,17 +110,46 @@ def _bar_title(tubes, component: str, clim, base: str) -> str:
     return base
 
 
-def _scaled_tubes(frame, solution, component: str):
-    """带工程显示单位的云图管。与 viewport.show_contour 同一套换算——
-    脚本若略过它，核对的就不是用户真正看到的那张图。"""
+def _contour(frame, solution, component: str, levels: int | None = None):
+    """云图的管、色标范围、调色板——**逐步照抄 viewport.show_contour**。
+
+    这个函数存在的唯一理由是"别画成另一张图"。原先它用
+    ``scene.member_tubes(..., scalars=...)``，那是**模型视图**的细管
+    （TUBE_RATIO = 0.0032）加连续渐变；而应用画的是
+    ``scene.banded_tubes(..., radius=CONTOUR_TUBE_RATIO * model_size)``
+    ——粗管（0.0145）加分级色块加调色板。
+
+    两者差了四倍半管径和"分不分级"，渲出来的图和用户看到的完全不是一回事。
+    于是"改一版渲一版对比"这条回路，核对的是一张不存在的图：既看不出真实
+    问题，还会诱导人去"修"作者刻意调好的常量（管径、支座大小、色标底端
+    都是一次次试出来的，注释里有完整的调试史）。
+
+    改这个函数之前先读一遍 viewport.show_contour，两边必须同步。
+    tests/test_render_viewport.py 会盯住关键的几项。
+    """
     from units import of as unit_system
-    tubes = scene.member_tubes(frame, solution, "D", scalars=component)
+
     system = unit_system(frame)
-    tubes[component] = tubes[component] * (
-        system.moment_scale if component in {"T", "My", "Mz", "M"}
-        else system.force_scale)
-    clim = scene.contour_clim(tubes, component)
-    return tubes, clim, system
+    if component in {"T", "My", "Mz", "M"}:
+        value_scale, unit = system.moment_scale, system.moment_unit
+    else:
+        value_scale, unit = system.force_scale, system.force_unit
+
+    line = scene.contour_line(frame, solution, "D", component,
+                              value_scale=value_scale)
+    clim = scene.contour_clim(line, component)
+    n = scene.contour_levels(levels)
+    cmap = theme.banded(theme.palette_cmap(theme.DEFAULT_PALETTE, component), n)
+    tubes = scene.banded_tubes(
+        line, component, clim, n,
+        radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame))
+    return tubes, line, clim, n, cmap, unit
+
+
+# 与 viewport.show_contour 同一套打光参数。注释见那边：环境光托底让背光面
+# 读得出颜色，适度漫反射与高光让圆管看得出是圆的。
+SHADE = dict(lighting=True, ambient=0.42, diffuse=0.58,
+             specular=0.22, specular_power=30, smooth_shading=True)
 
 
 def main() -> None:
@@ -144,13 +173,13 @@ def main() -> None:
         p.add_mesh(mesh, color=color)
     shot(p, "vp_model.png")
 
-    # 2. 合弯矩云图：顺序色标，从零起
+    # 2. 合弯矩云图：合量从零起
     p = plotter()
-    tubes, clim, system = _scaled_tubes(frame, solution, "M")
-    p.add_mesh(tubes, scalars="M", cmap=theme.sequential_cmap(), clim=clim,
-               smooth_shading=True,
-               scalar_bar_args=dict(title=_bar_title(tubes, "M", clim,
-                                                     f"|M| ({system.moment_unit})"),
+    tubes, line, clim, n, cmap, unit = _contour(frame, solution, "M")
+    p.add_mesh(tubes, scalars="M" + scene.BAND_SUFFIX, cmap=cmap, clim=clim,
+               n_colors=n, **SHADE,
+               scalar_bar_args=dict(title=_bar_title(line, "M", clim,
+                                                     f"|M| ({unit})"),
                                     color=theme.INK_MUTED,
                                     title_font_size=14, label_font_size=12,
                                     n_labels=5, width=0.30, height=0.045,
@@ -159,13 +188,13 @@ def main() -> None:
         p.add_mesh(mesh, color=theme.SUPPORT)
     shot(p, "vp_contour_M.png")
 
-    # 3. 轴力云图：发散色标，关于零对称
+    # 3. 轴力云图：有符号量，色标关于零对称
     p = plotter()
-    tubes, clim, system = _scaled_tubes(frame, solution, "N")
-    p.add_mesh(tubes, scalars="N", cmap=theme.DIVERGING, clim=clim,
-               smooth_shading=True,
-               scalar_bar_args=dict(title=_bar_title(tubes, "N", clim,
-                                                     f"N ({system.force_unit})"),
+    tubes, line, clim, n, cmap, unit = _contour(frame, solution, "N")
+    p.add_mesh(tubes, scalars="N" + scene.BAND_SUFFIX, cmap=cmap, clim=clim,
+               n_colors=n, **SHADE,
+               scalar_bar_args=dict(title=_bar_title(line, "N", clim,
+                                                     f"N ({unit})"),
                                     color=theme.INK_MUTED,
                                     title_font_size=14, label_font_size=12,
                                     n_labels=5, width=0.30, height=0.045,
