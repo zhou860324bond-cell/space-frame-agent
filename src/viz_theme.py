@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import math
+
 # 面与墨
 SURFACE = "#fcfcfb"
 PAGE = "#f9f9f7"
@@ -97,3 +99,28 @@ VIEWPORT_SEQUENTIAL = ["#184f95", "#256abf", "#3987e5",
 # 中间保持同样的色相推进顺序。
 VIEWPORT_RAINBOW = ["#2438d4", "#1f7ae8", "#1fb6d8", "#35c88a",
                     "#8fd433", "#e8c81e", "#f2882a", "#e23a2e"]
+
+
+# --------------------------------------------------------------------------- 缩放
+
+def safe_scale(size: float, peak: float, fraction: float) -> float:
+    """把"图画成模型尺寸的 fraction"换算成乘在数值上的倍数。
+
+    峰值为零（整条内力恒为零）时返回 0.0——画一条压平的线，而不是除零。
+
+    **关键在于"为零"不能只写成 `peak > 0`。** 解析上为零的量算出来往往不是
+    恰好 0.0，而是一个非规格化浮点数（denormal，小到 5e-324）。那种数
+    `peak > 0` 为真，而 `fraction * size / peak` 直接溢出成 inf，画出来的
+    坐标全是 inf/nan，matplotlib 抛 "Axis limits cannot be NaN or Inf"。
+
+    这正是 test_plot_results_covers_every_kind[shear] **偶发**失败的原因：
+    剪力解析上为零，浮点求和顺序随 BLAS 线程调度变化，同一份代码有时算出
+    恰好 0.0（安全），有时算出 denormal（炸）。所以它单独跑总是绿的。
+
+    注意倍数本身多大并不危险：偏移量 = 数值 × 倍数 ≤ peak × 倍数 =
+    fraction × size，天然有界。**唯一要挡的就是不是有限数这一种。**
+    """
+    if not (peak > 0.0) or not (size > 0.0):
+        return 0.0
+    factor = fraction * size / peak
+    return factor if math.isfinite(factor) else 0.0

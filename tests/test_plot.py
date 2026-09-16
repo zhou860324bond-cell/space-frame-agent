@@ -78,3 +78,59 @@ def test_static_diagram_keeps_physical_values_after_switching_to_mm(solved, tmp_
     mm = plot_diagram(solved.frame, solved.solution, "Mz", "DL", tmp_path / "mm.png")
     assert mm["peak"] == pytest.approx(si["peak"], rel=1e-8)
     assert mm["at_x"] == pytest.approx(si["at_x"], abs=1e-4)
+
+
+# --------------------------------------------------------------------- 缩放守卫
+
+def test_safe_scale_treats_a_denormal_peak_as_zero():
+    """解析上为零的量算出来常常不是恰好 0.0，而是非规格化浮点数。
+
+    这是 `test_plot_results_covers_every_kind[shear]` **偶发**失败的机理：
+
+    - 剪力在那个算例里解析上恒为零；
+    - 浮点求和顺序随 BLAS 线程调度变化，同一份代码有时算出恰好 0.0，
+      有时算出一个 denormal（小到 5e-324）；
+    - 旧代码的守卫是 `peak > 0`，denormal 过得去，接着
+      `0.09 * size / peak` 溢出成 inf，画出来的坐标全是 inf/nan，
+      matplotlib 抛 "Axis limits cannot be NaN or Inf"。
+
+    单独跑那条用例永远是绿的——这正是"偶发"最难查的地方。所以这里不去
+    复现那次随机，直接把**机理**钉死：喂 denormal，必须当零处理。
+    """
+    import math
+
+    import viz_theme as T
+
+    for denormal in (5e-324, 1e-320, 1e-310):
+        assert denormal > 0.0, "这个值得是正的，否则测的不是想测的东西"
+        assert not math.isfinite(0.09 * 10.0 / denormal), \
+            "前提变了：这个除法不再溢出，这条测试就失去意义了"
+        assert T.safe_scale(10.0, denormal, 0.09) == 0.0
+
+    # 正常值不受影响：倍数照给
+    assert T.safe_scale(10.0, 2.0, 0.09) == pytest.approx(0.45)
+    # 巨大但有限的倍数是安全的，不该被误伤——偏移量 = 值 × 倍数 ≤
+    # peak × 倍数 = fraction × size，天然有界。
+    assert T.safe_scale(10.0, 1e-300, 0.09) == pytest.approx(9e299)
+    # 零与负数一律压平
+    assert T.safe_scale(10.0, 0.0, 0.09) == 0.0
+    assert T.safe_scale(0.0, 1.0, 0.09) == 0.0
+
+
+def test_every_drawing_scale_goes_through_the_guard():
+    """四个缩放点必须都走 safe_scale，不能再出现裸的 `size / peak`。
+
+    这个 bug 同时存在于 plot3d 与 plot3d_interactive 的两处，共四个调用点。
+    只修一处的话，另一处会在某次重构后把同样的偶发失败带回来——
+    这个仓库已经吃过一次同类亏（OpenGL 探测在 conftest 与 doctor 里各有
+    一份，只修一份不够）。
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for name in ("src/plot3d.py", "src/plot3d_interactive.py"):
+        text = (root / name).read_text(encoding="utf-8")
+        bare = re.findall(r"[\d.]+\s*\*\s*size\s*/\s*peak", text)
+        assert not bare, f"{name} 里还有绕过 safe_scale 的裸除法：{bare}"
+        assert "T.safe_scale(" in text, f"{name} 没有用 safe_scale"
