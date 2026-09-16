@@ -206,7 +206,7 @@ class PropertiesPanel(QWidget):
                       if (v or None) == (list(fix) if fix else None)), None)
         if match is None and fix:
             match = "自定义：" + "".join(
-                d for d, on in zip(DOF, fix) if on) or "自定义"
+                d for d, on in zip(DOF, fix, strict=True) if on) or "自定义"
             names = names + [match]
         self._combo("support", "约束", names, match or "自由")
 
@@ -214,7 +214,7 @@ class PropertiesPanel(QWidget):
         # 平时六个复选框摆着，用户很容易勾出一个机构
         if match and match.startswith("自定义"):
             self._read_only("固定方向",
-                            "、".join(d for d, on in zip(DOF, fix) if on) or "无")
+                            "、".join(d for d, on in zip(DOF, fix, strict=True) if on) or "无")
 
     # --- 控件 ---
 

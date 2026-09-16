@@ -316,7 +316,8 @@ def cut_at(line: pv.PolyData, name: str, edges):
         count = int(connectivity[cursor])
         ids = connectivity[cursor + 1: cursor + 1 + count]
         cursor += count + 1
-        for a, b in zip(ids[:-1], ids[1:]):
+        # VTK 的 lines 数组里一条折线有 count 个点、count-1 段，成对滑窗
+        for a, b in zip(ids[:-1], ids[1:], strict=False):
             pa, pb = points[a], points[b]
             va, vb = float(values[a]), float(values[b])
             cuts = [0.0, 1.0]
@@ -325,7 +326,7 @@ def cut_at(line: pv.PolyData, name: str, edges):
                 cuts += [(edge - va) / (vb - va)
                          for edge in edges if lower < edge < upper]
             cuts = sorted(set(round(c, 12) for c in cuts))
-            for t0, t1 in zip(cuts[:-1], cuts[1:]):
+            for t0, t1 in zip(cuts[:-1], cuts[1:], strict=False):
                 mid = 0.5 * (t0 + t1)
                 yield (pa + t0 * (pb - pa), pa + t1 * (pb - pa),
                        va + mid * (vb - va))
@@ -443,7 +444,7 @@ def support_labels(frame, size: float | None = None) -> tuple[list, list[str]]:
     for nid, mask in frame.supports.items():
         if sum(mask[:3]) < 2 or nid not in frame.nodes:
             continue
-        fixed = " ".join(name for name, restrained in zip(dofs, mask)
+        fixed = " ".join(name for name, restrained in zip(dofs, mask, strict=True)
                          if restrained)
         if not fixed:
             continue
@@ -468,7 +469,7 @@ def member_local_axis_glyphs(frame, member_id: int,
                        tip_length=0.24, tip_radius=0.075,
                        shaft_radius=0.018, tip_resolution=24,
                        shaft_resolution=16)
-        for axis, direction in zip(("x", "y", "z"), rotation)
+        for axis, direction in zip(("x", "y", "z"), rotation, strict=True)
     }
 
 
@@ -507,7 +508,7 @@ def load_arrows(frame, case: str, size: float | None = None,
         mag = np.linalg.norm(np.array(vectors), axis=1)
         peak = float(mag.max()) or 1.0
         made, tails = [], []
-        for p, v, m in zip(points, vectors, mag):
+        for p, v, m in zip(points, vectors, mag, strict=True):
             # 反对称梯形荷载可能恰好在某个显示站点过零。零向量不能传给
             # pv.Arrow；VTK 会归一化它并产生 NaN，严重时在渲染线程原生崩溃。
             if m <= 1e-15 * peak:
@@ -541,7 +542,7 @@ def load_arrows(frame, case: str, size: float | None = None,
         magnitudes = np.linalg.norm(np.asarray(vectors, dtype=float), axis=1)
         peak = float(magnitudes.max()) or 1.0
         made: list[pv.PolyData] = []
-        for point, vector, magnitude in zip(points, vectors, magnitudes):
+        for point, vector, magnitude in zip(points, vectors, magnitudes, strict=True):
             if magnitude <= 1e-15 * peak:
                 continue
             axis = np.asarray(vector, dtype=float) / magnitude
@@ -963,7 +964,7 @@ def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list
     def vector_text(prefix: str, vector, scale: float, unit: str) -> str:
         values = np.asarray(vector, dtype=float) * scale
         terms = [f"{prefix}{axis}={value:+.3g}"
-                 for axis, value in zip("xyz", values) if value != 0.0]
+                 for axis, value in zip("xyz", values, strict=True) if value != 0.0]
         return f"{', '.join(terms)} {unit} [global]" if terms else ""
 
     def add(point, text: str) -> None:

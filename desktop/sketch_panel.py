@@ -1089,7 +1089,7 @@ class SketchPanel(QWidget):
         if entry and self.cmb_load_node.findData(int(entry["node"])) >= 0:
             self.cmb_load_node.setCurrentIndex(
                 self.cmb_load_node.findData(int(entry["node"])))
-        for spin, value in zip(self.load_spins, values):
+        for spin, value in zip(self.load_spins, values, strict=True):
             spin.setValue(float(value))
         self.btn_remove_load.setEnabled(entry is not None)
 

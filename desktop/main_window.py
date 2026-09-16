@@ -1011,7 +1011,7 @@ class MainWindow(QMainWindow):
                          "杆件局部分量"])
         for prefix, values in (("U(global)", data["global_displacement"]),
                                ("U(local)", data["local_displacement"])):
-            for axis, value in zip("xyz", values):
+            for axis, value in zip("xyz", values, strict=True):
                 rows.append([f"{prefix}.{axis}", float(value),
                              data["displacement_unit"], "中心线位移"])
         if data["stress"] is not None:
