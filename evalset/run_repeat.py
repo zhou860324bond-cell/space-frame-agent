@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from cases import CASES
-from run_eval import run_one
+from run_eval import MAX_ROUNDS, run_one
 from score import Verdict
 
 
@@ -176,7 +176,12 @@ def main() -> None:
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--id", nargs="*")
     parser.add_argument("--category")
-    parser.add_argument("--max-rounds", type=int, default=12)
+    # 跟随产品自己的默认值，不要在这里另写一个数。
+    # 原先硬编码成 12，而 agent.MAX_ROUNDS 是 24——**评测比产品还严**，
+    # 于是 C02、M01 在三轮稳定性里因为"超轮数"而失败（C02 轮数 10/11.3/12，
+    # 正好顶在天花板上）。那是评测卡出来的，不是模型的能力问题：
+    # 真正出厂的产品会给它们 24 轮。评测该测的是出厂状态。
+    parser.add_argument("--max-rounds", type=int, default=MAX_ROUNDS)
     parser.add_argument("--out", default=str(HERE / "stability.md"))
     args = parser.parse_args()
 
