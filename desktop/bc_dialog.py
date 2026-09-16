@@ -127,12 +127,12 @@ class BCDialog(QDialog):
 
         # 设置当前值
         if current_fix:
-            for cb, val in zip(self.checks, current_fix):
+            for cb, val in zip(self.checks, current_fix, strict=True):
                 cb.setChecked(bool(val))
 
     def _apply_preset(self, name: str):
         fix = PRESETS[name]
-        for cb, val in zip(self.checks, fix):
+        for cb, val in zip(self.checks, fix, strict=True):
             cb.setChecked(bool(val))
 
     def get_fix(self) -> list[int]:

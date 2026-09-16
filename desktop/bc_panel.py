@@ -97,7 +97,7 @@ class BCPanel(QWidget):
         settlement_layout.addRow("名称", self.txt_settlement_name)
         self.settlement_spins = [self._make_spin(-1e9, 1e9, 0) for _ in range(6)]
         for label, spin in zip(("U1", "U2", "U3", "UR1", "UR2", "UR3"),
-                               self.settlement_spins):
+                               self.settlement_spins, strict=True):
             settlement_layout.addRow(label, spin)
         settlement_note = QLabel("只在 Initial 中已约束的自由度上生效；可用于支座沉降或主动位移。")
         settlement_note.setWordWrap(True)
@@ -275,7 +275,7 @@ class BCPanel(QWidget):
                     self.txt_nodal_name.setText(str(entry.get("name") or
                                                    f"CF-Node-{self._current_node}"))
             for sp, val in zip([self.spn_fx, self.spn_fy, self.spn_fz,
-                                self.spn_mx, self.spn_my, self.spn_mz], load):
+                                self.spn_mx, self.spn_my, self.spn_mz], load, strict=True):
                 sp.setValue(float(val))
             # 当前分析步的给定位移
             settlement = [0.0] * 6
@@ -288,7 +288,7 @@ class BCPanel(QWidget):
                     settlement = entry["d"]
                     self.txt_settlement_name.setText(str(
                         entry.get("name") or f"Displacement-Node-{self._current_node}"))
-            for spin, value in zip(self.settlement_spins, settlement):
+            for spin, value in zip(self.settlement_spins, settlement, strict=True):
                 spin.setValue(float(value))
         # 杆件：杆件荷载
         elif self._current_member is not None:
@@ -305,7 +305,7 @@ class BCPanel(QWidget):
                     load = entry["w"]
                     self.txt_member_name.setText(str(entry.get("name") or
                                                     f"Line-Member-{self._current_member}"))
-            for sp, val in zip([self.spn_wx, self.spn_wy, self.spn_wz], load):
+            for sp, val in zip([self.spn_wx, self.spn_wy, self.spn_wz], load, strict=True):
                 sp.setValue(float(val))
         else:
             self.group_support.setEnabled(False)

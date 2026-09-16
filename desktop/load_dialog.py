@@ -94,9 +94,9 @@ class TrapezoidLoadWidget(QWidget):
         end_form = QFormLayout(end)
         self.start_spins = [self._make_spin(line_unit) for _ in range(3)]
         self.end_spins = [self._make_spin(line_unit) for _ in range(3)]
-        for label, spin in zip(("X", "Y", "Z"), self.start_spins):
+        for label, spin in zip(("X", "Y", "Z"), self.start_spins, strict=True):
             start_form.addRow(label, spin)
-        for label, spin in zip(("X", "Y", "Z"), self.end_spins):
+        for label, spin in zip(("X", "Y", "Z"), self.end_spins, strict=True):
             end_form.addRow(label, spin)
         layout.addWidget(start)
         layout.addWidget(end)
@@ -124,7 +124,7 @@ class MemberPointLoadWidget(QWidget):
         form = QFormLayout(self)
         self.force_spins = [self._make_spin("N") for _ in range(3)]
         for label, spin in zip(("P1 (X 向力)", "P2 (Y 向力)", "P3 (Z 向力)"),
-                               self.force_spins):
+                               self.force_spins, strict=True):
             form.addRow(label, spin)
         self.spn_a = self._make_spin(length_unit, maximum=1e9)
         self.spn_a.setMinimum(0.0)

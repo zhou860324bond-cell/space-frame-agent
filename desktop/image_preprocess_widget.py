@@ -41,7 +41,7 @@ class ImagePreprocessWidget(QWidget):
 
         crop_row = QHBoxLayout()
         self.crop_boxes = [QSpinBox() for _ in range(4)]
-        for label, box in zip(("左", "上", "右", "下"), self.crop_boxes):
+        for label, box in zip(("左", "上", "右", "下"), self.crop_boxes, strict=True):
             box.setRange(0, 0)
             crop_row.addWidget(QLabel(label))
             crop_row.addWidget(box)
@@ -56,9 +56,9 @@ class ImagePreprocessWidget(QWidget):
         self.crop = None
         metadata = self._process()
         ow, oh = metadata["preprocessing"]["oriented_size_px"]
-        for box, maximum in zip(self.crop_boxes, (ow - 1, oh - 1, ow, oh)):
+        for box, maximum in zip(self.crop_boxes, (ow - 1, oh - 1, ow, oh), strict=True):
             box.setRange(0, maximum)
-        for box, value in zip(self.crop_boxes, (0, 0, ow, oh)):
+        for box, value in zip(self.crop_boxes, (0, 0, ow, oh), strict=True):
             box.setValue(value)
         return metadata
 
