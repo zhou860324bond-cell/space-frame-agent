@@ -97,7 +97,7 @@ def to_tables(model: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     for s in model.get("supports", []):
         row: dict[str, Any] = {"name": str(s.get("name", "")),
                                "node": int(s["node"])}
-        row.update({name: bool(int(v)) for name, v in zip(LOCAL_DOF_NAMES, s["fix"])})
+        row.update({name: bool(int(v)) for name, v in zip(LOCAL_DOF_NAMES, s["fix"], strict=True)})
         supports.append(row)
 
     nodal: list[dict[str, Any]] = []
@@ -110,27 +110,27 @@ def to_tables(model: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             row = {"case": case_name, "name": str(e.get("name", "")),
                    "node": int(e["node"])}
             row.update({k: float(v) for k, v in
-                        zip(("Fx", "Fy", "Fz", "Mx", "My", "Mz"), e["load"])})
+                        zip(("Fx", "Fy", "Fz", "Mx", "My", "Mz"), e["load"], strict=True)})
             nodal.append(row)
         for e in block.get("member_loads") or []:
             row = {"case": case_name, "name": str(e.get("name", "")),
                    "member": int(e["member"])}
             row.update({k: float(v) for k, v in
-                        zip(("wx", "wy", "wz"), e["w"])})
+                        zip(("wx", "wy", "wz"), e["w"], strict=True)})
             member.append(row)
         for e in block.get("member_spans") or []:
             row = {"case": case_name, "name": str(e.get("name", "")),
                    "member": int(e["member"]),
                    "kind": str(e.get("kind", "uniform")),
                    "a": float(e.get("a", 0.0)), "note": str(e.get("note", ""))}
-            row.update({k: float(v) for k, v in zip(("w1x", "w1y", "w1z"), e["w1"])})
+            row.update({k: float(v) for k, v in zip(("w1x", "w1y", "w1z"), e["w1"], strict=True)})
             row.update({k: float(v) for k, v in
-                        zip(("w2x", "w2y", "w2z"), e.get("w2", (0.0, 0.0, 0.0)))})
+                        zip(("w2x", "w2y", "w2z"), e.get("w2", (0.0, 0.0, 0.0)), strict=True)})
             spans.append(row)
         for e in block.get("settlements") or []:
             row = {"case": case_name, "name": str(e.get("name", "")),
                    "node": int(e["node"])}
-            row.update({k: float(v) for k, v in zip(LOCAL_DOF_NAMES, e["d"])})
+            row.update({k: float(v) for k, v in zip(LOCAL_DOF_NAMES, e["d"], strict=True)})
             settle.append(row)
 
     if any(model.get(k) for k in ("nodal_loads", "member_loads",

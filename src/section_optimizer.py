@@ -185,7 +185,7 @@ class SectionOptimizer:
 
     def _build_section(self, params: dict[str, float]) -> dict[str, Any]:
         """用当前参数构建截面 dict。未指定的参数用默认值。"""
-        defaults = dict(zip(self._param_names, sec.DEFAULT_DIMENSIONS[self._section_type]))
+        defaults = dict(zip(self._param_names, sec.DEFAULT_DIMENSIONS[self._section_type], strict=True))
         merged = {**defaults, **params}
         args = [merged[name] for name in self._param_names]
         return self._builder(self._section_name, *args)
@@ -303,7 +303,7 @@ class SectionOptimizer:
 
         evaluations = []
         for combo in combinations:
-            params = dict(zip(param_names, combo))
+            params = dict(zip(param_names, combo, strict=True))
             evaluations.append(self._evaluate(params))
 
         return self._make_result("grid_search", evaluations, start)

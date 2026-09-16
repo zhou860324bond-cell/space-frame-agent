@@ -145,7 +145,9 @@ def generate_bent(
             f'base 只能是 "free"、"fixed" 或 "pinned"，收到 {base!r}')
 
     tops = [_profile_z(pts, x) for x in xs]
-    for x, z0, z1 in zip(xs, bases, tops):
+    # bases 在上面按 len(xs) 校验过，tops 逐根柱算出来——三者等长是硬约束，
+    # 长度一旦对不上就是上面的校验漏了，宁可当场炸也别静默少建一根柱
+    for x, z0, z1 in zip(xs, bases, tops, strict=True):
         if z1 <= z0 + TOL:
             raise GeneratorError(
                 f"x={x:g} 处的柱顶标高 {z1:g} 不高于柱脚标高 {z0:g}，柱长为零或为负")
@@ -176,12 +178,12 @@ def generate_bent(
     level_nodes: dict[float, list[int]] = {z: [] for z in levels}
     top_nodes: list[int] = []
 
-    for x, z0, z1 in zip(xs, bases, tops):
+    for x, z0, z1 in zip(xs, bases, tops, strict=True):
         cuts = [z0] + [z for z in levels if z0 + TOL < z < z1 - TOL] + [z1]
         ids = [node_at(x, z) for z in cuts]
         base_nodes.append(ids[0])
         top_nodes.append(ids[-1])
-        for z, nid in zip(cuts, ids):
+        for z, nid in zip(cuts, ids, strict=True):
             if z in level_nodes:
                 level_nodes[z].append(nid)
         for a, b in zip(ids, ids[1:], strict=False):

@@ -214,7 +214,7 @@ def _matches(frame: Frame, case: LoadCase, plane: Plane, nodes, members,
         theirs = span_loads_of(case, other)
         if len(mine) != len(theirs):
             return False
-        for item, peer in zip(mine, theirs):
+        for item, peer in zip(mine, theirs, strict=True):
             if item.kind != peer.kind:
                 return False
             w1 = sign * plane.mirror_force(item.w1)

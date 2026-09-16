@@ -561,14 +561,14 @@ def to_docx(doc: dict[str, Any], path: Path) -> Path:
         cols = list(rows[0])
         t = d.add_table(rows=1, cols=len(cols))
         t.style = "Table Grid"
-        for cell, name in zip(t.rows[0].cells, cols):
+        for cell, name in zip(t.rows[0].cells, cols, strict=True):
             run = cell.paragraphs[0].add_run(str(name))
             run.bold = True
             run.font.size = Pt(9)
             _set_cjk_font(run)
         for r in rows:
             cells = t.add_row().cells
-            for cell, name in zip(cells, cols):
+            for cell, name in zip(cells, cols, strict=True):
                 run = cell.paragraphs[0].add_run(_fmt(r.get(name, "")))
                 run.font.size = Pt(9)
                 _set_cjk_font(run)

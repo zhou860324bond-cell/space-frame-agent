@@ -130,8 +130,10 @@ def match_members(predictions: Iterable[Mapping[str, Any]],
         prediction_groups.setdefault(key, []).append(prediction_id)
     candidates = []
     for key in sorted(set(prediction_groups) & set(truth_groups)):
+        # 这里两边长度本来就可能不等：同一对节点上，预测画了两根平行杆而
+        # 标准答案只有一根是常事。多出来的那几根配不上对，截断正是想要的。
         for prediction_id, truth_id in zip(sorted(prediction_groups[key]),
-                                           sorted(truth_groups[key])):
+                                           sorted(truth_groups[key]), strict=False):
             candidates.append((0.0, prediction_id, truth_id))
     return _greedy_candidates(predicted, expected, candidates)
 

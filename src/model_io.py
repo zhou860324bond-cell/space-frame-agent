@@ -251,16 +251,19 @@ def migrate_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fill_case(frame: Frame, case: LoadCase, data: dict[str, Any]) -> LoadCase:
+    # load / w 的长度由 MODEL_SCHEMA 的 minItems=maxItems 卡死（6 和 3）。
+    # 但 validate_payload 在缺 jsonschema 时会跳过结构校验，那种情况下
+    # 一个 3 项的 load 静默截断，结果就是弯矩凭空消失——宁可当场炸。
     for e in data.get("nodal_loads", []):
         node = int(e["node"])
         previous = case.nodal_loads.get(node, (0.0,) * 6)
         case.nodal_loads[node] = tuple(a + float(b)
-                                       for a, b in zip(previous, e["load"]))
+                                       for a, b in zip(previous, e["load"], strict=True))
     for e in data.get("member_loads", []):
         member = int(e["member"])
         previous = case.member_loads.get(member, (0.0,) * 3)
         case.member_loads[member] = tuple(a + float(b)
-                                          for a, b in zip(previous, e["w"]))
+                                          for a, b in zip(previous, e["w"], strict=True))
     for e in data.get("member_spans", []):
         case.member_spans.setdefault(int(e["member"]), []).append(
             SpanLoad.from_dict(e))

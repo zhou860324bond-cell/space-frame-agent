@@ -270,7 +270,10 @@ class FrameDraft:
             nid = remap.get(int(s["node"]), int(s["node"]))
             cur = merged_sup.get(nid)
             fix = [int(v) for v in s["fix"]]
-            merged_sup[nid] = fix if cur is None else [max(a, b) for a, b in zip(cur, fix)]
+            # fix 恒为 6 位：set_support 校验过，from_model 进来的也受 schema 约束。
+            # 长度对不上时截断等于悄悄放开几个自由度，那是算错而不是画错
+            merged_sup[nid] = (fix if cur is None else
+                               [max(a, b) for a, b in zip(cur, fix, strict=True)])
         self.supports = [{"node": k, "fix": v} for k, v in sorted(merged_sup.items())]
 
         gone = set(remap)

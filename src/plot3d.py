@@ -246,7 +246,7 @@ def _draw_loads(ax, frame, case: str) -> dict[str, str]:
             return
         magnitude = np.linalg.norm(vectors, axis=1)
         peak = float(magnitude.max()) or 1.0
-        for p, v, m in zip(points, vectors, magnitude):
+        for p, v, m in zip(points, vectors, magnitude, strict=True):
             if m <= 1e-12 * peak:
                 continue
             step = span * (0.45 + 0.55 * m / peak) * np.asarray(v) / m
@@ -362,7 +362,7 @@ def _callout(ax, frame, point, text: str) -> None:
     size = _model_size(frame)
     point = np.asarray(point, dtype=float)
     tip = point + np.array([0.0, 0.0, 0.055 * size])
-    ax.plot(*zip(point, tip), color=T.HIGHLIGHT, linewidth=0.9, zorder=6)
+    ax.plot(*zip(point, tip, strict=True), color=T.HIGHLIGHT, linewidth=0.9, zorder=6)
     ax.scatter(*point, color=T.HIGHLIGHT, s=34, zorder=7)
     ax.text(tip[0], tip[1], tip[2], f" {text}", color=T.HIGHLIGHT,
             fontsize=9.5, fontweight="bold", zorder=7)

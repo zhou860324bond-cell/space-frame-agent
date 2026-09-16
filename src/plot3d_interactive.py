@@ -454,7 +454,7 @@ def figure_model(frame, case: str | None = None, height: int = 440,
         mask = frame.supports.get(nid)
         note = ""
         if mask:
-            names = [d for d, f in zip(("ux", "uy", "uz", "rx", "ry", "rz"), mask) if f]
+            names = [d for d, f in zip(("ux", "uy", "uz", "rx", "ry", "rz"), mask, strict=True) if f]
             note = f"<br>约束 {'、'.join(names)}"
         text.append(f"<b>节点 {nid}</b><br>({n.x:g}, {n.y:g}, {n.z:g}) m{note}")
     fig.add_trace(go.Scatter3d(x=px, y=py, z=pz, mode="markers", name="节点",
