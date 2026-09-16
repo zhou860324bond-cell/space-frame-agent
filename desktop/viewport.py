@@ -315,10 +315,13 @@ class Viewport(QWidget):
 
     @staticmethod
     def _hex_lum(hexc: str) -> float:
+        # 只是解析一个颜色字符串，能抛的就是类型/取值两种：QColor 对认不出的
+        # 字符串返回无效颜色而不抛异常，真抛是因为传进来的根本不是字符串。
+        # 缩窄到这两种，别顺手把下面那行算术里的 bug 也一起吞了。
         try:
             c = QColor(hexc)
             return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
-        except Exception:
+        except (TypeError, ValueError):
             return 0.0
 
     @staticmethod
@@ -333,7 +336,7 @@ class Viewport(QWidget):
         try:
             axes_color = "#333333" if self._is_light_bg() else theme.INK_MUTED
             self.plotter.add_axes(color=axes_color)
-        except Exception:
+        except Exception:  # noqa: BLE001  可选视觉效果：画不出来不该让整个视口刷新失败
             pass
 
     def toggle_grid_floor(self, on: bool) -> None:
@@ -377,7 +380,7 @@ class Viewport(QWidget):
                 plane, color=fill_color, opacity=0.35,
                 show_edges=True, edge_color=line_color,
                 name="_grid_floor", reset_camera=False)
-        except Exception:
+        except Exception:  # noqa: BLE001  可选视觉效果：画不出来不该让整个视口刷新失败
             pass
 
     # --- 基础 ---
@@ -638,7 +641,7 @@ class Viewport(QWidget):
         self.pick_mode = None  # 建模模式和拾取模式互斥
         try:
             self.plotter.disable_picking()
-        except Exception:
+        except Exception:  # noqa: BLE001  可选视觉效果：画不出来不该让整个视口刷新失败
             pass
         if mode is None:
             self._update_mode_badge()
@@ -650,7 +653,7 @@ class Viewport(QWidget):
                 # 空模型没有可拾取网格。建节点时仍要允许在当前相机焦平面
                 # 上取世界坐标，否则第一个节点永远点不出来。
                 pickable_window=(mode == "node"))
-        except Exception:
+        except Exception:  # noqa: BLE001  可选视觉效果：画不出来不该让整个视口刷新失败
             pass
         self._update_mode_badge()
 
@@ -755,7 +758,7 @@ class Viewport(QWidget):
                 # 图例挡住它要解释的东西，等于没有。
                 size=(0.115, min(0.24, 0.024 * len(entries))),
                 loc="upper left", face="none", font_family="arial")
-        except Exception:      # 图例画不出来不该让整个视口刷新失败
+        except Exception:  # noqa: BLE001  可选视觉效果：画不出来不该让整个视口刷新失败
             pass
 
     def _member_ink(self) -> tuple[str, str]:

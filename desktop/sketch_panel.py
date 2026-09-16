@@ -39,7 +39,7 @@ def _provider_with_credentials(default: str = "openai") -> str:
         from credentials import load_api_key
         if load_api_key():
             return "deepseek"
-    except Exception:                       # 读密钥失败不该拖垮面板构造
+    except Exception:  # noqa: BLE001  读密钥失败不该拖垮面板构造（默认值即可）
         pass
     return default
 
@@ -798,7 +798,7 @@ class SketchPanel(QWidget):
                 "raw_responses": list(getattr(result, "raw_responses", []) or []),
             }, ensure_ascii=False, indent=1), encoding="utf-8")
             return path.name
-        except Exception:      # 诊断落盘失败绝不能盖住原本的识别错误
+        except Exception:  # noqa: BLE001  诊断落盘失败绝不能盖住原本的识别错误
             return ""
 
     def _add_v2_review_issues(self, draft: dict) -> None:

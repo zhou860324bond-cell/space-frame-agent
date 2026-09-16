@@ -460,7 +460,7 @@ with tab_pre:
                 with st.spinner("Agent 正在思考并调用工具……"):
                     try:
                         out = chat.ask(_prompt)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001  界面边界：异常变成 st.error，类名与消息都展示
                         st.error(f"调用失败：{type(exc).__name__}: {exc}")
                         out = None
                 if out is not None:
@@ -519,7 +519,7 @@ with tab_pre:
                                 st.error(f"识别失败（{_sk_result.attempts} 次尝试）：")
                                 for _e in _sk_result.errors:
                                     st.text(_e)
-                        except Exception as _exc:
+                        except Exception as _exc:  # noqa: BLE001  同上
                             st.error(f"调用失败：{type(_exc).__name__}: {_exc}")
 
                 if st.session_state.get("sketch_model"):
@@ -1107,7 +1107,7 @@ with tab_run:
                             else:
                                 _opt_result = _optimizer.grid_search()
                             st.session_state.opt_result = _opt_result
-                        except Exception as _exc:
+                        except Exception as _exc:  # noqa: BLE001  同上，优化这一路
                             st.error(f"优化失败：{type(_exc).__name__}: {_exc}")
                             st.session_state.opt_result = None
 

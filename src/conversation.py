@@ -279,7 +279,7 @@ class Conversation:
             if on_tool is not None:
                 try:
                     on_tool("query_results", args, result.ok)
-                except Exception:
+                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
                     pass
             if result.ok:
                 p = result.payload
@@ -300,7 +300,7 @@ class Conversation:
             if on_tool is not None:
                 try:
                     on_tool("validate_model", args, result.ok)
-                except Exception:
+                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
                     pass
             if result.ok:
                 summary = result.payload.get("summary") or {}
@@ -323,7 +323,7 @@ class Conversation:
             if on_tool is not None:
                 try:
                     on_tool("solve_model", args, result.ok)
-                except Exception:
+                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
                     pass
             if result.ok:
                 cases = result.payload.get("cases") or {}
@@ -347,7 +347,7 @@ class Conversation:
             if on_tool is not None:
                 try:
                     on_tool("query_results", args, result.ok)
-                except Exception:
+                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
                     pass
             if result.ok:
                 p = result.payload
