@@ -586,7 +586,7 @@ class SketchParser:
             except (json.JSONDecodeError, ValueError) as e:
                 result.errors.append(f"第{attempt}次解析失败: {e}")
                 correction = f"输出格式错误：{e}。请严格输出 JSON，不要包含其他文字。"
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  外部大模型调用失败要记进 result.errors 再决定重试，不能中断整轮解析
                 result.errors.append(f"第{attempt}次调用失败: {type(e).__name__}: {e}")
                 break  # API 调用失败（网络/密钥），重试没用
 

@@ -526,7 +526,7 @@ def detect_silent_failures(
             continue
         try:
             result = check_fn(model, sol)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  检测器本身挂了也要出一条 WARN——静默失败检测器自己静默失败最讽刺
             result = _finding(
                 check_id, check_id, SEVERITY_INFO, STATUS_WARN,
                 f"检测执行出错: {type(e).__name__}: {e}",

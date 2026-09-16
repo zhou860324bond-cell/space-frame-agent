@@ -398,7 +398,7 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
         return errors
     try:
         errors += [f"[语义] {msg}" for msg in check_model(from_dict(data))]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  装载失败要作为一条校验错误回给调用方，不是抛出去；exc 已写进 errors
         errors.append(f"[语义] 模型装配失败: {exc}")
     return errors
 
