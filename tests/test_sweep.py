@@ -112,7 +112,7 @@ def test_deflection_still_decreases_monotonically_on_a_frame():
                 values=[1e-4, 3e-4, 1e-3, 3e-3], metric="max_deflection",
                 case="DL")
     got = [row["metric"] for row in r.payload["rows"]]
-    assert all(a > b for a, b in zip(got, got[1:])), got
+    assert all(a > b for a, b in zip(got, got[1:], strict=False)), got
 
 
 def test_each_probe_matches_solving_that_model_by_hand():

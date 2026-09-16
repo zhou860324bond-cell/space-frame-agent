@@ -127,7 +127,7 @@ def hot_spot_stress_linear(samples: list[tuple[float, float]],
             "不能只用半边数据外推")
 
     def at(distance: float) -> float:
-        for (d0, s0), (d1, s1) in zip(points, points[1:]):
+        for (d0, s0), (d1, s1) in zip(points, points[1:], strict=False):
             if d0 <= distance <= d1:
                 if d1 - d0 < 1e-12:
                     return s0

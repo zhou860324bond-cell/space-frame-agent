@@ -244,7 +244,7 @@ def diagnose_hotspot_convergence(values: list[tuple[float, float]],
                 "relative_changes": [],
                 "reason": "至少需要三档局部网格才能判断热点应力收敛"}
     changes = [abs(b[1] - a[1]) / max(abs(b[1]), abs(a[1]), 1e-12)
-               for a, b in zip(clean, clean[1:])]
+               for a, b in zip(clean, clean[1:], strict=False)]
     stable = changes[-1] <= tolerance
     improving = len(changes) < 2 or changes[-1] <= changes[-2] + 1e-12
     if stable and improving:

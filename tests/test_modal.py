@@ -119,7 +119,7 @@ def test_convergence_is_monotone_from_above(ends, beta):
     exact = beam_frequency(beta)
     got = [modal(bending(n, ends), 2).frequencies[0] for n in (2, 4, 8, 16)]
     assert all(a > exact for a in got), got
-    assert all(a > b for a, b in zip(got, got[1:])), got
+    assert all(a > b for a, b in zip(got, got[1:], strict=False)), got
 
 
 def test_higher_cantilever_modes():

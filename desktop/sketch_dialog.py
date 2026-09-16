@@ -221,7 +221,7 @@ class SketchCanvas(QWidget):
                 self._remember()
                 corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
                 ids = [self._get_or_add_node(point) for point in corners]
-                for n1, n2 in zip(ids, ids[1:] + ids[:1]):
+                for n1, n2 in zip(ids, ids[1:] + ids[:1], strict=False):
                     self._add_line(n1, n2)
                 self.pending_rect_corner = None
             self.update()
