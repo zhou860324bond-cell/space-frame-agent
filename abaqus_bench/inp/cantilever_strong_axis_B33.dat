@@ -1,6 +1,6 @@
 1
 
-   Abaqus 6.14-1                                  Date 01-9月-2026   Time 20:06:43
+   Abaqus 6.14-1                                  Date 16-9月-2026   Time 15:37:11
    For use by Supplied By SSQ under license from Dassault Systemes or its subsidiary.
 
 
@@ -142,12 +142,12 @@
 
      JOB TIME SUMMARY
        USER TIME (SEC)      =   0.0000    
-       SYSTEM TIME (SEC)    =  0.10000    
-       TOTAL CPU TIME (SEC) =  0.10000    
+       SYSTEM TIME (SEC)    =   0.0000    
+       TOTAL CPU TIME (SEC) =   0.0000    
        WALLCLOCK TIME (SEC) =          0
 1
 
-   Abaqus 6.14-1                                  Date 01-9月-2026   Time 20:06:47
+   Abaqus 6.14-1                                  Date 16-9月-2026   Time 15:37:16
    For use by Supplied By SSQ under license from Dassault Systemes or its subsidiary.
 
       cantilever_strong_axis  element=B33  units=N-m-Pa                                        STEP    1  INCREMENT    1
@@ -256,6 +256,6 @@
 
      JOB TIME SUMMARY
        USER TIME (SEC)      =  0.10000    
-       SYSTEM TIME (SEC)    =  0.10000    
-       TOTAL CPU TIME (SEC) =  0.20000    
-       WALLCLOCK TIME (SEC) =          1
+       SYSTEM TIME (SEC)    =   0.0000    
+       TOTAL CPU TIME (SEC) =  0.10000    
+       WALLCLOCK TIME (SEC) =          0

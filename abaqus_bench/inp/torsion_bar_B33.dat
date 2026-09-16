@@ -1,6 +1,6 @@
 1
 
-   Abaqus 6.14-1                                  Date 01-9月-2026   Time 21:06:57
+   Abaqus 6.14-1                                  Date 16-9月-2026   Time 15:39:19
    For use by Supplied By SSQ under license from Dassault Systemes or its subsidiary.
 
 
@@ -121,12 +121,12 @@
 
      JOB TIME SUMMARY
        USER TIME (SEC)      =  0.10000    
-       SYSTEM TIME (SEC)    =   0.0000    
-       TOTAL CPU TIME (SEC) =  0.10000    
+       SYSTEM TIME (SEC)    =  0.10000    
+       TOTAL CPU TIME (SEC) =  0.20000    
        WALLCLOCK TIME (SEC) =          0
 1
 
-   Abaqus 6.14-1                                  Date 01-9月-2026   Time 21:07:02
+   Abaqus 6.14-1                                  Date 16-9月-2026   Time 15:39:24
    For use by Supplied By SSQ under license from Dassault Systemes or its subsidiary.
 
       torsion_bar  element=B33  units=N-m-Pa                                                   STEP    1  INCREMENT    1

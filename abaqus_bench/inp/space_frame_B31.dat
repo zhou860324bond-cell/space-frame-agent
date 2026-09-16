@@ -1,6 +1,6 @@
 1
 
-   Abaqus 6.14-1                                  Date 01-9月-2026   Time 21:06:13
+   Abaqus 6.14-1                                  Date 16-9月-2026   Time 15:38:31
    For use by Supplied By SSQ under license from Dassault Systemes or its subsidiary.
 
 
@@ -195,13 +195,13 @@
 
 
      JOB TIME SUMMARY
-       USER TIME (SEC)      =  0.20000    
+       USER TIME (SEC)      =  0.10000    
        SYSTEM TIME (SEC)    =   0.0000    
-       TOTAL CPU TIME (SEC) =  0.20000    
+       TOTAL CPU TIME (SEC) =  0.10000    
        WALLCLOCK TIME (SEC) =          0
 1
 
-   Abaqus 6.14-1                                  Date 01-9月-2026   Time 21:06:18
+   Abaqus 6.14-1                                  Date 16-9月-2026   Time 15:38:36
    For use by Supplied By SSQ under license from Dassault Systemes or its subsidiary.
 
       space_frame  element=B31  units=N-m-Pa                                                   STEP    1  INCREMENT    1
@@ -318,6 +318,6 @@
 
      JOB TIME SUMMARY
        USER TIME (SEC)      =   0.0000    
-       SYSTEM TIME (SEC)    =   0.0000    
-       TOTAL CPU TIME (SEC) =   0.0000    
+       SYSTEM TIME (SEC)    =  0.10000    
+       TOTAL CPU TIME (SEC) =  0.10000    
        WALLCLOCK TIME (SEC) =          0
