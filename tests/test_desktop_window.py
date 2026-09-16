@@ -641,3 +641,38 @@ def test_the_colour_bar_is_bound_to_the_contour_layer_not_the_overflow_layer(
     assert order.index("contour") < order.index("scalar_bar")
     if "_contour_out_of_range" in order:
         assert order.index("scalar_bar") < order.index("_contour_out_of_range")
+
+
+def test_result_marker_imports_pyvista_itself(qt_app):
+    """放结果标记这条路径必须自己把 pyvista 导进来。
+
+    `desktop/viewport.py` 里 pyvista 一律用时再导——它和 VTK 加起来启动开销
+    不小，无头机器上还根本装不上。但 `set_result_marker` 原先漏了那一行，
+    引用的是别的方法里的局部 `pv`。
+
+    漏了这一行**测不出来**，这才是要补这条测试的原因：回归跑在
+    `QT_QPA_PLATFORM=offscreen` 下，`CAN_RENDER` 是 False，函数第一句就
+    return 了；只有真机上点"结果探针"或"定位极值"才会撞出 NameError。
+    也就是说这个 bug 对用户可见、对回归不可见。所以这里把 CAN_RENDER
+    显式扳成 True，逼它真的走到造球那一步。
+
+    （原件是 ruff 的 F821 翻出来的，不是人看出来的。）
+    """
+    window = solved(MainWindow(built()))
+    meshes: list[dict] = []
+    plotter = window.viewport.plotter
+    plotter.add_mesh = lambda mesh=None, **kw: meshes.append({"mesh": mesh, **kw})
+    plotter.add_point_labels = lambda *a, **kw: None
+    import desktop.viewport as vp
+
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        window.viewport.set_result_marker((0.0, 0.0, 0.0), "PROBE M1")
+    finally:
+        vp.CAN_RENDER = was
+
+    assert meshes, "标记没送进渲染器"
+    assert meshes[0]["name"] == "_result_marker"
+    # 真造出了一个球，而不是 None 混过去
+    assert meshes[0]["mesh"].n_points > 0

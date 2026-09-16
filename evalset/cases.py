@@ -12,9 +12,9 @@ from __future__ import annotations
 E = 210e9
 COL = {"name": "COLUMN", "A": 0.012, "Iy": 8e-5, "Iz": 2.4e-4, "J": 1e-6}
 BEAM = {"name": "BEAM", "A": 0.010, "Iy": 4e-5, "Iz": 3e-4, "J": 8e-7}
-SPEC = (f"钢材 E=210 GPa、泊松比 0.3，"
-        f"柱截面 A=0.012 Iy=8e-5 Iz=2.4e-4 J=1e-6，"
-        f"梁截面 A=0.010 Iy=4e-5 Iz=3e-4 J=8e-7。")
+SPEC = ("钢材 E=210 GPa、泊松比 0.3，"
+        "柱截面 A=0.012 Iy=8e-5 Iz=2.4e-4 J=1e-6，"
+        "梁截面 A=0.010 Iy=4e-5 Iz=3e-4 J=8e-7。")
 
 
 def _frame_size(nx: int, ny: int, nz: int) -> dict[str, int]:

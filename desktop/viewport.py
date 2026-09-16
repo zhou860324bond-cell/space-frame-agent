@@ -486,6 +486,13 @@ class Viewport(QWidget):
         """在结果极值或探针截面处放置可追溯标记。"""
         if not CAN_RENDER or self._frame is None:
             return
+        # pyvista 在这个文件里一律用时再导（它和 VTK 加起来启动开销不小，
+        # 而且无头环境根本装不上）。漏了这一行的后果不会在测试里露头：
+        # 测试跑在 QT_QPA_PLATFORM=offscreen 下，CAN_RENDER 是 False，
+        # 上面那个 return 就走掉了——只有真机上点"结果探针"或"定位极值"
+        # 才会撞出 NameError。是 ruff 的 F821 把它翻出来的。
+        import pyvista as pv
+
         for name in ("_result_marker", "_result_marker_label"):
             self.plotter.remove_actor(name, reset_camera=False)
         marker = pv.Sphere(radius=0.010 * scene.model_size(self._frame),

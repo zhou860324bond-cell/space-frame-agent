@@ -172,7 +172,7 @@ def main() -> None:
         print(f"已导出 {target.relative_to(ROOT)}（{size / 1024:.0f} KB）")
     STAMP.write_text(json.dumps(stamp, ensure_ascii=False, indent=2) + "\n",
                      encoding="utf-8")
-    print(f"\nWord 里打开后按 Ctrl+A、F9 更新一次目录，页码才会填上。")
+    print("\nWord 里打开后按 Ctrl+A、F9 更新一次目录，页码才会填上。")
 
 
 if __name__ == "__main__":

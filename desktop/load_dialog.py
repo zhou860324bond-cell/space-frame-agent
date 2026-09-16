@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (QComboBox, QDialog,
 
 from . import dialog_styles
 
-from . import theme
 
 NODE_LOAD_TYPES = [("集中力（节点）", "concentrated")]
 MEMBER_LOAD_TYPES = [

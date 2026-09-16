@@ -22,7 +22,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from agent import Session
 import silent_failures as sf

@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from agent import Session
 import capsule as cap_mod

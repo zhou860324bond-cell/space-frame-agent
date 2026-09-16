@@ -63,6 +63,14 @@ jobs:
 
       # PYTHONPATH 不在这里设：pytest.ini 里的 `pythonpath = src evalset abaqus_bench`
       # 已经声明了，而且那份声明跨平台（写成 env 就要分 `:` 和 `;` 两种分隔符）。
+      # 静态检查排在回归前面：它两秒出结果，而全量回归要几分钟。
+      # 语法错误、未定义名这种问题没必要等跑完测试才报。
+      - name: ruff 静态检查
+        shell: bash
+        run: |
+          pip install ruff
+          ruff check .
+
       - name: 跑全量回归
         shell: bash
         env:

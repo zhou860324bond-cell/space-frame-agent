@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from span_loads import (POINT, TRAPEZOID, UNIFORM, SpanLoad, fixed_end,
-                        moment_about_origin, span_force)
+from span_loads import (POINT, UNIFORM, SpanLoad, fixed_end,
+                        moment_about_origin)
 from units import MM as UNITS_MM  # noqa: F401  （对外转出，便于 from frame3d import）
 from units import SI as UNITS_SI
 from units import system as unit_system

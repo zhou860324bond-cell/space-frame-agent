@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QGridLayout,
                                QHBoxLayout, QLabel, QSizePolicy, QTabWidget,
                                QToolButton, QVBoxLayout, QWidget)
 
-from . import icons, theme
+from . import icons
 
 LARGE = QSize(30, 30)
 SMALL = QSize(20, 20)

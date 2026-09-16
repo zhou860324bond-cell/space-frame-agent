@@ -17,9 +17,9 @@ from typing import Any
 
 import numpy as np
 
-from frame3d import diagnose_singularity, solve
+from frame3d import diagnose_singularity
 from model_compiler import CompilationError, compile_model
-from model_io import from_dict, migrate_payload, validate_payload
+from model_io import from_dict, validate_payload
 from session_base import ToolResult
 
 

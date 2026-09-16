@@ -11,8 +11,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QGridLayout, QLabel, QLineEdit,
+                               QPushButton, QVBoxLayout)
 
 from . import dialog_styles, theme
 from .dialog_styles import DialogHeader, DialogSection, FormRow, HintLabel, style_dialog

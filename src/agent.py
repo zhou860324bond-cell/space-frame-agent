@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,26 +23,17 @@ from typing import Any, Callable, Protocol, Sequence
 
 import numpy as np
 
-from frame3d import (check_equilibrium, diagnose_singularity, self_weight_loads,
-                     solve)
-from generator import (GeneratorError, beam_member_ids, describe,
-                       generate_frame, generate_portal_frame,
-                       rafter_member_ids)
-import bent as _bent
+from generator import (describe)
 import changes as _changes
-from frame3d import LOCAL_DOF_NAMES
 from history import BuildHistory, MUTATING
 from model_compiler import CompilationError, compile_model
-from model_io import (CURRENT_SCHEMA_VERSION, from_dict, migrate_payload,
-                      validate_definitions, validate_payload)
-from result_db import from_solution as result_db_from_solution
+from model_io import (CURRENT_SCHEMA_VERSION, migrate_payload,
+                      validate_payload)
 from units import convert_model
 from units import system as unit_system
 
 # 求解后自动跑的两项质检：静默失败检测 + 实验胶囊存档。
 # 这两项失败不影响求解结果本身——用 try/except 兜住，只记警告。
-import capsule as _capsule
-import silent_failures as _silent
 
 MAX_ROUNDS = 24     # 一次完整建模+求解+查询，模型若逐个发调用能到十几轮。
                     # 真正的省时手段是让它一条消息发多个调用（见 SYSTEM_PROMPT 第 9 条），

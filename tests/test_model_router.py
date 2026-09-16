@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from model_router import ModelConfig, ModelRouter, CallRecord
+from model_router import ModelConfig, ModelRouter
 
 
 # --------------------------------------------------------- mock provider

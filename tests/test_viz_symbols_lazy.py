@@ -15,7 +15,6 @@ import builtins
 import importlib
 import sys
 
-import pytest
 
 
 def test_importing_viz_symbols_does_not_need_plotly(monkeypatch):

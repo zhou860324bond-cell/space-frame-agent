@@ -19,18 +19,16 @@ import json
 import math
 from typing import Any
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDialog, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QMessageBox, QPlainTextEdit,
-                               QPushButton, QSpinBox, QTableWidget,
+                               QPushButton, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout,
                                QWidget)
 
 from . import dialog_styles
 
-from . import theme
 
 
 def _spins(parent, low, high, value, step=0.1, decimals=2) -> QDoubleSpinBox:

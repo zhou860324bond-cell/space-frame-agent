@@ -36,7 +36,6 @@ MCP 客户端配置示例（Claude Desktop / Cursor）：
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import sys
 from pathlib import Path
@@ -53,7 +52,6 @@ from frame3d import Frame, Solution, check_equilibrium, solve
 from model_io import from_dict, validate_payload
 from silent_failures import detect_silent_failures, format_findings, summarize_findings
 from capsule import (
-    Capsule,
     diff_capsules,
     find_capsule,
     list_capsules,

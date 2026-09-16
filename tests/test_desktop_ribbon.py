@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(                             # noqa: E402
 
 from PySide6.QtWidgets import QApplication, QPushButton     # noqa: E402
 
-from desktop import commands, icons, ribbon                 # noqa: E402
+from desktop import commands, icons                 # noqa: E402
 from desktop.main_window import MODES, MainWindow           # noqa: E402
 from agent import Session                                   # noqa: E402
 

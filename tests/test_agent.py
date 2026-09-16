@@ -451,8 +451,6 @@ def test_rafter_ids_exclude_the_longitudinal_ties():
     """系杆默认与斜梁同截面。按名字筛会把系杆一起返回，拿去加载就压错了构件。"""
     s, r = portal(spans=[24.0], eave_height=6.0, ridge_rise=2.0, bays=[6.0, 6.0])
     rafters = set(r.payload["rafter_member_ids"])
-    beams = {m.id for m in s.frame.members.values() if m.section == "BEAM"} \
-        if s.frame else set()
     ties = [m for m in s.model["members"]
             if m["section"] == "BEAM" and int(m["id"]) not in rafters]
     assert ties, "多开间时应当有纵向系杆"
