@@ -284,6 +284,11 @@ def test_word_exports_are_not_behind_the_markdown():
     时间戳过不了 git，所以比的是内容哈希：`tools/build_docx.py`
     每次导出会把两份 Markdown 的 sha256 写进 `docs/word/来源指纹.json`。
     对不上就说明该重新跑一次导出了。
+
+    哈希前先把 CRLF 归一成 LF，口径必须和 `build_docx.fingerprint()` 一致。
+    不归一的话，Windows 上按 Git 默认配置（`core.autocrlf=true`）clone
+    下来的这份文件是 CRLF，字节对不上指纹，这条断言会拿"换行符不同"
+    冒充"文档改了没重新导出"——两种红长得一样，没法查。
     """
     import json
 
@@ -296,7 +301,7 @@ def test_word_exports_are_not_behind_the_markdown():
     for name, recorded in stamp.items():
         source = ROOT / "docs" / name
         assert source.exists(), f"指纹里记着 {name}，但这份文档不在了"
-        now = hashlib.sha256(source.read_bytes()).hexdigest()
+        now = hashlib.sha256(source.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         if now != recorded:
             stale.append(name)
         assert (ROOT / "docs" / "word" / (source.stem + ".docx")).exists(), \

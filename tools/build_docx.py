@@ -37,7 +37,22 @@ STAMP = OUT_DIR / "来源指纹.json"
 
 
 def fingerprint(path: pathlib.Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Markdown 的内容指纹，**换行符不算内容**。
+
+    这里必须先把 CRLF 归一成 LF 再哈希。理由：Git 默认在 Windows 上
+    `core.autocrlf=true`，同一份文件在 Linux 上检出是 LF、在 Windows 上
+    检出是 CRLF，字节不同、sha256 自然不同。直接哈希原始字节的话，
+    指纹只对"导出时那台机器的换行风格"成立——CI（Linux）永远绿，
+    而按 Git 默认配置 clone 的 Windows 用户永远红，且红的原因和
+    "忘了重新导出 Word" 一模一样，根本分不开。
+
+    归一之后，这条闸拦的才是它真正要拦的东西：正文改了、Word 没跟上。
+    """
+    return hashlib.sha256(_normalized(path)).hexdigest()
+
+
+def _normalized(path: pathlib.Path) -> bytes:
+    return path.read_bytes().replace(b"\r\n", b"\n")
 
 # 每份文档的标题页信息。副标题那行在 Markdown 里是正文第二行，
 # 导出时抽出来当副标题，免得 Word 里标题和副标题挤成一段。
