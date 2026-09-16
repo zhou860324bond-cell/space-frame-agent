@@ -6,9 +6,15 @@
 # 四件事是这个仓库特有的、写进 CI 才不会被忘掉：
 #
 # 1. **无头环境要 QT_QPA_PLATFORM=offscreen**，否则桌面端测试一碰 Qt 就崩。
-# 2. **PyVista / VTK / Gmsh 要系统库**（GL、GLU、X 的几个扩展），
+# 2. **PyVista / VTK / Gmsh / PySide6 要系统库**（EGL、GL、GLU、X 的几个扩展），
 #    pip 装的轮子不带这些，缺了会在 import 时就失败。Windows 的轮子自带，
 #    所以这一步只在 Linux 上做。
+#
+#    **libegl1 不能删。** 这条是这套 CI 第一次真跑时用一次红换来的：少了它，
+#    18 个桌面端测试模块在 collection 阶段就 ImportError（libEGL.so.1:
+#    cannot open shared object file），pytest 直接 exit 2，一个测试都没跑到。
+#    QT_QPA_PLATFORM=offscreen 救不了这个——offscreen 只是不加载 xcb 插件，
+#    PySide6 本身照样链接 libEGL。
 # 3. **实体单元那组测试要 Gmsh**，装不上时它们自己 skip，不该让整条流水线红。
 # 4. **必须有一台 Windows**。这个项目的用户全在 Windows（run.bat、build_exe.bat、
 #    桌面端都是 Windows 路径），只跑 Linux 等于把目标平台整个放进盲区——
@@ -51,7 +57,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgl1 libglu1-mesa libxrender1 libxcursor1 libxft2 \
+            libegl1 libgl1 libglu1-mesa libxrender1 libxcursor1 libxft2 \
             libxinerama1 libxkbcommon-x11-0 libdbus-1-3 xvfb
 
       - name: 装依赖
