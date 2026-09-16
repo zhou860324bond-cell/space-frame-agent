@@ -65,7 +65,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install PySide6 pyvista pyvistaqt gmsh
+          # mcp 不在 requirements.txt（属于 llm extra），但 tests/test_mcp_server.py
+          # 用 importorskip 门着它——不装的话那 14 个测试整个模块不被收集，
+          # 不声不响地少跑。这是 CI 第一次真跑时靠「总条数」那条闸发现的。
+          pip install PySide6 pyvista pyvistaqt gmsh mcp
 
       # PYTHONPATH 不在这里设：pytest.ini 里的 `pythonpath = src evalset abaqus_bench`
       # 已经声明了，而且那份声明跨平台（写成 env 就要分 `:` 和 `;` 两种分隔符）。

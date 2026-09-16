@@ -23,7 +23,6 @@ import ast
 import hashlib
 import pathlib
 import re
-import sys
 
 import pytest
 
@@ -152,24 +151,21 @@ def test_report_gold_case_count_matches_the_frozen_list():
 
 
 def _require_countable_full_run(collected: int) -> None:
-    """总条数这类断言的公共前置：跑的得是全量，平台还得对得上。
+    """总条数这类断言的公共前置：跑的得是全量。
 
-    **收集条数是跟平台走的。** Linux 上比 Windows 少十几条——有些用例依赖
-    只在 Windows 上成立的东西。文档里记的是 Windows 满配那一套数字（这个
-    项目的用户和作者都在 Windows，Abaqus 也只在 Windows 上），所以一个数字
-    不可能同时对得上两个平台。
+    **收集条数取决于可选依赖装没装全。** 用 `pytest.importorskip` 在模块级
+    门住的那几个模块，依赖缺了就整个不被收集——不是 skip，是压根不计数。
+    所以"实际收集 N 项"这句话只在依赖装全的环境里成立。
 
-    这一点是 CI 头一次加上 windows-latest 那格之后才暴露的：在那之前只跑
-    Linux，数字就写成了本机（Windows）的，两边永远对不上。
+    这一点是 CI 接上远程第一次真跑才暴露的：CI 报 1640、本机 1654，差的
+    正好是 tests/test_mcp_server.py 的 14 条——CI 的安装步骤漏了 `mcp`，
+    于是这 14 个测试在 CI 上**一直没跑，而且不声不响**。已经在
+    .github/workflows/tests.yml 里补上了。
 
-    于是让这条闸只在 Windows 上生效。**没有变松**：改测试的人在 Windows 上，
-    CI 的 windows-latest 那格也会执行它，该拦的照样拦得住。
+    换句话说，这条闸抓到的不是文档过期，是 CI 漏装依赖。它值这个钱。
     """
     if collected < 800:
         pytest.skip("只有跑全量回归时才数得出总条数")
-    if sys.platform != "win32":
-        pytest.skip("收集条数随平台不同；文档记的是 Windows 满配的基线，"
-                    "由 CI 的 windows-latest 那一格来守")
 
 
 def test_report_test_total_matches_the_full_run(request):

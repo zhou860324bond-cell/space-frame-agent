@@ -265,8 +265,33 @@ CHECKS = (("Python", _python), ("内核依赖", _numeric), ("求解器", _kernel
 FATAL = {"Python", "Qt", "PyVista"}
 
 
+def _force_utf8_stdout() -> None:
+    """把 stdout/stderr 定死成 UTF-8。
+
+    这个工具的输出**全是中文**，而 Windows 上 stdout 默认跟系统代码页走。
+    中文 Windows 是 cp936，打得出来；英文 Windows 是 cp1252，第一行就
+
+        UnicodeEncodeError: 'charmap' codec can't encode characters
+        in position 0-13: character maps to <undefined>
+
+    ——整个自检一个字都没打出来就挂了。也就是说，**越是环境不标准的机器
+    越需要这个自检，而它恰恰在那种机器上先死**。
+
+    是 CI 的 windows runner（英文 locale）第一次跑时暴露的。本机是中文
+    Windows，永远撞不到。
+
+    errors="replace" 兜底：真遇到打不出的字符就显示成 ?，也好过整个崩掉。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass                     # 被重定向成不支持 reconfigure 的对象，算了
+
+
 def report() -> int:
     """逐项检查并打印。全通过返回 0，否则返回 1。"""
+    _force_utf8_stdout()
     print("空间刚架智能计算　桌面端自检")
     print(f"  {platform.platform()}")
     print(f"  {sys.executable}")
