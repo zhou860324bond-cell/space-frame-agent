@@ -128,7 +128,26 @@ class SolvingMixin:
         except Exception as exc:                      # noqa: BLE001
             payload["capsule_error"] = f"{type(exc).__name__}: {exc}"
 
-        return ToolResult(True, payload)
+        # 判定为「结果不可用」的静默失败要让 ok=False。
+        #
+        # 理由不是"critical 就该失败"，而是**自修复闭环靠 ok 触发**：系统提示
+        # 第 4 条写着"solve_model 返回错误清单时，读懂它、改模型、重试"。
+        # 以前这些发现只躺在 payload 里，Agent 照样把一套全零结果如实汇报给
+        # 用户——可溯源，但是个废数。
+        #
+        # 不是所有 critical 都拦：excessive_displacement 的数字是真的，只是
+        # 大得可疑，用户可能就是要看它。拦的是「这组数不代表任何受力状态」
+        # 的那几条，名单写在 silent_failures.RESULT_INVALIDATING 里。
+        blocking = [f for f in payload.get("silent_failures", {}).get("findings", [])
+                    if f.get("status") == "fail"
+                    and f.get("id") in _silent.RESULT_INVALIDATING]
+        if blocking:
+            payload["unusable"] = {
+                "reason": "静默失败检测判定这组结果不代表任何受力状态",
+                "checks": [f["id"] for f in blocking],
+                "next": [f.get("suggestion") for f in blocking if f.get("suggestion")],
+            }
+        return ToolResult(not blocking, payload)
 
     def solve_with_abaqus(self, case: str | None = None,
                           element: str = "B33") -> ToolResult:

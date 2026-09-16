@@ -73,18 +73,59 @@ def _structure_dimension(model: Frame) -> float:
     return float(np.linalg.norm(ranges))
 
 
+def _member_length(model: Frame, mid: int) -> float:
+    m = model.members[mid]
+    return float(np.linalg.norm(model.nodes[m.j].xyz - model.nodes[m.i].xyz))
+
+
 def _total_applied_load(model: Frame, case: str) -> np.ndarray:
-    """某个工况的外载荷合力（平动 3 分量，全局坐标）。"""
+    """某个工况的外载荷合力（平动 3 分量，全局坐标）。
+
+    **必须把 member_spans 算进来。** 原先只统计 nodal_loads 与满跨
+    member_loads，跨中点荷载、梯形、局部均布一概不算——于是
+    reaction_load_balance 在任何用了跨荷载的模型上都会假报"反力与外载荷
+    不平衡"（实测 tests/test_units.py 的 rich_model 残差 11.1%）。
+
+    这个假阳性以前看不见：near_singular_stiffness 那个 bug 让 overall 恒为
+    fail，多一条少一条分不出来。修好那个之后它立刻露头。
+
+    合力用 span_loads.resultant()——那个函数的 docstring 写着"整体平衡校核
+    用"，本来就是为这件事准备的，只是没被接上。
+
+    settlements 与 member_strains **有意不计入**：它们确实产生反力与内力，
+    但那组反力是自平衡的（合力为零），计入反而会把平衡校核算错。
+    "这个工况有没有作用"是另一个问题，用 _case_has_action() 回答。
+    """
+    from span_loads import SpanLoad, resultant
+
     total = np.zeros(3)
     lc = model.case(case)
     for nid, f in lc.nodal_loads.items():
         total += np.array(f[:3])
-    # 均布载荷合力 = 线荷载 * 杆长
+    # 满跨均布：合力 = 线荷载 × 杆长
     for mid, w in lc.member_loads.items():
-        m = model.members[mid]
-        length = float(np.linalg.norm(model.nodes[m.j].xyz - model.nodes[m.i].xyz))
-        total += np.array(w[:3]) * length
+        total += np.array(w[:3]) * _member_length(model, mid)
+    # 跨荷载：点荷载 / 梯形 / 局部均布
+    for mid, loads in (lc.member_spans or {}).items():
+        length = _member_length(model, mid)
+        for load in loads:
+            item = load if isinstance(load, SpanLoad) else SpanLoad.from_dict(load)
+            force, _ = resultant(item, length)
+            total += np.asarray(force, dtype=float)[:3]
     return total
+
+
+def _case_has_action(model: Frame, case: str) -> bool:
+    """这个工况里**有没有任何作用**——不只是"有没有外力"。
+
+    支座沉降与初应变（温度）不产生净外力，但它们是实实在在的作用，会产生
+    反力与内力。拿 _total_applied_load 去判断"有没有作用"会把这两类工况
+    误判成空求解——这正是 no_applied_load 第一版踩的坑。
+    """
+    lc = model.case(case)
+    if float(np.linalg.norm(_total_applied_load(model, case))) > 1e-10:
+        return True
+    return bool(lc.settlements or lc.member_strains)
 
 
 def _total_reaction(model: Frame, sol: Solution, case: str) -> np.ndarray:
@@ -235,16 +276,12 @@ def check_no_applied_load(model: Frame, sol: Solution) -> dict[str, Any]:
 
     全零结果"肉眼看就是错的"，但只有人看才看得出来。这条检测就是替人看。
     """
-    loaded = []
-    for name in sol.all_results():
-        magnitude = float(np.linalg.norm(_total_applied_load(model, name)))
-        if magnitude > 1e-10:
-            loaded.append(name)
+    loaded = [name for name in sol.all_results() if _case_has_action(model, name)]
 
     if loaded:
         return _finding(
             "no_applied_load", "求解时没有任何荷载", SEVERITY_CRITICAL, STATUS_PASS,
-            f"{len(loaded)} 个工况有非零外载荷",
+            f"{len(loaded)} 个工况有作用（外载荷、支座沉降或初应变）",
             {"loaded_cases": loaded},
         )
     return _finding(
@@ -252,7 +289,7 @@ def check_no_applied_load(model: Frame, sol: Solution) -> dict[str, Any]:
         "求解时没有任何荷载",
         SEVERITY_CRITICAL,
         STATUS_FAIL,
-        f"全部 {len(sol.all_results())} 个工况的外载荷合力都是零——"
+        f"全部 {len(sol.all_results())} 个工况既没有外载荷，也没有支座沉降或初应变——"
         "这次求解的结果必然是全零位移、全零内力，不代表任何受力状态",
         {"cases": sorted(sol.all_results())},
         "检查两件事：一是 set_load_cases / set_member_load 是否返回了 ok=False"
@@ -551,6 +588,23 @@ def check_reaction_load_balance(model: Frame, sol: Solution) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 注册表与主入口
 # ---------------------------------------------------------------------------
+
+# 这几条不通过时，**结果不代表任何受力状态**——solve_model 会据此返回
+# ok=False，把自修复闭环接上（见 session_solving.solve_model 末尾）。
+#
+# excessive_displacement 有意不在名单里：它的数字是真的，只是大得可疑。
+# 用户可能就是要看一个很柔的结构。拦住它等于替用户决定什么叫"合理"。
+#
+# load_magnitude_anomaly / section_orientation 是 warning，本来就不拦。
+RESULT_INVALIDATING = frozenset({
+    "insufficient_supports",      # 机构：位移没有唯一解
+    "zero_reaction_with_load",    # 荷载没传到支座
+    "zero_internal_force",        # 荷载没传到杆件
+    "no_applied_load",            # 压根没有作用，结果必然全零
+    "near_singular_stiffness",    # 数值不可信
+    "reaction_load_balance",      # 平衡都不满足，算错了
+})
+
 
 ALL_CHECKS: list[tuple[str, Callable[[Frame, Solution], dict[str, Any]]]] = [
     ("insufficient_supports", check_insufficient_supports),

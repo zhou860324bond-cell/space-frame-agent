@@ -248,3 +248,85 @@ def test_a_loaded_model_passes_the_no_load_check():
     s = _solved()
     findings = {f["id"]: f for f in sf.detect_silent_failures(s.frame, s.solution)}
     assert findings["no_applied_load"]["status"] == "pass"
+
+
+# ------------------------------------------- 检测结果要能拦住 solve_model
+
+def test_unusable_result_makes_solve_model_fail():
+    """判定为「结果不可用」时，solve_model 必须返回 ok=False。
+
+    **这条不是为了好看，是为了把自修复闭环接上。** 系统提示第 4 条写着
+    "solve_model 返回错误清单时，读懂它、改模型、重试"——那个闭环是靠 ok
+    触发的。以前这些发现只躺在 payload 里，Agent 看到的是"求解成功"，
+    于是照样把一套全零结果如实汇报给用户：可溯源，但是个废数。
+    """
+    s = _frame_without_load([{"name": "DL"}])       # 空工况
+    r = s.solve_model()
+    assert not r.ok, "没有任何作用的求解不该报成功"
+    assert "unusable" in r.payload
+    assert "no_applied_load" in r.payload["unusable"]["checks"]
+    assert r.payload["unusable"]["next"], "要把怎么办一并给出来"
+    # 结果本身仍然留在 payload 里，不是丢掉，是标记为不可用
+    assert "cases" in r.payload
+
+
+def test_a_normal_model_still_solves_ok():
+    s = _solved()
+    assert s.solve_model().ok
+    assert "unusable" not in s.solve_model().payload
+
+
+def test_excessive_displacement_does_not_block():
+    """位移过大是 critical，但**有意不拦**。
+
+    它的数字是真的，只是大得可疑——用户可能就是要看一个很柔的结构。
+    拦住它等于替用户决定什么叫"合理"。名单见 RESULT_INVALIDATING。
+    """
+    assert "excessive_displacement" not in sf.RESULT_INVALIDATING
+    assert "no_applied_load" in sf.RESULT_INVALIDATING
+
+
+# ------------------------------------------- 外载荷合力要把跨荷载算进来
+
+def test_applied_load_counts_span_loads():
+    """`_total_applied_load` 必须把 member_spans 算进来。
+
+    原先只统计 nodal_loads 与满跨 member_loads，跨中点荷载、梯形、局部均布
+    一概不算——于是 reaction_load_balance 在任何用了跨荷载的模型上都假报
+    "反力与外载荷不平衡"（实测 rich_model 残差 11.1%）。
+
+    这个假阳性以前看不见：near_singular_stiffness 那个 bug 让 overall 恒为
+    fail，多一条少一条分不出来。修好那个之后它立刻露头。
+    """
+    s = Session()
+    s.define_materials_and_sections(MATERIALS, SECTIONS)
+    s.generate_frame(spans=[6.0], storeys=[3.6], column_section="COL",
+                     beam_section="BEAM", material="Q355")
+    beam = [m["id"] for m in s.model["members"] if m["section"] == "BEAM"][0]
+    # 只加一个跨中点荷载，别的什么都没有
+    s.set_load_cases(cases=[{"name": "P", "member_spans": [
+        {"member": beam, "kind": "point", "w1": [0, 0, -30e3], "a": 3.0}]}])
+    assert s.solve_model().ok, "只有跨荷载的模型必须算得出来且不被判不可用"
+
+    total = sf._total_applied_load(s.frame, "P")
+    assert abs(float(total[2]) + 30e3) < 1.0, \
+        f"竖向合力应当是 -30 kN，实得 {total[2]}"
+
+    findings = {f["id"]: f for f in sf.detect_silent_failures(s.frame, s.solution)}
+    assert findings["reaction_load_balance"]["status"] == "pass"
+    assert findings["no_applied_load"]["status"] == "pass"
+
+
+def test_settlement_only_case_is_an_action():
+    """支座沉降不产生净外力，但它是实实在在的作用，不该被判成空求解。"""
+    s = Session()
+    s.define_materials_and_sections(MATERIALS, SECTIONS)
+    s.generate_frame(spans=[6.0], storeys=[3.6], column_section="COL",
+                     beam_section="BEAM", material="Q355")
+    base = min(int(n["id"]) for n in s.model["nodes"])
+    s.set_load_cases(cases=[{"name": "SET", "settlements": [
+        {"node": base, "d": [0, 0, -0.005, 0, 0, 0]}]}])
+    s.solve_model()
+    findings = {f["id"]: f for f in sf.detect_silent_failures(s.frame, s.solution)}
+    assert findings["no_applied_load"]["status"] == "pass", \
+        "沉降工况不是空求解"
