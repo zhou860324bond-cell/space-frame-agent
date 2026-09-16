@@ -114,12 +114,13 @@ def test_solve_frame_invalid_model_returns_error():
 
 # --------------------------------------------------------- detect_silent_failures_tool
 
-def test_detect_silent_failures_returns_eight_checks():
+def test_detect_silent_failures_returns_every_check():
     out = mcp_s.detect_silent_failures_tool(VALID_MODEL)
     data = json.loads(out)
     findings = data.get("findings", data.get("results", []))
-    # 8 项检测
-    assert len(findings) == 8, f"应该有 8 项检测，实得 {len(findings)}"
+    # 数量跟着 ALL_CHECKS 走，不在这里另写一个数——加检测项时改一处就够
+    import silent_failures as sf
+    assert len(findings) == len(sf.ALL_CHECKS),         f"应该有 {len(sf.ALL_CHECKS)} 项检测，实得 {len(findings)}"
     for f in findings:
         assert "id" in f and "name" in f and "status" in f
 
