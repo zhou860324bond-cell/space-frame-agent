@@ -95,10 +95,17 @@ def compare_one(model: dict, abaqus: dict[int, dict[str, float]]) -> dict:
         report["error"] = "两侧没有共同的节点编号，检查 .inp 是否由同一份模型生成"
         return report
 
+    # 误差之外还要记两侧各自的范数。理由见 render() 里 _cell 的注释：
+    # 只看归一化误差分不出"参考解为零"和"两边都为零"，而这两种情况
+    # 一个是分歧、一个是无事发生，混在一起会把真问题盖掉。
+    report["ref_norm"] = {}
+    report["our_norm"] = {}
     for key in COMPONENTS + REACTIONS:
-        e = normalized_error([ours[n][key] for n in shared],
-                             [abaqus[n].get(key, 0.0) for n in shared])
-        report["errors"][key] = e
+        ours_col = [ours[n][key] for n in shared]
+        theirs_col = [abaqus[n].get(key, 0.0) for n in shared]
+        report["errors"][key] = normalized_error(ours_col, theirs_col)
+        report["ref_norm"][key] = float(np.linalg.norm(theirs_col))
+        report["our_norm"][key] = float(np.linalg.norm(ours_col))
 
     mag_ours = [math.sqrt(sum(ours[n][k] ** 2 for k in COMPONENTS[:3])) for n in shared]
     mag_theirs = [math.sqrt(sum(abaqus[n].get(k, 0.0) ** 2 for k in COMPONENTS[:3]))
@@ -111,14 +118,69 @@ def compare_one(model: dict, abaqus: dict[int, dict[str, float]]) -> dict:
     return report
 
 
+# 同族分量（位移 / 转角 / 反力）单位一致，可以互相比大小。
+_FAMILIES = (("u1", "u2", "u3"), ("ur1", "ur2", "ur3"), ("rf1", "rf2", "rf3"))
+# 低于本族最大参考值这个倍数，就当作"参考解在这个分量上是零"。
+# 实测数据分得很开：真正为零的分量比值在 1e-16 ~ 1e-19，而最小的真实分量
+# 也有 1e-3 量级，1e-9 落在中间很宽的空当里。
+_ZERO_REL = 1e-9
+
+
+def _family_of(key: str):
+    for fam in _FAMILIES:
+        if key in fam:
+            return fam
+    return None
+
+
+def _cell(report: dict, key: str) -> str:
+    """一个分量该怎么印。
+
+    **为什么不能只印归一化误差**：e = |a-b| / |b| 在 |b| 趋于 0 时会爆成
+    1e+13 这种数字，它只反映分母多小，没有物理含义；而如果因此一律记作 —，
+    又会把"参考解说这里是零、本程序说不是"这种**真分歧**藏起来——那恰恰是
+    最该看见的一种。B31 的 space_frame 就是：u2 / ur1 / rf2 三个分量
+    Abaqus 给的是机器零，本程序给的是 1.4e-05 / 3.8e-03 / 4.8e+03，
+    而同一份输入换成 B33 时两边吻合到五位有效数字。所以分三种情况印。
+    """
+    v = report["errors"].get(key)
+    fam = _family_of(key)
+    if fam is None:                       # |U| 没有同族可比，按原样印
+        return "—" if v is None else format(v, ".2e")
+
+    ref = report.get("ref_norm", {})
+    our = report.get("our_norm", {})
+    scale = max((ref.get(k, 0.0) for k in fam), default=0.0)
+    if scale <= 0.0:
+        return "—"
+    ref_zero = ref.get(key, 0.0) <= scale * _ZERO_REL
+    our_zero = our.get(key, 0.0) <= scale * _ZERO_REL
+    if ref_zero and our_zero:
+        return "—"
+    if ref_zero:
+        return f"**参考0/本程序 {our.get(key, 0.0):.2e}**"
+    return "—" if v is None else format(v, ".2e")
+
+
 def render(reports: list[dict], element: str) -> str:
     lines = [f"# 与 Abaqus 对标结果（{element}）", ""]
     if element == "B33":
         lines += ["B33 是 Abaqus 的三次梁单元，不计横向剪切变形，与本程序的 "
                   "Euler-Bernoulli 格式属于同一套理论，误差应落在数值精度量级。", ""]
     else:
-        lines += ["B31 是一点缩减积分的 Timoshenko 梁，含剪切变形与细长度补偿，"
-                  "与本程序存在**格式差异导致的系统性偏差**，不是误差。", ""]
+        lines += [
+            "B31 是一点缩减积分的 Timoshenko 梁，含剪切变形与细长度补偿，"
+            "与本程序的 Euler-Bernoulli 格式存在系统性偏差。**量级上的差**"
+            "（悬臂梁 6.7e-03、门式刚架 1.5e-01）用格式差异解释得通。",
+            "",
+            "**但 space_frame 的 u2 / ur1 / rf2 三项解释不通，列为待查项。**"
+            "这三项 Abaqus 的 B31 给的是机器零，本程序给的是 "
+            "1.40e-05 / 3.79e-03 / 4.80e+03；而**同一份输入文件**只把 "
+            "`TYPE=B33` 换成 `TYPE=B31`（两份 .inp 的 diff 除此之外没有一行"
+            "不同），B33 那次两边吻合到五位有效数字。剪切变形只会让量级差"
+            "几个百分点，不会让一整个方向的响应塌成零——所以这不是格式差异，"
+            "机理尚未查清。",
+            ""]
 
     lines += ["| 算例 | 节点数 | 最大位移 本程序 / Abaqus (mm) | e(\\|U\\|) | e(U3) | e(RF3) |",
               "|---|---|---|---|---|---|"]
@@ -141,13 +203,14 @@ def render(reports: list[dict], element: str) -> str:
         if r.get("error"):
             continue
         lines.append(f"### {r['name']}")
-        cells = []
-        for key in COMPONENTS + REACTIONS + ["|U|"]:
-            v = r["errors"].get(key)
-            cells.append(f"{key} = {'—' if v is None else format(v, '.2e')}")
+        cells = [f"{key} = {_cell(r, key)}"
+                 for key in COMPONENTS + REACTIONS + ["|U|"]]
         lines.append("- " + "，".join(cells))
         lines.append("")
-    lines.append("注：参考解整体为零的分量记作 —，归一化误差在那里没有意义。")
+    lines += ["注：参考解整体为零、本程序也为零的分量记作 —，归一化误差在那里",
+              "没有意义。参考解为零而**本程序不为零**的分量记作 `参考0/本程序 X`：",
+              "那不是误差大小的问题，是两边根本不一致，除出来的比值"
+              "（动辄 1e+13）只反映分母多小，没有任何物理含义。"]
     return "\n".join(lines)
 
 
