@@ -23,6 +23,7 @@ import ast
 import hashlib
 import pathlib
 import re
+import sys
 
 import pytest
 
@@ -150,6 +151,27 @@ def test_report_gold_case_count_matches_the_frozen_list():
         f"`docs/BETA_0.1_GOLD_CASES.md` 里实际冻结 {len(numbers)} 项。")
 
 
+def _require_countable_full_run(collected: int) -> None:
+    """总条数这类断言的公共前置：跑的得是全量，平台还得对得上。
+
+    **收集条数是跟平台走的。** Linux 上比 Windows 少十几条——有些用例依赖
+    只在 Windows 上成立的东西。文档里记的是 Windows 满配那一套数字（这个
+    项目的用户和作者都在 Windows，Abaqus 也只在 Windows 上），所以一个数字
+    不可能同时对得上两个平台。
+
+    这一点是 CI 头一次加上 windows-latest 那格之后才暴露的：在那之前只跑
+    Linux，数字就写成了本机（Windows）的，两边永远对不上。
+
+    于是让这条闸只在 Windows 上生效。**没有变松**：改测试的人在 Windows 上，
+    CI 的 windows-latest 那格也会执行它，该拦的照样拦得住。
+    """
+    if collected < 800:
+        pytest.skip("只有跑全量回归时才数得出总条数")
+    if sys.platform != "win32":
+        pytest.skip("收集条数随平台不同；文档记的是 Windows 满配的基线，"
+                    "由 CI 的 windows-latest 那一格来守")
+
+
 def test_report_test_total_matches_the_full_run(request):
     """报告里**每一处**回归条数，都必须等于这次真正收集到的条数。
 
@@ -165,8 +187,7 @@ def test_report_test_total_matches_the_full_run(request):
     知道这回事就不会以为是测试写错了。
     """
     collected = len(request.session.items)
-    if collected < 800:
-        pytest.skip("只有跑全量回归时才数得出总条数")
+    _require_countable_full_run(collected)
     flat = _text(REPORT).replace(",", "").replace("，", "，")
     claimed = {int(n) for n in re.findall(r"回归\s*\*{0,2}\s*(\d{3,})\s*项", flat)}
     assert claimed, "《课程报告》里找不到「回归 N 项」这句话了"
@@ -263,8 +284,7 @@ def test_readme_regression_baseline_matches_the_full_run(request):
     整个仓库的可信度就先打了折。
     """
     collected = len(request.session.items)
-    if collected < 800:
-        pytest.skip("只有跑全量回归时才数得出总条数")
+    _require_countable_full_run(collected)
     hit = re.search(r"(\d+)\s*项通过、(\d+)\s*项按环境跳过", _text(README))
     assert hit, "README 里找不到「N 项通过、M 项按环境跳过」这句话了"
     stated = int(hit.group(1)) + int(hit.group(2))

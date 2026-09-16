@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import platform
+import subprocess
 import sys
 from pathlib import Path
 
@@ -172,6 +173,46 @@ def _pyvista() -> tuple[bool, str]:
     return True, f"PyVista {pyvista.__version__}　VTK {vtk.VTK_VERSION}"
 
 
+# OpenGL 探测脚本。单独拎出来，是因为它必须在**子进程**里跑，见 _opengl。
+#
+# 约定：往 stdout 打一行结论，父进程按那一行判断。真崩了就没有那一行，
+# 父进程看返回码即可。
+_OPENGL_PROBE = """
+import sys
+try:
+    import vtk
+    w = vtk.vtkOpenGLRenderWindow()
+    w.SetSize(64, 64)
+    r = vtk.vtkRenderer()
+    w.AddRenderer(r)
+    s = vtk.vtkSphereSource()
+    m = vtk.vtkPolyDataMapper()
+    m.SetInputConnection(s.GetOutputPort())
+    a = vtk.vtkActor()
+    a.SetMapper(m)
+    r.AddActor(a)
+    w.Render()
+    w.Finalize()
+    print("REAL " + vtk.VTK_VERSION)
+    sys.exit(0)
+except Exception:
+    pass
+try:
+    import pyvista as pv
+    p = pv.Plotter(off_screen=True, window_size=(64, 64))
+    p.add_mesh(pv.Sphere())
+    p.screenshot(None, return_img=True)
+    p.close()
+    print("OFFSCREEN")
+except Exception as exc:
+    print("FAIL %s: %s" % (type(exc).__name__, str(exc)[:150]))
+sys.exit(0)
+"""
+
+_NO_GL_HINT = ("可以试试设环境变量 LIBGL_ALWAYS_SOFTWARE=1；"
+               "实在不行就用网页版 run_gui.bat，功能一样全")
+
+
 def _opengl() -> tuple[bool, str]:
     """真去建一个渲染窗口画个球。
 
@@ -182,42 +223,38 @@ def _opengl() -> tuple[bool, str]:
     这才是桌面端 MainWindow 实际走的路；失败再降级到 off_screen 离屏模式。
     离屏能画不代表真实窗口能开——早先只测 off_screen 会在无 GL 机器上
     误报"离屏正常"，但真实启动照样崩在 'failed to get valid pixel format'。
-    """
-    # 第一级：真实 OpenGL 渲染窗口。必须真调一次 Render()，只建窗口不渲染
-    # 在某些环境下会"假成功"。
-    try:
-        import vtk
-        ren_win = vtk.vtkOpenGLRenderWindow()
-        ren_win.SetSize(64, 64)
-        renderer = vtk.vtkRenderer()
-        ren_win.AddRenderer(renderer)
-        sphere = vtk.vtkSphereSource()
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(sphere.GetOutputPort())
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        renderer.AddActor(actor)
-        ren_win.Render()                          # 真正触发 OpenGL 上下文初始化
-        ren_win.Finalize()
-        return True, f"OpenGL 渲染正常（VTK {vtk.VTK_VERSION}）"
-    except Exception:
-        pass                                       # 真实窗口失败，降级到离屏
 
-    # 第二级：离屏模式。能画说明软件渲染/ Mesa 可用，但真实窗口仍可能失败。
+    **两级都在子进程里跑。** 原先是在本进程里 try/except 包着的，兜不住：
+    在没有 GPU 的机器上 Render() 不抛 Python 异常，而是原生崩溃，
+    except Exception 对 access violation 无能为力。于是这个**专门用来诊断
+    "这台机器能不能渲染"的自检**，在最该给出诊断的那种机器上把自己搞崩了。
+    CI 第一次在 windows runner 上跑就是这样，整个 pytest 被带走（exit 139）。
+
+    子进程崩了，父进程只是读到一个非零返回码——那正好就是"真实窗口开不了"。
+    tests/conftest.py 的 opengl_available 出于同样的理由也是子进程探测；
+    两处分开是因为问的问题不同（那边只问"能不能离屏渲染"）。
+    """
     try:
-        import pyvista as pv
-        plotter = pv.Plotter(off_screen=True, window_size=(64, 64))
-        plotter.add_mesh(pv.Sphere())
-        plotter.screenshot(None, return_img=True)
-        plotter.close()
-    except Exception as exc:                      # noqa: BLE001
-        return False, (f"{type(exc).__name__}: {str(exc)[:150]}　"
-                       "多见于远程桌面或没装显卡驱动的机器。"
-                       "可以试试设环境变量 LIBGL_ALWAYS_SOFTWARE=1；"
-                       "实在不行就用网页版 run_gui.bat，功能一样全")
-    return False, ("仅离屏渲染可用，真实 OpenGL 窗口无法初始化——"
-                   "桌面端启动会崩。可以试试设 LIBGL_ALWAYS_SOFTWARE=1；"
-                   "或直接用网页版 run_gui.bat")
+        done = subprocess.run([sys.executable, "-c", _OPENGL_PROBE],
+                              capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"探测进程起不来：{type(exc).__name__}"
+
+    verdict = (done.stdout or "").strip().splitlines()
+    verdict = verdict[-1] if verdict else ""
+
+    if verdict.startswith("REAL"):
+        return True, f"OpenGL 渲染正常（VTK {verdict[5:].strip()}）"
+    if verdict.startswith("OFFSCREEN"):
+        return False, ("仅离屏渲染可用，真实 OpenGL 窗口无法初始化——"
+                       "桌面端启动会崩。" + _NO_GL_HINT)
+    if verdict.startswith("FAIL "):
+        return False, (verdict[5:] + "　多见于远程桌面或没装显卡驱动的机器。"
+                       + _NO_GL_HINT)
+    # 没有结论行 = 探测进程自己崩了。这正是最该报出来的那种机器。
+    return False, (f"探测进程异常退出（返回码 {done.returncode}），"
+                   "说明这台机器连建渲染窗口都会崩——桌面端一定起不来。"
+                   + _NO_GL_HINT)
 
 
 CHECKS = (("Python", _python), ("内核依赖", _numeric), ("求解器", _kernel),
