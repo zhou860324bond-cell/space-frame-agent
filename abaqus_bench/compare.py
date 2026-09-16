@@ -20,6 +20,21 @@ B31 是含剪切变形的 Timoshenko 梁，会留下系统性偏差**，细长�
 
 from __future__ import annotations
 
+# 直接 `python abaqus_bench\compare.py` 也要能跑，不能要求调用方先设好 PYTHONPATH。
+#
+# 这几个脚本的用法是写在文档里、让人照着敲的（见 abaqus_bench/README.md）。原先照着敲会
+# 立刻 ModuleNotFoundError——只有走 .bat（里面设了 PYTHONPATH）才活。
+# 文档教的命令必须名副其实，所以脚本自己把路径铺好。
+# pytest 那边由 pytest.ini 的 `pythonpath` 负责，同一个道理。
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+for _p in (_ROOT / "src", Path(__file__).resolve().parent):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+
 import argparse
 import csv
 import math

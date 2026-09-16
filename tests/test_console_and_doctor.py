@@ -22,15 +22,48 @@ import pytest
 from console import use_utf8
 
 
-def test_main_batch_launcher_propagates_failures_and_stops_examples():
-    """一键入口不能在 pytest 失败后继续跑示例，最后反而返回成功。"""
+def test_main_batch_launcher_never_reports_success_on_a_failed_regression():
+    """一键入口不能在回归失败之后返回成功。
+
+    **这条原先还钉着「回归必须跑在示例之前」，那一半被有意去掉了。**
+    原来的顺序是先跑一千六百多项回归（几分钟），失败就直接
+    "Examples were not run" 退出——于是任何一台有环境毛病的机器（没有 GPU、
+    非中文 locale、缺系统库），用户等了几分钟，最后一眼都没见过这东西能干嘛。
+
+    真正要守的是**退出码**：回归红了就不许返回成功。先给人看产品不影响这一点，
+    回归照跑、结果照样决定退出码。所以改成按意图断言，不按顺序断言。
+    """
     text = (Path(__file__).resolve().parent.parent / "run.bat").read_text(
         encoding="utf-8")
     assert 'set "RUN_CODE=%ERRORLEVEL%"' in text
     assert "exit /b %RUN_CODE%" in text
-    assert "ERROR: tests failed. Examples were not run." in text
-    assert text.index("ERROR: tests failed") < text.index("examples\\run_json.py")
+    tail = text[text.index("running the full regression"):]
+    assert "pytest" in tail
+    assert "exit /b 1" in tail, "回归失败必须非零退出"
 
+
+def test_main_batch_launcher_shows_the_examples_before_the_regression():
+    """示例要跑在回归前面——这是为「第一次打开」做的取舍。
+
+    代价是零：回归紧接着就跑，退出码仍由它决定（见上一条）。收益是机器有
+    毛病时，用户至少见过一次这东西能干嘛，而不是对着一屏红色测试输出猜。
+    """
+    text = (Path(__file__).resolve().parent.parent / "run.bat").read_text(
+        encoding="utf-8")
+    assert text.index("running the examples") < text.index(
+        "running the full regression")
+
+
+def test_main_batch_launcher_forwards_user_arguments():
+    """脚本用 _inner 重新调用自己（为了把输出收进日志），必须透传用户参数。
+
+    不透传的话 :inner 里看到的 %1 永远是 _inner，用户敲的 --quick 在这一步
+    就没了——实测过，它静悄悄地跑完了全量回归。
+    """
+    text = (Path(__file__).resolve().parent.parent / "run.bat").read_text(
+        encoding="utf-8")
+    assert "_inner %*" in text, "重新调用自己时要带上 %*"
+    assert '"%~2"=="--quick"' in text, "第一个参数是 _inner，用户参数从第二个起"
 
 # ------------------------------------------------- 编码保险
 
