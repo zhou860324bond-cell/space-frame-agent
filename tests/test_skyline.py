@@ -283,7 +283,7 @@ def _shuffle_ids(payload: dict, seed: int = 3) -> dict:
     ids = [int(n["id"]) for n in payload["nodes"]]
     mixed = list(ids)
     np.random.default_rng(seed).shuffle(mixed)
-    return _renumber(payload, dict(zip(ids, mixed)))
+    return _renumber(payload, dict(zip(ids, mixed, strict=True)))
 
 
 def test_a_bad_numbering_costs_real_storage_and_rcm_gets_it_back():

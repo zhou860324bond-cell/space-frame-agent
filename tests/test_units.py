@@ -130,7 +130,9 @@ def test_internal_force_diagrams_are_the_same_in_both_systems(both, component):
     da = a.query_diagram(component=component, member=2, stations=9).payload
     db = b.query_diagram(component=component, member=2, stations=9).payload
     assert db["peak"] == pytest.approx(da["peak"], rel=1e-9, abs=1e-9)
-    for x, y in zip(da["values"], db["values"]):
+    # strict=True 在这里本身就是断言：两套单位制必须给出同样多的站点，
+    # 少给几个而被 zip 截掉的话，逐点比对就成了只比前几个的空检查
+    for x, y in zip(da["values"], db["values"], strict=True):
         assert y == pytest.approx(x, rel=1e-9, abs=1e-9)
 
 
