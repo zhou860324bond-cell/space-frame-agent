@@ -220,10 +220,16 @@ def is_amd_cpu(env: dict[str, str] | None = None) -> bool:
     """当前 CPU 是不是 AMD。Windows 看 PROCESSOR_IDENTIFIER，Linux 看 cpuinfo。
 
     env 可注入，否则测不了——真实调用传 None 即可。
+
+    **注入了就以注入为准，不再去读 /proc/cpuinfo。** 原先不是这样：注入的 env
+    只在"是 AMD"那条路上被采信，说"不是 AMD"时会继续掉进下面的 cpuinfo 分支，
+    把注入整个绕开。Windows 上没有 /proc/cpuinfo，靠 OSError 蒙对了；等 CI
+    第一次在 Linux 上跑就露了馅——GitHub 的 runner 是 AMD，于是注入 Intel
+    也返回 True，三条用例一起红。注入的意义就是"这次别看真机器"。
     """
-    identifier = (os.environ if env is None else env).get(
-        "PROCESSOR_IDENTIFIER", "")
-    if "AMD" in identifier.upper():
+    if env is not None:
+        return "AMD" in env.get("PROCESSOR_IDENTIFIER", "").upper()
+    if "AMD" in os.environ.get("PROCESSOR_IDENTIFIER", "").upper():
         return True
     try:
         with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as handle:
