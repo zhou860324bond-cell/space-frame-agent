@@ -34,7 +34,19 @@ use_utf8()
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 # 按模块名找，而不是按目录写死——布局变了指纹也还算得出来
-FINGERPRINT_MODULES = ("frame3d.py", "model_io.py", "generator.py", "agent.py",
+#
+# **agent_tools.py 必须在列。** 指纹把 agent.py 列进来的本意是盯住工具描述
+# （"工具描述一改就等于提示词变了"），但那 1180 行 TOOLS 后来搬去了
+# agent_tools.py。只留 agent.py 的话，改一个工具描述指纹察觉不到——
+# 指纹还在，保护没了。这是搬文件时漏掉的一处，补回来。
+#
+# session_*.py 同理：Session 的方法体从 agent.py 搬了出去，而工具的实际
+# 行为就在那些方法里。指纹要绑的是"这一版代码"，不是"这一个文件"。
+FINGERPRINT_MODULES = ("frame3d.py", "model_io.py", "generator.py",
+                       "agent.py", "agent_tools.py",
+                       "session_base.py", "session_modeling.py",
+                       "session_loads.py", "session_solving.py",
+                       "session_query.py", "session_checks.py",
                        "plot3d.py", "cases.py", "score.py")
 _SKIP_DIRS = {".venv", "__pycache__", ".pytest_cache", ".git"}
 
