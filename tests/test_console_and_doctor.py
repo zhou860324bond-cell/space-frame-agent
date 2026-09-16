@@ -208,8 +208,14 @@ def test_the_doctor_runs_on_its_own_without_the_launcher():
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
+    # encoding 要写死成 utf-8：doctor 那边把 stdout 定死成了 UTF-8（它的输出
+    # 全是中文，跟着系统代码页走会在英文 Windows 上直接 UnicodeEncodeError），
+    # 这边就不能再用本机默认编码去解——中文 Windows 上默认是 gbk，解 UTF-8
+    # 会 UnicodeDecodeError，text=True 吞掉异常后 stdout 直接变成 None。
+    # 两头都定死，这条测试才不看机器脸色。
     got = subprocess.run([sys.executable, "-m", "desktop.doctor"],
                          cwd=root, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace",
                          env={**os.environ, "PYTHONPATH": "",
                               "QT_QPA_PLATFORM": "offscreen"})
     assert "No module named" not in got.stdout, got.stdout
