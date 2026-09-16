@@ -115,7 +115,7 @@ def _numeric_equal(prediction: dict[str, Any], truth: dict[str, Any]) -> bool:
         return False
     return len(actual) == len(expected) and all(
         abs(got - wanted) <= max(tolerance, 1.0e-6 * abs(wanted))
-        for (got, _), (wanted, tolerance) in zip(actual, expected))
+        for (got, _), (wanted, tolerance) in zip(actual, expected, strict=True))
 
 
 def evaluate_manifest(path: str | Path = DEFAULT_MANIFEST) -> dict[str, Any]:

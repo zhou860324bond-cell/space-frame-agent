@@ -69,7 +69,7 @@ def main() -> None:
     out = run_turn("三跨 6 米、两层层高 3.6 米、开间 6 米的钢框架，梁上 20 kN/m",
                    provider, session=session)
 
-    for index, ((name, args), (_, payload)) in enumerate(zip(out.tool_calls, record), 1):
+    for index, ((name, args), (_, payload)) in enumerate(zip(out.tool_calls, record, strict=True), 1):
         shown = {k: v for k, v in args.items() if k not in {"materials", "sections", "model"}}
         print(f"\n[{index}] {name}  {json.dumps(shown, ensure_ascii=False)}")
 

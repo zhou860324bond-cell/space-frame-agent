@@ -65,7 +65,9 @@ def parse_dat(path: str | Path) -> dict[int, dict[str, float]]:
             continue
         node = int(row.group(1))
         record = out.setdefault(node, {})
-        for name, value in zip(columns, values):
+        # 上面只挡了 values 比 columns 短的行；长出来的列是 .dat 常有的
+        # 尾随字段，表头没给名字，截掉正是想要的
+        for name, value in zip(columns, values, strict=False):
             record[name] = value
     for record in out.values():
         for field in _FIELDS:
