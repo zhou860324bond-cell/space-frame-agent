@@ -638,3 +638,38 @@ def test_the_band_cuts_and_the_range_cuts_come_from_one_place():
     assert [g[0] for g in got] == [0.0, 1.0, 3.0]
     assert [g[1] for g in got] == [1.0, 3.0, 4.0]
     assert [g[2] for g in got] == [0.5, 2.0, 3.5]     # 段中点的值
+
+
+# ------------------------------------------------- 裁剪必须把数字说出来
+
+def test_clipped_caption_says_how_much_was_clipped():
+    """色标裁剪时，说明文字里必须带上「裁到哪儿」的数字。
+
+    原先只写 `display clipped at p95`——它说了"裁过"，没说"裁到哪儿"。
+    实测一个门式刚架 p95 只有真实峰值的 58%：**照色标读数会低估四成**，
+    而光看 "clipped at p95" 是猜不到这个幅度的。
+
+    注意这里不是说裁剪本身有问题。刚架内力是重尾分布，不裁的话绝大多数
+    构件是同一个颜色，云图等于没有信息（理由见 scene.CONTOUR_PERCENTILE）。
+    要拦的是**裁了却不说裁了多少**。
+
+    文字一律 ASCII：VTK 的默认字体没有中文字形。
+    """
+    cap = scene.contour_caption("Mz", "kN.m", clipped=True, levels=12,
+                                scale_max=40.4, true_peak=69.2)
+    assert "clipped at p95" in cap
+    assert "40.4" in cap, "要写出色标上限"
+    assert "69.2" in cap, "要写出真实峰值"
+    assert "58%" in cap, "要写出上限占峰值的比例——这才是可读的那个数"
+    assert cap.isascii(), "视口文字必须是 ASCII：VTK 默认字体没有中文字形"
+
+
+def test_unclipped_caption_says_nothing_about_clipping():
+    cap = scene.contour_caption("Mz", "kN.m", clipped=False, levels=12)
+    assert "clipped" not in cap
+
+
+def test_clipped_caption_degrades_gracefully_without_numbers():
+    """拿不到峰值时仍要说「裁过」，只是说不出裁到哪儿——不能整句消失。"""
+    cap = scene.contour_caption("Mz", "kN.m", clipped=True, levels=12)
+    assert "clipped at p95" in cap

@@ -1027,7 +1027,11 @@ class Viewport(QWidget):
             bar_title, position=(0.795, 0.735), viewport=True,
             color=theme.VIEWPORT_INK, font_size=10, name="_contour_bar_title")
         self.plotter.add_text(
-            scene.contour_caption(component, unit, clipped, sign_filter, n),
+            scene.contour_caption(
+                component, unit, clipped, sign_filter, n,
+                scale_max=max(abs(clim[0]), abs(clim[1])),
+                true_peak=float(np.abs(np.asarray(line[component])).max())
+                if line.n_points else None),
             position="upper_left", color=theme.VIEWPORT_INK,
             font_size=9, name="_contour_definition")
         if overlay_deformed:
