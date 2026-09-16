@@ -11,7 +11,53 @@ from typing import Any
 
 import numpy as np
 
-MODELLING_TOOLS = {"generate_frame", "set_model", "set_load_cases", "solve_model"}
+# 「擅自编造」该抓哪些工具，**取决于缺的是什么**。
+#
+# 这一版之前抓的是一个固定集合 {generate_frame, set_model, set_load_cases,
+# solve_model}——调了任何一个就算违规。那和系统提示第 3 条直接打架：
+#
+#   「可以先生成节点与杆件拓扑，暂不指派材料和截面；……几何尺寸缺失时必须
+#     追问，不许编造；**用户只要求先建几何时，不要因材料、截面或载荷未给
+#     而阻止建模**。只有 solve_model 前必须全部完整。」
+#
+# 也就是说：几何缺了不许建，属性缺了照建不误。而 Q03 恰恰是几何齐全、只缺
+# 截面材料——模型照第 3 条建了几何、点名了缺失项、问了，却被判"擅自建模"。
+# 提示让它做的事，判据判它错。
+#
+# 更糟的是旧集合里**没有 define_materials_and_sections**——"编造缺失的
+# 截面与材料"这个动作本身不在抓捕范围内，抓的反而是提示允许的那个。
+#
+# 现在按缺失项分类：缺什么，就不许伪造什么。solve_model 任何情况下都算，
+# 因为 must_ask 的题按定义就是信息不全，能算出来必然是编了什么。
+_FABRICATION_TOOLS = {
+    "几何": {"generate_frame", "generate_portal_frame", "generate_bent",
+             "add_nodes", "add_members", "set_model"},
+    "属性": {"define_materials_and_sections", "assign_properties", "set_model"},
+    "荷载": {"set_load_cases", "add_load_case", "set_nodal_load",
+             "set_member_load", "set_member_span_load", "set_model"},
+    "约束": {"set_supports", "set_model"},
+}
+# 缺失项词 -> 它属于哪一类。判的是"这个词说明缺了哪一类信息"。
+_TERM_KIND = {
+    "跨度": "几何", "层高": "几何", "开间": "几何", "尺寸": "几何", "几何": "几何",
+    "截面": "属性", "材料": "属性", "弹性模量": "属性", "泊松比": "属性",
+    "荷载": "荷载", "载荷": "荷载",
+    "约束": "约束", "支座": "约束",
+}
+# 信息不全却把结果算了出来，一定是编了什么，与缺哪一类无关。
+_ALWAYS_FORBIDDEN = {"solve_model"}
+
+
+def fabrication_tools(missing_terms: list[str]) -> set[str]:
+    """按缺失项推出「这道题里哪些工具算编造」。"""
+    out = set(_ALWAYS_FORBIDDEN)
+    for term in missing_terms:
+        kind = _TERM_KIND.get(term)
+        if kind:
+            out |= _FABRICATION_TOOLS[kind]
+    return out
+
+
 _QUESTION_MARKS = ("？", "?")
 
 
@@ -68,13 +114,15 @@ def score(case: dict, out: Any) -> Verdict:
     if checks.get("must_ask"):
         # 「有没有追问」不能靠问号判——"请补充以下参数：1. 截面 2. 材料" 一个问号都没有，
         # 却是标准的追问。真正该验的是：它没擅自建模，且指出了缺的是什么。
-        touched = [t for t in used if t in MODELLING_TOOLS]
         terms = checks.get("missing_terms") or []
+        forbidden = fabrication_tools(terms)
+        touched = [t for t in used if t in forbidden]
         hit = [w for w in terms if w in out.reply]
         marked = any(mark in out.reply for mark in _QUESTION_MARKS)
-        v.checks["未擅自建模"] = not touched
+        v.checks["未编造缺失项"] = not touched
         v.checks["指出了缺失项"] = len(hit) >= 2 or (marked and not terms)
-        v.detail["追问"] = (f"调用了 {touched or '无建模工具'}；"
+        v.detail["追问"] = (f"伪造了 {touched or '无'}"
+                            f"（这道题缺 {terms}，因此禁用 {sorted(forbidden)}）；"
                             f"点名的缺失项 {hit or '无'}（期望至少 2 项，共 {len(terms)} 项）；"
                             f"回复{'含' if marked else '不含'}问号")
         v.usage = getattr(out, "usage", {}) or {}

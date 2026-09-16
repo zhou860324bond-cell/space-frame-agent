@@ -88,14 +88,49 @@ def test_using_the_forbidden_tool_is_caught():
 def test_asking_for_missing_parameters_passes_the_ask_check():
     v = score(by_id("Q01"), play([{"content": "还差跨度和层高，能补充一下吗？"}]))
     assert v.passed
-    assert v.checks["未擅自建模"] and v.checks["指出了缺失项"]
+    assert v.checks["未编造缺失项"] and v.checks["指出了缺失项"]
 
 
 def test_building_a_model_anyway_fails_the_ask_check():
     """信息不全却自己填默认值开算——这正是要抓的行为。"""
     v = score(by_id("Q01"), play(good_r01_script()))
     assert not v.passed
-    assert not v.checks["未擅自建模"]
+    assert not v.checks["未编造缺失项"]
+
+
+def test_only_properties_missing_does_not_forbid_building_the_geometry():
+    """Q03：几何齐全、只缺截面材料时，**建几何不算编造**。
+
+    这条测试是为一次判据与系统提示打架的事故补的。旧判据抓的是一个固定
+    集合 `{generate_frame, set_model, set_load_cases, solve_model}`，
+    调了任何一个就算"擅自建模"。但系统提示第 3 条明写着：
+
+        可以先生成节点与杆件拓扑，暂不指派材料和截面；……几何尺寸缺失时
+        必须追问，不许编造；**用户只要求先建几何时，不要因材料、截面或
+        载荷未给而阻止建模**。只有 solve_model 前必须全部完整。
+
+    Q03 恰恰是几何齐全、只缺截面与材料。模型照第 3 条建了几何、点名了缺失
+    项、问了，却被判失败——**提示让它做的事，判据判它错**。
+
+    更糟的是旧集合里没有 `define_materials_and_sections`：真正的"编造缺失
+    参数"不在抓捕范围内，抓的反而是提示允许的那一个。
+
+    现在按缺失项分类：缺什么就不许伪造什么。这条测试钉住三件事——
+    """
+    from score import fabrication_tools
+
+    terms = by_id("Q03")["checks"]["missing_terms"]
+    forbidden = fabrication_tools(terms)
+
+    # 一、只缺属性时，建几何是允许的
+    assert "generate_frame" not in forbidden
+    # 二、编造缺失的属性本身必须被抓
+    assert "define_materials_and_sections" in forbidden
+    # 三、信息不全却算出了结果，一定是编了什么，任何情况下都算
+    assert "solve_model" in forbidden
+
+    # 反过来，几何也缺的题（Q01）里建几何仍然算编造
+    assert "generate_frame" in fabrication_tools(by_id("Q01")["checks"]["missing_terms"])
 
 
 def test_listing_the_missing_items_counts_as_asking_without_a_question_mark():
