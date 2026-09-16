@@ -393,7 +393,7 @@ class MainWindow(QMainWindow):
             return
         try:
             handler(cmd) if _takes_command(handler) else handler()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  命令执行的界面边界：异常要变成对话框，不能把主窗口带走；类名与消息都展示了
             QMessageBox.critical(self, f"{cmd.label} 失败",
                                  f"错误：{type(e).__name__}: {str(e)}")
             import traceback
@@ -2180,7 +2180,7 @@ class MainWindow(QMainWindow):
                 f"已从草图生成模型：{n_node} 节点 / {n_mem} 杆件"
                 f"（{bays} 榀，榀距 {bay_len}m）", 6000)
             self.refresh()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  同上，出图这一路；错误文本原样进对话框
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "草图生成失败", f"错误：{str(e)}")
             import traceback

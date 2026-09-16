@@ -348,7 +348,7 @@ class SketchCanvas(QWidget):
             p.setFont(QFont("Arial", 10))
             p.drawText(10, self.height() - 10,
                        f"坐标: ({wx:.2f}, {wy:.2f})   缩放: {self.scale:.0f}x")
-        except Exception:
+        except Exception:  # noqa: BLE001  同上；且必须走到下面的 painter.end()，否则 QBackingStore 会报错
             # 绘制出错时也要结束 painter，避免 QBackingStore 错误
             import traceback
             traceback.print_exc()

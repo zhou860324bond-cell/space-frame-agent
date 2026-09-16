@@ -173,7 +173,7 @@ class QueryMixin:
                                     mapping=self.compilation.mapping)
             else:
                 return ToolResult(False, {"error": f"不支持的图类型 {kind!r}"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  工具边界：失败要变成 ToolResult(False)，类名与消息都在 payload 里
             return ToolResult(False, {"error": f"绘图失败：{type(exc).__name__}: {exc}"})
         info["note"] = "图已保存供用户查看；引用数字请用 query_results，不要从图上读数"
         return ToolResult(True, info)

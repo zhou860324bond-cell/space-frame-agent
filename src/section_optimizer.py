@@ -225,7 +225,7 @@ class SectionOptimizer:
                 params=params, objectives=objectives, constraints=constraints,
                 feasible=feasible, duration_ms=(time.monotonic() - start) * 1000,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  单个候选截面算不出来只标 feasible=False 继续搜；error 字段留了原文
             return EvaluationPoint(
                 params=params, objectives={}, constraints={}, feasible=False,
                 error=f"{type(e).__name__}: {e}",

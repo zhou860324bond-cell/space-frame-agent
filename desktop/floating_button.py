@@ -71,7 +71,7 @@ class FloatingAgentButton(QWidget):
             p.setPen(QColor(theme.INK_MUTED))
             p.drawText(QRect(0, 34, self.width(), 28),
                        Qt.AlignmentFlag.AlignCenter, ">")
-        except Exception:
+        except Exception:  # noqa: BLE001  Qt 绘制回调里异常会被吞成静默重绘失败，这里打完整 traceback 再放过
             import traceback
             traceback.print_exc()
         finally:

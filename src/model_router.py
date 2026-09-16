@@ -193,7 +193,7 @@ class ModelRouter:
                 if i > 0:
                     self._fallback_count += 1
                 return result
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  一个模型失败要记进 call_history 再回退到下一个；error 字段留了原文
                 duration = 0.0
                 self.call_history.append(CallRecord(
                     model=config.name, success=False, duration_ms=duration,
