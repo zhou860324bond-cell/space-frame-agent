@@ -237,7 +237,7 @@ def check_near_singular_stiffness(model: Frame, sol: Solution) -> dict[str, Any]
         try:
             from scipy.sparse.linalg import onenormest
             cond = float(onenormest(K) * onenormest(sp.linalg.inv(K.tocsc())))
-        except Exception:
+        except Exception:  # noqa: BLE001  条件数估不出来就记 -1.0，下游 `if cond < 0` 会出一条 finding
             cond = -1.0  # 无法估计
 
     if cond < 0:

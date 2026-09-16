@@ -128,7 +128,7 @@ def run_case(index: int, case: dict, model: str, max_rounds: int,
     started = time.time()
     try:
         out = run_turn(case["prompt"], provider, session=Session(), max_rounds=max_rounds)
-    except Exception as exc:                      # 网络、鉴权、模型名错误都在这里现形
+    except Exception as exc:  # noqa: BLE001  探针脚本：网络/鉴权/模型名错误都要原样打给用户看
         print(f"调用失败：{type(exc).__name__}: {exc}")
         print("常见原因：密钥无效、模型名不对、本机无法访问 api.deepseek.com")
         return

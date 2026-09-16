@@ -37,7 +37,7 @@ def run_one(case: dict, api_key: str, model: str, max_rounds: int) -> Verdict:
     try:
         provider = DeepSeekProvider(api_key=api_key, model=model)
         out = run_turn(case["prompt"], provider, session=Session(), max_rounds=max_rounds)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  评测要跑满所有题：一题崩了记进 Verdict.error 继续下一题
         v = Verdict(case_id=case["id"], category=case["category"])
         v.error = f"{type(exc).__name__}: {exc}"
         v.seconds = time.time() - started

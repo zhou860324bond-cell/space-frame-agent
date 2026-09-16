@@ -169,7 +169,7 @@ def _write_vtu_and_png(mesh: solid3d.SolidMesh, result: solid3d.SolidResult,
         plotter.view_isometric()
         plotter.show(screenshot=png, auto_close=True)
         return vtu, png
-    except Exception:                           # 图形环境不是数值求解的前置条件
+    except Exception:  # noqa: BLE001  图形环境不是数值求解的前置条件；数值结果已算完
         return None, None
 
 

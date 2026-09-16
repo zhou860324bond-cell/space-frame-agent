@@ -20,7 +20,7 @@ from sections import i_section
 HAS_QT = True
 try:                                    # 没装 Qt 时只跳过要开窗的测试
     from PySide6.QtWidgets import QApplication
-except Exception:                       # pragma: no cover
+except Exception:  # noqa: BLE001  import 探测：没装 Qt 就跳过要开窗的测试  pragma: no cover
     HAS_QT = False
 
 needs_qt = pytest.mark.skipif(not HAS_QT, reason="未安装 PySide6")
