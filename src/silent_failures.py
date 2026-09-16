@@ -220,9 +220,72 @@ def check_zero_internal_force(model: Frame, sol: Solution) -> dict[str, Any]:
 # 检测项 4: 刚度矩阵接近奇异
 # ---------------------------------------------------------------------------
 
+def check_no_applied_load(model: Frame, sol: Solution) -> dict[str, Any]:
+    """一个荷载都没有，却照样求出了一套（全零的）结果。
+
+    **这是 zero_reaction_with_load / zero_internal_force 两项的盲区。**
+    那两条的前提都是"有外载荷"——没有载荷时它们直接跳过，于是最基本的一种
+    静默失败反而没人管：求解返回 ok=True，内力弯矩全零，界面上看不出异常。
+
+    真实的触发路径至少有两条，都不罕见：
+
+    * `set_load_cases` 因为杆件号写错而**失败**（它会如实报错并保持原模型
+      不变），但调用方没看返回值就接着 solve；
+    * 建了工况却没往里放荷载——空工况是被接受的。
+
+    全零结果"肉眼看就是错的"，但只有人看才看得出来。这条检测就是替人看。
+    """
+    loaded = []
+    for name in sol.all_results():
+        magnitude = float(np.linalg.norm(_total_applied_load(model, name)))
+        if magnitude > 1e-10:
+            loaded.append(name)
+
+    if loaded:
+        return _finding(
+            "no_applied_load", "求解时没有任何荷载", SEVERITY_CRITICAL, STATUS_PASS,
+            f"{len(loaded)} 个工况有非零外载荷",
+            {"loaded_cases": loaded},
+        )
+    return _finding(
+        "no_applied_load",
+        "求解时没有任何荷载",
+        SEVERITY_CRITICAL,
+        STATUS_FAIL,
+        f"全部 {len(sol.all_results())} 个工况的外载荷合力都是零——"
+        "这次求解的结果必然是全零位移、全零内力，不代表任何受力状态",
+        {"cases": sorted(sol.all_results())},
+        "检查两件事：一是 set_load_cases / set_member_load 是否返回了 ok=False"
+        "（杆件号写错时它会报错并保持原模型不变，此时荷载根本没写进去）；"
+        "二是工况里是不是只有名字、没有荷载条目。",
+    )
+
+
 def check_near_singular_stiffness(model: Frame, sol: Solution) -> dict[str, Any]:
-    """刚度矩阵条件数过大 — 接近奇异，可能有机构位移模式或数值不稳定。"""
-    K = sol.K
+    """刚度矩阵条件数过大 — 接近奇异，可能有机构位移模式或数值不稳定。
+
+    **必须算施加边界条件【之后】的矩阵。** `sol.K` 是原始总刚，里面还留着
+    没被约束住的刚体位移模式——空间问题恒有 6 个，所以它**按定义就奇异**，
+    条件数恒在 1e17~1e19。
+
+    原先直接拿 sol.K 算，后果是这一项对**任何模型**都报 critical：一个柱底
+    固接的门式刚架和一个真正的机构给出同一个数。一个 100% 误报的 critical
+    比没有更糟——它让人学会忽略整块告警，真信号跟着一起被埋掉。
+    （实测：正常门式刚架 24×24、秩 18、亏秩正好 6，条件数 1.21e+19。）
+
+    取自由自由度的子矩阵，口径和 frame3d.solve 里那一步完全一致。
+    """
+    from frame3d import constrained_dofs
+
+    full = sol.K
+    fixed = constrained_dofs(model)
+    free = np.setdiff1d(np.arange(full.shape[0]), fixed)
+    if free.size == 0:
+        return _finding(
+            "near_singular_stiffness", "刚度矩阵接近奇异", SEVERITY_WARNING,
+            STATUS_WARN, "所有自由度都被约束，没有可解的方程",
+            suggestion="检查是否把整个结构都固定住了。")
+    K = full[free][:, free]
     n = K.shape[0]
 
     # 小矩阵转稠密算精确条件数；大矩阵用范数估计
@@ -494,6 +557,7 @@ ALL_CHECKS: list[tuple[str, Callable[[Frame, Solution], dict[str, Any]]]] = [
     ("excessive_displacement", check_excessive_displacement),
     ("zero_reaction_with_load", check_zero_reaction_with_load),
     ("zero_internal_force", check_zero_internal_force),
+    ("no_applied_load", check_no_applied_load),
     ("near_singular_stiffness", check_near_singular_stiffness),
     ("reaction_load_balance", check_reaction_load_balance),
     ("load_magnitude_anomaly", check_load_magnitude_anomaly),
