@@ -90,7 +90,7 @@ def _auto_scale(frame, solution, case: str) -> float:
     size = float(np.max(coords.max(axis=0) - coords.min(axis=0))) or 1.0
     peak = float(max_centerline_displacement(
         frame, solution, case, stations=201)["value"])
-    return 1.0 if peak <= 0 else 0.05 * size / peak
+    return T.safe_scale(size, peak, 0.05) or 1.0
 
 
 def figure_deformed(frame, solution, case: str | None = None,
@@ -295,7 +295,7 @@ def figure_diagram_3d(frame, solution, component: str = "Mz",
 
     coords = np.array([n.xyz for n in frame.nodes.values()])
     size = float(np.max(coords.max(axis=0) - coords.min(axis=0))) or 1.0
-    factor = scale if scale is not None else (0.09 * size / peak if peak > 0 else 0.0)
+    factor = scale if scale is not None else T.safe_scale(size, peak, 0.09)
 
     # 局部 y 承载 Vy / Mz，局部 z 承载 Vz / My；N 与 T 沿局部 y 摊开即可
     axis_index = 2 if component in {"Vz", "My"} else 1

@@ -88,9 +88,9 @@ def _autoscale(frame, solution, case: str) -> float:
         size = float(np.max(coords.max(axis=0) - coords.min(axis=0)))
     peak = float(max_centerline_displacement(
         frame, solution, case, stations=201)["value"])
-    if peak <= 0 or size <= 0:
-        return 1.0
-    return 0.05 * size / peak
+    # 1.0 是"不放大"，和 safe_scale 的 0.0（压平）不同：变形图没有可见
+    # 位移时按原尺寸画整个结构才对，压平会把模型也压没。
+    return T.safe_scale(size, peak, 0.05) or 1.0
 
 
 def _physical_location(frame, mapping, element_id: int,
@@ -522,7 +522,7 @@ def plot_diagram(frame, solution, component: str = "Mz", case: str | None = None
     peak = max((abs(d.extreme(component)[1]) for d in diagrams.values()), default=0.0)
     coords = np.array([n.xyz for n in frame.nodes.values()])
     size = float(np.max(coords.max(axis=0) - coords.min(axis=0))) or 1.0
-    factor = scale if scale is not None else (0.09 * size / peak if peak > 0 else 0.0)
+    factor = scale if scale is not None else T.safe_scale(size, peak, 0.09)
     axis_index = 2 if component in {"Vz", "My"} else 1
     draw_sign = -1.0 if component in {"My", "Mz"} else 1.0
 
