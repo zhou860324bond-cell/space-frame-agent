@@ -338,15 +338,108 @@ def from_dict(data: dict[str, Any]) -> Frame:
     return f
 
 
+# 校验信息里出现的字段名 -> 用户看得懂的说法。
+#
+# 这些名字是 Domain IR 的键，写给程序看的；界面上直接印 `materials` 或
+# `ref_vector`，等于让用户去猜。缺的不翻就保留原名——猜错比不翻更糟。
+_FIELD_CN = {
+    "materials": "材料", "sections": "截面", "supports": "支座",
+    "nodes": "节点", "members": "杆件", "load_cases": "荷载工况",
+    "combos": "工况组合", "sets": "集合", "units": "单位制",
+    "nodal_loads": "节点荷载", "member_loads": "杆件均布荷载",
+    "member_spans": "杆间荷载", "member_strains": "初应变",
+    "settlements": "支座沉降", "releases": "杆端释放",
+    "ref_vector": "截面参考向量", "offset_i": "i 端偏移",
+    "offset_j": "j 端偏移", "fix": "约束方向", "factors": "组合系数",
+    "section": "截面", "material": "材料", "member": "杆件", "node": "节点",
+    "name": "名称", "kind": "类型", "id": "编号",
+}
+
+
+# jsonschema 的类型词也不该甩给用户。
+_TYPE_CN = {"number": "数字", "integer": "整数", "string": "文字",
+            "array": "一组值", "object": "一个对象", "boolean": "是/否"}
+
+
+def _field_cn(name: str) -> str:
+    """字段名的中文说法；没收录的原样返回。"""
+    cn = _FIELD_CN.get(name)
+    return f"{cn}（{name}）" if cn else name
+
+
+def _humanize_schema_error(error) -> str:
+    """把 jsonschema 的英文报错翻成人话。
+
+    **为什么要翻**：`validate_payload` 的清单最初是写给大模型看的，后来被
+    原样接到了桌面端的校验面板上。于是一个中文界面、面向结构力学学生的软件，
+    在用户最需要帮助的错误路径上，印出来的是
+
+        [结构] (根): 'materials' is a required property
+
+    学生要的是"还没有定义材料"。实测建完几何点开「3 校验」，三条报错全是
+    这种原文。
+
+    **原文不丢**：认得出的模式翻成中文并在括号里附上原文，认不出的原样保留。
+    校验信息是排障用的，宁可啰嗦也不能少信息——把没见过的模式翻成一句笼统的
+    "格式不对"，比不翻更糟。
+    """
+    message = error.message
+    validator = getattr(error, "validator", None)
+
+    if validator == "required":
+        # "'materials' is a required property"
+        missing = message.split("'")[1] if "'" in message else ""
+        if missing:
+            return f"缺少{_field_cn(missing)}，还没有定义"
+    elif validator == "minItems":
+        # 位置前缀已经写了是哪一项，这里不再重复
+        return "还是空的，至少要有一条"
+    elif validator == "type":
+        want = error.validator_value
+        cn = _TYPE_CN.get(want if isinstance(want, str) else "", want)
+        return f"填的东西类型不对，这里要的是{cn}（原文：{message}）"
+    elif validator in {"minimum", "exclusiveMinimum"}:
+        return f"数值太小：不得小于 {error.validator_value}（原文：{message}）"
+    elif validator in {"maximum", "exclusiveMaximum"}:
+        return f"数值太大：不得大于 {error.validator_value}（原文：{message}）"
+    elif validator == "enum":
+        allowed = "、".join(str(x) for x in (error.validator_value or []))
+        return f"取值不在允许范围内，只能是：{allowed}（原文：{message}）"
+    elif validator == "additionalProperties":
+        return f"有不认识的字段（原文：{message}）"
+    return message
+
+
+def _last_key(error) -> str:
+    """出错位置路径上最后一个字段名，用来说清"哪一项"不能为空。"""
+    for part in reversed(list(error.absolute_path)):
+        if isinstance(part, str):
+            return part
+    return ""
+
+
+def _error_location(error) -> str:
+    """出错位置，字段名翻成中文。"""
+    parts = [_field_cn(p) if isinstance(p, str) else f"第 {int(p) + 1} 条"
+             for p in error.absolute_path]
+    return " / ".join(parts) or "模型根层"
+
+
 def validate_payload(data: dict[str, Any]) -> list[str]:
-    """两级校验：schema 结构 + 模型语义。返回给大模型的错误清单。"""
+    """两级校验：schema 结构 + 模型语义。
+
+    **这份清单既给大模型看，也直接显示在桌面端的校验面板上。** 早先只写给
+    模型，于是 schema 那一层原样透出 jsonschema 的英文原文——用户点开
+    「3 校验」，看到的是 `'materials' is a required property`。现在结构层
+    的信息也翻成中文（见 `_humanize_schema_error`），原文在括号里保留。
+    """
     errors: list[str] = []
     try:
         import jsonschema
         v = jsonschema.Draft202012Validator(MODEL_SCHEMA)
         for e in sorted(v.iter_errors(data), key=lambda e: list(e.path)):
-            loc = "/".join(str(p) for p in e.path) or "(根)"
-            errors.append(f"[结构] {loc}: {e.message}")
+            errors.append(
+                f"[结构] {_error_location(e)}：{_humanize_schema_error(e)}")
     except ImportError:
         errors.append("[提示] 未安装 jsonschema，跳过结构校验")
     except AttributeError:

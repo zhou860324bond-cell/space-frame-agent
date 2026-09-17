@@ -747,8 +747,16 @@ class Viewport(QWidget):
         支座和荷载靠形状区分，但形状是要学的；没有图例，用户只能猜那个小锥子
         是铰接还是滚动。**符号系统必须自带说明**，否则它只是好看，不是可读。
         条目为空时不画——一个空框比没有框更碍事。
+
+        **只有杆件那一条时也不画。** 刚建完几何、还没加支座和荷载时，图例里
+        就剩一条 "Member"——而一根管子是不需要解释的。实测那一步左上角浮着
+        一个只写着 "Member" 的灰标签，在全中文界面里像个没删干净的调试残留。
+        图例存在的理由是解释**要学的符号**；没有要学的东西就别占那块地方。
         """
         if not entries:
+            return
+        explainable = [e for e in entries if e[0] != _LEGEND_TEXT["杆件"]]
+        if not explainable:
             return
         try:
             self.plotter.add_legend(

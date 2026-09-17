@@ -673,3 +673,37 @@ def test_clipped_caption_degrades_gracefully_without_numbers():
     """拿不到峰值时仍要说「裁过」，只是说不出裁到哪儿——不能整句消失。"""
     cap = scene.contour_caption("Mz", "kN.m", clipped=True, levels=12)
     assert "clipped at p95" in cap
+
+
+# ------------------------------------------- 图例只在有东西要解释时才出现
+
+def test_legend_is_skipped_when_only_members_are_drawn():
+    """刚建完几何、还没加支座和荷载时，不该浮一个只写 "Member" 的标签。
+
+    图例存在的理由写在 `_add_legend` 的 docstring 里：支座靠形状区分，
+    而形状是要学的，所以符号系统必须自带说明。**但一根管子不需要解释。**
+
+    实测：参数化建完 24 节点 / 36 杆件之后，视口左上角浮着一个灰色标签，
+    上面只有一个英文单词 "Member"——在全中文界面里像没删干净的调试残留，
+    而且它什么也没说明。
+    """
+    from desktop import viewport as vp
+
+    calls = []
+
+    class Fake:
+        def add_legend(self, **kw):
+            calls.append(kw)
+
+    view = vp.Viewport.__new__(vp.Viewport)
+    view.plotter = Fake()
+
+    view._add_legend([(vp._LEGEND_TEXT["杆件"], "#fff")])
+    assert not calls, "只有杆件时不该画图例"
+
+    view._add_legend([(vp._LEGEND_TEXT["杆件"], "#fff"),
+                      (vp._LEGEND_TEXT["固接"], "#888")])
+    assert calls, "有支座要解释时必须画"
+    labels = [row[0] for row in calls[0]["labels"]]
+    assert vp._LEGEND_TEXT["固接"] in labels
+    assert vp._LEGEND_TEXT["杆件"] in labels, "画的时候杆件那条仍然留着"
