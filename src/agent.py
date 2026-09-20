@@ -666,7 +666,17 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         self.result_db = None
 
     def _applied_load_magnitude(self, case: str) -> float:
-        """该工况施加的荷载总量级，用来分辨"没有荷载"和"荷载被约束吃掉了"。"""
+        """该工况施加的荷载总量级，用来分辨"没有荷载"和"荷载被约束吃掉了"。
+
+        **member_spans 必须算进来。** 漏掉它的后果不是数字偏小，而是整条
+        警告失灵：只用梯形/跨中集中力加载的模型，这里会算出 0，于是
+        solve_model 里"有荷载但位移为零"那一支永远进不去——反力 60 kN、
+        位移 0、一句提示都没有。silent_failures._total_applied_load 早就
+        因为同一个原因修过（见那个函数的 docstring），当时没传播到这里。
+
+        量的是**荷载强度的绝对值之和**，不是合力：自平衡的荷载（比如反对称
+        梯形）合力为零，但它确实是一份荷载，不该被当成"没加载"。
+        """
         load_case = self.frame.load_cases.get(case)
         if load_case is None:                      # 组合：按系数合成后再看
             factors = self.frame.combos.get(case, {})
@@ -679,6 +689,10 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
             total += float(np.abs(np.asarray(load, dtype=float)).sum())
         for w in load_case.member_loads.values():
             total += float(np.abs(np.asarray(w, dtype=float)).sum())
+        for loads in (load_case.member_spans or {}).values():
+            for item in loads:
+                total += float(np.abs(np.asarray(item.w1, dtype=float)).sum())
+                total += float(np.abs(np.asarray(item.w2, dtype=float)).sum())
         return total
 
     def _reference_length(self) -> float:

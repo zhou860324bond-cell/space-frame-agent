@@ -370,6 +370,88 @@ def test_out_of_plane_load_on_a_plane_frame_is_flagged_as_zero_displacement():
     assert "warning" in case and "位移为零" in case["warning"]
 
 
+def simply_supported_beam(load):
+    """单跨简支梁，节点只有两端——跨中挠度**不在任何节点上**。
+
+    这正是"节点最大位移"会骗人的最小模型：model_compiler 只在集中力位置和
+    显式内节点处剖分，满跨均布/梯形不触发剖分，于是跨中没有节点可查。
+    """
+    s = Session()
+    s.define_materials_and_sections(MATERIALS, SECTIONS)
+    s.set_model({
+        "units": "N-m-Pa",
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": 6, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "section": "BEAM", "material": "STEEL"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                     {"node": 2, "fix": [0, 1, 1, 1, 0, 0]}],
+    })
+    load(s)
+    return s
+
+
+def test_headline_displacement_includes_deflection_inside_the_element():
+    """简支梁 6 m、20 kN/m：节点位移是 0，真实跨中挠度 16.38 mm。
+
+    以前 solve_model 的头条只报节点那一个数，于是"施加了 20 kN/m"和
+    "最大位移 0.0 mm"同时出现在一份结果里。内力早就做了单元内解析恢复
+    （internal_forces.member_deflection），位移这一路当时没接上来。
+    """
+    s = simply_supported_beam(lambda s: s.set_member_load(1, [0, 0, -20e3]))
+    case = s.solve_model().payload["cases"]["Load-1"]
+    assert case["max_displacement_mm"] == 0.0, "两端都被约束，节点位移本来就是 0"
+
+    E, Iz, L, w = 2.1e11, 3.0e-4, 6.0, 20e3
+    exact = 5 * w * L ** 4 / (384 * E * Iz) * 1000.0
+    assert case["max_deflection_mm"] == pytest.approx(exact, rel=1e-3)
+    assert case["at_x_m"] == pytest.approx(L / 2, abs=1e-6)
+
+
+def test_zero_nodal_displacement_is_explained_not_blamed_on_the_load():
+    """节点位移为零**不等于**荷载加错了，提示不能反过来诬告用户。
+
+    原来这两种情形共用一条警告"检查荷载方向"：
+    简支梁均布（正常，响应在单元内）与平面刚架面外荷载（真错）。
+    照着它去查荷载方向，前一种永远查不出问题。
+    """
+    s = simply_supported_beam(lambda s: s.set_member_load(1, [0, 0, -20e3]))
+    case = s.solve_model().payload["cases"]["Load-1"]
+    assert "warning" not in case, "正常的简支梁不该报警告"
+    assert "不是荷载加错了" in case["note"]
+    assert "max_deflection_mm" in case["note"]
+
+
+def test_span_only_loads_count_as_applied_load():
+    """只用 member_spans 加载时，"有荷载但位移为零"那一支不能失灵。
+
+    _applied_load_magnitude 原先只统计 nodal_loads 与 member_loads，
+    梯形/跨中集中力一概不算——于是纯跨荷载的模型算出 0，那条判据进不去，
+    结果是反力 60 kN、位移 0、**一句提示都没有**。
+    silent_failures._total_applied_load 早因同一个原因修过，没传播到这里。
+    """
+    s = simply_supported_beam(
+        lambda s: s.set_member_span_load(1, "trapezoid", [0, 0, 0], [0, 0, -20e3]))
+    case = s.solve_model().payload["cases"]["Load-1"]
+    # 编译后才有 frame；这个数就是那条判据的输入
+    assert s._applied_load_magnitude("Load-1") > 0.0
+    assert case["max_displacement_mm"] == 0.0
+    assert case["max_deflection_mm"] > 1.0, "三角形荷载下跨内确实有挠度"
+    assert "note" in case, "以前这里什么都不说"
+
+
+def test_frame_headline_deflection_beats_the_nodal_one():
+    """多层框架上两个数差一倍——这不是极端算例，是默认工况。"""
+    s = Session()
+    s.define_materials_and_sections(MATERIALS, SECTIONS)
+    beams = s.generate_frame(spans=[6.0, 6.0], storeys=[4.0],
+                             bays=[6.0]).payload["beam_member_ids"]
+    s.set_load_cases(cases=[{"name": "D", "member_loads":
+                             [{"member": m, "w": [0, 0, -20e3]} for m in beams]}])
+    case = s.solve_model().payload["cases"]["D"]
+    assert case["max_deflection_mm"] > 1.5 * case["max_displacement_mm"]
+    assert case["at_member"] in beams
+
+
 def test_no_load_at_all_raises_no_zero_displacement_warning():
     """真的没加荷载时不该报这条——那不是错误。"""
     s = Session()

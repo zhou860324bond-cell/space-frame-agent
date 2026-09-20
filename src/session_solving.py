@@ -73,6 +73,7 @@ class SolvingMixin:
         span = self._reference_length()
         U = self.units
         results = {}
+        view = self.result_db.solution_view(self.frame)
         for name, res in self.solution.all_results().items():
             node, mag = self._max_displacement(res)
             eq = check_equilibrium(self.frame, self.solution, name)
@@ -80,14 +81,35 @@ class SolvingMixin:
                      "at_node": node,
                      "equilibrium_ok": eq["ok"],
                      "equilibrium_residual": float(f"{eq['relative']:.3e}")}
+            # 节点位移**不是**最大位移。满跨均布下挠度全在单元内部，
+            # 节点那一栏可能只有真值的一半，简支梁更是直接报 0。
+            # 详见 _intra_member_deflection 的注释。
+            defl, defl_at = self._intra_member_deflection(view, name, entry)
+            governing = max(mag, defl)
             if mag <= 1e-12 and self._applied_load_magnitude(name) > 0.0:
+                axis = self._out_of_plane_load_axis(name)
+                if axis is not None:
+                    entry["warning"] = (
+                        f"有荷载但节点位移为零：模型的节点都在一个平面内，而这个"
+                        f"工况的荷载几乎全部沿平面法向 {axis}，也就是面外。"
+                        "平面刚架（bays 留空）的面外自由度是被自动约束的，"
+                        "面外荷载传不到节点上。检查荷载方向。"
+                        + (f"（max_deflection_mm 里那 {entry['max_deflection_mm']} mm "
+                           "是杆件在面外被两端夹住硬弯出来的，不代表结构真能这样受力。）"
+                           if defl > 1e-12 else ""))
+                elif defl > 1e-12:
+                    entry["note"] = (
+                        "节点位移为零是正常的，不是荷载加错了：这个工况的节点"
+                        "全被约束住，响应发生在单元内部。真实最大挠度看 "
+                        f"max_deflection_mm（{entry['max_deflection_mm']} mm，"
+                        f"在{defl_at}），校核挠跨比用它。")
+                else:
+                    entry["warning"] = (
+                        "有荷载但位移为零，且单元内部也没有挠度。常见原因：荷载"
+                        "全部作用在被约束死的方向上。检查荷载方向。")
+            elif span > 0 and governing > span / 200.0:
                 entry["warning"] = (
-                    "有荷载但位移为零。常见原因：荷载全部作用在被约束死的方向上——"
-                    "例如给平面刚架（bays 留空）加了面外荷载，"
-                    "平面刚架的面外自由度是被自动约束的。检查荷载方向。")
-            elif span > 0 and mag > span / 200.0:
-                entry["warning"] = (
-                    f"最大位移达到最短杆件长度的 1/{max(1, int(span / mag))}，量级异常。"
+                    f"最大位移达到最短杆件长度的 1/{max(1, int(span / governing))}，量级异常。"
                     "常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、"
                     "单位没换算成 N-m-Pa、或截面惯性矩填小了。")
             results[name] = entry
@@ -148,6 +170,103 @@ class SolvingMixin:
                 "next": [f.get("suggestion") for f in blocking if f.get("suggestion")],
             }
         return ToolResult(not blocking, payload)
+
+    def _intra_member_deflection(self, view, name: str,
+                                 entry: dict[str, Any]) -> tuple[float, str]:
+        """把**含单元内部**的最大挠度写进 entry，返回 (挠度, 位置描述)。
+
+        为什么 solve_model 的头条必须带上这个数：`_max_displacement` 只扫节点，
+        而满跨均布、梯形这类荷载不会触发 model_compiler 的剖分（它只在集中力
+        位置和显式内节点处切分），于是跨中根本没有节点可查。后果实测：
+
+        * 简支梁 6 m、20 kN/m —— 节点位移 0.0 mm，真实跨中挠度 16.38 mm；
+        * 87 杆三层框架、各梁 20 kN/m —— 头条报 4.30 mm，真实 9.27 mm，差 2.16 倍。
+
+        两个数都不是错的，错的是只报前一个还管它叫"最大位移"。内力早就做了
+        单元内解析恢复（internal_forces.member_deflection 的 docstring 专门
+        写了这件事），位移这一路当时没接上来。
+
+        算不出来时**显式说算不出来**，不静默省略——省略会让人以为单元内没有
+        挠度，那正是这个函数要消灭的误读。代价实测 47 ms（求解本身 223 ms），
+        stations 取 21 到 201 耗时几乎不变，瓶颈在逐单元开销，所以不必省测点。
+        """
+        try:
+            from internal_forces import max_deflection
+            best = max_deflection(self.frame, view, name, stations=101,
+                                  mapping=self.compilation.mapping)
+        except Exception as exc:                   # 附加信息，不该拖垮求解
+            entry["max_deflection_mm"] = None
+            entry["max_deflection_note"] = f"单元内挠度算不出来：{exc}"
+            return 0.0, ""
+        if best is None or best.get("member") is None:
+            entry["max_deflection_mm"] = None
+            entry["max_deflection_note"] = "模型里没有杆件，无从谈单元内挠度"
+            return 0.0, ""
+        value = float(best["value"])
+        U = self.units
+        entry["max_deflection_mm"] = round(value * U.disp_scale, 6)
+        entry["at_member"] = best["member"]
+        entry["at_x_m"] = round(float(best["x"]) * U.length_to_m, 4)
+        where = f"杆件 {best['member']} 距 i 端 {entry['at_x_m']} m 处"
+        return value, where
+
+    def _out_of_plane_load_axis(self, name: str) -> str | None:
+        """模型是真正的平面结构、且该工况荷载几乎全垂直于这个平面时，
+        返回法向的名字（"X"/"Y"/"Z" 或坐标串）；否则返回 None。
+
+        **为什么不能沿用"节点位移为零"做判据。** 两件完全不同的事都会让节点
+        位移为零：
+
+        * 简支梁加满跨均布——正常，节点本来就全被约束，响应在单元内部；
+        * 平面刚架加面外荷载——建模错误，面外自由度是被自动约束的。
+
+        原来的实现把两者都当成后者，于是对着一根正常的简支梁喊"检查荷载
+        方向"。反过来只看单元内挠度又会把后者放过去——面外荷载在杆件内部是
+        **真的**会产生弯曲的（实测 My = wL²/12、挠度 14.7 mm），它不是零。
+
+        能分开两者的是几何：平面刚架的节点张成一个二维平面，面外方向唯一；
+        简支梁的节点共线，压根没有唯一的"面外"，那种模型不该报这条。
+        所以这里先做共面性判断，再看荷载方向。
+        """
+        pts = np.array([[n.x, n.y, n.z] for n in self.frame.nodes.values()],
+                       dtype=float)
+        if len(pts) < 3:
+            return None
+        centered = pts - pts.mean(axis=0)
+        _, sv, vt = np.linalg.svd(centered, full_matrices=True)
+        if sv[0] <= 0:
+            return None
+        # sv[2]≈0 ⇒ 共面；sv[1] 太小 ⇒ 共线，没有唯一法向，不适用这条检查
+        if sv[2] / sv[0] > 1e-9 or sv[1] / sv[0] < 1e-6:
+            return None
+        normal = vt[2] / np.linalg.norm(vt[2])
+
+        vectors: list[np.ndarray] = []
+        load_case = self.frame.load_cases.get(name)
+        if load_case is None:                      # 组合不单独判，交给各工况
+            return None
+        for load in load_case.nodal_loads.values():
+            vectors.append(np.asarray(load, dtype=float)[:3])
+        for w in load_case.member_loads.values():
+            vectors.append(np.asarray(w, dtype=float)[:3])
+        for loads in (load_case.member_spans or {}).values():
+            for item in loads:
+                vectors.append(np.asarray(item.w1, dtype=float))
+                vectors.append(np.asarray(item.w2, dtype=float))
+        seen = False
+        for vec in vectors:
+            norm = float(np.linalg.norm(vec))
+            if norm <= 0:
+                continue
+            seen = True
+            if abs(float(np.dot(vec / norm, normal))) < 0.99:
+                return None                        # 有一项在面内，就不是纯面外
+        if not seen:
+            return None
+        for axis, label in enumerate("XYZ"):
+            if abs(normal[axis]) > 0.999:
+                return label
+        return "(" + ", ".join(f"{v:.3f}" for v in normal) + ")"
 
     def solve_with_abaqus(self, case: str | None = None,
                           element: str = "B33") -> ToolResult:
