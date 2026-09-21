@@ -18,7 +18,8 @@ from frame3d import (Frame, Material, Member, Node, Section, check_equilibrium,
                      check_model, fixed_end_equivalent, solve)
 from internal_forces import member_diagram
 from model_io import from_dict
-from span_loads import (KINDS, PARTIAL, POINT, RAMP, TRAPEZOID, UNIFORM, SpanLoad,
+from span_loads import (KINDS, MOMENT, PARTIAL, POINT, RAMP, TRAPEZOID,
+                        UNIFORM, SpanLoad,
                         fixed_end, span_force)
 
 # 符号约定：这套几何下全局 z 向的荷载落在杆件局部 y 上，因此产生 Mz。
@@ -415,6 +416,9 @@ def test_every_declared_span_load_kind_reaches_the_solver(kind):
         entry["w2"] = [0.0, 0.0, W]
     if kind == POINT:
         entry["a"] = L / 2
+    if kind == MOMENT:
+        entry["w1"] = [0.0, W * L, 0.0]        # 力矩矢量，量纲是力×长度
+        entry["a"] = L / 2
     if kind == PARTIAL:
         entry["a"], entry["b"] = 0.0, L / 2
     if kind == RAMP:
@@ -425,9 +429,13 @@ def test_every_declared_span_load_kind_reaches_the_solver(kind):
     assert s.set_model(payload).ok
     s.model["load_cases"] = [{"name": "C", "member_spans": [entry]}]
     assert s.solve_model().ok
-    total = s.query_results("reactions", case="C").payload["vertical_total_kN"]
-    assert abs(total) > 1e-6, (
-        f"{kind} 类型的荷载没有产生任何反力——多半是被编译器静默丢掉了")
+    # 判据是**内力非零**而不是反力合计。纯力偶的合力恒为零，拿反力合计去
+    # 判会把它误判成"荷载被丢掉了"——判据本身对那一类荷载失效。
+    peak = max(abs(s.query_diagram(comp, 1, case="C").payload["peak"])
+               for comp in ("N", "Vy", "Vz", "My", "Mz"))
+    assert peak > 1e-9, (
+        f"{kind} 类型的荷载没有在杆件里产生任何内力——"
+        "多半是被编译器静默丢掉了")
 
 
 # ------------------------------------------------------- 弹性支座
@@ -860,3 +868,107 @@ def test_a_long_edge_shorter_than_the_short_span_is_refused():
     r = _simple(3.0).apply_area_load([1], Q_AREA, 4.0, "two_way_long")
     assert not r.ok
     assert "不是长边" in r.payload["error"] or "短跨" in r.payload["error"]
+
+
+# ------------------------------------------------------- 跨间集中力偶
+
+def test_a_couple_gives_the_hand_calculated_reactions_wherever_it_sits():
+    """简支梁上力偶的反力是 ±M₀/L，**与位置无关**。
+
+    这一条同时验两件事：数值对不对，以及位置有没有被错误地卷进去。
+    """
+    m0 = 100e3
+    for a in (L / 2, L / 4, 3 * L / 4):
+        f = pin_pin(bar())
+        # 绕局部 z 的力偶：这套几何下局部 z = −全局 Y
+        f.case().member_spans[1] = [SpanLoad(MOMENT, (0.0, -m0, 0.0), a=a)]
+        sol = solve(f)
+        assert check_equilibrium(f, sol, "default")["ok"]
+        r = sol["default"].R[f.node_dofs(1)[2]]
+        assert r == pytest.approx(m0 / L, rel=1e-9)
+
+
+def test_the_moment_diagram_jumps_by_exactly_the_applied_couple():
+    """**这是力偶最强的判据。** 弯矩图在作用点处跳跃一个 M₀，不多不少。
+
+    跳跃量算错的话反力仍可能是对的（力偶的合力为零），所以只验反力
+    抓不到这类错。跨中力偶：M(a⁻)=+M₀L/(2L)=+M₀/2、M(a⁺)=−M₀/2。
+    """
+    m0, a = 100e3, L / 2
+    f = pin_pin(bar())
+    f.case().member_spans[1] = [SpanLoad(MOMENT, (0.0, -m0, 0.0), a=a)]
+    sol = solve(f)
+    eps = 1e-9
+    d = member_diagram(f, sol, 1, at_x=np.array([0.0, a - eps, a + eps, L]))
+    assert d.Mz[0] == pytest.approx(0.0, abs=1e-6)
+    assert d.Mz[3] == pytest.approx(0.0, abs=1e-6)
+    assert d.Mz[1] == pytest.approx(m0 / 2, rel=1e-9)
+    assert d.Mz[2] == pytest.approx(-m0 / 2, rel=1e-9)
+    assert abs(d.Mz[2] - d.Mz[1]) == pytest.approx(m0, rel=1e-9)
+
+
+def test_the_element_formula_and_the_nodal_conversion_agree():
+    """**两条独立实现必须给出同一个答案。**
+
+    手工搭的 Frame 走 span_loads.fixed_end 的形函数导数公式；
+    Session 走编译器——它在力偶位置剖分出节点，再把力偶折成**节点弯矩**，
+    那一路是精确的、完全不碰固端力公式。
+
+    这条交叉校验当场抓到过一个真错：我第一版照教科书的"固端弯矩"表写
+    M_i = m₀·b(2a−b)/L²，简支梁反力算成 25 kN 而正确值是 12.5 kN，
+    整体平衡也不成立。差的正是固端力与等效节点荷载之间那个负号。
+    """
+    from agent import Session
+
+    m0, a = 100e3, L / 4
+    f = pin_pin(bar())
+    f.case().member_spans[1] = [SpanLoad(MOMENT, (0.0, -m0, 0.0), a=a)]
+    by_element = solve(f)["default"].R[f.node_dofs(1)[2]]
+
+    s = Session()
+    s.set_model({
+        "units": "N-m-Pa",
+        "materials": [{"name": "M", "E": E, "nu": 0.3}],
+        "sections": [{"name": "S", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4,
+                      "J": 8e-7}],
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": L, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "M", "section": "S"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                     {"node": 2, "fix": [0, 1, 1, 1, 0, 0]}],
+        "load_cases": [{"name": "C", "member_spans": [
+            {"member": 1, "kind": "moment", "w1": [0.0, -m0, 0.0], "a": a}]}],
+    })
+    assert s.solve_model().ok
+    reactions = s.query_results("reactions", case="C").payload["reactions"]
+    by_node = list(reactions.values())[0]["R"][2] * 1e3
+    # query_results 的反力按 kN 保留六位，回乘 1e3 后精度到 1e-3 N
+    assert by_element == pytest.approx(by_node, rel=1e-6)
+
+
+def test_a_pure_couple_is_not_mistaken_for_an_empty_load_case():
+    """纯力偶的**合力恒为零**，不能因此被判成"没有荷载"。
+
+    实测这条会把一个完全正常的工况整个拦下来：求解平衡残差 2.9e-16、
+    跨内挠度 0.81 mm，而 no_applied_load 报 critical 并置 ok=False。
+    支座沉降与初应变早就是这样的特例，力偶是第三类。
+    """
+    from agent import Session
+
+    s = Session()
+    s.set_model({
+        "units": "N-m-Pa",
+        "materials": [{"name": "M", "E": E, "nu": 0.3}],
+        "sections": [{"name": "S", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4,
+                      "J": 8e-7}],
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": L, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "M", "section": "S"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                     {"node": 2, "fix": [0, 1, 1, 1, 0, 0]}],
+        "load_cases": [{"name": "C", "member_spans": [
+            {"member": 1, "kind": "moment", "w1": [0.0, -50e3, 0.0],
+             "a": L / 2}]}],
+    })
+    got = s.solve_model()
+    assert got.ok, got.payload.get("unusable")

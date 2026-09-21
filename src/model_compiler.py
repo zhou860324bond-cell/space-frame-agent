@@ -15,7 +15,8 @@ import numpy as np
 
 from frame3d import Frame, LoadCase, Member, Node, member_endpoints
 from model_io import from_dict, migrate_payload, validate_payload
-from span_loads import (KINDS, PARTIAL, POINT, RAMP, TRAPEZOID, UNIFORM,
+from span_loads import (KINDS, MOMENT, PARTIAL, POINT, RAMP, TRAPEZOID,
+                        UNIFORM,
                         SpanLoad)
 
 _SPLIT_REL_TOL = 1e-9
@@ -88,7 +89,7 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
             float(load.a)
             for case in physical.load_cases.values()
             for load in case.member_spans.get(physical_id, ())
-            if load.kind == POINT
+            if load.kind in (POINT, MOMENT)
         ]
         direction = pj - pi
         explicit_points: list[tuple[float, int]] = []
@@ -175,7 +176,7 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                         physical_case.member_strains[physical_id])
 
             for load in physical_case.member_spans.get(physical_id, ()):
-                if load.kind == POINT:
+                if load.kind in (POINT, MOMENT):
                     position = float(load.a)
                     if position <= tolerance:
                         node_id = member.i
@@ -185,9 +186,16 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                         nearest = min(range(len(interior)),
                                       key=lambda item: abs(interior[item] - position))
                         node_id = internal_node_ids[nearest]
+                    # 集中力进平动三项，集中力偶进转动三项。
+                    # **力偶作用在节点上就是个节点弯矩**——上面的剖分已经
+                    # 在作用位置造出了节点，所以这条转换是精确的，不需要
+                    # 把力偶带进单元的固端力公式。
+                    offset = 0 if load.kind == POINT else 3
                     previous = analysis_case.nodal_loads.get(node_id, (0.0,) * 6)
                     analysis_case.nodal_loads[node_id] = tuple(
-                        float(previous[index]) + (float(load.w1[index]) if index < 3 else 0.0)
+                        float(previous[index])
+                        + (float(load.w1[index - offset])
+                           if offset <= index < offset + 3 else 0.0)
                         for index in range(6))
                     continue
 

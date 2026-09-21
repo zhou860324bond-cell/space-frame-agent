@@ -33,7 +33,7 @@ import numpy as np
 
 from frame3d import (Frame, local_axes, member_endpoints,
                      member_local_displacements, span_loads_of)
-from span_loads import POINT, span_force
+from span_loads import POINT, span_couple, span_force
 
 COMPONENTS = ("N", "Vy", "Vz", "T", "My", "Mz")
 # 局部 y/z 轴随杆件方向转动。空间刚架跨杆件比较时，单看 My 或 Mz 很容易
@@ -82,16 +82,21 @@ def _span_contribution(frame: Frame, member, case: str, L: float,
     """
     S = np.zeros((3, len(x)))
     M = np.zeros((3, len(x)))
+    # 力偶单独一条通道：它对任何截面的贡献都是同一个常量，越过作用点之后
+    # 突然出现；而 M 是"力乘力臂"的积分，随截面位置变化。混在一起的话
+    # 符号和随 x 的变化规律都对不上。
+    C = np.zeros((3, len(x)))
     load_case = frame.load_cases.get(case)
     if load_case is None:
-        return S, M
+        return S, M, C
     pi, pj = member_endpoints(frame, member)
     _, rot = local_axes(pi, pj, member.ref_vector)
     for item in span_loads_of(load_case, member.id):
         s, m = span_force(item, L, rot, x)
         S += s
         M += m
-    return S, M
+        C += span_couple(item, L, rot, x)
+    return S, M, C
 
 
 def point_load_stations(frame: Frame, member_id: int, case: str,
@@ -172,10 +177,12 @@ def member_diagram(frame: Frame, solution, member_id: int,
 
     S = np.zeros((3, len(x)))
     M = np.zeros((3, len(x)))
+    C = np.zeros((3, len(x)))
     for base, factor in sources:
-        s, m = _span_contribution(frame, member, base, length, x)
+        s, m, c = _span_contribution(frame, member, base, length, x)
         S += factor * s
         M += factor * m
+        C += factor * c
 
     def clean_roundoff(values: np.ndarray) -> np.ndarray:
         """去掉相对峰值处于机器舍入量级的假残值。
@@ -197,9 +204,9 @@ def member_diagram(frame: Frame, solution, member_id: int,
         N=clean_roundoff(-f[0] - S[0]),
         Vy=clean_roundoff(-f[1] - S[1]),
         Vz=clean_roundoff(-f[2] - S[2]),
-        T=clean_roundoff(np.full_like(x, -f[3])),
-        My=clean_roundoff(-f[4] - f[2] * x - M[2]),
-        Mz=clean_roundoff(-f[5] + f[1] * x + M[1]),
+        T=clean_roundoff(np.full_like(x, -f[3]) - C[0]),
+        My=clean_roundoff(-f[4] - f[2] * x - M[2] - C[1]),
+        Mz=clean_roundoff(-f[5] + f[1] * x + M[1] - C[2]),
     )
 
 

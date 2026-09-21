@@ -607,7 +607,14 @@ TOOLS: list[dict[str, Any]] = [
                            "partial 用 a、b 圈出受载区间 [a, b]，强度写在 w1 里——"
                            "砌体墙、局部堆载、只压半跨的活载都是这个形状。"
                            "以前只能拿几个集中力硬凑，凑出来的弯矩图在荷载区内"
-                           "是折线而不是抛物线。",
+                           "是折线而不是抛物线。"
+                           "partial_trapezoid 在 [a,b] 内由 w1 线性变到 w2，"
+                           "双向板的三角形/梯形分配靠它拼（也可以直接用 "
+                           "apply_area_load，那个会替你算好）。"
+                           "moment 是**跨间集中力偶**：w1 是力矩矢量（N·m），"
+                           "a 是作用位置。预制构件的偏心支承、次梁传来的扭矩、"
+                           "牛腿偏心都是它。弯矩图会在 a 处**跳跃**一个 w1，"
+                           "那不是画错了。",
             "parameters": {
                 "type": "object", "required": ["member_id", "kind", "w1"],
                 "properties": {
@@ -625,7 +632,8 @@ TOOLS: list[dict[str, Any]] = [
                         ],
                     },
                     "kind": {"type": "string",
-                             "enum": ["uniform", "trapezoid", "point", "partial"]},
+                             "enum": ["uniform", "trapezoid", "point", "partial",
+                                      "partial_trapezoid", "moment"]},
                     "w1": {"type": "array", "minItems": 3, "maxItems": 3,
                            "items": {"type": "number"}},
                     "w2": {"type": "array", "minItems": 3, "maxItems": 3,

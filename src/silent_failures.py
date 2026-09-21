@@ -121,10 +121,24 @@ def _case_has_action(model: Frame, case: str) -> bool:
     支座沉降与初应变（温度）不产生净外力，但它们是实实在在的作用，会产生
     反力与内力。拿 _total_applied_load 去判断"有没有作用"会把这两类工况
     误判成空求解——这正是 no_applied_load 第一版踩的坑。
+
+    **纯力偶是第三类**，而且是最容易忘的一类：集中力偶的合力恒为零，
+    只有力矩。一个只加了力偶的工况求解完全正常（实测平衡残差 2.9e-16、
+    跨内挠度 0.81 mm），却会被判成"没有荷载"并把结果整个拦下来。
+    节点荷载的后三项同理——只给弯矩不给力时合力也是零。
     """
     lc = model.case(case)
     if float(np.linalg.norm(_total_applied_load(model, case))) > 1e-10:
         return True
+    if any(float(np.abs(np.asarray(load[3:], dtype=float)).sum()) > 1e-10
+           for load in lc.nodal_loads.values()):
+        return True                        # 只有节点弯矩
+    from span_loads import MOMENT
+
+    if any(item.kind == MOMENT and float(np.abs(
+               np.asarray(item.w1, dtype=float)).sum()) > 1e-10
+           for loads in (lc.member_spans or {}).values() for item in loads):
+        return True                        # 只有跨间力偶
     return bool(lc.settlements or lc.member_strains)
 
 

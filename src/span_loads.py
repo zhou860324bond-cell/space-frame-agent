@@ -35,7 +35,10 @@ PARTIAL = "partial"
 #: 补它的直接理由是**双向板导荷**：短边梁的对称三角形、长边梁的对称梯形，
 #: 在一根杆上都得靠两三段这种荷载拼出来，前面那两种一条都表达不了。
 RAMP = "partial_trapezoid"
-KINDS = (UNIFORM, TRAPEZOID, POINT, PARTIAL, RAMP)
+#: 跨间集中力偶。w1 是**力矩矢量**（全局），a 是作用位置。
+#: 预制构件的偏心支承、次梁传来的扭矩、柱上的牛腿偏心，都是这个形状。
+MOMENT = "moment"
+KINDS = (UNIFORM, TRAPEZOID, POINT, PARTIAL, RAMP, MOMENT)
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class SpanLoad:
     point:      w1 是集中力（当前力单位），a 是距 i 端的距离（当前长度单位）
     partial:    w1 是强度，荷载只作用在 [a, b] 这一段（当前长度单位）
     partial_trapezoid: [a, b] 段内强度由 w1（在 a）线性变到 w2（在 b）
+    moment:     w1 是力矩矢量（当前力×长度单位），a 是作用位置
     """
     kind: str
     w1: tuple[float, float, float]
@@ -76,7 +80,7 @@ class SpanLoad:
         out: dict[str, Any] = {"kind": self.kind, "w1": [float(v) for v in self.w1]}
         if self.kind == TRAPEZOID:
             out["w2"] = [float(v) for v in self.w2]
-        if self.kind == POINT:
+        if self.kind in (POINT, MOMENT):
             out["a"] = float(self.a)
         if self.kind in (PARTIAL, RAMP):
             out["a"] = float(self.a)
@@ -127,6 +131,32 @@ def _point_fixed_end(L: float, P: float, a: float) -> tuple[float, float, float,
     vj = P * a ** 2 * (L + 2.0 * b) / L ** 3
     mi = P * a * b ** 2 / L ** 2
     mj = -P * a ** 2 * b / L ** 2
+    return vi, vj, mi, mj
+
+
+def _couple_fixed_end(L: float, m0: float, a: float) -> tuple[float, float, float, float]:
+    """集中力偶的等效节点荷载 (V_i, V_j, M_i, M_j)。a 从 i 端量起。
+
+    由 Hermite 形函数的**导数**给出：力偶做的功是 m0·θ，而 θ = v'，
+    所以等效节点荷载是 m0·N'(a)，ξ = a/L：
+
+        N₁' = 6(ξ² − ξ)/L      → V_i
+        N₂' = 1 − 4ξ + 3ξ²     → M_i
+        N₃' = 6(ξ − ξ²)/L      → V_j
+        N₄' = −2ξ + 3ξ²        → M_j
+
+    **符号是靠形函数导数定的，不是抄表。** 教科书列的"固端弯矩"
+    M_i = m0·b(2a−b)/L² 恰好等于 −m0·N₂'，两者差一个负号——那是固端力与
+    等效节点荷载的约定差别。直接抄表的结果实测是：简支梁反力算成 25 kN
+    而正确值是 M0/L = 12.5 kN，且整体平衡不成立。
+
+    跨中（ξ=0.5）时 V = ∓1.5·m0/L、M_i = M_j = −m0/4。
+    """
+    xi = a / L
+    vi = 6.0 * m0 * (xi ** 2 - xi) / L
+    vj = -vi
+    mi = m0 * (1.0 - 4.0 * xi + 3.0 * xi ** 2)
+    mj = m0 * (-2.0 * xi + 3.0 * xi ** 2)
     return vi, vj, mi, mj
 
 
@@ -226,6 +256,17 @@ def fixed_end(load: SpanLoad, L: float, rot: np.ndarray) -> np.ndarray:
         p[1], p[7], p[5], p[11] = vi, vj, mi, mj
         vi, vj, mi, mj = _point_fixed_end(L, pz, a)
         p[2], p[8], p[4], p[10] = vi, vj, -mi, -mj
+        return p
+
+    if load.kind == MOMENT:
+        cx, cy, cz = rot @ np.asarray(load.w1, dtype=float)
+        a = float(load.a)
+        # 绕局部 x 的分量是**扭矩**：两端按距离反比分配，与轴力同理
+        p[3], p[9] = cx * (L - a) / L, cx * a / L
+        vi, vj, mi, mj = _couple_fixed_end(L, cz, a)      # 绕局部 z → 局部 y 平面
+        p[1], p[7], p[5], p[11] = vi, vj, mi, mj
+        vi, vj, mi, mj = _couple_fixed_end(L, cy, a)      # 绕局部 y → 局部 z 平面
+        p[2], p[8], p[4], p[10] = -vi, -vj, -mi, -mj
         return p
 
     if load.kind == RAMP:
@@ -328,12 +369,31 @@ def span_force(load: SpanLoad, L: float, rot: np.ndarray,
     return S, M
 
 
+def span_couple(load: SpanLoad, L: float, rot: np.ndarray,
+                x: np.ndarray) -> np.ndarray:
+    """左段 [0, x] 上该荷载直接贡献的力矩（局部坐标，形状 (3, len(x))）。
+
+    **单独一条通道，不并进 span_force 的 M。** 那个 M 是"力乘力臂"的积分，
+    随截面位置变化；力偶不同——它对任何截面的贡献都是同一个常量，越过
+    作用点之后突然出现。两者混在一起，符号和随 x 的变化规律都对不上。
+    """
+    x = np.asarray(x, dtype=float)
+    if load.kind != MOMENT:
+        return np.zeros((3, len(x)))
+    local = rot @ np.asarray(load.w1, dtype=float)
+    past = (x > load.a).astype(float)
+    return np.outer(local, past)
+
+
 def resultant(load: SpanLoad, L: float) -> tuple[np.ndarray, float]:
     """整根杆上的荷载合力（全局）与其作用点距 i 端的距离。
 
     整体平衡校核用。合力为零时（例如反对称的梯形荷载）作用点没有意义，
     返回杆件中点——那种情况下合力矩由调用方按分量单独算，不靠这个。
     """
+    if load.kind == MOMENT:
+        # 力偶的合力为零——它只贡献力矩。作用点仍报 a，供诊断使用。
+        return np.zeros(3), float(load.a)
     if load.kind == POINT:
         return np.asarray(load.w1, dtype=float), float(load.a)
     if load.kind == RAMP:
@@ -368,6 +428,9 @@ def moment_about_origin(load: SpanLoad, L: float, pi: np.ndarray,
     整体平衡校核直接用这两个量，不必再关心荷载是什么形状。
     """
     axis = (pj - pi) / L
+    if load.kind == MOMENT:
+        # 纯力偶：合力为零，对任何点的力矩都等于它自己
+        return np.zeros(3), np.asarray(load.w1, dtype=float)
     if load.kind == POINT:
         force = np.asarray(load.w1, dtype=float)
         point = pi + axis * load.a

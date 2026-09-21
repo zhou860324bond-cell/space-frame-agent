@@ -458,10 +458,10 @@ class LoadsMixin:
 
         kind = str(kind)
         if kind not in {"uniform", "trapezoid", "point", "partial",
-                        "partial_trapezoid"}:
+                        "partial_trapezoid", "moment"}:
             return ToolResult(False, {
                 "error": "kind 只能是 uniform / trapezoid / point / partial / "
-                         "partial_trapezoid"})
+                         "partial_trapezoid / moment"})
         try:
             start = [float(value) for value in w1]
             end = [float(value) for value in (w2 if w2 is not None else w1)]
@@ -480,7 +480,8 @@ class LoadsMixin:
         absent = sorted(set(ids) - set(known))
         if absent:
             return ToolResult(False, {"error": f"杆件 {absent} 不存在"})
-        if len(ids) > 1 and kind in ("point", "partial"):
+        if len(ids) > 1 and kind in ("point", "partial", "moment",
+                                     "partial_trapezoid"):
             # a / b 是**沿杆长的绝对位置**，一组长短不一的杆件共用同一个 a
             # 没有意义：短杆上可能超出杆长，长杆上位置完全不对应。
             # 与其按比例自作主张，不如说清楚。
@@ -495,11 +496,12 @@ class LoadsMixin:
         # 多根时在同一份 candidate 上逐根走一遍，不能只取第一根——那正是
         # 这一轮反复在修的"静默丢弃"。
         position = None
-        if kind == "point":
+        if kind in ("point", "moment"):
             try:
                 position = float(a)
             except (TypeError, ValueError):
-                return ToolResult(False, {"error": "杆中集中力必须给出距 i 端位置 a"})
+                return ToolResult(False, {
+                    "error": f"{kind} 必须给出距 i 端位置 a"})
             nodes = {int(node["id"]): node for node in self.model.get("nodes") or []}
             ni, nj = nodes[int(member["i"])], nodes[int(member["j"])]
             length = float(np.linalg.norm(np.array(
@@ -540,7 +542,7 @@ class LoadsMixin:
         if reference != "global":
             # 集中力（point）的 w1 是**力**不是强度，投影换算对它没有意义：
             # 一个集中力不会因为杆件倾斜而变大变小。局部坐标则照样适用。
-            if kind == "point" and reference == "projected":
+            if kind in ("point", "moment") and reference == "projected":
                 return ToolResult(False, {
                     "error": "杆中集中力是力不是强度，没有「按水平投影分布」这回事。"
                              "要换方向用 reference=local，要减小数值请自己算。"})
@@ -598,7 +600,7 @@ class LoadsMixin:
                                          "kind": kind, "w1": member_start}
                 if kind == "trapezoid":
                     entry["w2"] = member_end
-                if kind == "point":
+                if kind in ("point", "moment"):
                     entry["a"] = position
                 if kind in ("partial", "partial_trapezoid"):
                     entry["a"] = position
