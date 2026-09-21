@@ -105,6 +105,7 @@ _TO_MM = {
     "area": 1e6,            # m²  → mm²
     "inertia": 1e12,        # m⁴  → mm⁴
     "first_moment": 1e9,    # m³  → mm³（半截面静矩 S）
+    "curvature": 1e-3,      # 1/m → 1/mm（初曲率 κ）
     "modulus": 1e-6,        # Pa  → MPa
     "density": 1e-12,       # kg/m³ → t/mm³
     "force": 1.0,           # N   → N

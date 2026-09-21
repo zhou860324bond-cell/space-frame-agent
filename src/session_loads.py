@@ -671,7 +671,8 @@ class LoadsMixin:
                           lack_of_fit: float | None = None,
                           delta_t: float | None = None,
                           case_name: str | None = None,
-                          name: str | None = None) -> ToolResult:
+                          name: str | None = None,
+                          gradient_t: float | None = None) -> ToolResult:
         """装配误差与温度变化（讲义 §3-9 五、六）。
 
         讲义把温度应力"转化为装配内力问题"，这里就照这个思路做成一个入口：
@@ -684,10 +685,22 @@ class LoadsMixin:
         members = {int(m["id"]): m for m in self.model.get("members") or []}
         if member_id not in members:
             return ToolResult(False, {"error": f"杆件 {member_id} 不存在"})
-        for label, value in (("lack_of_fit", lack_of_fit), ("delta_t", delta_t)):
+        for label, value in (("lack_of_fit", lack_of_fit), ("delta_t", delta_t),
+                            ("gradient_t", gradient_t)):
             if value is not None and not np.isfinite(float(value)):
                 return ToolResult(False, {"error": f"{label} 必须是有限数"})
-        if delta_t:
+        if gradient_t:
+            # 梯度算 κ=α·ΔT/h 要截面高度，而 h 只有按尺寸建的截面才有
+            section = next(
+                (item for item in self.model.get("sections") or []
+                 if item["name"] == members[member_id]["section"]), None)
+            if not (section or {}).get("cy"):
+                return ToolResult(False, {
+                    "error": f"截面 {members[member_id]['section']!r} 没有极端纤维"
+                             "距离 cy，算不出温度梯度引起的曲率 κ=α·ΔT/h",
+                    "hint": "用按尺寸定义的截面（矩形/工字形/圆管/实心圆），"
+                            "或直接给出 cy"})
+        if delta_t or gradient_t:
             material = next(
                 (item for item in self.model.get("materials") or []
                  if item["name"] == members[member_id]["material"]), None)
@@ -713,6 +726,8 @@ class LoadsMixin:
             payload["lack_of_fit"] = float(lack_of_fit)
         if delta_t:
             payload["delta_t"] = float(delta_t)
+        if gradient_t:
+            payload["gradient_t"] = float(gradient_t)
         if len(payload) > 2:
             entries.append(payload)
         case["member_strains"] = entries
@@ -722,9 +737,12 @@ class LoadsMixin:
         return ToolResult(True, {
             "name": entry_name, "member": member_id, "case": chosen,
             "lack_of_fit": lack_of_fit, "delta_t": delta_t,
+            "gradient_t": gradient_t,
             "analysis_ready": not errors, "warnings": errors,
-            "note": "初应变不是外力：杆件能自由伸缩时轴力为零，"
-                    "被约束住才产生内力。"})
+            "note": "初应变不是外力：杆件能自由伸缩时轴力为零，被约束住才产生"
+                    "内力。**均匀温度与温度梯度是两回事**：delta_t 让杆整体"
+                    "伸缩、产生轴力，gradient_t（截面上下温差）让杆想要弯、"
+                    "产生弯矩，κ=α·ΔT/h。静定结构两者都不产生内力。"})
 
     @_records
     def add_self_weight(self, case: str | None = None,

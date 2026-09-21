@@ -972,3 +972,110 @@ def test_a_pure_couple_is_not_mistaken_for_an_empty_load_case():
     })
     got = s.solve_model()
     assert got.ok, got.payload.get("unusable")
+
+
+# --------------------------------------------------------- 温度梯度
+
+def _hn_with_gradient(fix_i, fix_j, gradient: float):
+    """HN400 梁，两端约束由参数给，施加截面上下温差。"""
+    import sections as sec
+    from agent import Session
+
+    hn = sec.i_section("HN", 0.400, 0.200, 0.008, 0.013)
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q", "E": 2.06e11, "nu": 0.3, "density": 0.0,
+          "alpha": 1.2e-5}], [hn])
+    s.set_model({**s.model,
+                 "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                           {"id": 2, "x": 6.0, "y": 0, "z": 0}],
+                 "members": [{"id": 1, "i": 1, "j": 2, "material": "Q",
+                              "section": "HN"}],
+                 "supports": [{"node": 1, "fix": list(fix_i)},
+                              {"node": 2, "fix": list(fix_j)}]})
+    assert s.set_member_strain(1, gradient_t=gradient).ok
+    assert s.solve_model().ok
+    return s, hn
+
+
+def test_a_temperature_gradient_bends_a_restrained_member():
+    """上下温差让杆想要弯；被约束住就产生弯矩 EI·κ，κ = α·ΔT/h。
+
+    HN400、ΔT=30℃：κ = 1.2e-5×30/0.4 = 9e-4 /m，EI·κ = 42.5769 kN·m，
+    且沿杆**恒定**——纯弯曲不产生剪力。
+    """
+    s, hn = _hn_with_gradient((1,) * 6, (1,) * 6, 30.0)
+    kappa = 1.2e-5 * 30.0 / (2 * hn["cy"])
+    exact = 2.06e11 * hn["Iz"] * kappa / 1e3
+    d = s.query_diagram("Mz", 1, stations=11).payload
+    assert abs(d["peak"]) == pytest.approx(exact, rel=1e-6)
+    # 两端同值 ⇒ 沿杆恒定
+    assert d["at_i_end"] == pytest.approx(d["at_j_end"], rel=1e-9)
+
+
+def test_a_statically_determinate_member_is_free_to_bend():
+    """**这是温度作用最强的判据。**
+
+    静定结构自由变形，温度不产生任何内力——和"自由伸长的杆轴力为零"
+    是同一条道理。算出非零内力就说明初曲率被当成了外荷载。
+    """
+    s, _ = _hn_with_gradient((1, 1, 1, 1, 0, 0), (0, 1, 1, 1, 0, 0), 30.0)
+    for comp in ("N", "Vy", "Vz", "My", "Mz"):
+        peak = s.query_diagram(comp, 1, stations=21).payload["peak"]
+        assert abs(peak) < 1e-6, f"{comp} 在静定杆上不该有内力，得到 {peak}"
+
+
+def test_a_uniform_rise_and_a_gradient_are_not_the_same_thing():
+    """均匀升温给轴力，上下温差给弯矩。混为一谈会得到完全不同的内力。
+
+    把梯度折算成某种"等效均匀温度"是错的——前者产生弯矩，后者产生轴力，
+    两者在同一根杆上同时存在也互不替代。
+    """
+    import sections as sec
+    from agent import Session
+
+    hn = sec.i_section("HN", 0.400, 0.200, 0.008, 0.013)
+    uniform = Session()
+    uniform.define_materials_and_sections(
+        [{"name": "Q", "E": 2.06e11, "nu": 0.3, "density": 0.0,
+          "alpha": 1.2e-5}], [hn])
+    uniform.set_model({**uniform.model,
+                       "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                                 {"id": 2, "x": 6.0, "y": 0, "z": 0}],
+                       "members": [{"id": 1, "i": 1, "j": 2, "material": "Q",
+                                    "section": "HN"}],
+                       "supports": [{"node": 1, "fix": [1] * 6},
+                                    {"node": 2, "fix": [1] * 6}]})
+    assert uniform.set_member_strain(1, delta_t=30.0).ok
+    assert uniform.solve_model().ok
+    gradient, _ = _hn_with_gradient((1,) * 6, (1,) * 6, 30.0)
+
+    n_uniform = abs(uniform.query_diagram("N", 1).payload["peak"])
+    m_uniform = abs(uniform.query_diagram("Mz", 1).payload["peak"])
+    n_gradient = abs(gradient.query_diagram("N", 1).payload["peak"])
+    m_gradient = abs(gradient.query_diagram("Mz", 1).payload["peak"])
+    assert n_uniform > 1.0 and m_uniform < 1e-6, "均匀升温只产生轴力"
+    assert m_gradient > 1.0 and n_gradient < 1e-6, "温度梯度只产生弯矩"
+
+
+def test_a_gradient_needs_the_section_depth_and_says_so():
+    """算 κ=α·ΔT/h 要截面高度，只给 A/Iy/Iz/J 的截面算不出来。
+
+    随便拿一个高度顶上会给出一个来路不明的弯矩——和正应力缺 cy 时的
+    处置一致：明确拒绝，并说清楚缺什么。
+    """
+    from agent import Session
+
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q", "E": 2.06e11, "nu": 0.3, "alpha": 1.2e-5}],
+        [{"name": "B", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4, "J": 8e-7}])
+    s.set_model({**s.model,
+                 "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                           {"id": 2, "x": 6.0, "y": 0, "z": 0}],
+                 "members": [{"id": 1, "i": 1, "j": 2, "material": "Q",
+                              "section": "B"}],
+                 "supports": [{"node": 1, "fix": [1] * 6},
+                              {"node": 2, "fix": [1] * 6}]})
+    bad = s.set_member_strain(1, gradient_t=30.0)
+    assert not bad.ok and "cy" in bad.payload["error"]

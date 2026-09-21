@@ -75,7 +75,10 @@ _MEMBER_STRAINS = {
         "properties": {"name": {"type": "string", "minLength": 1},
                        "member": {"type": "integer"},
                        "lack_of_fit": {"type": "number"},
-                       "delta_t": {"type": "number"}},
+                       "delta_t": {"type": "number"},
+                       # 截面上下温差（沿局部 y，即截面高度方向）。
+                       # 它产生的是**曲率**不是轴向应变，两者不能混。
+                       "gradient_t": {"type": "number"}},
     },
 }
 _MEMBER_LOADS = {
@@ -301,6 +304,21 @@ def _fill_case(frame: Frame, case: LoadCase, data: dict[str, Any]) -> LoadCase:
             strain += frame.materials[member.material].alpha * float(e["delta_t"])
         case.member_strains[member.id] = (
             case.member_strains.get(member.id, 0.0) + strain)
+        if e.get("gradient_t"):
+            # κ = α·ΔT / h，h 是截面在局部 y 方向的高度（= 2·cy）。
+            # 缺 cy 就拒绝——和正应力、剪应力一样，算不出就明说算不出，
+            # 不拿一个来路不明的截面高度顶上。
+            section = frame.sections[member.section]
+            if section.cy is None:
+                raise ValueError(
+                    f"杆件 {member.id} 的截面 {section.name!r} 没有极端纤维距离 "
+                    "cy，算不出温度梯度引起的曲率 κ=α·ΔT/h。"
+                    "请用 sections.py 的 builder 按尺寸定义截面，或直接给出 cy。")
+            alpha = frame.materials[member.material].alpha
+            kappa = alpha * float(e["gradient_t"]) / (2.0 * section.cy)
+            previous = case.member_curvatures.get(member.id, (0.0, 0.0))
+            case.member_curvatures[member.id] = (previous[0],
+                                                 previous[1] + kappa)
     return case
 
 

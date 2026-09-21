@@ -170,6 +170,15 @@ class LoadCase:
     # 存应变而不是存 Δl 或 ΔT：应变沿杆是常量，杆件被自动剖分时各段直接继承，
     # 不需要按段长重新分配。
     member_strains: dict[int, float] = field(default_factory=dict)
+    #: 初曲率 κ₀（1/长度），按杆件，(绕局部 y, 绕局部 z)。
+    #:
+    #: **均匀温度与温度梯度是两回事**：均匀 ΔT 让杆整体伸缩，给的是轴向
+    #: 应变；上下温差让杆想要弯，给的是曲率 κ = α·ΔT/h。前者已经由
+    #: member_strains 承担，后者单独一格——把梯度折算成某种"等效轴向应变"
+    #: 是错的，它产生的是弯矩不是轴力。
+    #:
+    #: 与 member_strains 同理，曲率沿杆是常量，剖分后各段直接继承。
+    member_curvatures: dict[int, tuple[float, float]] = field(default_factory=dict)
 
 
 def span_loads_of(case: LoadCase, member_id: int) -> list[SpanLoad]:
@@ -488,15 +497,39 @@ def equivalent_local_load(model: "Frame", member: "Member", case: LoadCase,
     初应变的等效节点力由 ``f₀ = ∫Bᵀ E ε₀ dV = EA·ε₀·[−1 … +1]`` 得到：
     升温（ε₀>0）把两端往外推，所以自由杆自由伸长、轴力为零；两端固定时
     位移为零，回算得到 ``N = −EA·ε₀``，即受压。这与讲义 §3-9 五、六一致。
+
+    初曲率同理，只是换成弯曲那一套形函数：
+
+        f₀ = ∫ (B_b)ᵀ E I κ₀ dx，  B_b = [N₁'' N₂'' N₃'' N₄'']
+        ∫₀ᴸ N'' dx = [N']₀ᴸ  ⇒  (0, −1, 0, +1)
+
+    所以只在两端的**转动**自由度上出力，平动那两项为零——这正是"纯弯曲
+    不产生剪力"的代数表述。静定杆因此自由弯曲、内力为零；两端固定时
+    端弯矩为 EI·κ₀，沿杆是常量。
     """
     p = np.zeros(12)
     for item in span_loads_of(case, member.id):
         p += fixed_end(item, L, rot)
     strain = float(case.member_strains.get(member.id, 0.0))
+    material = model.materials[member.material]
+    section = model.sections[member.section]
     if strain:
-        axial = model.materials[member.material].E * model.sections[member.section].A * strain
+        axial = material.E * section.A * strain
         p[0] -= axial
         p[6] += axial
+    curvature = case.member_curvatures.get(member.id)
+    if curvature:
+        ky, kz = (float(v) for v in curvature)
+        if kz:
+            moment = material.E * section.Iz * kz
+            p[5] -= moment
+            p[11] += moment
+        if ky:
+            # 局部 y 平面的弯矩项与局部 z 平面反号，来源与 fixed_end 里
+            # 那两行一致（r × F）；改一处必须同时改另一处。
+            moment = material.E * section.Iy * ky
+            p[4] += moment
+            p[10] -= moment
     return p
 
 

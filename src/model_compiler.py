@@ -174,6 +174,11 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                 for element_id in element_ids:
                     analysis_case.member_strains[element_id] = (
                         physical_case.member_strains[physical_id])
+            # 曲率与应变同理：沿杆是常量，剖分后各段直接继承，不按长度分配。
+            if physical_id in physical_case.member_curvatures:
+                for element_id in element_ids:
+                    analysis_case.member_curvatures[element_id] = (
+                        physical_case.member_curvatures[physical_id])
 
             for load in physical_case.member_spans.get(physical_id, ()):
                 if load.kind in (POINT, MOMENT):

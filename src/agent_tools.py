@@ -702,6 +702,14 @@ TOOLS: list[dict[str, Any]] = [
                                     "description": "制造误差，当前长度单位；正=做长了"},
                     "delta_t": {"type": "number",
                                 "description": "温度变化 ℃；正=升温"},
+                    "gradient_t": {"type": "number",
+                                   "description":
+                                       "截面**上下温差**（℃，沿局部 y 即截面高度方向）。"
+                                       "与 delta_t 是两回事：delta_t 让杆整体伸缩、"
+                                       "产生轴力；gradient_t 让杆想要弯、产生弯矩，"
+                                       "κ=α·ΔT/h。日照下的屋面梁、蒸汽管道、"
+                                       "大体积混凝土内外温差都是这一类。"
+                                       "需要材料有 alpha、截面有 cy（按尺寸建的截面才有）。"},
                     "case_name": {"type": "string"},
                     "name": {"type": "string"},
                 },
