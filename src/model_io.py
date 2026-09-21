@@ -45,6 +45,9 @@ _MEMBER_SPANS = {
             "member": {"type": "integer"},
             "kind": {"type": "string", "enum": list(SPAN_KINDS)},
             "w1": _VEC3,
+            # partial 的终点。kind 的取值由 span_loads.KINDS 自动带进来，
+            # 这里只需补这个字段。
+            "b": {"type": "number", "minimum": 0},
             "w2": _VEC3,
             "a": {"type": "number", "minimum": 0},
             # 自由备注，求解器不读。自重生成的荷载靠它标记，

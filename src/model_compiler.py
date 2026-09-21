@@ -15,7 +15,7 @@ import numpy as np
 
 from frame3d import Frame, LoadCase, Member, Node, member_endpoints
 from model_io import from_dict, migrate_payload, validate_payload
-from span_loads import POINT, TRAPEZOID, UNIFORM, SpanLoad
+from span_loads import KINDS, PARTIAL, POINT, TRAPEZOID, UNIFORM, SpanLoad
 
 _SPLIT_REL_TOL = 1e-9
 _SPLIT_ABS_TOL = 1e-9
@@ -203,6 +203,33 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                         w2 = start + change * (boundaries[index + 1] / length)
                         analysis_case.member_spans.setdefault(element_id, []).append(
                             SpanLoad(TRAPEZOID, tuple(w1), tuple(w2)))
+                    continue
+
+                if load.kind == PARTIAL:
+                    # 逐段求 [a, b] 与该单元的重叠，落到单元的局部坐标上。
+                    # 没剖分时只有一段，等价于原样搬过去。
+                    for index, element_id in enumerate(element_ids):
+                        lo, hi = boundaries[index], boundaries[index + 1]
+                        start = max(float(load.a), lo)
+                        end = min(float(load.b), hi)
+                        if end - start <= tolerance:
+                            continue                # 这一段不在受载区间内
+                        analysis_case.member_spans.setdefault(element_id, []).append(
+                            SpanLoad(PARTIAL, tuple(load.w1),
+                                     a=start - lo, b=end - lo))
+                    continue
+
+                # **不认识的类型必须炸，不能默默丢掉。**
+                # 原先这里是个没有 else 的 if 链：POINT/UNIFORM/TRAPEZOID 各自
+                # continue，其余一概掉出循环消失。加 partial 时实测后果是
+                # 反力全零、平衡残差 0.0、一句话都不报——荷载凭空蒸发而所有
+                # 自检都说"没问题"。往 span_loads.KINDS 里加类型的人不会想到
+                # 还要改这里，所以让它在这里当场失败。
+                raise CompilationError([
+                    f"杆件 {physical_id} 上的杆间荷载类型 {load.kind!r} 编译器"
+                    f"还不认识。已知类型：{list(KINDS)}。"
+                    "新增类型必须同时在 model_compiler 里写明它怎么分配到"
+                    "剖分后的单元上——漏掉这一步荷载会被静默丢弃。"])
 
         if len(element_ids) > 1:
             reasons = []

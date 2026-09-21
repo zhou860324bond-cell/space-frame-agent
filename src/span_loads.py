@@ -30,7 +30,8 @@ import numpy as np
 UNIFORM = "uniform"
 TRAPEZOID = "trapezoid"
 POINT = "point"
-KINDS = (UNIFORM, TRAPEZOID, POINT)
+PARTIAL = "partial"
+KINDS = (UNIFORM, TRAPEZOID, POINT, PARTIAL)
 
 
 @dataclass(frozen=True)
@@ -40,22 +41,25 @@ class SpanLoad:
     uniform:    w1 是满跨强度（当前力/长度单位），w2 与 a 不用
     trapezoid:  w1 是 i 端强度、w2 是 j 端强度（当前力/长度单位）
     point:      w1 是集中力（当前力单位），a 是距 i 端的距离（当前长度单位）
+    partial:    w1 是强度，荷载只作用在 [a, b] 这一段（当前长度单位）
     """
     kind: str
     w1: tuple[float, float, float]
     w2: tuple[float, float, float] = (0.0, 0.0, 0.0)
     a: float = 0.0
+    #: partial 的终点。只有 partial 用得上；其余类型保持 0.0 并被忽略。
+    b: float = 0.0
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
             raise ValueError(f"杆间荷载类型只能取 {KINDS}，收到 {self.kind!r}")
 
     def scaled(self, factor: float) -> "SpanLoad":
-        """按系数缩放。荷载组合按此逐项合成，位置 a 不缩放。"""
+        """按系数缩放。荷载组合按此逐项合成，位置 a、b 不缩放。"""
         return SpanLoad(self.kind,
                         tuple(factor * v for v in self.w1),
                         tuple(factor * v for v in self.w2),
-                        self.a)
+                        self.a, self.b)
 
     def ends(self) -> tuple[np.ndarray, np.ndarray]:
         """把均布归一成梯形的两端强度——下游只需处理梯形一种。"""
@@ -69,6 +73,9 @@ class SpanLoad:
             out["w2"] = [float(v) for v in self.w2]
         if self.kind == POINT:
             out["a"] = float(self.a)
+        if self.kind == PARTIAL:
+            out["a"] = float(self.a)
+            out["b"] = float(self.b)
         return out
 
     @staticmethod
@@ -78,10 +85,15 @@ class SpanLoad:
             # 缺 w2 就默认成 w1 的话，写漏的梯形会静悄悄变成均布；
             # 默认成 0 又会静悄悄变成三角形。两种都不能接受
             raise ValueError("梯形荷载必须同时给出 w1 与 w2")
+        if kind == PARTIAL and ("a" not in data or "b" not in data):
+            # 缺哪一头都不能猜：默认成 0 或 L 会把"半跨堆载"静悄悄变成满跨，
+            # 合力差一倍而且不报错。
+            raise ValueError("部分跨均布必须同时给出起点 a 与终点 b")
         return SpanLoad(kind,
                         tuple(float(v) for v in data["w1"]),
                         tuple(float(v) for v in data.get("w2", (0.0, 0.0, 0.0))),
-                        float(data.get("a", 0.0)))
+                        float(data.get("a", 0.0)),
+                        float(data.get("b", 0.0)))
 
 
 def _bending_fixed_end(L: float, q1: float, q2: float) -> tuple[float, float, float, float]:
@@ -109,6 +121,40 @@ def _point_fixed_end(L: float, P: float, a: float) -> tuple[float, float, float,
     return vi, vj, mi, mj
 
 
+def _partial_fixed_end(L: float, w: float, a: float,
+                       b: float) -> tuple[float, float, float, float]:
+    """[a, b] 段均布的 (V_i, V_j, M_i, M_j)。
+
+    做法是把 `_point_fixed_end` 对 x 从 a 积到 b——集中力的固端力本来就是
+    位置的多项式，积分有闭式，不必另找公式表：
+
+        V_i = w/L³ · [L³x − Lx³ + x⁴/2]
+        V_j = w/L³ · [Lx³ − x⁴/2]
+        M_i = w/L² · [L²x²/2 − 2Lx³/3 + x⁴/4]
+        M_j = −w/L² · [Lx³/3 − x⁴/4]
+
+    **自校验**：取 a=0、b=L 时四项分别退回 wL/2、wL/2、wL²/12、−wL²/12，
+    也就是满跨均布的固端力，一位不差。测试拿这一条当判据。
+    """
+    def vi_f(x: float) -> float:
+        return L ** 3 * x - L * x ** 3 + x ** 4 / 2.0
+
+    def vj_f(x: float) -> float:
+        return L * x ** 3 - x ** 4 / 2.0
+
+    def mi_f(x: float) -> float:
+        return L ** 2 * x ** 2 / 2.0 - 2.0 * L * x ** 3 / 3.0 + x ** 4 / 4.0
+
+    def mj_f(x: float) -> float:
+        return L * x ** 3 / 3.0 - x ** 4 / 4.0
+
+    vi = w * (vi_f(b) - vi_f(a)) / L ** 3
+    vj = w * (vj_f(b) - vj_f(a)) / L ** 3
+    mi = w * (mi_f(b) - mi_f(a)) / L ** 2
+    mj = -w * (mj_f(b) - mj_f(a)) / L ** 2
+    return vi, vj, mi, mj
+
+
 def fixed_end(load: SpanLoad, L: float, rot: np.ndarray) -> np.ndarray:
     """一项荷载的等效节点荷载向量（12,），局部坐标。
 
@@ -127,6 +173,19 @@ def fixed_end(load: SpanLoad, L: float, rot: np.ndarray) -> np.ndarray:
         vi, vj, mi, mj = _point_fixed_end(L, py, a)
         p[1], p[7], p[5], p[11] = vi, vj, mi, mj
         vi, vj, mi, mj = _point_fixed_end(L, pz, a)
+        p[2], p[8], p[4], p[10] = vi, vj, -mi, -mj
+        return p
+
+    if load.kind == PARTIAL:
+        qx, qy, qz = rot @ np.asarray(load.w1, dtype=float)
+        a, b = float(load.a), float(load.b)
+        # 轴向：∫ₐᵇ w(1−x/L)dx 与 ∫ₐᵇ w·x/L dx
+        span, first = b - a, (b ** 2 - a ** 2) / (2.0 * L)
+        p[0] = qx * (span - first)
+        p[6] = qx * first
+        vi, vj, mi, mj = _partial_fixed_end(L, qy, a, b)
+        p[1], p[7], p[5], p[11] = vi, vj, mi, mj
+        vi, vj, mi, mj = _partial_fixed_end(L, qz, a, b)
         p[2], p[8], p[4], p[10] = vi, vj, -mi, -mj
         return p
 
@@ -164,6 +223,19 @@ def span_force(load: SpanLoad, L: float, rot: np.ndarray,
         M = np.outer(p_local, past * (x - load.a))
         return S, M
 
+    if load.kind == PARTIAL:
+        q = rot @ np.asarray(load.w1, dtype=float)
+        a, b = float(load.a), float(load.b)
+        # 截面走到 a 之前什么都没有；越过 b 之后荷载不再增加，所以先把
+        # 积分上限夹到 [a, b]，再套均布的那两条式子。
+        t = np.clip(x, a, b)
+        covered = np.maximum(t - a, 0.0)
+        S = np.outer(q, covered)
+        # ∫ₐᵗ (x−ξ)dξ = x(t−a) − (t²−a²)/2
+        arm = x * covered - (t ** 2 - a ** 2) / 2.0
+        M = np.outer(q, np.maximum(arm, 0.0))
+        return S, M
+
     v1, v2 = load.ends()
     q1 = rot @ v1
     d = (rot @ v2) - q1
@@ -180,6 +252,10 @@ def resultant(load: SpanLoad, L: float) -> tuple[np.ndarray, float]:
     """
     if load.kind == POINT:
         return np.asarray(load.w1, dtype=float), float(load.a)
+    if load.kind == PARTIAL:
+        # 合力 = 强度 × 作用长度，作用点在这一段的中点
+        return (np.asarray(load.w1, dtype=float) * (load.b - load.a),
+                float((load.a + load.b) / 2.0))
     v1, v2 = load.ends()
     total = (v1 + v2) * L / 2.0
     # 梯形形心：x̄ = L(w1 + 2w2) / (3(w1 + w2))，逐分量的形心可能不同，
@@ -201,6 +277,13 @@ def moment_about_origin(load: SpanLoad, L: float, pi: np.ndarray,
         force = np.asarray(load.w1, dtype=float)
         point = pi + axis * load.a
         return force, np.cross(point, force)
+
+    if load.kind == PARTIAL:
+        w = np.asarray(load.w1, dtype=float)
+        a, b = float(load.a), float(load.b)
+        force = w * (b - a)
+        first = w * (b ** 2 - a ** 2) / 2.0        # ∫ₐᵇ s·w ds
+        return force, np.cross(pi, force) + np.cross(axis, first)
 
     v1, v2 = load.ends()
     # 逐分量积分：∫ w_k(s) ds 与 ∫ (pi + axis·s) × w(s) ds

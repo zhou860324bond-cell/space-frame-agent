@@ -570,19 +570,28 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "set_member_span_load",
             "description": "在杆件上创建或按名称替换非满跨荷载："
-                           "均布、梯形/三角形或杆中集中力；w1 全零表示删除。",
+                           "均布、梯形/三角形、杆中集中力或**部分跨均布**；"
+                           "w1 全零表示删除。"
+                           "partial 用 a、b 圈出受载区间 [a, b]，强度写在 w1 里——"
+                           "砌体墙、局部堆载、只压半跨的活载都是这个形状。"
+                           "以前只能拿几个集中力硬凑，凑出来的弯矩图在荷载区内"
+                           "是折线而不是抛物线。",
             "parameters": {
                 "type": "object", "required": ["member_id", "kind", "w1"],
                 "properties": {
                     "member_id": {"type": "integer"},
                     "kind": {"type": "string",
-                             "enum": ["uniform", "trapezoid", "point"]},
+                             "enum": ["uniform", "trapezoid", "point", "partial"]},
                     "w1": {"type": "array", "minItems": 3, "maxItems": 3,
                            "items": {"type": "number"}},
                     "w2": {"type": "array", "minItems": 3, "maxItems": 3,
                            "items": {"type": "number"}},
                     "a": {"type": "number",
-                          "description": "距杆件 i 端位置，使用当前模型长度单位"},
+                          "description": "距杆件 i 端位置，使用当前模型长度单位。"
+                                         "point 是作用点；partial 是受载区间起点"},
+                    "b": {"type": "number",
+                          "description": "partial 专用：受载区间终点，"
+                                         "必须满足 0 ≤ a < b ≤ 杆长"},
                     "case_name": {"type": "string"},
                     "name": {"type": "string"},
                 },
@@ -676,7 +685,9 @@ TOOLS: list[dict[str, Any]] = [
                                                    "kind=trapezoid 时 w1 是 i 端强度、w2 是 j 端强度"
                                                    "（单位 N/m，三角形就把一端写 0）；"
                                                    "kind=point 时 w1 是集中力（单位 N）、"
-                                                   "a 是距 i 端的距离（单位 m，必须在 0~杆长之间）。"
+                                                   "a 是距 i 端的距离（单位 m，必须在 0~杆长之间）；"
+                                                   "kind=partial 时 w1 是强度（N/m），"
+                                                   "a、b 圈出受载区间，0 ≤ a < b ≤ 杆长。"
                                                    "满跨均布用上面的 member_loads 更省事。",
                                     "items": {
                                         "type": "object",
@@ -690,6 +701,8 @@ TOOLS: list[dict[str, Any]] = [
                                             "w2": {"type": "array", "minItems": 3, "maxItems": 3,
                                                    "items": {"type": "number"}},
                                             "a": {"type": "number"},
+                                            "b": {"type": "number",
+                                                  "description": "partial 的区间终点"},
                                             "note": {"type": "string",
                                                      "description": "备注，可留空"}}}},
                                 "settlements": {

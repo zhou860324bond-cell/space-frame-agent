@@ -188,13 +188,20 @@ class LoadsMixin:
                              w2: list[float] | None = None,
                              a: float | None = None,
                              case_name: str | None = None,
-                             name: str | None = None) -> ToolResult:
-        """创建梯形、三角形或杆中集中力，按名称编辑而不是重复叠加。"""
+                             name: str | None = None,
+                             b: float | None = None) -> ToolResult:
+        """创建梯形、三角形、杆中集中力或部分跨均布，按名称编辑而不是重复叠加。
+
+        ``partial`` 用 a、b 圈出受载区间 [a, b]，强度写在 w1 里。
+        砌体墙、局部堆载、只压半跨的活载都是这个形状；以前只能拿几个集中力
+        硬凑，凑出来的弯矩图在荷载区内是折线而不是抛物线。
+        """
         from copy import deepcopy
 
         kind = str(kind)
-        if kind not in {"uniform", "trapezoid", "point"}:
-            return ToolResult(False, {"error": "kind 只能是 uniform / trapezoid / point"})
+        if kind not in {"uniform", "trapezoid", "point", "partial"}:
+            return ToolResult(False, {
+                "error": "kind 只能是 uniform / trapezoid / point / partial"})
         try:
             start = [float(value) for value in w1]
             end = [float(value) for value in (w2 if w2 is not None else w1)]
@@ -221,6 +228,27 @@ class LoadsMixin:
             if not np.isfinite(position) or not 0 <= position <= length:
                 return ToolResult(False, {
                     "error": f"位置 a 必须在 0 到杆长 {length:g} 之间（当前模型长度单位）"})
+        # 名字不能叫 end —— 上文的 end 是 w2 向量，覆盖掉会让梯形荷载
+        # 静默丢掉 j 端强度。
+        span_end = None
+        if kind == "partial":
+            nodes = {int(node["id"]): node for node in self.model.get("nodes") or []}
+            ni, nj = nodes[int(member["i"])], nodes[int(member["j"])]
+            length = float(np.linalg.norm(np.array(
+                [nj[key] - ni[key] for key in ("x", "y", "z")], dtype=float)))
+            try:
+                position, span_end = float(a), float(b)
+            except (TypeError, ValueError):
+                return ToolResult(False, {
+                    "error": "部分跨均布必须同时给出起点 a 与终点 b"})
+            if not (np.isfinite(position) and np.isfinite(span_end)):
+                return ToolResult(False, {"error": "a 与 b 必须是有限数"})
+            if not 0 <= position < span_end <= length:
+                # 不允许 a==b：那是个零长度的"荷载"，合力为零却照样占着一条
+                # 记录，以后查"为什么合力对不上"会白费很多时间。
+                return ToolResult(False, {
+                    "error": f"必须满足 0 ≤ a < b ≤ 杆长 {length:g}，"
+                             f"收到 a={position:g}、b={span_end:g}"})
         load_name = str(name or f"{kind.title()}-Member-{member_id}").strip()
         if not load_name:
             return ToolResult(False, {"error": "载荷名称不能为空"})
@@ -242,6 +270,9 @@ class LoadsMixin:
                 entry["w2"] = end
             if kind == "point":
                 entry["a"] = position
+            if kind == "partial":
+                entry["a"] = position
+                entry["b"] = span_end
             entries.append(entry)
         case["member_spans"] = entries
         errors = validate_payload(candidate)

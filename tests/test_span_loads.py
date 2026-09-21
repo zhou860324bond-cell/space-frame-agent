@@ -15,7 +15,8 @@ import pytest
 from frame3d import (Frame, Material, Member, Node, Section, check_equilibrium,
                      check_model, fixed_end_equivalent, solve)
 from internal_forces import member_diagram
-from span_loads import POINT, TRAPEZOID, UNIFORM, SpanLoad, fixed_end, span_force
+from span_loads import (KINDS, PARTIAL, POINT, TRAPEZOID, UNIFORM, SpanLoad,
+                        fixed_end, span_force)
 
 # 符号约定：这套几何下全局 z 向的荷载落在杆件局部 y 上，因此产生 Mz。
 # 向下（W、P 取负）的荷载给出**正的** Mz。既有测试一律取绝对值回避了符号，
@@ -311,3 +312,113 @@ def test_round_trip_through_a_dict():
                  SpanLoad(TRAPEZOID, (0.0, 0.0, W), (0.0, 0.0, 2 * W)),
                  SpanLoad(POINT, (0.0, 0.0, P), a=2.5)):
         assert SpanLoad.from_dict(item.to_dict()) == item
+
+
+# --------------------------------------------------- 部分跨均布 partial
+
+def test_a_partial_load_over_the_whole_span_is_the_uniform_load():
+    """a=0、b=L 时必须**逐项**退回满跨均布。
+
+    这是 partial 最强的一条自检：它的固端力是把集中力公式从 a 积到 b 得来的，
+    积满全跨就该还原成 wL/2 与 wL²/12。差一点都说明积分写错了。
+    """
+    rot = np.eye(3)
+    full = fixed_end(SpanLoad(UNIFORM, (0.0, 0.0, W)), L, rot)
+    part = fixed_end(SpanLoad(PARTIAL, (0.0, 0.0, W), a=0.0, b=L), L, rot)
+    assert np.allclose(full, part, atol=1e-9), float(np.max(np.abs(full - part)))
+
+
+def test_a_half_span_load_matches_the_textbook_fixed_end_forces():
+    """半跨均布（0→L/2）的固端力有现成闭合解，四个数逐个对。
+
+        V_i = 13wL/32    V_j = 3wL/32
+        M_i = 11wL²/192  M_j = 5wL²/192
+
+    这四个彼此独立、凑不出来——任一系数写错都会当场露馅。
+    """
+    p = fixed_end(SpanLoad(PARTIAL, (0.0, 0.0, W), a=0.0, b=L / 2), L, np.eye(3))
+    vi, vj, mi, mj = p[2], p[8], p[4], p[10]
+    assert vi == pytest.approx(13.0 * W * L / 32.0, rel=1e-12)
+    assert vj == pytest.approx(3.0 * W * L / 32.0, rel=1e-12)
+    # 局部 z 方向的弯矩项取反，与 uniform / trapezoid 是同一套符号来源
+    assert mi == pytest.approx(-11.0 * W * L ** 2 / 192.0, rel=1e-12)
+    assert mj == pytest.approx(5.0 * W * L ** 2 / 192.0, rel=1e-12)
+    assert vi + vj == pytest.approx(W * L / 2.0, rel=1e-12)
+
+
+def test_a_partial_load_reproduces_the_hand_calculation():
+    """端到端：简支梁前半跨受载，跨内弯矩对手算。
+
+    6 m 梁、前 3 m 上 20 kN/m：合力 60 kN 作用在 x=1.5，
+    R₁ = 60×(1−1.5/6) = 45 kN，峰值出现在剪力过零处 x = R₁/w = 2.25 m，
+    M = 45×2.25 − 20×2.25²/2 = 50.625 kN·m。
+    """
+    f = pin_pin(bar())
+    f.case().member_spans[1] = [SpanLoad(PARTIAL, (0.0, 0.0, W), a=0.0, b=L / 2)]
+    sol = solve(f)
+    assert check_equilibrium(f, sol, "default")["ok"]
+    r1 = -W * (L / 2) * (1.0 - (L / 4) / L)          # 近端反力（向上为正）
+    x0 = r1 / -W                                      # 剪力过零
+    exact = r1 * x0 + W * x0 ** 2 / 2.0
+    x_peak, m_peak = peak(f)
+    assert x_peak == pytest.approx(x0, abs=L / 200)
+    assert m_peak == pytest.approx(exact, rel=1e-3)
+
+
+def test_splitting_the_member_does_not_change_a_partial_load():
+    """跨越剖分点时，两段合起来必须和不剖分给出同一个答案。
+
+    重叠区间要落到每个单元**自己的**局部坐标上。算错只会让结果偏，
+    不报错——所以拿"剖分与否同值"当判据。
+    """
+    plain = pin_pin(bar())
+    plain.case().member_spans[1] = [
+        SpanLoad(PARTIAL, (0.0, 0.0, W), a=L / 4, b=3 * L / 4)]
+    cut = pin_pin(bar(n=2))                  # 在跨中切开
+    cut.case().member_spans[1] = [
+        SpanLoad(PARTIAL, (0.0, 0.0, W), a=L / 4, b=L / 2)]
+    cut.case().member_spans[2] = [
+        SpanLoad(PARTIAL, (0.0, 0.0, W), a=0.0, b=L / 4)]
+    assert peak(plain)[1] == pytest.approx(peak(cut)[1], rel=1e-6)
+    assert peak(plain)[0] == pytest.approx(peak(cut)[0], abs=L / 100)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_every_declared_span_load_kind_reaches_the_solver(kind):
+    """**KINDS 里每一种都必须真的进得了求解器。**
+
+    这条闸拦的是"加了类型却没改编译器"。model_compiler 里那段原本是个
+    没有 else 的 if 链：POINT/UNIFORM/TRAPEZOID 各自 continue，其余一概
+    掉出循环消失。加 partial 时实测后果是**反力全零、平衡残差 0.0、
+    一句话都不报**——荷载凭空蒸发，而所有自检都说"没问题"。
+
+    判据是反力合计等于荷载合力：荷载被丢掉时它会是零。
+    """
+    from agent import Session
+
+    payload = {
+        "units": "N-m-Pa",
+        "materials": [{"name": "M", "E": E, "nu": 0.3}],
+        "sections": [{"name": "S", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4,
+                      "J": 8e-7}],
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": L, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "M", "section": "S"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]},
+                     {"node": 2, "fix": [0, 1, 1, 1, 1, 1]}],
+    }
+    entry: dict = {"member": 1, "kind": kind, "w1": [0.0, 0.0, W]}
+    if kind == TRAPEZOID:
+        entry["w2"] = [0.0, 0.0, W]
+    if kind == POINT:
+        entry["a"] = L / 2
+    if kind == PARTIAL:
+        entry["a"], entry["b"] = 0.0, L / 2
+
+    s = Session()
+    assert s.set_model(payload).ok
+    s.model["load_cases"] = [{"name": "C", "member_spans": [entry]}]
+    assert s.solve_model().ok
+    total = s.query_results("reactions", case="C").payload["vertical_total_kN"]
+    assert abs(total) > 1e-6, (
+        f"{kind} 类型的荷载没有产生任何反力——多半是被编译器静默丢掉了")
