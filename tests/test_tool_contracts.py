@@ -517,3 +517,75 @@ def test_a_set_survives_an_unrelated_change():
     s.set_load_cases(cases=[{"name": "D", "member_loads":
                              [{"member": 4, "w": [0, 0, -20e3]}]}])
     assert s.model["sets"]["全部柱"]["members"] == before
+
+
+# --------------------------------------------- 描述与能力同步
+
+#: 安全相关的返回字段，**工具描述里必须点名**。
+#:
+#: 这条闸补的是一个真实发生过的缺口：payload 里已经有正确数据，而工具描述
+#: 没提，于是 agent 拿到了也不会用，甚至照旧转达一句已经不成立的限制。
+#: 三处实测后果：
+#:
+#:   solve_model        agent 继续引用 max_displacement_mm，而它漏报单元内
+#:                      挠度 2.16 倍（87 杆框架 4.30 vs 9.27 mm）
+#:   buckling_analysis  λ 被网格抬高 102%（门式刚架 1.66 vs 收敛 0.82）而不提
+#:   check_strength     描述说"只算正应力"——在折算应力接进来之后这句话是假的
+#:
+#: 键写在这里就必须在描述里出现。改了能力不改描述，这里会红。
+DESCRIPTION_MUST_MENTION = {
+    "solve_model": ("max_deflection_mm",),
+    "modal_analysis": ("mesh_warning",),
+    "buckling_analysis": ("mesh_warning", "likely_cause"),
+    "check_strength": ("折算应力", "φ"),
+}
+
+
+@pytest.mark.parametrize("tool_name", sorted(DESCRIPTION_MUST_MENTION))
+def test_the_description_tells_the_agent_what_to_look_at(tool_name):
+    """工具描述必须点名那些**不提就会被忽略**的返回字段。
+
+    agent 只看得到描述。payload 里放了再正确的数，描述不提就等于没放——
+    这不是文档洁癖，是三次实测出来的错数。
+    """
+    fn = {t["function"]["name"]: t["function"] for t in TOOLS}[tool_name]
+    text = fn["description"]
+    missing = [k for k in DESCRIPTION_MUST_MENTION[tool_name] if k not in text]
+    assert not missing, (
+        f"{tool_name} 的描述没提到 {missing}——agent 看不到的东西等于不存在")
+
+
+def test_no_tool_still_claims_a_limitation_it_has_outgrown():
+    """能力补上了，描述里那句旧限制就必须跟着删。
+
+    check_strength 曾长期写着"只算正应力，没有剪应力与扭转"。折算应力接进来
+    之后这句话变成假的，而 agent 会**原样转达给用户**——比没有说明更糟。
+    """
+    fn = {t["function"]["name"]: t["function"] for t in TOOLS}["check_strength"]
+    text = fn["description"]
+    assert "只算正应力" not in text, "折算应力已经接进来了，这句限制是假的"
+    # 但真正还存在的限制必须留着，不许借着更新描述把边界一起抹掉
+    assert "扭转" in text, "仍不含扭转剪应力，这一条不能删"
+
+
+@pytest.mark.parametrize("tool_name", sorted({
+    t["function"]["name"] for t in TOOLS}))
+def test_every_declared_parameter_is_actually_accepted(tool_name):
+    """schema 声明的参数，Session 方法必须真的接得住。
+
+    声明了却接不住，agent 传过来就是 TypeError；而这种错只在模型**恰好**
+    用到那个参数时才现形，平时测不出来。`**kwargs` 视为全接受。
+    """
+    import inspect
+
+    fn = {t["function"]["name"]: t["function"] for t in TOOLS}[tool_name]
+    method = getattr(Session, tool_name, None)
+    if method is None:
+        pytest.skip(f"{tool_name} 不是 Session 方法")
+    params = inspect.signature(method).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return                                  # **kwargs 全收
+    declared = set(fn["parameters"].get("properties") or {})
+    missing = declared - set(params)
+    assert not missing, (
+        f"{tool_name} 的 schema 声明了 {sorted(missing)}，但方法签名里没有")
