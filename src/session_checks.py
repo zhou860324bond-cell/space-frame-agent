@@ -203,7 +203,8 @@ class ChecksMixin:
 
     def check_strength(self, members: list[int] | None = None,
                        cases: list[str] | None = None,
-                       slenderness_limit: float | None = None) -> ToolResult:
+                       slenderness_limit: float | None = None,
+                       buckling_curve: str = "b") -> ToolResult:
         """强度验算 + 逐杆稳定校核（讲义 §3-9 三）。
 
         按**物理构件**验算：传编译映射进去，剖分过的杆件才会按整根算 Pcr。
@@ -230,7 +231,8 @@ class ChecksMixin:
                 members=[int(m) for m in members] if members else None,
                 cases=[str(c) for c in cases] if cases else None,
                 slenderness_limit=(None if slenderness_limit is None
-                                   else float(slenderness_limit)))
+                                   else float(slenderness_limit)),
+                buckling_curve=str(buckling_curve))
         except StrengthUnavailable as exc:
             return ToolResult(False, {
                 "error": str(exc),
@@ -282,6 +284,17 @@ class ChecksMixin:
                     "mu": round(b["axes"][b["critical_axis"]]["mu"], 3),
                     "mu_source": b["axes"][b["critical_axis"]]["mu_source"],
                 })
+                cc = b["code_check"]
+                if cc is not None:
+                    # 规范法与欧拉并列给出。欧拉在中小柔度段弃权，而实际
+                    # 钢柱大多落在那里——实测 λ=24.9 的粗短柱，欧拉
+                    # N/Pcr=0.023、规范 0.822，差 35 倍且偏不安全。
+                    row.update({
+                        "phi": round(cc["phi"], 4),
+                        "buckling_curve": cc["curve"],
+                        "code_stability_ratio": round(cc["ratio"], 4),
+                        "code_stability_ok": cc["ok"],
+                    })
             rows.append(row)
 
         warnings: list[str] = []
@@ -313,9 +326,10 @@ class ChecksMixin:
                 "slenderness": round(got["worst_buckling"]["slenderness"], 1)},
             "notes": got["notes"],
             "warnings": warnings,
-            "reading": "failed_members 是**真的超限**；inconclusive_members 是"
-                       "「欧拉公式在这根杆上不适用（λ<λp，中小柔度）」，"
-                       "既不是通过也不是不通过，转达时不要说成不安全。",
+            "reading": "failed_members 是**真的超限**。inconclusive_members 现在只在"
+                       "**连规范法也给不出结论**时才有内容（缺屈服应力）——"
+                       "欧拉公式不适用的中小柔度段已由 GB 50017 的 φ 系数法覆盖，"
+                       "不再弃权。",
             "limitation": "正应力校核按拉压分别比许用值；折算应力 √(σ²+3τ²) "
                           "另算一条，在极端纤维、中性轴、腹板边缘三处取最不利。"
                           "**仍不含扭转剪应力**（截面契约里没有扭转常数之外的壁厚分布），"
