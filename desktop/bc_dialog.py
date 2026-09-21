@@ -11,7 +11,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QGridLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDoubleSpinBox,
+                               QGridLayout, QLabel, QLineEdit,
                                QPushButton, QVBoxLayout)
 
 from . import dialog_styles, theme
@@ -39,7 +40,8 @@ class BCDialog(QDialog):
     """边界条件对话框 —— 勾选自由度。"""
 
     def __init__(self, node_id: int, current_fix: list[int] | None = None,
-                 current_name: str | None = None, parent=None):
+                 current_name: str | None = None, parent=None,
+                 current_spring: list[float] | None = None):
         super().__init__(parent)
         self.setWindowTitle(f"边界条件 — 节点 {node_id}")
         style_dialog(self, 440, 520)
@@ -86,6 +88,7 @@ class BCDialog(QDialog):
         dof_grid = QGridLayout()
         dof_grid.setSpacing(8)
         self.checks: list[QCheckBox] = []
+        self.springs: list[QDoubleSpinBox] = []
         for i, (code, desc) in enumerate(DOFS):
             # 自由度代码标签
             code_label = QLabel(code)
@@ -110,8 +113,31 @@ class BCDialog(QDialog):
             dof_grid.addWidget(cb, i, 2)
             self.checks.append(cb)
 
+            # 弹簧刚度。**真实支座几乎总在"完全固定"和"完全自由"之间**——
+            # 桩基、弹性地基、橡胶支座都是。以前这里只有勾选框，等于逼用户
+            # 在两个极端里挑一个。
+            box = QDoubleSpinBox()
+            box.setRange(0.0, 1.0e15)
+            box.setDecimals(1)
+            box.setSingleStep(1.0e6)
+            box.setMinimumHeight(24)
+            box.setToolTip(
+                "支承刚度，0 表示该方向没有弹簧。"
+                + ("平动：力/长度（N-m-Pa 下是 N/m）" if i < 3
+                   else "转动：力·长度/弧度（N·m/rad）"))
+            # 勾了刚性约束，弹簧就用不上了：刚性会把自由度整个划掉。
+            # 直接禁用比让用户填完再被拒绝要好。
+            cb.toggled.connect(
+                lambda checked, w=box: (w.setEnabled(not checked),
+                                        w.setValue(0.0) if checked else None))
+            dof_grid.addWidget(box, i, 3)
+            self.springs.append(box)
+
         dof_section.addLayout(dof_grid)
-        dof_section.addWidget(HintLabel("U1/U2/U3 = 平动自由度，UR1/UR2/UR3 = 转动自由度"))
+        dof_section.addWidget(HintLabel(
+            "U1/U2/U3 = 平动自由度，UR1/UR2/UR3 = 转动自由度。"
+            "右侧一栏是弹性支承刚度，留 0 表示不设弹簧；"
+            "勾了约束的方向弹簧会被自动禁用——刚性约束会让弹簧完全失效。"))
         content.addWidget(dof_section)
 
         layout.addLayout(content, 1)
@@ -129,6 +155,10 @@ class BCDialog(QDialog):
         if current_fix:
             for cb, val in zip(self.checks, current_fix, strict=True):
                 cb.setChecked(bool(val))
+        if current_spring:
+            for box, val in zip(self.springs, current_spring, strict=True):
+                if box.isEnabled():
+                    box.setValue(float(val))
 
     def _apply_preset(self, name: str):
         fix = PRESETS[name]
@@ -137,6 +167,11 @@ class BCDialog(QDialog):
 
     def get_fix(self) -> list[int]:
         return [1 if cb.isChecked() else 0 for cb in self.checks]
+
+    def get_spring(self) -> list[float] | None:
+        """六个方向的支承刚度；全零时返回 None（表示不设弹簧）。"""
+        values = [float(box.value()) for box in self.springs]
+        return values if any(values) else None
 
     def get_name(self) -> str:
         return self.txt_name.text().strip()

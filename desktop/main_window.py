@@ -2006,21 +2006,24 @@ class MainWindow(QMainWindow):
                               if int(s["node"]) == nid), None)
         current = current_entry["fix"] if current_entry else None
         dlg = BCDialog(nid, current,
-                       current_name=(current_entry or {}).get("name"), parent=self)
+                       current_name=(current_entry or {}).get("name"), parent=self,
+                       current_spring=(current_entry or {}).get("spring"))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         fix = dlg.get_fix()
+        spring = dlg.get_spring()
         bc_name = dlg.get_name()
-        if any(fix) and not bc_name:
+        if (any(fix) or spring) and not bc_name:
             QMessageBox.warning(self, "边界条件创建失败", "边界条件名称不能为空。")
             return
         result = self.session.set_supports(
-            [nid], fix, name=bc_name or f"BC-Node-{nid}")
+            [nid], fix, name=bc_name or f"BC-Node-{nid}", spring=spring)
         if not result.ok:
             QMessageBox.warning(self, "边界条件创建失败", self._explain(result.payload))
             return
-        self.set_prompt(f"已设置节点 {nid} 边界条件：{fix}")
-        self._after_manual_edit(f"节点 {nid} 边界条件已更新：{fix}")
+        told = f"{fix}" + (f" + 弹簧 {spring}" if spring else "")
+        self.set_prompt(f"已设置节点 {nid} 边界条件：{told}")
+        self._after_manual_edit(f"节点 {nid} 边界条件已更新：{told}")
 
     # 这些命令必须先在视口里选中对象才有意义。
     # 键是命令名，值是它接受的选择类型。

@@ -205,7 +205,11 @@ MODEL_SCHEMA: dict[str, Any] = {
                 "properties": {"name": {"type": "string", "minLength": 1},
                                "node": {"type": "integer"},
                                "fix": {"type": "array", "minItems": 6, "maxItems": 6,
-                                       "items": {"type": "integer", "enum": [0, 1]}}},
+                                       "items": {"type": "integer", "enum": [0, 1]}},
+                               # 弹性支座刚度。平动是 力/长度，转动是
+                               # 力·长度/弧度；0 表示该方向没有弹簧。
+                               "spring": {"type": "array", "minItems": 6, "maxItems": 6,
+                                          "items": {"type": "number", "minimum": 0}}},
             },
         },
         # 单工况模型直接写这几项，等价于名为 "default" 的工况
@@ -340,6 +344,8 @@ def from_dict(data: dict[str, Any]) -> Frame:
         )
     for s in data["supports"]:
         f.supports[int(s["node"])] = tuple(int(v) for v in s["fix"])
+        if s.get("spring"):
+            f.springs[int(s["node"])] = tuple(float(v) for v in s["spring"])
 
     _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):
@@ -395,6 +401,20 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
             errors.append(f"[语义] {label}重复：{duplicate}")
 
     walk(data)
+    for s in data.get("supports") or []:
+        spring = s.get("spring")
+        if not spring:
+            continue
+        clash = [k for k, (fix, value) in enumerate(zip(s.get("fix") or [0] * 6,
+                                                        spring, strict=False))
+                 if fix and value]
+        if clash:
+            # 刚性约束会把自由度整个划掉，弹簧那一项永远不会被用到。
+            # 静默忽略最糟：用户以为自己建了个弹性支座，算出来的却是刚接。
+            errors.append(
+                f"[语义] 节点 {s.get('node')} 的方向 {clash} 既写了 fix=1 又给了"
+                "弹簧刚度。刚性约束会让弹簧完全失效，两者只能取一个："
+                "要刚接就把 spring 那一项设为 0，要弹性支承就把 fix 那一项设为 0。")
     unique(data.get("materials") or [], "name", "材料名")
     unique(data.get("sections") or [], "name", "截面名")
     unique(data.get("nodes") or [], "id", "节点编号")

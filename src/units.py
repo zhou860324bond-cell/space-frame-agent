@@ -110,6 +110,10 @@ _TO_MM = {
     "force": 1.0,           # N   → N
     "moment": 1e3,          # N·m → N·mm
     "line_load": 1e-3,      # N/m → N/mm
+    # 弹簧刚度：平动是 力/长度，转动是 力·长度/弧度。**两者方向相反**，
+    # 用同一个系数会让转动弹簧差 10⁶，而且只在换过单位的模型上现形。
+    "spring_translation": 1e-3,   # N/m     → N/mm
+    "spring_rotation": 1e3,       # N·m/rad → N·mm/rad
 }
 
 
@@ -169,6 +173,12 @@ def convert_model(model: dict, to: str) -> dict:
                         **({"c_web": s["c_web"] * f["length"]}
                            if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    out["supports"] = [
+        {**s, **({"spring": [v * (f["spring_translation"] if k < 3
+                                  else f["spring_rotation"])
+                             for k, v in enumerate(s["spring"])]}
+                 if "spring" in s else {})}
+        for s in model.get("supports", [])]
     out["nodes"] = [{**n, "x": n["x"] * f["length"], "y": n["y"] * f["length"],
                      "z": n["z"] * f["length"]}
                     for n in model.get("nodes", [])]

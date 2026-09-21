@@ -193,6 +193,16 @@ class Frame:
     sections: dict[str, Section] = field(default_factory=dict)
     materials: dict[str, Material] = field(default_factory=dict)
     supports: dict[int, tuple[int, int, int, int, int, int]] = field(default_factory=dict)
+    #: 弹性支座：节点 → 六个方向的支承刚度。0 表示该方向没有弹簧。
+    #:
+    #: 与 supports 的区别是**本质的**：supports 把自由度划掉（位移强制为给定
+    #: 值），springs 则把自由度留在方程里、只往对角线上加一项刚度。所以同一个
+    #: 方向不能既 fix 又给弹簧——那样弹簧会被静默忽略，而用户以为它在起作用。
+    #:
+    #: 单位：平动是 力/长度，转动是 力·长度/弧度。两者换算方向相反，
+    #: units.convert_model 里分开处理。
+    springs: dict[int, tuple[float, float, float, float, float, float]] = field(
+        default_factory=dict)
     load_cases: dict[str, LoadCase] = field(default_factory=_default_cases)
     combos: dict[str, dict[str, float]] = field(default_factory=dict)
     # 单位制只影响自重的 g 与结果的显示换算，不影响刚度方程本身
@@ -517,6 +527,14 @@ def assemble(model: Frame, case_names: list[str] | None = None):
         for nid, load in model.load_cases[name].nodal_loads.items():
             F[model.node_dofs(nid), c] += np.asarray(load, dtype=float)
 
+    # 弹性支座只往对角线上加一项，不动任何耦合项——弹簧是接地的，
+    # 它连接的是"这个自由度"和"大地"，不是两个自由度。
+    for nid, stiffness in model.springs.items():
+        dofs = model.node_dofs(nid)
+        for k, value in enumerate(stiffness):
+            if value:
+                rows.append(dofs[k]); cols.append(dofs[k]); vals.append(float(value))
+
     K = coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
     return K, F, case_names
 
@@ -645,6 +663,15 @@ def solve(model: Frame, cases: list[str] | None = None,
         Uc = U[:, c]
         Rc = np.zeros(n)
         Rc[fixed] = (K @ Uc - F[:, c])[fixed]
+        # 弹簧支承的自由度是**自由**的，K@U−F 在那里恒为零，取不到反力。
+        # 弹簧对结构的作用力是 −k·u，方向与固定支座的反力一致：
+        # 向下压 P 时 u=−P/k，−k·u=+P，向上托住。
+        # 漏掉这一段的后果不是数字偏小，而是 check_equilibrium 直接失衡。
+        for nid, stiffness in model.springs.items():
+            dofs = model.node_dofs(nid)
+            for k, value in enumerate(stiffness):
+                if value:
+                    Rc[dofs[k]] += -float(value) * Uc[dofs[k]]
         results[name] = CaseResult(
             name=name, U=Uc, R=Rc,
             member_forces=_member_forces(model, Uc, model.load_cases[name]),

@@ -828,8 +828,18 @@ class ModelingMixin:
 
     @_records
     def set_supports(self, node_ids, fix: list[int],
-                     name: str = "BC-1") -> ToolResult:
-        """给节点或节点集合统一施加位移边界；边界属于 Initial 阶段。"""
+                     name: str = "BC-1",
+                     spring: list[float] | None = None) -> ToolResult:
+        """给节点或节点集合统一施加位移边界；边界属于 Initial 阶段。
+
+        ``spring`` 给出六个方向的**支承刚度**（平动 力/长度，转动
+        力·长度/弧度），0 表示该方向没有弹簧。桩基、弹性地基、橡胶支座、
+        相邻结构的约束刚度都是这个形状——以前只能在"完全固定"和"完全自由"
+        之间二选一。
+
+        同一方向不能既 fix=1 又给弹簧：刚性约束会把自由度整个划掉，
+        弹簧永远用不上，而用户以为它在起作用。这里当场拒绝。
+        """
         from copy import deepcopy
 
         try:
@@ -841,6 +851,26 @@ class ModelingMixin:
         if len(fix) != 6 or any(value not in (0, 1) for value in fix):
             return ToolResult(False, {
                 "error": "fix 必须是六个 0 或 1，顺序 ux uy uz rx ry rz"})
+        stiffness: list[float] | None = None
+        if spring is not None:
+            try:
+                stiffness = [float(v) for v in spring]
+            except (TypeError, ValueError):
+                return ToolResult(False, {"error": "spring 必须是六个数字"})
+            if len(stiffness) != 6 or not all(np.isfinite(v) and v >= 0
+                                              for v in stiffness):
+                return ToolResult(False, {
+                    "error": "spring 必须是六个非负有限数，顺序 ux uy uz rx ry rz"})
+            clash = [k for k, (f, v) in enumerate(zip(fix, stiffness,
+                                                      strict=True)) if f and v]
+            if clash:
+                return ToolResult(False, {
+                    "error": f"方向 {clash} 既写了 fix=1 又给了弹簧刚度。"
+                             "刚性约束会让弹簧完全失效，两者只能取一个。",
+                    "hint": "要刚接就把 spring 那一项设为 0，"
+                            "要弹性支承就把 fix 那一项设为 0。"})
+            if not any(stiffness):
+                stiffness = None
         known = {int(node["id"]) for node in self.model.get("nodes") or []}
         missing = sorted(set(ids) - known)
         if missing:
@@ -850,10 +880,11 @@ class ModelingMixin:
         selected = set(ids)
         supports = [support for support in candidate.get("supports") or []
                     if int(support["node"]) not in selected]
-        if any(fix):
+        if any(fix) or stiffness:
             bc_name = str(name or "BC-1").strip() or "BC-1"
             supports.extend({"name": bc_name, "node": node,
-                             "fix": [int(v) for v in fix]}
+                             "fix": [int(v) for v in fix],
+                             **({"spring": list(stiffness)} if stiffness else {})}
                             for node in ids)
         candidate["supports"] = sorted(supports, key=lambda item: int(item["node"]))
         if candidate.get("supports") == self.model.get("supports", []):

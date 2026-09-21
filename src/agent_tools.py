@@ -446,6 +446,15 @@ TOOLS: list[dict[str, Any]] = [
                     "fix": {"type": "array", "minItems": 6, "maxItems": 6,
                             "items": {"type": "integer", "enum": [0, 1]},
                             "description": "[ux,uy,uz,rx,ry,rz]，1 表示约束"},
+                    "spring": {"type": "array", "minItems": 6, "maxItems": 6,
+                               "items": {"type": "number", "minimum": 0},
+                               "description":
+                                   "弹性支座刚度 [kx,ky,kz,krx,kry,krz]，"
+                                   "0 表示该方向没有弹簧。平动单位 力/长度"
+                                   "（N-m-Pa 下是 N/m），转动单位 力·长度/弧度"
+                                   "（N·m/rad）。**同一方向不能既 fix=1 又给"
+                                   "弹簧**，刚性约束会让弹簧完全失效，"
+                                   "工具会当场拒绝。"},
                     "name": {"type": "string"},
                 },
                 "additionalProperties": False,

@@ -15,6 +15,7 @@ import pytest
 from frame3d import (Frame, Material, Member, Node, Section, check_equilibrium,
                      check_model, fixed_end_equivalent, solve)
 from internal_forces import member_diagram
+from model_io import from_dict
 from span_loads import (KINDS, PARTIAL, POINT, TRAPEZOID, UNIFORM, SpanLoad,
                         fixed_end, span_force)
 
@@ -422,3 +423,102 @@ def test_every_declared_span_load_kind_reaches_the_solver(kind):
     total = s.query_results("reactions", case="C").payload["vertical_total_kN"]
     assert abs(total) > 1e-6, (
         f"{kind} 类型的荷载没有产生任何反力——多半是被编译器静默丢掉了")
+
+
+# ------------------------------------------------------- 弹性支座
+
+def _spring_cantilever(k: float) -> Frame:
+    """悬臂，端部加一个竖向弹簧。梁与弹簧**并联**。
+
+    注意放开的是 ry 不是 rz：杆沿全局 X 时局部 y 指向全局 +Z，
+    所以 Z 向荷载引起的转动是绕局部 z，对应全局 Y。
+    """
+    f = bar()
+    f.supports[1] = (1, 1, 1, 1, 1, 1)
+    f.supports[2] = (1, 1, 0, 1, 0, 1)
+    if k:
+        f.springs[2] = (0.0, 0.0, k, 0.0, 0.0, 0.0)
+    f.case().nodal_loads[2] = (0.0, 0.0, P, 0.0, 0.0, 0.0)
+    return f
+
+
+@pytest.mark.parametrize("ratio", [0.0, 1.0, 10.0, 1e6])
+def test_a_spring_support_acts_in_parallel_with_the_beam(ratio):
+    """δ = P/(k + 3EI/L³)。弹簧与梁端刚度是并联关系。
+
+    ratio=0 退回纯悬臂 PL³/(3EI)，ratio 很大时位移趋于零——两端都对上，
+    中间那两档才有意义。四档实测误差 0.0000%。
+    """
+    beam_k = 3.0 * E * SEC.Iz / L ** 3
+    k = ratio * beam_k
+    f = _spring_cantilever(k)
+    sol = solve(f)
+    uz = sol["default"].U[f.node_dofs(2)[2]]
+    assert uz == pytest.approx(P / (k + beam_k), rel=1e-9)
+
+
+def test_the_spring_reaction_is_included_in_equilibrium():
+    """弹簧支承的自由度是**自由**的，K@U−F 在那里恒为零。
+
+    所以弹簧反力必须单独补 −k·u。漏掉的后果不是数字偏小，
+    而是整体平衡直接失衡——这条拿 check_equilibrium 当判据。
+    """
+    beam_k = 3.0 * E * SEC.Iz / L ** 3
+    f = _spring_cantilever(2.0 * beam_k)
+    sol = solve(f)
+    assert check_equilibrium(f, sol, "default")["ok"]
+    total = sol["default"].R[[f.node_dofs(n)[2] for n in f.nodes]].sum()
+    assert total == pytest.approx(-P, rel=1e-9)
+
+
+def test_a_rigid_fix_and_a_spring_on_the_same_dof_is_rejected():
+    """同一方向既 fix=1 又给弹簧刚度，必须报错而不是二选一。
+
+    刚性约束会把自由度整个划掉，弹簧那一项永远用不上。静默忽略最糟：
+    用户以为建了个弹性支座，算出来的却是刚接，而两者的内力分布完全不同。
+    """
+    from model_io import validate_payload
+
+    payload = {
+        "units": "N-m-Pa",
+        "materials": [{"name": "M", "E": E, "nu": 0.3}],
+        "sections": [{"name": "S", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4,
+                      "J": 8e-7}],
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": L, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "M", "section": "S"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 1, 1],
+                      "spring": [0, 0, 1e7, 0, 0, 0]}],
+    }
+    errors = validate_payload(payload)
+    assert any("既写了 fix=1 又给了" in e for e in errors), errors
+
+
+def test_spring_stiffness_survives_a_unit_change():
+    """平动弹簧是 力/长度、转动弹簧是 力·长度/弧度，**换算方向相反**。
+
+    用同一个系数会让转动弹簧差 10⁶，而且只在换过单位的模型上才现形——
+    和 cy/cz、静矩踩过的是同一个坑。判据是换算前后算出来的位移相同。
+    """
+    from units import MM, convert_model
+
+    beam_k = 3.0 * E * SEC.Iz / L ** 3
+    si = {
+        "units": "N-m-Pa",
+        "materials": [{"name": "M", "E": E, "nu": 0.3}],
+        "sections": [{"name": "S", "A": 0.01, "Iy": 4e-5, "Iz": SEC.Iz,
+                      "J": 8e-7}],
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": L, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "M", "section": "S"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]},
+                     {"node": 2, "fix": [1, 1, 0, 1, 0, 1],
+                      "spring": [0, 0, beam_k, 0, 0, 1.0e6]}],
+        "nodal_loads": [{"node": 2, "load": [0, 0, P, 0, 0, 0]}],
+    }
+    mm = convert_model(si, MM)
+    a = solve(from_dict(si))["default"]
+    b = solve(from_dict(mm))["default"]
+    # 位移以 m 与 mm 计，差 1000 倍；物理量相同
+    assert a.U[from_dict(si).node_dofs(2)[2]] * 1e3 == pytest.approx(
+        b.U[from_dict(mm).node_dofs(2)[2]], rel=1e-9)
