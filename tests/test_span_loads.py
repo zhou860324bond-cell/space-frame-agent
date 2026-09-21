@@ -1297,3 +1297,116 @@ def test_patterns_and_combinations_compose():
     controlled = {c["name"] for c in got.payload["combos"]}
     for name in names:
         assert f"基本-{name}控制" in controlled
+
+
+# ------------------------------------------ Abaqus 式命名边界条件
+
+_E, _A, _IY, _IZ, _J = 2.06e11, 0.018, 5e-5, 2e-3, 1e-6
+_MAT = [{"name": "Q", "E": _E, "nu": 0.3, "density": 0.0}]
+_SEC = [{"name": "B", "A": _A, "Iy": _IY, "Iz": _IZ, "J": _J}]
+
+
+def _portal(span: float, height: float, half: bool):
+    """门式刚架。half=True 时只建一半，跨中用 XSYMM 封口。"""
+    from agent import Session
+
+    s = Session()
+    s.define_materials_and_sections(_MAT, _SEC)
+    if half:
+        nodes = [{"id": 1, "x": 0, "y": 0, "z": 0},
+                 {"id": 2, "x": 0, "y": 0, "z": height},
+                 {"id": 3, "x": span / 2, "y": 0, "z": height}]
+        members = [{"id": 1, "i": 1, "j": 2, "material": "Q", "section": "B"},
+                   {"id": 2, "i": 2, "j": 3, "material": "Q", "section": "B"}]
+        supports = [{"node": 1, "fix": [1] * 6},
+                    {"node": 2, "fix": [0, 1, 0, 1, 0, 1]}]
+    else:
+        nodes = [{"id": 1, "x": 0, "y": 0, "z": 0},
+                 {"id": 2, "x": 0, "y": 0, "z": height},
+                 {"id": 3, "x": span, "y": 0, "z": height},
+                 {"id": 4, "x": span, "y": 0, "z": 0}]
+        members = [{"id": 1, "i": 1, "j": 2, "material": "Q", "section": "B"},
+                   {"id": 2, "i": 2, "j": 3, "material": "Q", "section": "B"},
+                   {"id": 3, "i": 3, "j": 4, "material": "Q", "section": "B"}]
+        supports = [{"node": 1, "fix": [1] * 6}, {"node": 4, "fix": [1] * 6},
+                    {"node": 2, "fix": [0, 1, 0, 1, 0, 1]},
+                    {"node": 3, "fix": [0, 1, 0, 1, 0, 1]}]
+    s.set_model({**s.model, "nodes": nodes, "members": members,
+                 "supports": supports})
+    if half:
+        assert s.set_supports([3], bc_type="XSYMM", name="对称面").ok
+    s.set_member_load(2, [0, 0, -20e3])
+    assert s.solve_model().ok
+    return s
+
+
+def test_a_symmetry_bc_lets_half_the_model_stand_in_for_the_whole():
+    """**这是对称边界存在的理由。**
+
+    半跨 + XSYMM 必须与整跨模型给出同一个答案。对不上就说明约束的自由度
+    选错了——而选错不会报错，结构照样算得出来，只是算的不是你想要的那个。
+
+    XSYMM 的含义：对称面法向是 X，所以 U1=0（不能穿过对称面）、
+    UR2=UR3=0（绕面内两轴转就不对称了）。
+    """
+    full = _portal(12.0, 4.0, half=False)
+    half = _portal(12.0, 4.0, half=True)
+    a = full.query_results("reactions").payload["reactions"]["1"]["R"]
+    b = half.query_results("reactions").payload["reactions"]["1"]["R"]
+    assert a[0] == pytest.approx(b[0], rel=1e-9)     # 柱脚水平推力
+    assert a[2] == pytest.approx(b[2], rel=1e-9)     # 柱脚竖向反力
+    ma = full.query_diagram("Mz", 1, stations=21).payload["at_j_end"]
+    mb = half.query_diagram("Mz", 1, stations=21).payload["at_j_end"]
+    assert ma == pytest.approx(mb, rel=1e-9)         # 柱顶弯矩
+
+
+@pytest.mark.parametrize("bc_type,expected", [
+    ("ENCASTRE", [1, 1, 1, 1, 1, 1]),
+    ("PINNED", [1, 1, 1, 0, 0, 0]),
+    ("XSYMM", [1, 0, 0, 0, 1, 1]),
+    ("YSYMM", [0, 1, 0, 1, 0, 1]),
+    ("ZSYMM", [0, 0, 1, 1, 1, 0]),
+    ("XASYMM", [0, 1, 1, 1, 0, 0]),
+])
+def test_the_named_types_expand_to_the_abaqus_masks(bc_type, expected):
+    """名字到掩码的对应必须与 Abaqus 一致，否则从 Abaqus 迁过来的人会中招。
+
+    对称面：法向的**平动**被约束，面内两轴的**转动**被约束。
+    反对称正好相反。
+    """
+    from session_modeling import BC_TYPES
+
+    assert list(BC_TYPES[bc_type]) == expected
+
+
+def test_a_conflicting_type_and_mask_is_refused_not_silently_resolved():
+    """同时给 bc_type 和 fix 且两者不一致时，不能默默挑一个。
+
+    挑错了正是"算的不是你想要的那个结构"的来源。
+    """
+    s = _portal(12.0, 4.0, half=True)
+    bad = s.set_supports([2], fix=[1, 1, 1, 1, 1, 1], bc_type="PINNED")
+    assert not bad.ok and "不一致" in bad.payload["error"]
+
+
+def test_the_manager_names_the_standard_type_behind_each_mask():
+    """BC Manager 要把掩码反查成标准类型名——光看六个 0/1 认不出来。"""
+    s = _portal(12.0, 4.0, half=True)
+    got = s.list_boundary_conditions()
+    assert got.ok
+    types = {row["name"]: row["type"] for row in got.payload["boundary_conditions"]}
+    assert types["对称面"] == "XSYMM"
+
+
+def test_deleting_a_bc_warns_when_the_structure_becomes_a_mechanism():
+    """删边界条件会让结构少掉约束。变成机构时必须当场说，
+
+    不能等到求解时才炸——那时的错误信息指向刚度矩阵，
+    不是"你刚才删掉的那条"。
+    """
+    s = _portal(12.0, 4.0, half=True)
+    assert s.list_boundary_conditions().payload["count"] >= 2
+    got = s.delete_boundary_condition("对称面")
+    assert got.ok and got.payload["deleted"] == "对称面"
+    missing = s.delete_boundary_condition("并不存在")
+    assert not missing.ok and "available" in missing.payload

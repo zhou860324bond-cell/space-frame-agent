@@ -26,6 +26,42 @@ import bent as _bent
 import changes as _changes
 
 
+#: Abaqus 的命名边界条件类型 → 六个自由度的约束掩码（ux uy uz rx ry rz）。
+#:
+#: **为什么要有名字。** 让人去填六个 0/1 是这一步最容易出错的地方：
+#: "对称面上该约束哪几个"没有几个人记得住，而填错了不会报错——结构照样
+#: 算得出来，只是算的不是你想要的那个结构。Abaqus 用名字解决这件事，
+#: 这里照搬同一套名字，迁移过来的人不用重新记。
+#:
+#: 对称面的法向决定约束哪些：**法向的平动**被约束（不能穿过对称面），
+#: **面内两个轴的转动**被约束（转了就不对称了）。反对称正好相反：
+#: 面内两个平动被约束，法向转动被约束。
+BC_TYPES: dict[str, tuple[int, int, int, int, int, int]] = {
+    "ENCASTRE": (1, 1, 1, 1, 1, 1),     # 完全固定
+    "PINNED": (1, 1, 1, 0, 0, 0),       # 三向铰接
+    "XSYMM": (1, 0, 0, 0, 1, 1),        # 对称面法向 X：U1=UR2=UR3=0
+    "YSYMM": (0, 1, 0, 1, 0, 1),        # 法向 Y：U2=UR1=UR3=0
+    "ZSYMM": (0, 0, 1, 1, 1, 0),        # 法向 Z：U3=UR1=UR2=0
+    "XASYMM": (0, 1, 1, 1, 0, 0),       # 反对称，法向 X：U2=U3=UR1=0
+    "YASYMM": (1, 0, 1, 0, 1, 0),
+    "ZASYMM": (1, 1, 0, 0, 0, 1),
+    "FREE": (0, 0, 0, 0, 0, 0),         # 解除约束
+}
+
+#: 给人看的一句话说明，列在 BC 管理器里
+BC_TYPE_NOTES = {
+    "ENCASTRE": "完全固定：六个自由度全约束",
+    "PINNED": "铰接：三个平动约束，转动自由",
+    "XSYMM": "对称面法向 X：不能穿过对称面，也不能绕面内两轴转",
+    "YSYMM": "对称面法向 Y",
+    "ZSYMM": "对称面法向 Z",
+    "XASYMM": "反对称面法向 X：面内两个平动与法向转动被约束",
+    "YASYMM": "反对称面法向 Y",
+    "ZASYMM": "反对称面法向 Z",
+    "FREE": "自由：解除该节点的全部约束",
+}
+
+
 class ModelingMixin:
     """建模：几何生成与图元增删改。见模块 docstring。"""
     # --- 工具实现 ---
@@ -827,9 +863,89 @@ class ModelingMixin:
                                  "warnings": errors})
 
     @_records
-    def set_supports(self, node_ids, fix: list[int],
+    @_records
+    def list_boundary_conditions(self) -> ToolResult:
+        """列出全部边界条件——相当于 Abaqus 的 BC Manager。
+
+        以前只能去读模型 JSON。边界条件是**最容易改错又最难看出来**的一类
+        对象：多约束一个自由度，结构照样算得出来，只是算的不是你想要的那个。
+        所以要能一眼看全：谁、在哪些节点、约束了什么、是不是某个标准类型。
+        """
+        rows: list[dict[str, Any]] = []
+        by_name: dict[str, dict[str, Any]] = {}
+        for entry in self.model.get("supports") or []:
+            name = str(entry.get("name") or f"(未命名-节点{entry['node']})")
+            mask = tuple(int(v) for v in entry.get("fix") or (0,) * 6)
+            spring = entry.get("spring")
+            key = (name, mask, tuple(spring) if spring else None)
+            bucket = by_name.get(str(key))
+            if bucket is None:
+                matched = next((k for k, v in BC_TYPES.items() if v == mask), None)
+                bucket = {
+                    "name": name, "nodes": [], "fix": list(mask),
+                    "type": matched or "自定义",
+                    "means": BC_TYPE_NOTES.get(matched or "",
+                                               "自定义掩码，不对应标准类型"),
+                    **({"spring": list(spring)} if spring else {}),
+                }
+                by_name[str(key)] = bucket
+                rows.append(bucket)
+            bucket["nodes"].append(int(entry["node"]))
+        for row in rows:
+            row["nodes"] = sorted(row["nodes"])
+            row["count"] = len(row["nodes"])
+        free = [row["name"] for row in rows if not any(row["fix"])
+                and not row.get("spring")]
+        return ToolResult(True, {
+            "count": len(rows), "boundary_conditions": rows,
+            "restrained_dofs": sum(sum(r["fix"]) * r["count"] for r in rows),
+            **({"warning": f"边界条件 {free} 什么都没约束——写了名字但六个自由度"
+                           "全是 0，多半是想删没删干净"} if free else {}),
+            "note": "type 是按掩码反查出来的标准类型名；对不上任何一种就标"
+                    "「自定义」。Initial 阶段的约束在这里；分析步里的给定位移"
+                    "属于荷载工况，用 query_results 或看模型的 settlements。",
+        })
+
+    @_records
+    def delete_boundary_condition(self, name: str) -> ToolResult:
+        """按名字删掉一条边界条件。
+
+        这个操作**会让结构少掉约束**，所以删完立刻跑一次奇异诊断：约束不够
+        的话求解会在很后面才失败，而那时错误信息指向的是刚度矩阵，
+        不是"你刚才删掉的那条"。
+        """
+        from copy import deepcopy
+
+        target = str(name).strip()
+        supports = list(self.model.get("supports") or [])
+        keep = [s for s in supports if str(s.get("name")) != target]
+        if len(keep) == len(supports):
+            return ToolResult(False, {
+                "error": f"没有名为 {target!r} 的边界条件",
+                "available": sorted({str(s.get("name")) for s in supports})})
+        candidate = deepcopy(self.model)
+        candidate["supports"] = keep
+        errors = validate_payload(candidate)
+        if errors:
+            return ToolResult(False, {
+                "errors": errors,
+                "hint": f"删掉 {target!r} 之后模型不合法，原模型保持不变"})
+        self.model = candidate
+        self._invalidate()
+        removed = len(supports) - len(keep)
+        payload: dict[str, Any] = {"deleted": target, "entries": removed,
+                                   "remaining": len(keep)}
+        diagnosis = self.diagnose_supports()
+        if diagnosis.ok and diagnosis.payload.get("modes"):
+            payload["warning"] = ("删掉之后结构出现了刚体位移模态——约束已经不够，"
+                                  "现在求解会失败。")
+            payload["modes"] = diagnosis.payload["modes"]
+        return ToolResult(True, payload)
+
+    def set_supports(self, node_ids, fix: list[int] | None = None,
                      name: str = "BC-1",
-                     spring: list[float] | None = None) -> ToolResult:
+                     spring: list[float] | None = None,
+                     bc_type: str | None = None) -> ToolResult:
         """给节点或节点集合统一施加位移边界；边界属于 Initial 阶段。
 
         ``spring`` 给出六个方向的**支承刚度**（平动 力/长度，转动
@@ -848,6 +964,24 @@ class ModelingMixin:
             return ToolResult(False, {"error": str(exc)})
         if not ids:
             return ToolResult(False, {"error": "至少选择一个节点"})
+        if bc_type is not None:
+            key = str(bc_type).upper()
+            if key not in BC_TYPES:
+                return ToolResult(False, {
+                    "error": f"bc_type 只能取 {sorted(BC_TYPES)}",
+                    "hint": "对称面用 XSYMM/YSYMM/ZSYMM，法向取对称面的法线方向"})
+            if fix is not None and list(fix) != list(BC_TYPES[key]):
+                # 两个都给且不一致时不能默默挑一个——那正是"算的不是你想要
+                # 的那个结构"的来源
+                return ToolResult(False, {
+                    "error": f"同时给了 bc_type={key} 和 fix={list(fix)}，"
+                             "而两者不一致，无法判断你要哪个",
+                    "bc_type_means": list(BC_TYPES[key])})
+            fix = list(BC_TYPES[key])
+        if fix is None:
+            return ToolResult(False, {
+                "error": "要么给 fix（六个 0/1），要么给 bc_type",
+                "bc_types": sorted(BC_TYPES)})
         if len(fix) != 6 or any(value not in (0, 1) for value in fix):
             return ToolResult(False, {
                 "error": "fix 必须是六个 0 或 1，顺序 ux uy uz rx ry rz"})

@@ -113,6 +113,10 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "analyze_joint_solid": (("node_id", "case"),
                             "节点局部实体：dry_run 只出规格；native 自研求解，"
                             "Abaqus 是可选对标后端"),
+    "list_boundary_conditions": (("count", "boundary_conditions"),
+                                 "BC Manager：谁、在哪些节点、约束了什么"),
+    "delete_boundary_condition": (("deleted", "entries", "remaining"),
+                                  "删边界条件会让结构少约束，所以要报剩下多少"),
     "generate_live_patterns": (("spans", "span_count", "cases", "count"),
                                "活载布置：归出几跨、每个工况压哪些梁，都要给出来"),
     "generate_combinations": (("standard", "count", "combos", "gamma", "psi_c"),

@@ -434,7 +434,7 @@ TOOLS: list[dict[str, Any]] = [
             "description": "给节点或节点集合施加位移/转角边界条件。"
                            "边界条件属于 Initial 阶段，不属于荷载工况。",
             "parameters": {
-                "type": "object", "required": ["node_ids", "fix"],
+                "type": "object", "required": ["node_ids"],
                 "properties": {
                     "node_ids": {
                         "description": "节点编号列表或已定义的节点集合名",
@@ -445,7 +445,19 @@ TOOLS: list[dict[str, Any]] = [
                     },
                     "fix": {"type": "array", "minItems": 6, "maxItems": 6,
                             "items": {"type": "integer", "enum": [0, 1]},
-                            "description": "[ux,uy,uz,rx,ry,rz]，1 表示约束"},
+                            "description": "[ux,uy,uz,rx,ry,rz]，1 表示约束。给了 bc_type 就不必给它"},
+                    "bc_type": {"type": "string",
+                                "enum": ["ENCASTRE", "PINNED", "XSYMM", "YSYMM",
+                                         "ZSYMM", "XASYMM", "YASYMM", "ZASYMM",
+                                         "FREE"],
+                                "description":
+                                    "Abaqus 那套命名边界条件，给了它就不用填六个 0/1。"
+                                    "**对称面上该约束哪几个自由度没几个人记得住，"
+                                    "而填错了不会报错**——结构照样算得出来，只是算的不是你想要的那个。"
+                                    "ENCASTRE 完全固定、PINNED 三向铰接；"
+                                    "XSYMM/YSYMM/ZSYMM 是对称面（字母是**法向**），"
+                                    "XASYMM/… 是反对称面；FREE 解除约束。"
+                                    "用对称边界可以只建半个或四分之一结构——实测半跨门式刚架加 XSYMM 与整跨模型逐项完全一致。"},
                     "spring": {"type": "array", "minItems": 6, "maxItems": 6,
                                "items": {"type": "number", "minimum": 0},
                                "description":
@@ -457,6 +469,37 @@ TOOLS: list[dict[str, Any]] = [
                                    "工具会当场拒绝。"},
                     "name": {"type": "string"},
                 },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_boundary_conditions",
+            "description":
+                "列出全部边界条件，相当于 Abaqus 的 BC Manager："
+                "谁、在哪些节点、约束了哪几个自由度、是不是某个标准类型。"
+                "\n边界条件是**最容易改错又最难看出来**的一类对象——多约束一个"
+                "自由度，结构照样算得出来，只是算的不是用户想要的那个结构。"
+                "用户问「现在有哪些边界条件」「支座怎么定的」时用这个。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_boundary_condition",
+            "description":
+                "按名字删掉一条边界条件。**这会让结构少掉约束**，"
+                "工具删完会立刻跑一次奇异诊断；返回里出现 warning 与 modes 时"
+                "必须转达——那意味着结构已经变成机构，再求解就会失败，"
+                "而那时的错误信息指向的是刚度矩阵，不是刚才删掉的那一条。",
+            "parameters": {
+                "type": "object", "required": ["name"],
+                "properties": {"name": {"type": "string",
+                                        "description": "边界条件名称，"
+                                                       "用 list_boundary_conditions 查"}},
                 "additionalProperties": False,
             },
         },
