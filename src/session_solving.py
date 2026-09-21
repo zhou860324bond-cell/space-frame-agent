@@ -30,7 +30,8 @@ import silent_failures as _silent
 class SolvingMixin:
     """求解：自研内核、Abaqus 对标、实体子模型。见模块 docstring。"""
     def solve_model(self, analysis: str = "linear", increments: int = 10,
-                    max_iter: int = 40, tolerance: float = 1e-7) -> ToolResult:
+                    max_iter: int = 40, tolerance: float = 1e-7,
+                    amplitudes: dict | None = None) -> ToolResult:
         errors = validate_payload(self.model)
         if errors:
             return ToolResult(False, {"errors": errors,
@@ -51,6 +52,19 @@ class SolvingMixin:
                 self.solution = solve_material_nonlinear(
                     self.frame, increments=increments, max_iter=max_iter,
                     tolerance=tolerance)
+            elif analysis == "step":
+                from nonlinear import solve_step
+                if not amplitudes:
+                    self.solution = None
+                    return ToolResult(False, {
+                        "error": "分析类型 step 需要 amplitudes："
+                                 "把工况名映射到幅值曲线名",
+                        "example": {"DL": "STEP", "WX": "RAMP"},
+                        "hint": "内置 RAMP（0→1 斜坡）与 STEP（全程为 1）；"
+                                "自定义曲线用 define_amplitude"})
+                self.solution = solve_step(
+                    self.frame, dict(amplitudes), increments=increments,
+                    max_iter=max_iter, tolerance=tolerance)
             else:
                 self.solution = None
                 return ToolResult(False, {"error": f"未知分析类型 {analysis!r}"})
@@ -76,11 +90,23 @@ class SolvingMixin:
         view = self.result_db.solution_view(self.frame)
         for name, res in self.solution.all_results().items():
             node, mag = self._max_displacement(res)
-            eq = check_equilibrium(self.frame, self.solution, name)
+            # 二阶分析的平衡只在变形后位形上成立。拿未变形几何去查，残差
+            # 恰好是 P·Δ——那是二阶效应本身，不是误差。一根 1600 kN 轴压、
+            # 顶点侧移 54 mm 的柱子会报 5.4% 的"不平衡"而模型完全正确，
+            # 用户看到的是一次假警报。
+            kind = str(self.solution.analysis.get("type", ""))
+            second_order = kind.startswith(("pdelta", "material_nonlinear"))
+            # 变形后位形下残差由几何刚度自身的近似定界，落在 1e-4 量级；
+            # 线性静力用的 1e-8 会把每一次正确的二阶求解都判成不平衡。
+            eq = check_equilibrium(self.frame, self.solution, name,
+                                   rtol=1e-3 if second_order else 1e-8,
+                                   deformed=second_order)
             entry = {"max_displacement_mm": round(mag * U.disp_scale, 6),
                      "at_node": node,
                      "equilibrium_ok": eq["ok"],
                      "equilibrium_residual": float(f"{eq['relative']:.3e}")}
+            if second_order:
+                entry["equilibrium_frame"] = "变形后位形"
             # 节点位移**不是**最大位移。满跨均布下挠度全在单元内部，
             # 节点那一栏可能只有真值的一半，简支梁更是直接报 0。
             # 详见 _intra_member_deflection 的注释。

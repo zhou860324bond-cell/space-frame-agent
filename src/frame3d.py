@@ -149,6 +149,60 @@ def _dof_index(name: str, member_id: int) -> int:
         ) from None
 
 
+@dataclass(frozen=True)
+class Amplitude:
+    """幅值曲线：一张 (时间, 系数) 表，供非线性分析按伪时间取用。
+
+    **它解决的是非比例加载。** solve_pdelta 按 load_factor = step/increments
+    把所有荷载一起放大，于是"重力加满之后再推侧力"这种最常见的工况表达
+    不了。弹性分析的终点不受影响（同一个方程的根），但加载**路径**受：
+    轴力恒定时切线刚度恒定，推覆曲线才是直线。路径相关的材料非线性里，
+    终点本身也会变。详见 nonlinear.solve_step。
+
+    表按伪时间线性插值；时间超出表的范围时取两端的值（不外推）。
+    Abaqus 的 TABULAR amplitude 就是这个语义。
+    """
+    name: str
+    points: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        if len(self.points) < 2:
+            raise ValueError(f"幅值曲线 {self.name!r} 至少要两个点")
+        times = [t for t, _ in self.points]
+        if any(b <= a for a, b in zip(times, times[1:], strict=False)):
+            # 时间不递增的话插值结果取决于实现细节，而那不该是用户要猜的东西
+            raise ValueError(
+                f"幅值曲线 {self.name!r} 的时间必须严格递增，收到 {times}")
+
+    def at(self, time: float) -> float:
+        """按伪时间取系数。超出范围时取端点值——**不外推**。
+
+        外推会让"表只写到 t=1 而增量走到 1.0000001"这种浮点边界情形
+        突然给出一个表外的系数，那种错很难查。
+        """
+        t = float(time)
+        points = self.points
+        if t <= points[0][0]:
+            return float(points[0][1])
+        if t >= points[-1][0]:
+            return float(points[-1][1])
+        for (t0, v0), (t1, v1) in zip(points, points[1:], strict=False):
+            if t0 <= t <= t1:
+                span = t1 - t0
+                return float(v0 + (v1 - v0) * (t - t0) / span)
+        return float(points[-1][1])
+
+
+#: 内置的两条常用曲线。用户不必为最常见的两种情形去写表。
+BUILTIN_AMPLITUDES = {
+    #: 线性斜坡 0 → 1，等价于原先写死的 step/increments
+    "RAMP": ((0.0, 0.0), (1.0, 1.0)),
+    #: 全程恒为 1：荷载在分析一开始就是全值，不参与放大。
+    #: 重力配它、侧力配 RAMP，就是标准的推覆加载。
+    "STEP": ((0.0, 1.0), (1.0, 1.0)),
+}
+
+
 @dataclass
 class LoadCase:
     """一个荷载工况。
@@ -214,6 +268,8 @@ class Frame:
         default_factory=dict)
     load_cases: dict[str, LoadCase] = field(default_factory=_default_cases)
     combos: dict[str, dict[str, float]] = field(default_factory=dict)
+    #: 幅值曲线，供非线性分析做非比例加载。线性静力用不到。
+    amplitudes: dict[str, Amplitude] = field(default_factory=dict)
     # 单位制只影响自重的 g 与结果的显示换算，不影响刚度方程本身
     units: str = UNITS_SI
 
@@ -763,7 +819,14 @@ def self_weight_loads(model: Frame, factor: float = 1.0,
 
 
 def combined_case(model: Frame, factors: dict[str, float]) -> LoadCase:
-    """把若干工况按系数合成一个等效工况，用于组合的平衡校核。"""
+    """把若干工况按系数合成一个等效工况。
+
+    用于组合的平衡校核，以及非线性分析步里的非比例加载。
+
+    **必须覆盖 LoadCase 的每一个荷载字段。** 漏掉一个不会报错，只会让那
+    一类荷载从合成工况里消失——初应变一度就是这样漏着的。
+    tests/test_advanced_beam.py 里的字段闸门看着这件事。
+    """
     merged = LoadCase("__combined__")
     for name, f in factors.items():
         case = model.load_cases[name]
@@ -776,6 +839,13 @@ def combined_case(model: Frame, factors: dict[str, float]) -> LoadCase:
         for mid, items in case.member_spans.items():
             merged.member_spans.setdefault(mid, []).extend(
                 item.scaled(f) for item in items)
+        for mid, strain in case.member_strains.items():
+            merged.member_strains[mid] = (merged.member_strains.get(mid, 0.0)
+                                          + f * float(strain))
+        for mid, kappa in case.member_curvatures.items():
+            base = np.asarray(merged.member_curvatures.get(mid, (0.0, 0.0)))
+            merged.member_curvatures[mid] = tuple(
+                base + f * np.asarray(kappa, dtype=float))
         for nid, given in case.settlements.items():
             base = np.asarray(merged.settlements.get(nid, (0.0,) * 6))
             merged.settlements[nid] = tuple(base + f * np.asarray(given, dtype=float))
@@ -783,8 +853,15 @@ def combined_case(model: Frame, factors: dict[str, float]) -> LoadCase:
 
 
 def check_equilibrium(model: Frame, sol: Solution, case: str | None = None,
-                      rtol: float = 1e-8) -> dict:
-    """整体静力平衡：支座反力合力 + 外荷载合力 = 0。"""
+                      rtol: float = 1e-8, deformed: bool = False) -> dict:
+    """整体静力平衡：支座反力合力 + 外荷载合力 = 0。
+
+    ``deformed=True`` 时力臂取变形后的节点位置。**二阶分析必须这样查。**
+    P-Δ 的平衡本来就只在变形后位形上成立，拿未变形几何去查，残差恰好等于
+    P·Δ——那不是误差，是二阶效应本身。一根 1600 kN 轴压、顶点侧移 54 mm 的
+    柱子会报出 5.4% 的"不平衡"，而模型完全正确；用户看到的是一次假警报。
+    一阶分析两者等价，所以默认仍是未变形几何。
+    """
     name = case or sol.primary
     if name in model.combos:
         load_case = combined_case(model, model.combos[name])
@@ -792,16 +869,27 @@ def check_equilibrium(model: Frame, sol: Solution, case: str | None = None,
         load_case = model.load_cases[name]
     result = sol[name]
 
+    def arm(nid: int) -> np.ndarray:
+        """力臂。二阶分析取变形后的位置。"""
+        base = np.asarray(model.nodes[nid].xyz, dtype=float)
+        if not deformed:
+            return base
+        return base + result.U[model.node_dofs(nid)[:3]]
+
     applied = np.zeros(6)
     for nid, load in load_case.nodal_loads.items():
         p = np.asarray(load, dtype=float)
-        r = model.nodes[nid].xyz
+        r = arm(nid)
         applied[:3] += p[:3]
         applied[3:] += p[3:] + np.cross(r, p[:3])
     for mid in sorted(set(load_case.member_loads) | set(load_case.member_spans)):
         m = model.members[mid]
         pi, pj = member_endpoints(model, m)
         L = float(np.linalg.norm(pj - pi))
+        if deformed:
+            # 杆长仍取原长：杆间荷载的合力大小由原长定义，变的是力臂。
+            pi = pi + result.U[model.node_dofs(m.i)[:3]]
+            pj = pj + result.U[model.node_dofs(m.j)[:3]]
         for item in span_loads_of(load_case, mid):
             force, moment = moment_about_origin(item, L, pi, pj)
             applied[:3] += force
@@ -811,7 +899,7 @@ def check_equilibrium(model: Frame, sol: Solution, case: str | None = None,
     for nid in model.supports:
         d = model.node_dofs(nid)
         p = result.R[d]
-        r = model.nodes[nid].xyz
+        r = arm(nid)
         reac[:3] += p[:3]
         reac[3:] += p[3:] + np.cross(r, p[:3])
 

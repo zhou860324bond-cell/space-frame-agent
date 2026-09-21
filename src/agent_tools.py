@@ -1134,6 +1134,48 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "define_amplitude",
+            "description":
+                "定义一条幅值曲线（Abaqus 的 Amplitude），给 solve_model(analysis=\"step\") 用。"
+                "曲线是 (伪时间, 系数) 表，线性插值，表外取端点值不外推。"
+                "伪时间是分析步内部进度 0→1，不是真实时间——本内核是静力分析。"
+                "\n内置 RAMP（0→1 斜坡）与 STEP（全程为 1）已够用大多数情形，"
+                "只有需要「前 30% 就加满再保持」这类非线性路径时才定义新的。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string", "description": "曲线名；不能叫 RAMP 或 STEP"},
+                "points": {"type": "array", "minItems": 2,
+                           "items": {"type": "array", "minItems": 2, "maxItems": 2,
+                                     "items": {"type": "number"}},
+                           "description": "[[伪时间, 系数], ...]，时间必须严格递增"},
+                "times": {"type": "array", "items": {"type": "number"},
+                          "description": "与 values 配对给，替代 points"},
+                "values": {"type": "array", "items": {"type": "number"}}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_amplitudes",
+            "description": "列出可用的幅值曲线，含内置的 RAMP 与 STEP 及其含义。"
+                           "用户问「有哪些加载方式」或要做推覆时先看这个。",
+            "parameters": {"type": "object", "properties": {},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_amplitude",
+            "description": "删除一条自定义幅值曲线。内置的 RAMP 与 STEP 删不掉。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "solve_model",
             "description":
                 "求解当前模型。支持线性静力、P-Delta 二阶弹性、双线性轴向材料非线性。"
@@ -1142,9 +1184,20 @@ TOOLS: list[dict[str, Any]] = [
                 "可查——实测 87 杆三层框架，节点值 4.30 mm、真实挠度 9.27 mm，差 2.16 "
                 "倍；简支梁上后者直接是 0.0。前者含单元内部，校核挠跨比用它。"
                 "\n返回里若有 note 或 warning，原样转达。note 常常是在解释「节点位移为零"
-                "是正常的」，漏掉它用户会以为荷载加错了。",
+                "是正常的」，漏掉它用户会以为荷载加错了。"
+                "\n\n**analysis=\"step\" 是非比例加载**：几个工况同时施加，"
+                "各按自己的幅值曲线随分析步变化。推覆分析要它——"
+                "{\"DL\":\"STEP\",\"WX\":\"RAMP\"} 表示重力全程加满、侧力线性上升。"
+                "**它不改变弹性分析的终点**（二阶弹性解与加载路径无关），"
+                "改变的是路径；别把它当成更准的算法。用户要能力曲线时看返回的 "
+                "analysis.convergence，每个增量带 max_displacement。",
             "parameters": {"type": "object", "properties": {
-                "analysis": {"type": "string", "enum": ["linear", "pdelta", "material"]},
+                "analysis": {"type": "string",
+                             "enum": ["linear", "pdelta", "material", "step"],
+                             "description": "step 是非比例加载的 P-Delta 分析步，需要配 amplitudes"},
+                "amplitudes": {"type": "object",
+                               "additionalProperties": {"type": "string"},
+                               "description": "analysis=step 时必填：工况名 -> 幅值曲线名，例如 {\"DL\": \"STEP\", \"WX\": \"RAMP\"}"},
                 "increments": {"type": "integer", "minimum": 1},
                 "max_iter": {"type": "integer", "minimum": 1},
                 "tolerance": {"type": "number", "exclusiveMinimum": 0}

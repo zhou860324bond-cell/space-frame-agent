@@ -12,8 +12,9 @@ from typing import Any
 
 import numpy as np
 
-from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Frame, LoadCase, Material,
-                     Member, Node, Section, check_model, member_endpoints)
+from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Frame, LoadCase,
+                     Material, Member, Node, Section, check_model,
+                     member_endpoints)
 from span_loads import KINDS as SPAN_KINDS
 from span_loads import SpanLoad
 
@@ -234,6 +235,15 @@ MODEL_SCHEMA: dict[str, Any] = {
                                "member_strains": _MEMBER_STRAINS},
             },
         },
+        "amplitudes": {
+            "description": "幅值曲线：名字 -> [[伪时间, 系数], ...]",
+            "type": "object",
+            "additionalProperties": {
+                "type": "array", "minItems": 2,
+                "items": {"type": "array", "minItems": 2, "maxItems": 2,
+                          "items": {"type": "number"}},
+            },
+        },
         "combos": {
             "type": "array",
             "items": {
@@ -375,6 +385,9 @@ def from_dict(data: dict[str, Any]) -> Frame:
                                   "member_strains")):
         f.load_cases.pop(DEFAULT_CASE, None)
 
+    for name, table in (data.get("amplitudes") or {}).items():
+        f.amplitudes[str(name)] = Amplitude(
+            str(name), tuple((float(t), float(v)) for t, v in table))
     for c in data.get("combos", []):
         f.combos[str(c["name"])] = {str(k): float(v) for k, v in c["factors"].items()}
     return f

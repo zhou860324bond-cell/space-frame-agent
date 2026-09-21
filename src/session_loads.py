@@ -453,6 +453,93 @@ class LoadsMixin:
     }
     VARIABLE_KINDS = ("live", "wind", "snow", "crane")
 
+    #: 内置幅值曲线的说明，给用户看，不是给代码用。
+    BUILTIN_AMPLITUDE_NOTES = {
+        "RAMP": "0→1 线性斜坡。荷载随分析步均匀增长，等同于不用幅值曲线。",
+        "STEP": "全程恒为 1。荷载在分析一开始就是全值，不参与放大——"
+                "重力配它、侧力配 RAMP，就是标准的推覆加载。",
+    }
+
+    @_records
+    def define_amplitude(self, name: str, times=None, values=None,
+                         points=None) -> ToolResult:
+        """定义一条幅值曲线（Abaqus 的 Amplitude），供 analysis="step" 使用。
+
+        曲线是一张 (伪时间, 系数) 表，按伪时间线性插值，表外取端点值不外推。
+        伪时间是分析步内部的进度 0→1，不是真实时间——本内核做的是静力分析。
+
+        给法二选一：``times`` 与 ``values`` 两个等长数组，或 ``points``
+        直接给 [[t, v], ...]。
+
+        **它改变的是加载路径，不是弹性分析的终点。** 二阶弹性问题的解与路径
+        无关；幅值曲线买到的是推覆曲线这类沿途信息，以及路径相关分析里的正确
+        终点。详见 solve_model(analysis="step")。
+        """
+        from frame3d import BUILTIN_AMPLITUDES, Amplitude
+
+        label = str(name).strip()
+        if not label:
+            return ToolResult(False, {"error": "幅值曲线要有名字"})
+        if label in BUILTIN_AMPLITUDES:
+            return ToolResult(False, {
+                "error": f"{label!r} 是内置曲线的名字，换一个",
+                "builtin": self.BUILTIN_AMPLITUDE_NOTES})
+        if points is not None:
+            table = [(float(t), float(v)) for t, v in points]
+        elif times is not None and values is not None:
+            if len(times) != len(values):
+                return ToolResult(False, {
+                    "error": f"times 有 {len(times)} 个而 values 有 {len(values)} 个，"
+                             "两者必须等长"})
+            table = [(float(t), float(v))
+                     for t, v in zip(times, values, strict=True)]
+        else:
+            return ToolResult(False, {
+                "error": "要么给 times 与 values，要么给 points",
+                "example": {"name": "前段加满", "points": [[0, 0], [0.3, 1], [1, 1]]}})
+        try:
+            curve = Amplitude(label, tuple(table))
+        except ValueError as exc:
+            return ToolResult(False, {"error": str(exc)})
+        from copy import deepcopy
+        candidate = deepcopy(self.model)
+        candidate.setdefault("amplitudes", {})[label] = [list(p) for p in table]
+        # 只拦这次编辑引入的错误。模型还没建完就先定义曲线是正常用法，
+        # 不该被"还没有节点"这类无关报错挡住。
+        before = set(validate_payload(self.model))
+        errors = [e for e in validate_payload(candidate) if e not in before]
+        if errors:
+            return ToolResult(False, {"errors": errors,
+                                      "hint": "曲线未写入，原模型保持不变"})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            "amplitude": label, "points": [list(p) for p in table],
+            "sampled": {f"{t:.2f}": round(curve.at(t), 6)
+                        for t in (0.0, 0.25, 0.5, 0.75, 1.0)},
+            "note": "用 solve_model(analysis=\"step\", amplitudes={工况名: 曲线名}) 施加"})
+
+    def list_amplitudes(self) -> ToolResult:
+        """列出可用的幅值曲线，含内置的两条。"""
+        defined = dict(self.model.get("amplitudes") or {})
+        return ToolResult(True, {
+            "builtin": self.BUILTIN_AMPLITUDE_NOTES,
+            "defined": {k: [list(p) for p in v] for k, v in defined.items()},
+            "count": len(defined) + len(self.BUILTIN_AMPLITUDE_NOTES)})
+
+    @_records
+    def delete_amplitude(self, name: str) -> ToolResult:
+        """删除一条自定义幅值曲线。内置的两条删不掉。"""
+        label = str(name).strip()
+        table = self.model.get("amplitudes") or {}
+        if label not in table:
+            return ToolResult(False, {
+                "error": f"没有自定义幅值曲线 {label!r}",
+                "defined": sorted(table)})
+        removed = table.pop(label)
+        self._invalidate()
+        return ToolResult(True, {"deleted": label, "points": removed})
+
     @_records
     def generate_combinations(self, dead=None, live=None, wind=None,
                               snow=None, crane=None,
