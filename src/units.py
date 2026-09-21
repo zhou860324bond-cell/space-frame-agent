@@ -104,6 +104,7 @@ _TO_MM = {
     "length": 1e3,          # m   → mm
     "area": 1e6,            # m²  → mm²
     "inertia": 1e12,        # m⁴  → mm⁴
+    "first_moment": 1e9,    # m³  → mm³（半截面静矩 S）
     "modulus": 1e-6,        # Pa  → MPa
     "density": 1e-12,       # kg/m³ → t/mm³
     "force": 1.0,           # N   → N
@@ -156,7 +157,17 @@ def convert_model(model: dict, to: str) -> dict:
                         # 极端纤维距离是长度。漏掉这两项会让正应力差 1000 倍，
                         # 而且只在换过单位的模型上才出现。
                         **({"cy": s["cy"] * f["length"]} if "cy" in s else {}),
-                        **({"cz": s["cz"] * f["length"]} if "cz" in s else {})}
+                        **({"cz": s["cz"] * f["length"]} if "cz" in s else {}),
+                        # 静矩是长度³、中性轴宽度是长度。漏掉 S 会让剪应力
+                        # 差 10⁹，和 cy/cz 一样只在换过单位的模型上才现形。
+                        **({"Sz": s["Sz"] * f["first_moment"]} if "Sz" in s else {}),
+                        **({"Sy": s["Sy"] * f["first_moment"]} if "Sy" in s else {}),
+                        **({"bz": s["bz"] * f["length"]} if "bz" in s else {}),
+                        **({"by": s["by"] * f["length"]} if "by" in s else {}),
+                        **({"S_flange": s["S_flange"] * f["first_moment"]}
+                           if "S_flange" in s else {}),
+                        **({"c_web": s["c_web"] * f["length"]}
+                           if "c_web" in s else {})}
                        for s in model.get("sections", [])]
     out["nodes"] = [{**n, "x": n["x"] * f["length"], "y": n["y"] * f["length"],
                      "z": n["z"] * f["length"]}

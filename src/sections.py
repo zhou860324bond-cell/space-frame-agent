@@ -63,6 +63,13 @@ def rectangle(name: str, width: float, height: float) -> dict[str, Any]:
         "J": rectangle_torsion_factor(long_ / short) * short ** 3 * long_,
         "cy": h / 2.0,                           # 角点，材料实际存在
         "cz": b / 2.0,
+        # τ = V·S/(I·b)。半截面静矩 = (面积)·(形心到中性轴距离)：
+        # 绕 z 弯时半截面是 b×(h/2)，形心在 h/4 处 → S = b·h²/8，
+        # 中性轴处宽度就是 b。代回去得 τmax = 1.5V/A，与闭合解一致。
+        "Sz": b * h ** 2 / 8.0,
+        "bz": b,
+        "Sy": h * b ** 2 / 8.0,
+        "by": h,
         "circular": False,
     }
 
@@ -91,6 +98,19 @@ def i_section(name: str, height: float, flange_width: float,
         "J": (2.0 * b * tf ** 3 + hw * tw ** 3) / 3.0,
         "cy": h / 2.0,                           # 翼缘外表面
         "cz": b / 2.0,                           # 翼缘尖：(cy, cz) 处有材料
+        # 强轴受剪（Vy，沿腹板方向）：中性轴以上是一个翼缘加半个腹板，
+        # 静矩按两块分别取矩再相加；中性轴处只有腹板，宽度取 tw。
+        # 这正是 GB 50017 验算腹板剪应力 τ = V·S/(I·tw) 用的那一组。
+        "Sz": b * tf * (h - tf) / 2.0 + tw * hw ** 2 / 8.0,
+        "bz": tw,
+        # 弱轴受剪（Vz，沿翼缘方向）：剪力几乎全由两翼缘承担，
+        # 中性轴（z=0）切过两个翼缘，有效宽度取 2·tf。腹板对 Iy 的贡献
+        # 只有 hw·tw³/12，在这里一并忽略，偏安全。
+        "Sy": 2.0 * (tf * (b / 2.0)) * (b / 4.0),
+        "by": 2.0 * tf,
+        # 腹板边缘：只有翼缘在中性轴之外，所以那里的静矩只剩翼缘这一块。
+        "S_flange": b * tf * (h - tf) / 2.0,
+        "c_web": hw / 2.0,
         "circular": False,
     }
 
@@ -103,17 +123,25 @@ def circular_tube(name: str, outer_diameter: float, thickness: float) -> dict[st
         raise ValueError(f"壁厚太大：2×{t} 已经不小于外径 {d}")
     di = d - 2.0 * t
     inertia = math.pi * (d ** 4 - di ** 4) / 64.0
+    # 半圆环静矩 S = (d³ − di³)/12；中性轴处被两侧壁切过，宽度 2t。
+    first = (d ** 3 - di ** 3) / 12.0
     return {"name": name, "A": math.pi * (d ** 2 - di ** 2) / 4.0,
             "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia,
-            "cy": d / 2.0, "cz": d / 2.0, "circular": True}
+            "cy": d / 2.0, "cz": d / 2.0,
+            "Sz": first, "bz": 2.0 * t, "Sy": first, "by": 2.0 * t,
+            "circular": True}
 
 
 def solid_circle(name: str, diameter: float) -> dict[str, Any]:
     d = _check("diameter", diameter)
     inertia = math.pi * d ** 4 / 64.0
+    # 半圆静矩 S = d³/12；中性轴处宽度就是直径。代回 τ=VS/(Ib) 得
+    # τmax = 4V/(3A)，与闭合解一致。
     return {"name": name, "A": math.pi * d ** 2 / 4.0,
             "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia,
-            "cy": d / 2.0, "cz": d / 2.0, "circular": True}
+            "cy": d / 2.0, "cz": d / 2.0,
+            "Sz": d ** 3 / 12.0, "bz": d, "Sy": d ** 3 / 12.0, "by": d,
+            "circular": True}
 
 
 BUILDERS = {

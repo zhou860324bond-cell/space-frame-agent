@@ -131,3 +131,120 @@ def test_stress_is_the_same_physical_quantity_in_both_unit_systems():
     mm_stress = worst_normal_stress_all_cases(
         *(lambda s: (s.frame, s.solution))(_solved(mm)))          # MPa
     assert si_stress == pytest.approx(mm_stress * 1e6, rel=1e-9)
+
+
+# ------------------------------------------------- 剪应力与四个强度理论
+
+def test_shear_stress_matches_the_closed_forms():
+    """τ = V·S/(I·b) 对经典截面必须**精确**命中闭合解。
+
+    这两条是教科书上背下来的数：矩形 τmax = 1.5V/A、实心圆 4V/(3A)。
+    对不上就说明静矩或中性轴宽度写错了，而那种错会一路传到折算应力，
+    在那里已经看不出来源。
+    """
+    import sections as sec
+    from frame3d import Section
+    from stress import shear_stress
+
+    V = 100e3
+    rect = Section(**{k: v for k, v in sec.rectangle("R", 0.20, 0.40).items()
+                      if k != "name"}, name="R")
+    tau_y, _ = shear_stress(rect, V, 0.0)
+    assert float(tau_y) == pytest.approx(1.5 * V / rect.A, rel=1e-12)
+
+    circle = Section(**{k: v for k, v in sec.solid_circle("C", 0.20).items()
+                        if k != "name"}, name="C")
+    tau_y, _ = shear_stress(circle, V, 0.0)
+    assert float(tau_y) == pytest.approx(4.0 * V / (3.0 * circle.A), rel=1e-12)
+
+
+def test_the_i_section_web_carries_more_than_the_crude_average():
+    """工字形腹板 τ 比"腹板均匀受剪"高一截，这个差别是真的，不是误差。
+
+    V/(hw·tw) 把剪力当成在腹板上均匀分布；真实分布是抛物线，峰值更高。
+    实测高 4.7%。若两者相等，多半是静矩被写成了只含腹板的那一半。
+    """
+    import sections as sec
+    from frame3d import Section
+    from stress import shear_stress
+
+    raw = sec.i_section("I", 0.400, 0.200, 0.008, 0.013)
+    isec = Section(**{k: v for k, v in raw.items() if k != "name"}, name="I")
+    V = 100e3
+    tau_y, _ = shear_stress(isec, V, 0.0)
+    crude = V / ((0.400 - 2 * 0.013) * 0.008)
+    assert float(tau_y) > crude
+    assert float(tau_y) / crude == pytest.approx(1.047, abs=5e-3)
+
+
+def test_shear_is_refused_when_the_geometry_is_missing():
+    """只给 A/Iy/Iz/J 的截面不许"估"一个剪应力出来。
+
+    来路不明的应力比没有应力更危险——正应力那一路已经这么定过，
+    剪应力照同一条规矩。
+    """
+    from frame3d import Section
+    from stress import StressUnavailable, shear_stress
+
+    bare = Section("bare", A=0.01, Iy=1e-5, Iz=2e-5, J=1e-6)
+    with pytest.raises(StressUnavailable):
+        shear_stress(bare, 1.0, 0.0)
+
+
+@pytest.mark.parametrize("sigma,tau", [
+    (100e6, 0.0), (0.0, 50e6), (100e6, 50e6), (-100e6, 50e6),
+    (200e6, 80e6), (-150e6, 30e6), (50e6, -50e6)])
+def test_the_third_and_fourth_theories_agree_with_their_closed_forms(sigma, tau):
+    """σr3、σr4 有两条算法，必须给出同一个数。
+
+    一条从主应力合成，一条是梁里 (σ, τ) 的闭式 √(σ²+4τ²) / √(σ²+3τ²)。
+    实现走的是主应力那条，闭式在这里当独立对照——闭式写错了主应力那条
+    不会跟着错，所以这是真的交叉校验，不是自己验自己。
+    """
+    from stress import equivalent_stress, von_mises
+
+    assert float(equivalent_stress(sigma, tau, "3")) == pytest.approx(
+        math.sqrt(sigma ** 2 + 4 * tau ** 2), rel=1e-12)
+    assert float(equivalent_stress(sigma, tau, "4")) == pytest.approx(
+        math.sqrt(sigma ** 2 + 3 * tau ** 2), rel=1e-12)
+    # 折算应力就是第四强度理论，GB 50017 §6.1.5 用的是同一个式子
+    assert float(von_mises(sigma, tau)) == pytest.approx(
+        float(equivalent_stress(sigma, tau, "4")), rel=1e-12)
+
+
+def test_pure_shear_reproduces_the_textbook_principal_stresses():
+    """纯剪 τ 下 σ1=+τ、σ2=0、σ3=−τ，于是 σr3=2τ、σr4=√3·τ。
+
+    这是四个理论里差别最大的一个状态：第三理论比第四理论保守 15.5%。
+    两者若算出同一个数，说明某一条的公式套错了。
+    """
+    from stress import equivalent_stress, principal_stresses
+
+    tau = 50e6
+    s1, s2, s3 = principal_stresses(0.0, tau)
+    assert float(s1) == pytest.approx(tau)
+    assert float(s2) == pytest.approx(0.0, abs=1e-6)
+    assert float(s3) == pytest.approx(-tau)
+    assert float(equivalent_stress(0.0, tau, "3")) == pytest.approx(2 * tau)
+    assert float(equivalent_stress(0.0, tau, "4")) == pytest.approx(
+        math.sqrt(3.0) * tau)
+
+
+def test_the_second_theory_is_the_only_one_that_needs_poisson():
+    """σr2 = σ1 − ν(σ2+σ3)，纯剪下等于 (1+ν)·τ。
+
+    它是四条里唯一吃材料参数的。ν 传错会静默改变结论，所以钉死。
+    """
+    from stress import equivalent_stress
+
+    tau = 50e6
+    for nu in (0.0, 0.3, 0.5):
+        got = equivalent_stress(0.0, tau, "2", nu=nu)
+        assert float(got) == pytest.approx((1.0 + nu) * tau)
+
+
+def test_an_unknown_theory_is_rejected_rather_than_guessed():
+    from stress import equivalent_stress
+
+    with pytest.raises(ValueError, match="1/2/3/4"):
+        equivalent_stress(1.0, 1.0, "5")

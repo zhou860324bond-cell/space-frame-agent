@@ -149,6 +149,15 @@ MODEL_SCHEMA: dict[str, Any] = {
                                # 极端纤维距离；缺省时正应力不可算，明确拒绝。
                                "cy": {"type": "number", "exclusiveMinimum": 0},
                                "cz": {"type": "number", "exclusiveMinimum": 0},
+                               # 剪应力 τ=V·S/(I·b) 用的半截面静矩与中性轴宽度。
+                               # Sz/bz 配 Iz 与 Vy，Sy/by 配 Iy 与 Vz。
+                               "Sz": {"type": "number", "exclusiveMinimum": 0},
+                               "bz": {"type": "number", "exclusiveMinimum": 0},
+                               "Sy": {"type": "number", "exclusiveMinimum": 0},
+                               "by": {"type": "number", "exclusiveMinimum": 0},
+                               # 腹板边缘：折算应力的控制点常在这里
+                               "S_flange": {"type": "number", "exclusiveMinimum": 0},
+                               "c_web": {"type": "number", "exclusiveMinimum": 0},
                                "circular": {"type": "boolean"}},
             },
         },
@@ -306,7 +315,13 @@ def from_dict(data: dict[str, Any]) -> Frame:
             float(s["Az"]) if s.get("Az") is not None else None,
             float(s["cy"]) if s.get("cy") is not None else None,
             float(s["cz"]) if s.get("cz") is not None else None,
-            bool(s.get("circular", False)))
+            bool(s.get("circular", False)),
+            float(s["Sz"]) if s.get("Sz") is not None else None,
+            float(s["bz"]) if s.get("bz") is not None else None,
+            float(s["Sy"]) if s.get("Sy") is not None else None,
+            float(s["by"]) if s.get("by") is not None else None,
+            float(s["S_flange"]) if s.get("S_flange") is not None else None,
+            float(s["c_web"]) if s.get("c_web") is not None else None)
     for n in data["nodes"]:
         f.nodes[int(n["id"])] = Node(int(n["id"]), float(n["x"]), float(n["y"]), float(n["z"]))
     for m in data["members"]:

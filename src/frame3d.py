@@ -55,6 +55,24 @@ class Section:
     cy: float | None = None
     cz: float | None = None
     circular: bool = False
+    # 剪应力 τ = V·S/(I·b) 需要的两样几何：半截面静矩 S 与中性轴处宽度 b。
+    # 命名直接对应那条公式：Sz/bz 配 Iz 与 Vy（强轴受剪），Sy/by 配 Iy 与 Vz。
+    #
+    # **builder 本来就算得出来，以前只是丢掉了**：i_section 拿到了 h/b/tw/tf，
+    # 却只输出 A/Iy/Iz/J/cy/cz。少这两项，折算应力 √(σ²+3τ²) 就无从谈起，
+    # 强度验算只能停在正应力那一层。
+    # 与 cy/cz 一样：留空时剪应力被明确拒绝，不估算。
+    Sz: float | None = None
+    bz: float | None = None
+    Sy: float | None = None
+    by: float | None = None
+    # 腹板与翼缘交界处的几何。折算应力 √(σ²+3τ²) 的控制点往往**不在**极端
+    # 纤维也不在中性轴，而在这里：极端纤维 τ=0、中性轴弯曲 σ=0，只有交界处
+    # 两者同时都大。GB 50017 §6.1.5 要验的就是这一点。
+    # 只有明确区分腹板与翼缘的截面（工字形）才有这两项；矩形、圆一律留空，
+    # 此时折算应力只在极端纤维与中性轴两处取值。
+    S_flange: float | None = None     # 单个翼缘对中性轴的静矩
+    c_web: float | None = None        # 中性轴到腹板边缘的距离
 
 
 @dataclass(frozen=True)

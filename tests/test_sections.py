@@ -78,8 +78,16 @@ def test_every_preset_builds_a_usable_section(kind):
     values = DEFAULT_DIMENSIONS[kind]
     assert len(values) == len(keys)
     s = builder("X", *values)
-    assert set(s) == {"name", "A", "Iy", "Iz", "J", "cy", "cz", "circular"}
-    assert all(s[k] > 0 for k in ("A", "Iy", "Iz", "J", "cy", "cz"))
+    base = {"name", "A", "Iy", "Iz", "J", "cy", "cz", "circular"}
+    # 剪应力 τ=V·S/(I·b) 要的两组几何，每种截面都必须给全，
+    # 否则折算应力算不了而调用方只会拿到一句"缺几何"。
+    shear = {"Sz", "bz", "Sy", "by"}
+    # 腹板边缘那一对只有明确区分腹板与翼缘的截面才有；
+    # 矩形和圆没有腹板，留空是对的，不能硬凑一个数出来。
+    web = {"S_flange", "c_web"}
+    assert set(s) in (base | shear, base | shear | web), sorted(set(s))
+    assert all(s[k] > 0 for k in (base | shear | web) & set(s) - {"name",
+                                                                  "circular"})
     assert isinstance(s["circular"], bool)
 
 
