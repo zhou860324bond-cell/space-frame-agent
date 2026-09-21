@@ -21,6 +21,70 @@ from session_base import SELF_WEIGHT_NOTE, ToolResult, _records
 
 class LoadsMixin:
     """荷载：工况、节点/杆件荷载、位移与初应变。见模块 docstring。"""
+    #: 荷载强度的参照系。三种写法描述的是**不同的物理荷载**，混用不会报错，
+    #: 只会给出一个看着很正常的错数：
+    #:
+    #:   global     w 是全局分量，强度按**沿杆长**分布。默认，也是内核唯一认识的形式。
+    #:   local      w 是杆件局部分量，按沿杆长分布。风压垂直于杆轴时用它，
+    #:              不必自己拆 sinθ/cosθ——那一步手算最容易反号。
+    #:   projected  w 是全局分量，强度按**水平投影长度**分布。斜屋面的雪载、
+    #:              活载按规范就是这么给的（kN/m 是"平面上每米"）。
+    #:
+    #: 后两种在**写入模型前**就换算成 global，模型里存的永远是内核认识的那一种。
+    #: 这样求解器、编译器、内力回算一概不必知道有这回事；代价是几何变了之后
+    #: 荷载不会自己跟着变，需要重新施加——与 add_self_weight 的约定一致。
+    LOAD_REFERENCES = ("global", "local", "projected")
+
+    def _to_global_intensity(self, member: dict, w: list[float],
+                             reference: str) -> tuple[list[float], dict]:
+        """把 local / projected 的强度换算成全局分量、沿杆长分布。
+
+        返回 (全局强度, 换算说明)。说明会原样进 ToolResult——换算过程必须
+        看得见，否则用户拿到一个和自己输入不一样的数字却不知道为什么。
+        """
+        from frame3d import local_axes
+
+        nodes = {int(n["id"]): n for n in self.model.get("nodes") or []}
+        ni, nj = nodes[int(member["i"])], nodes[int(member["j"])]
+        pi = np.array([ni["x"], ni["y"], ni["z"]], dtype=float)
+        pj = np.array([nj["x"], nj["y"], nj["z"]], dtype=float)
+        length, rot = local_axes(pi, pj, member.get("ref_vector"))
+        vector = np.asarray(w, dtype=float)
+
+        if reference == "local":
+            # rot 的行是局部轴的全局分量，所以局部→全局是 rot 的转置
+            out = rot.T @ vector
+            return [float(v) for v in out], {
+                "reference": "local",
+                "given_local": [float(v) for v in vector],
+                "as_global": [round(float(v), 6) for v in out],
+                "explain": "按杆件局部轴给出的强度已换算成全局分量；"
+                           "局部 x 沿 i→j，局部 y 由参考向量定（水平杆件指向全局 +Z）。",
+            }
+
+        # projected：强度是"每米水平投影"，沿杆长的强度要乘 L_水平 / L
+        horizontal = float(np.linalg.norm((pj - pi)[:2]))
+        if horizontal <= 0.0:
+            return list(vector), {
+                "reference": "projected",
+                "explain": "杆件是竖直的，水平投影为零——按水平投影给的荷载在它"
+                           "身上没有意义，强度原样采用。请确认这是你要的。",
+                "warning": True,
+            }
+        scale = horizontal / length
+        out = vector * scale
+        return [float(v) for v in out], {
+            "reference": "projected",
+            "given_per_horizontal_metre": [float(v) for v in vector],
+            "member_length": round(length, 6),
+            "horizontal_projection": round(horizontal, 6),
+            "scale": round(scale, 6),
+            "as_global_per_member_metre": [round(float(v), 6) for v in out],
+            "explain": f"按水平投影给的强度乘以 {scale:.6g}（= 水平投影 / 杆长）"
+                       "换算成沿杆长分布。总合力不变，这正是投影荷载的定义。",
+        }
+
+
     @_records
     def set_load_cases(self, cases: list[dict], combos: list[dict] | None = None) -> ToolResult:
         """一次性定义全部荷载工况与组合，覆盖此前的荷载定义。
@@ -121,9 +185,15 @@ class LoadsMixin:
     @_records
     def set_member_load(self, member_id: int, load: list[float],
                         case_name: str | None = None,
-                        name: str | None = None) -> ToolResult:
+                        name: str | None = None,
+                        reference: str = "global") -> ToolResult:
         """设置杆件均布荷载。load 是三个数 [wx,wy,wz]，单位为 N/当前长度单位。
-        传全零列表表示删除该杆件的荷载。"""
+        传全零列表表示删除该杆件的荷载。
+
+        ``reference`` 见 LOAD_REFERENCES：斜梁上的雪载、活载按规范是"每米水平
+        投影"，用 projected；风压垂直于杆轴，用 local。两者都在写入前换算成
+        全局分量，换算过程原样写进返回值。
+        """
         from copy import deepcopy
 
         if len(load) != 3:
@@ -135,8 +205,18 @@ class LoadsMixin:
         if not all(np.isfinite(value) for value in values):
             return ToolResult(False, {"error": "均布荷载分量必须是有限数"})
         member_id = int(member_id)
-        if member_id not in {int(m["id"]) for m in self.model.get("members", [])}:
+        member = next((m for m in self.model.get("members") or []
+                       if int(m["id"]) == member_id), None)
+        if member is None:
             return ToolResult(False, {"error": f"杆件 {member_id} 不存在"})
+        reference = str(reference)
+        if reference not in self.LOAD_REFERENCES:
+            return ToolResult(False, {
+                "error": f"reference 只能是 {list(self.LOAD_REFERENCES)}"})
+        conversion = None
+        if reference != "global" and any(values):
+            values, conversion = self._to_global_intensity(
+                member, values, reference)
         candidate = deepcopy(self.model)
         if not candidate.get("load_cases"):
             candidate["load_cases"] = [{"name": "Load-1", "nodal_loads": [],
@@ -169,7 +249,9 @@ class LoadsMixin:
         self.model = candidate
         self._invalidate()
         return ToolResult(True, {"name": load_name,
-                                 "member": member_id, "case": case_name, "load": values})
+                                 "member": member_id, "case": case_name,
+                                 "load": values,
+                                 **({"conversion": conversion} if conversion else {})})
 
     def _load_case_in(self, candidate: dict[str, Any],
                       case_name: str | None) -> tuple[dict[str, Any] | None, str]:
@@ -189,7 +271,8 @@ class LoadsMixin:
                              a: float | None = None,
                              case_name: str | None = None,
                              name: str | None = None,
-                             b: float | None = None) -> ToolResult:
+                             b: float | None = None,
+                             reference: str = "global") -> ToolResult:
         """创建梯形、三角形、杆中集中力或部分跨均布，按名称编辑而不是重复叠加。
 
         ``partial`` 用 a、b 圈出受载区间 [a, b]，强度写在 w1 里。
@@ -249,6 +332,26 @@ class LoadsMixin:
                 return ToolResult(False, {
                     "error": f"必须满足 0 ≤ a < b ≤ 杆长 {length:g}，"
                              f"收到 a={position:g}、b={span_end:g}"})
+        reference = str(reference)
+        if reference not in self.LOAD_REFERENCES:
+            return ToolResult(False, {
+                "error": f"reference 只能是 {list(self.LOAD_REFERENCES)}"})
+        conversion = None
+        if reference != "global":
+            # 集中力（point）的 w1 是**力**不是强度，投影换算对它没有意义：
+            # 一个集中力不会因为杆件倾斜而变大变小。局部坐标则照样适用。
+            if kind == "point" and reference == "projected":
+                return ToolResult(False, {
+                    "error": "杆中集中力是力不是强度，没有「按水平投影分布」这回事。"
+                             "要换方向用 reference=local，要减小数值请自己算。"})
+            if any(start) or any(end):
+                start, conversion = self._to_global_intensity(
+                    member, start, reference)
+                if kind == "trapezoid":
+                    end, _ = self._to_global_intensity(member, end, reference)
+                else:
+                    end = list(start)
+
         load_name = str(name or f"{kind.title()}-Member-{member_id}").strip()
         if not load_name:
             return ToolResult(False, {"error": "载荷名称不能为空"})
@@ -280,7 +383,8 @@ class LoadsMixin:
         self._invalidate()
         return ToolResult(True, {"name": load_name, "member": member_id,
                                  "case": chosen, "kind": kind,
-                                 "analysis_ready": not errors, "warnings": errors})
+                                 "analysis_ready": not errors, "warnings": errors,
+                                 **({"conversion": conversion} if conversion else {})})
 
     @_records
     def set_prescribed_displacement(self, node_id: int, d: list[float],

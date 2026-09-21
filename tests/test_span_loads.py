@@ -9,6 +9,8 @@
 3. 一致性：均布的两种写法必须给出同一个数，叠加必须等于分别算再相加。
 """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -522,3 +524,81 @@ def test_spring_stiffness_survives_a_unit_change():
     # 位移以 m 与 mm 计，差 1000 倍；物理量相同
     assert a.U[from_dict(si).node_dofs(2)[2]] * 1e3 == pytest.approx(
         b.U[from_dict(mm).node_dofs(2)[2]], rel=1e-9)
+
+
+# ------------------------------------------- 荷载参照系 local / projected
+
+def _sloped(pitch: float = 3.0, run: float = 6.0):
+    """一根斜梁，从 (0,0,0) 到 (run,0,pitch)。两端固接，只看反力。"""
+    from agent import Session
+
+    s = Session()
+    s.set_model({
+        "units": "N-m-Pa",
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": run, "y": 0, "z": pitch}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "S", "section": "B"}],
+        "materials": [{"name": "S", "E": 2.06e11, "nu": 0.3, "density": 0.0}],
+        "sections": [{"name": "B", "A": 8.6e-3, "Iy": 3e-5, "Iz": 1e-4,
+                      "J": 1e-6}],
+        "supports": [{"node": 1, "fix": [1] * 6}, {"node": 2, "fix": [1] * 6}],
+    })
+    return s
+
+
+def test_a_projected_load_puts_the_right_total_on_a_sloped_member():
+    """**斜梁上这个选错，结果看着完全正常但是错的。**
+
+    同样写 10 kN/m：按沿杆长算总重是 10×6.708=67.08 kN，
+    按水平投影算是 10×6=60.00 kN。差 11.8%，而两种写法在规范里都存在——
+    雪载、活载给的是"每米水平投影"，自重给的是"每米杆长"。
+    """
+    run, pitch, w = 6.0, 3.0, 10e3
+    length = math.hypot(run, pitch)
+
+    along = _sloped(pitch, run)
+    along.set_member_load(1, [0, 0, -w])
+    along.solve_model()
+    total_along = along.query_results("reactions").payload["vertical_total_kN"]
+
+    projected = _sloped(pitch, run)
+    r = projected.set_member_load(1, [0, 0, -w], reference="projected")
+    projected.solve_model()
+    total_proj = projected.query_results("reactions").payload["vertical_total_kN"]
+
+    assert total_along == pytest.approx(w * length / 1e3, rel=1e-6)
+    assert total_proj == pytest.approx(w * run / 1e3, rel=1e-6)
+    # 换算过程必须看得见：用户拿到的强度和自己输入的不一样，得说清为什么
+    assert r.payload["conversion"]["scale"] == pytest.approx(run / length,
+                                                             rel=1e-6)
+
+
+def test_a_local_load_is_rotated_not_rescaled():
+    """local 只换方向、不改大小——它描述的是"垂直于杆轴的 10 kN/m"。
+
+    投影换算改的是**大小**（总合力守恒），局部坐标换的是**方向**（模长守恒）。
+    两者搞混的后果都是一个看着正常的错数，所以各自钉死。
+    """
+    s = _sloped()
+    r = s.set_member_load(1, [0, -10e3, 0], reference="local")
+    got = np.asarray(r.payload["load"], dtype=float)
+    assert float(np.linalg.norm(got)) == pytest.approx(10e3, rel=1e-9)
+    # 局部 y 在这根斜梁上指向"斜上方"，所以全局 x 分量为正、z 分量为负
+    assert got[0] > 0 and got[2] < 0
+
+
+def test_a_point_load_cannot_be_given_per_horizontal_metre():
+    """集中力是**力**不是强度，没有"按水平投影分布"这回事。
+
+    悄悄按 cosθ 缩一下最糟：用户以为自己加了 5 kN，实际只加了 4.47 kN。
+    """
+    s = _sloped()
+    r = s.set_member_span_load(1, "point", [0, 0, -5e3], a=2.0,
+                               reference="projected")
+    assert not r.ok
+    assert "集中力" in r.payload["error"]
+
+
+def test_an_unknown_reference_is_rejected():
+    s = _sloped()
+    assert not s.set_member_load(1, [0, 0, -1e3], reference="plan").ok

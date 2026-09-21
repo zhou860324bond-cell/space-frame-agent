@@ -566,6 +566,17 @@ TOOLS: list[dict[str, Any]] = [
                     "load": {"type": "array", "minItems": 3, "maxItems": 3,
                              "items": {"type": "number"},
                              "description": "全局 [wx,wy,wz]，N/m"},
+                    "reference": {"type": "string",
+                                  "enum": ["global", "local", "projected"],
+                                  "description":
+                                      "强度的参照系，默认 global（全局分量、沿杆长）。"
+                                      "**斜梁上这个选错，结果看着完全正常但是错的。**"
+                                      "projected：强度按每米**水平投影**给——斜屋面的"
+                                      "雪载、活载按规范就是这么给的；工具会乘 "
+                                      "水平投影/杆长 换算，总合力不变。"
+                                      "local：w 是杆件局部分量，风压垂直于杆轴时用它，"
+                                      "不必自己拆 sinθ/cosθ。"
+                                      "换算过程会原样写进返回值的 conversion 里。"},
                     "case_name": {"type": "string"},
                     "name": {"type": "string",
                              "description": "载荷名，例如 Roof-Line-1"},
@@ -601,6 +612,17 @@ TOOLS: list[dict[str, Any]] = [
                     "b": {"type": "number",
                           "description": "partial 专用：受载区间终点，"
                                          "必须满足 0 ≤ a < b ≤ 杆长"},
+                    "reference": {"type": "string",
+                                  "enum": ["global", "local", "projected"],
+                                  "description":
+                                      "强度的参照系，默认 global（全局分量、沿杆长）。"
+                                      "**斜梁上这个选错，结果看着完全正常但是错的。**"
+                                      "projected：强度按每米**水平投影**给——斜屋面的"
+                                      "雪载、活载按规范就是这么给的；工具会乘 "
+                                      "水平投影/杆长 换算，总合力不变。"
+                                      "local：w 是杆件局部分量，风压垂直于杆轴时用它，"
+                                      "不必自己拆 sinθ/cosθ。"
+                                      "换算过程会原样写进返回值的 conversion 里。"},
                     "case_name": {"type": "string"},
                     "name": {"type": "string"},
                 },
