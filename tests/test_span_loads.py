@@ -1079,3 +1079,108 @@ def test_a_gradient_needs_the_section_depth_and_says_so():
                               {"node": 2, "fix": [1] * 6}]})
     bad = s.set_member_strain(1, gradient_t=30.0)
     assert not bad.ok and "cy" in bad.payload["error"]
+
+
+# ----------------------------------------------------------- 规范组合
+
+def _three_cases():
+    """恒 + 活 + 风 三个工况的门式刚架。"""
+    from agent import Session
+
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q", "E": 2.06e11, "nu": 0.3, "density": 7850.0}],
+        [{"name": "B", "A": 0.018, "Iy": 5e-5, "Iz": 2e-3, "J": 1e-6}])
+    r = s.generate_frame(spans=[6.0], storeys=[4.0])
+    s.assign_properties([int(m["id"]) for m in s.model["members"]],
+                        material="Q", section="B")
+    beams = r.payload["beam_member_ids"]
+    s.set_load_cases(cases=[
+        {"name": "DL", "member_loads": [{"member": m, "w": [0, 0, -20e3]}
+                                        for m in beams]},
+        {"name": "LL", "member_loads": [{"member": m, "w": [0, 0, -10e3]}
+                                        for m in beams]},
+        {"name": "WX", "nodal_loads": [{"node": 3,
+                                        "load": [15e3, 0, 0, 0, 0, 0]}]},
+    ])
+    return s
+
+
+def test_every_variable_load_takes_a_turn_at_controlling():
+    """**这是自动生成组合的理由。**
+
+    只算"活载控制"而不算"风控制"，风控制的那些杆件就永远查不出来——
+    包络只在给定的组合里取极值，少一个就是少一个，而结果看着完全正常。
+    """
+    s = _three_cases()
+    got = s.generate_combinations(dead="DL", live="LL", wind="WX")
+    assert got.ok
+    named = {c["name"]: c["factors"] for c in got.payload["combos"]}
+    # 两个可变荷载各有一组基本组合
+    assert "基本-LL控制" in named and "基本-WX控制" in named
+    # GB 50068-2018：γ_G=1.3、γ_Q=1.5、ψ_c(风)=0.6、ψ_c(活)=0.7
+    assert named["基本-LL控制"] == pytest.approx(
+        {"DL": 1.3, "LL": 1.5, "WX": 1.5 * 0.6})
+    assert named["基本-WX控制"] == pytest.approx(
+        {"DL": 1.3, "WX": 1.5, "LL": 1.5 * 0.7})
+
+
+def test_a_favourable_dead_load_combination_is_generated_for_wind():
+    """风吸把构件往上拔时恒载是**有利**的，这时用 1.3 反而不保守。
+
+    软件判不了"哪根杆件上恒载算有利"——那是逐杆逐截面的事。
+    所以两组都生成，交给包络逐点去挑。
+    """
+    s = _three_cases()
+    got = s.generate_combinations(dead="DL", live="LL", wind="WX")
+    named = {c["name"]: c["factors"] for c in got.payload["combos"]}
+    assert named["基本-WX控制(恒载有利)"] == pytest.approx({"DL": 1.0, "WX": 1.5})
+
+
+def test_the_2012_edition_uses_the_old_partial_factors():
+    """既有项目按 2012 版校核：γ_G=1.2、γ_Q=1.4。
+
+    两版差 8%，选错了不会报错，只会让结果整体偏松或偏紧。
+    """
+    s = _three_cases()
+    got = s.generate_combinations(dead="DL", live="LL",
+                                  standard="GB50009-2012")
+    named = {c["name"]: c["factors"] for c in got.payload["combos"]}
+    assert named["基本-LL控制"] == pytest.approx({"DL": 1.2, "LL": 1.4})
+
+
+def test_the_psi_factors_can_be_overridden_and_are_reported():
+    """ψ 系数随建筑类别变。默认是一般民用建筑，商业、库房不同。
+
+    用错不会报错，只会让组合悄悄偏小——所以既要能覆盖，也要把实际用的
+    那一套原样报出来。
+    """
+    s = _three_cases()
+    got = s.generate_combinations(dead="DL", live="LL", wind="WX",
+                                  psi_c={"live": 0.9})
+    named = {c["name"]: c["factors"] for c in got.payload["combos"]}
+    assert named["基本-WX控制"]["LL"] == pytest.approx(1.5 * 0.9)
+    assert got.payload["psi_c"]["live"] == pytest.approx(0.9)
+
+
+def test_generated_combinations_feed_the_envelope_automatically():
+    """组合一经写入，包络与强度校核自动以它们为对象。
+
+    这条连的是全链路：生成组合 → 求解 → 包络逐点取极值并记住控制组合。
+    """
+    s = _three_cases()
+    assert s.generate_combinations(dead="DL", live="LL", wind="WX").ok
+    assert s.solve_model().ok
+    assert set(s.solution.combos) == {
+        c["name"] for c in s.model["combos"]}
+    got = s.query_envelope(component="Mz")
+    assert got.ok
+
+
+def test_an_unknown_case_name_is_refused_before_anything_is_written():
+    """工况名写错必须当场拒绝，而且不能改坏模型。"""
+    s = _three_cases()
+    before = list(s.model.get("combos") or [])
+    bad = s.generate_combinations(dead="DL", live="没有这个工况")
+    assert not bad.ok
+    assert list(s.model.get("combos") or []) == before

@@ -428,6 +428,164 @@ class LoadsMixin:
                 f"双向板长边梁：梯形，两端各升 {rise:g}，平台 q·Lx/2 = "
                 f"{abs(q) * width / 2:g}")
 
+    #: 分项系数与组合值系数。**这些数字是有出处的，不是默认值。**
+    #:
+    #: GB 50068-2018《建筑结构可靠性设计统一标准》把承载能力极限状态的
+    #: 分项系数从 1.2/1.4 提到了 1.3/1.5；不少既有项目仍按 2012 版校核，
+    #: 所以两套都留着，由调用方明确选。
+    #:
+    #: ψ_c（组合值系数）与 ψ_q（准永久值系数）**随建筑类别变**：这里给的是
+    #: 一般民用建筑（住宅、办公）的常见取值。商业、库房、机房的活载系数
+    #: 不同，必须由调用方覆盖——用错了不会报错，只会让组合悄悄偏小。
+    COMBINATION_STANDARDS = {
+        "GB50068-2018": {
+            "gamma_G_unfavourable": 1.3, "gamma_G_favourable": 1.0,
+            "gamma_Q": 1.5,
+            "psi_c": {"live": 0.7, "wind": 0.6, "snow": 0.7, "crane": 0.7},
+            "psi_q": {"live": 0.5, "wind": 0.0, "snow": 0.2, "crane": 0.6},
+        },
+        "GB50009-2012": {
+            "gamma_G_unfavourable": 1.2, "gamma_G_favourable": 1.0,
+            "gamma_Q": 1.4,
+            "psi_c": {"live": 0.7, "wind": 0.6, "snow": 0.7, "crane": 0.7},
+            "psi_q": {"live": 0.5, "wind": 0.0, "snow": 0.2, "crane": 0.6},
+        },
+    }
+    VARIABLE_KINDS = ("live", "wind", "snow", "crane")
+
+    @_records
+    def generate_combinations(self, dead=None, live=None, wind=None,
+                              snow=None, crane=None,
+                              standard: str = "GB50068-2018",
+                              include_serviceability: bool = True,
+                              psi_c: dict | None = None,
+                              replace: bool = True) -> ToolResult:
+        """按规范生成荷载组合，写进模型的 combos。
+
+        以前 combos 要手写系数字典，于是"漏了一个组合"这种错完全看不出来——
+        包络只在给定的组合里取极值，少一个就是少一个，而结果看着完全正常。
+
+        生成三类：
+
+        * **基本组合**（承载能力极限状态）：每个可变荷载**轮流**当控制荷载，
+          取 γ_Q；其余可变荷载取 γ_Q·ψ_c。轮流这一步最容易漏——只算
+          "活载控制"而不算"风控制"，风控制的那些杆件就永远查不出来。
+        * **恒载有利的基本组合**：有风荷载时另生成一组 γ_G=1.0。风吸把柱子
+          往上拔时恒载是有利的，这时候用 1.3 反而不保守。
+          软件判不了"哪根杆件上恒载算有利"——那是逐杆逐截面的事，
+          所以两组都生成，交给包络逐点去挑。
+        * **标准组合与准永久组合**（正常使用极限状态）：验挠度、裂缝用。
+
+        各参数接受单个工况名或名字列表。
+        """
+        from copy import deepcopy
+
+        spec = self.COMBINATION_STANDARDS.get(str(standard))
+        if spec is None:
+            return ToolResult(False, {
+                "error": f"standard 只能是 {list(self.COMBINATION_STANDARDS)}"})
+
+        def names(value) -> list[str]:
+            if value is None:
+                return []
+            if isinstance(value, str):
+                return [value]
+            return [str(v) for v in value]
+
+        groups = {"live": names(live), "wind": names(wind),
+                  "snow": names(snow), "crane": names(crane)}
+        dead_cases = names(dead)
+        known = {c.get("name") for c in self.model.get("load_cases") or []}
+        missing = sorted({n for n in dead_cases + [x for g in groups.values()
+                                                   for x in g]} - known)
+        if missing:
+            return ToolResult(False, {
+                "error": f"工况 {missing} 不存在", "available": sorted(known)})
+        if not dead_cases and not any(groups.values()):
+            return ToolResult(False, {"error": "至少要给一个工况"})
+
+        factors_c = dict(spec["psi_c"])
+        factors_c.update({str(k): float(v) for k, v in (psi_c or {}).items()})
+        gu, gf = spec["gamma_G_unfavourable"], spec["gamma_G_favourable"]
+        gq = spec["gamma_Q"]
+
+        combos: list[dict] = []
+
+        def add(name: str, factors: dict[str, float], basis: str) -> None:
+            if factors:
+                combos.append({"name": name, "factors": factors,
+                               "basis": basis})
+
+        variable = [(kind, case) for kind in self.VARIABLE_KINDS
+                    for case in groups[kind]]
+
+        # --- 基本组合：每个可变荷载轮流控制 ---
+        for kind, lead in variable:
+            factors = {case: gu for case in dead_cases}
+            factors[lead] = factors.get(lead, 0.0) + gq
+            for other_kind, other in variable:
+                if other == lead:
+                    continue
+                psi = factors_c.get(other_kind, 0.7)
+                factors[other] = factors.get(other, 0.0) + gq * psi
+            add(f"基本-{lead}控制", factors,
+                f"{standard} 基本组合，{lead} 为控制荷载："
+                f"γ_G={gu}、γ_Q={gq}，其余可变荷载取 γ_Q·ψ_c")
+        if dead_cases and not variable:
+            add("基本-仅恒载", {case: gu for case in dead_cases},
+                f"{standard} 基本组合，只有永久荷载")
+
+        # --- 恒载有利：风吸上拔时用 ---
+        for case in groups["wind"]:
+            factors = {d: gf for d in dead_cases}
+            factors[case] = factors.get(case, 0.0) + gq
+            add(f"基本-{case}控制(恒载有利)", factors,
+                f"{standard} 基本组合，永久荷载按有利取 γ_G={gf}。"
+                "风吸把构件往上拔时恒载是有利的，这时用 1.3 反而不保守")
+
+        # --- 正常使用极限状态 ---
+        if include_serviceability:
+            for kind, lead in variable:
+                factors = {case: 1.0 for case in dead_cases}
+                factors[lead] = factors.get(lead, 0.0) + 1.0
+                for other_kind, other in variable:
+                    if other == lead:
+                        continue
+                    factors[other] = factors.get(other, 0.0) + factors_c.get(
+                        other_kind, 0.7)
+                add(f"标准-{lead}控制", factors,
+                    f"{standard} 标准组合，验挠度用")
+            quasi = {case: 1.0 for case in dead_cases}
+            for kind, case in variable:
+                psi = spec["psi_q"].get(kind, 0.5)
+                if psi:
+                    quasi[case] = quasi.get(case, 0.0) + psi
+            add("准永久", quasi, f"{standard} 准永久组合，验长期变形用")
+
+        candidate = deepcopy(self.model)
+        existing = [] if replace else list(candidate.get("combos") or [])
+        keep = [c for c in existing
+                if c.get("name") not in {x["name"] for x in combos}]
+        candidate["combos"] = keep + [
+            {"name": c["name"], "factors": c["factors"]} for c in combos]
+        errors = validate_payload(candidate)
+        if errors:
+            return ToolResult(False, {"errors": errors,
+                                      "hint": "组合未写入，原模型保持不变"})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            "standard": standard, "count": len(combos),
+            "combos": [{"name": c["name"], "factors": c["factors"],
+                        "basis": c["basis"]} for c in combos],
+            "gamma": {"G_unfavourable": gu, "G_favourable": gf, "Q": gq},
+            "psi_c": factors_c,
+            "note": "ψ 系数随建筑类别变，这里给的是一般民用建筑的常见取值。"
+                    "商业、库房、机房不同，用错不会报错，只会让组合悄悄偏小——"
+                    "请核对后用 psi_c 覆盖。组合一经写入，包络与强度校核"
+                    "自动以它们为对象。",
+        })
+
     def _load_case_in(self, candidate: dict[str, Any],
                       case_name: str | None) -> tuple[dict[str, Any] | None, str]:
         """在候选模型中取分析步；增量载荷工具共用，避免默认工况逻辑漂移。"""

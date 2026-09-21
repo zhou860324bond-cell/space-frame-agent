@@ -850,6 +850,71 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "generate_combinations",
+            "description":
+                "按规范生成荷载组合并写入模型。用户说「按规范组合」「做荷载组合」"
+                "「1.3 恒 + 1.5 活」时用这个，不要手写系数字典——"
+                "**漏了一个组合完全看不出来**：包络只在给定的组合里取极值，"
+                "少一个就是少一个，而结果看着完全正常。"
+                "\n\n生成三类："
+                "\n基本组合（承载能力）—— 每个可变荷载**轮流**当控制荷载，取 γ_Q，"
+                "其余取 γ_Q·ψ_c。轮流这一步最容易漏：只算「活载控制」不算"
+                "「风控制」，风控制的那些杆件就永远查不出来。"
+                "\n恒载有利的基本组合 —— 有风荷载时另生成一组 γ_G=1.0。风吸把柱子"
+                "往上拔时恒载是有利的，用 1.3 反而不保守。软件判不了「哪根杆件上"
+                "恒载算有利」，所以两组都生成，交给包络逐点挑。"
+                "\n标准组合与准永久组合 —— 验挠度、长期变形用。"
+                "\n\n**ψ 系数随建筑类别变**：默认是一般民用建筑（住宅、办公）的"
+                "常见取值，商业、库房、机房不同。用错不会报错，只会让组合悄悄偏小——"
+                "回答时要把用了哪套系数说出来，并提醒核对。"
+                "\n组合一经写入，query_envelope 与 check_strength 自动以它们为对象。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dead": {"description": "永久荷载工况名或名字列表",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "live": {"description": "楼面/屋面活荷载工况",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "wind": {"description": "风荷载工况。有多个方向就都列上，"
+                                            "每个都会轮流当控制荷载",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "snow": {"description": "雪荷载工况",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "crane": {"description": "吊车荷载工况",
+                              "oneOf": [{"type": "string"},
+                                        {"type": "array",
+                                         "items": {"type": "string"}}]},
+                    "standard": {"type": "string",
+                                 "enum": ["GB50068-2018", "GB50009-2012"],
+                                 "description":
+                                     "默认 GB50068-2018（γ_G=1.3、γ_Q=1.5）。"
+                                     "2012 版是 1.2/1.4，既有项目校核才用"},
+                    "include_serviceability": {"type": "boolean",
+                                               "description": "是否生成标准组合与"
+                                                              "准永久组合，默认是"},
+                    "psi_c": {"type": "object",
+                              "additionalProperties": {"type": "number"},
+                              "description":
+                                  "覆盖组合值系数，键取 live/wind/snow/crane。"
+                                  "建筑类别与默认值不符时**必须**覆盖"},
+                    "replace": {"type": "boolean",
+                                "description": "是否清掉同名的旧组合，默认是"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "apply_area_load",
             "description":
                 "把**面荷载**（力/面积，如楼面恒载 3.5 kN/m²）导成梁上的线荷载。"
