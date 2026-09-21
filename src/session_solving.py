@@ -194,7 +194,9 @@ class SolvingMixin:
             from internal_forces import max_deflection
             best = max_deflection(self.frame, view, name, stations=101,
                                   mapping=self.compilation.mapping)
-        except Exception as exc:                   # 附加信息，不该拖垮求解
+        except Exception as exc:  # noqa: BLE001 — 异常没被吞掉：它的文本
+            # 进了 max_deflection_note，随结果一起返回给用户。挠度是求解的
+            # 附加信息，算不出来不该把整次求解拖垮（见模块 docstring 末段）。
             entry["max_deflection_mm"] = None
             entry["max_deflection_note"] = f"单元内挠度算不出来：{exc}"
             return 0.0, ""
