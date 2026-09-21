@@ -29,6 +29,108 @@ import silent_failures as _silent
 
 class SolvingMixin:
     """求解：自研内核、Abaqus 对标、实体子模型。见模块 docstring。"""
+    def solve_steps(self, inspect: str | None = None) -> ToolResult:
+        """按顺序求解模型里声明的全部分析步。
+
+        荷载与边界条件在步之间**传播**：某一步建的东西自动沿用到后面每一步，
+        直到被改写或显式失活。所以"满载 → 撤活载 → 拆支座"这样三步，只需要
+        在第一步写全荷载，后两步各写一行变化。
+
+        **每一步都从未变形、无应力的状态重解。** 线弹性下这不是问题——撤掉
+        支座之后的平衡态就是重解出来的那个。但它表达不了施工过程：后装的杆件
+        不会躲开先前的变形，塑性残余也不会留到下一步。杆件同样不能在步之间
+        生灭。返回里带着这两条，转达时不要省掉。
+
+        ``inspect`` 指定哪一步的结果留在会话里供后处理（画图、验算、查内力）；
+        默认是最后一步。求解本身每一步都做，只是会话一次只能端着一份结果。
+        """
+        import steps as step_module
+
+        declared = step_module.from_payload(self.model)
+        if not declared:
+            return ToolResult(False, {
+                "error": "模型里没有分析步",
+                "hint": "用 add_step 建一个；只想算一次的话直接用 solve_model"})
+        try:
+            effective = step_module.resolve(declared, self.model)
+        except ValueError as exc:
+            return ToolResult(False, {"error": str(exc),
+                                      "hint": "分析步没有执行，模型保持不变"})
+
+        names = [e.name for e in effective]
+        target = inspect if inspect is not None else names[-1]
+        if target not in names:
+            return ToolResult(False, {
+                "error": f"没有名为 {target!r} 的分析步", "steps": names})
+
+        original = self.model
+        summary = []
+        try:
+            for eff in effective:
+                self.model = step_module.payload_for(eff, original)
+                if eff.analysis == "pdelta":
+                    outcome = self.solve_model(
+                        analysis="step", amplitudes=dict(eff.loads),
+                        increments=eff.increments)
+                    case_key = "STEP"
+                else:
+                    # 线性步：各工况按幅值曲线在 t=1 处的系数叠加成一个组合。
+                    # 线性叠加在这里是精确的，所以不必走增量求解。
+                    factors = self._amplitude_factors(eff.loads, original)
+                    self.model = dict(self.model)
+                    self.model["combos"] = [{"name": eff.name,
+                                             "factors": factors}]
+                    outcome = self.solve_model(analysis="linear")
+                    case_key = eff.name
+                if not outcome.ok:
+                    return ToolResult(False, {
+                        "error": f"分析步 {eff.name!r} 求解失败",
+                        "detail": outcome.payload,
+                        "completed": [s["step"] for s in summary]})
+                entry = outcome.payload.get("cases", {}).get(case_key, {})
+                summary.append({
+                    "step": eff.name, "analysis": eff.analysis,
+                    "loads": dict(eff.loads),
+                    "supports": sorted(eff.supports),
+                    "changes": list(eff.changes),
+                    "max_deflection_mm": entry.get("max_deflection_mm"),
+                    "max_displacement_mm": entry.get("max_displacement_mm"),
+                    "equilibrium_ok": entry.get("equilibrium_ok")})
+                if eff.name == target:
+                    kept = (self.solution, self.result_db,
+                            self.frame, self.compilation)
+        finally:
+            self.model = original
+
+        self.solution, self.result_db, self.frame, self.compilation = kept
+        return ToolResult(True, {
+            "steps": summary, "count": len(summary), "inspecting": target,
+            "note": f"会话里留的是分析步 {target!r} 的结果，后处理都按它来；"
+                    "换一步看结果用 solve_steps(inspect=\"步名\")",
+            "limitation": "每一步都从未变形、无应力状态重解，不把上一步的状态"
+                          "带进来；杆件也不能在步之间生灭。所以这表达的是"
+                          "「同一结构的几种配置」，不是施工过程。"})
+
+    @staticmethod
+    def _amplitude_factors(loads: dict, payload: dict) -> dict:
+        """线性步里各工况的叠加系数：幅值曲线在伪时间 1.0 处的值。
+
+        **不是一律取 1.0。** 自定义曲线完全可以收在 0.5——那种情况下取 1.0
+        会把荷载放大一倍，而结果看着完全正常。
+        """
+        from frame3d import BUILTIN_AMPLITUDES, Amplitude
+
+        defined = payload.get("amplitudes") or {}
+        out = {}
+        for case, amp in loads.items():
+            if amp in defined:
+                curve = Amplitude(amp, tuple((float(t), float(v))
+                                             for t, v in defined[amp]))
+            else:
+                curve = Amplitude(amp, BUILTIN_AMPLITUDES[amp])
+            out[case] = curve.at(1.0)
+        return out
+
     def solve_model(self, analysis: str = "linear", increments: int = 10,
                     max_iter: int = 40, tolerance: float = 1e-7,
                     amplitudes: dict | None = None) -> ToolResult:

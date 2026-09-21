@@ -119,6 +119,17 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
                                   "删边界条件会让结构少约束，所以要报剩下多少"),
     "generate_live_patterns": (("spans", "span_count", "cases", "count"),
                                "活载布置：归出几跨、每个工况压哪些梁，都要给出来"),
+    "add_step": (("added", "count", "steps", "note"),
+                 "加分析步：要把**结算后实际生效**的荷载与支座给出来，"
+                 "只回显声明会把传播这件事藏起来"),
+    "list_steps": (("declared", "effective", "count"),
+                   "分析步清单：声明与生效必须分两栏，"
+                   "只给声明看不出某一步实际在算什么"),
+    "delete_step": (("deleted", "count", "steps"),
+                    "删分析步：删完之后剩下的步各自生效什么，要重新给一遍"),
+    "solve_steps": (("steps", "count", "inspecting", "limitation"),
+                    "分析步求解：逐步一行；**留在会话里的是哪一步要说明**，"
+                    "「每步都从零重解」这条限制也是契约的一部分"),
     "define_amplitude": (("amplitude", "points", "sampled", "note"),
                          "幅值曲线：定义了什么形状、几个采样点上是多少，都要回给用户核对"),
     "list_amplitudes": (("builtin", "defined", "count"),

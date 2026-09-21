@@ -235,6 +235,43 @@ MODEL_SCHEMA: dict[str, Any] = {
                                "member_strains": _MEMBER_STRAINS},
             },
         },
+        # 分析步。荷载与边界条件在步之间**传播**：某一步建的东西自动沿用
+        # 到后面每一步，直到被改写或显式失活。语义与结算见 src/steps.py。
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object", "required": ["name"],
+                "additionalProperties": False,
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "analysis": {"type": "string",
+                                 "enum": ["linear", "pdelta"]},
+                    "loads": {"type": "object",
+                              "additionalProperties": {"type": "string"}},
+                    "deactivate_loads": {"type": "array",
+                                         "items": {"type": "string"}},
+                    "supports": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object", "additionalProperties": False,
+                            "properties": {
+                                "name": {"type": "string", "minLength": 1},
+                                "fix": {"type": "array",
+                                        "minItems": 6, "maxItems": 6,
+                                        "items": {"type": "integer",
+                                                  "enum": [0, 1]}},
+                                "spring": {"type": "array",
+                                           "minItems": 6, "maxItems": 6,
+                                           "items": {"type": "number",
+                                                     "minimum": 0}}},
+                        },
+                    },
+                    "deactivate_supports": {"type": "array",
+                                            "items": {"type": "integer"}},
+                    "increments": {"type": "integer", "minimum": 1},
+                },
+            },
+        },
         "amplitudes": {
             "description": "幅值曲线：名字 -> [[伪时间, 系数], ...]",
             "type": "object",

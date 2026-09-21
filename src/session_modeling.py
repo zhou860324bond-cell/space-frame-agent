@@ -863,7 +863,131 @@ class ModelingMixin:
                                  "warnings": errors})
 
     @_records
+    def add_step(self, name: str, analysis: str = "linear",
+                 loads: dict | None = None,
+                 deactivate_loads: list | None = None,
+                 supports: dict | None = None,
+                 deactivate_supports: list | None = None,
+                 increments: int = 10,
+                 after: str | None = None) -> ToolResult:
+        """新增一个分析步（Abaqus 的 Step），追加到末尾或插在某一步之后。
+
+        **荷载与边界条件在步之间传播。** 这一步只写新建或改写的东西，上一步
+        有而这里没提的会自动沿用——要让它消失必须显式写进 deactivate。这是
+        Abaqus 的语义，也是最容易被误解的一点：漏写不等于撤销。
+
+        ``loads`` 是 工况名 -> 幅值曲线名，例如 {"DL": "STEP", "WX": "RAMP"}。
+        ``supports`` 是 节点号 -> {"fix": [...], "spring": [...]}，用来在这一步
+        改写某个支座（比如把固接换成铰接）。
+
+        analysis 目前支持 linear 与 pdelta。材料非线性没放进来是因为一个分析步
+        里常有几个工况同时生效，而材料非线性不能事后叠加，缺一个合成工况的
+        增量入口；硬放进来只能偷偷按单工况各算各的，那是错的答案。
+        """
+        import steps as step_module
+
+        try:
+            step = step_module.Step(
+                name=str(name), analysis=str(analysis),
+                loads={str(k): str(v) for k, v in (loads or {}).items()},
+                deactivate_loads=tuple(str(c) for c in (deactivate_loads or ())),
+                supports={int(k): dict(v) for k, v in (supports or {}).items()},
+                deactivate_supports=tuple(int(n) for n in
+                                          (deactivate_supports or ())),
+                increments=int(increments))
+        except (ValueError, TypeError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+
+        existing = step_module.from_payload(self.model)
+        names = [s.name for s in existing]
+        if step.name in names:
+            return ToolResult(False, {
+                "error": f"已经有名为 {step.name!r} 的分析步", "steps": names})
+        if after is None:
+            existing.append(step)
+        elif after in names:
+            existing.insert(names.index(after) + 1, step)
+        else:
+            return ToolResult(False, {
+                "error": f"没有名为 {after!r} 的分析步，插不进去", "steps": names})
+
+        return self._write_steps(existing, {"added": step.name})
+
+    def list_steps(self) -> ToolResult:
+        """列出全部分析步，并给出每一步**实际生效**的荷载与边界条件。
+
+        传播是隐式的：第三步写着一行「失活活载」，实际生效的却是第一步那几个
+        荷载减掉活载。光看声明看不出这件事，所以这里把结算结果一并给出——
+        声明与生效分两栏，哪一步到底在算什么一眼可见。
+        """
+        import steps as step_module
+
+        declared = step_module.from_payload(self.model)
+        if not declared:
+            return ToolResult(True, {"steps": [], "count": 0,
+                                     "note": "模型里还没有分析步"})
+        payload = {"declared": step_module.to_payload(declared),
+                   "count": len(declared)}
+        try:
+            payload["effective"] = [
+                {"step": e.name, "analysis": e.analysis,
+                 "increments": e.increments, "loads": dict(e.loads),
+                 "supports": sorted(e.supports), "changes": list(e.changes)}
+                for e in step_module.resolve(declared, self.model)]
+        except ValueError as exc:
+            payload["resolve_error"] = str(exc)
+            payload["hint"] = "这串分析步结算不出来，求解会直接报同样的错"
+        return ToolResult(True, payload)
+
     @_records
+    def delete_step(self, name: str) -> ToolResult:
+        """删除一个分析步。
+
+        **后面的步会跟着变**：传播是按顺序结算的，删掉中间一步，它建立的荷载
+        或支座改写就不再存在，后面某一步的「失活」可能因此失去对象而报错。
+        返回里会把删除后的结算结果一并给出，好核对这件事。
+        """
+        import steps as step_module
+
+        existing = step_module.from_payload(self.model)
+        names = [s.name for s in existing]
+        if str(name) not in names:
+            return ToolResult(False, {
+                "error": f"没有名为 {name!r} 的分析步", "steps": names})
+        keep = [s for s in existing if s.name != str(name)]
+        return self._write_steps(keep, {"deleted": str(name)})
+
+    def _write_steps(self, steps: list, extra: dict) -> ToolResult:
+        """把分析步写回模型，写之前先结算一遍——结算不过就不写。"""
+        from copy import deepcopy
+
+        import steps as step_module
+
+        candidate = deepcopy(self.model)
+        candidate["steps"] = step_module.to_payload(steps)
+        before = set(validate_payload(self.model))
+        errors = [e for e in validate_payload(candidate) if e not in before]
+        if errors:
+            return ToolResult(False, {"errors": errors,
+                                      "hint": "分析步未写入，原模型保持不变"})
+        try:
+            effective = step_module.resolve(steps, candidate)
+        except ValueError as exc:
+            return ToolResult(False, {
+                "error": str(exc),
+                "hint": "这串分析步结算不出来，没有写入；先把它改成立得住的顺序"})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            **extra, "count": len(steps),
+            "steps": [{"step": e.name, "analysis": e.analysis,
+                       "loads": dict(e.loads), "supports": sorted(e.supports),
+                       "changes": list(e.changes)} for e in effective],
+            "note": "loads 与 supports 是**结算后实际生效**的，含从前面步传播"
+                    "过来的部分，不只是这一步声明的"})
+
+    # 只读的清单工具不记建模历史：它不改模型，记进去只会让时间轴上多出
+    # 一堆"什么也没做"的条目，把真正的建模步骤淹掉。
     def list_boundary_conditions(self) -> ToolResult:
         """列出全部边界条件——相当于 Abaqus 的 BC Manager。
 

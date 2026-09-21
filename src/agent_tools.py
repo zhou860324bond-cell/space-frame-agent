@@ -1134,6 +1134,86 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "add_step",
+            "description":
+                "新增一个分析步（Abaqus 的 Step）。用户说「先满载再撤活载」"
+                "「拆掉这个支座看看」「分几个工况阶段算」时用这个。"
+                "\n\n**荷载与边界条件在步之间传播**：这一步只写新建或改写的东西，"
+                "上一步有而这里没提的会自动沿用。要让它消失必须显式写进 "
+                "deactivate_loads / deactivate_supports——**漏写不等于撤销**，"
+                "这是最容易向用户解释错的一点，回答时要讲明白。"
+                "\nloads 是 工况名 -> 幅值曲线名；supports 是 节点号 -> "
+                "{fix: [...], spring: [...]}，用来在这一步改写某个支座。"
+                "\n每一步都从未变形、无应力状态重解，不把上一步的状态带进来，"
+                "杆件也不能在步之间生灭——所以这表达的是「同一结构的几种配置」，"
+                "不是施工过程。用户问施工顺序时要说清楚这个区别。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string", "description": "分析步名；Initial 是保留名"},
+                "analysis": {"type": "string", "enum": ["linear", "pdelta"],
+                             "description": "材料非线性暂不支持分析步"},
+                "loads": {"type": "object",
+                          "additionalProperties": {"type": "string"},
+                          "description": "本步新建或改写的荷载：工况名 -> 幅值曲线名"},
+                "deactivate_loads": {"type": "array", "items": {"type": "string"},
+                                     "description": "本步起失活的工况名"},
+                "supports": {"type": "object",
+                             "additionalProperties": {"type": "object"},
+                             "description": "本步新建或改写的支座：节点号 -> {fix, spring}"},
+                "deactivate_supports": {"type": "array", "items": {"type": "integer"},
+                                        "description": "本步起拆掉的支座所在节点号"},
+                "increments": {"type": "integer", "minimum": 1},
+                "after": {"type": "string",
+                          "description": "插在这一步之后；留空则追加到末尾"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_steps",
+            "description":
+                "列出全部分析步，声明与**实际生效**分两栏。"
+                "\n传播是隐式的：某一步写着一行「失活活载」，生效的却是前面传下来"
+                "的一整套减掉活载。只看声明会把这件事看漏，所以回答用户"
+                "「第几步在算什么」时一律看 effective 那一栏，不要看 declared。",
+            "parameters": {"type": "object", "properties": {},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_step",
+            "description":
+                "删除一个分析步。**后面的步会跟着变**：删掉建立某个荷载的那一步，"
+                "后面的「失活」就失去对象，整串分析步可能结算不出来——"
+                "那种情况下工具会拒绝删除并保持模型原样，把错误原样转达给用户。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "solve_steps",
+            "description":
+                "按顺序求解模型里声明的全部分析步，每一步给一行结果。"
+                "有分析步时用这个，不要退回 solve_model 一步步手动算——"
+                "手动算会丢掉传播，而漏掉一个上一步的荷载看不出来。"
+                "\n会话一次只端得住一份结果供后处理（画图、验算、查内力）；"
+                "默认留最后一步，用 inspect 指定留哪一步。返回里的 limitation "
+                "要原样转达：每一步都从未变形、无应力状态重解，杆件不能在步之间"
+                "生灭，所以这不是施工过程分析。",
+            "parameters": {"type": "object", "properties": {
+                "inspect": {"type": "string",
+                            "description": "哪一步的结果留在会话里；留空取最后一步"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "define_amplitude",
             "description":
                 "定义一条幅值曲线（Abaqus 的 Amplitude），给 solve_model(analysis=\"step\") 用。"
