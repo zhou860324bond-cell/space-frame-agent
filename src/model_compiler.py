@@ -15,7 +15,8 @@ import numpy as np
 
 from frame3d import Frame, LoadCase, Member, Node, member_endpoints
 from model_io import from_dict, migrate_payload, validate_payload
-from span_loads import KINDS, PARTIAL, POINT, TRAPEZOID, UNIFORM, SpanLoad
+from span_loads import (KINDS, PARTIAL, POINT, RAMP, TRAPEZOID, UNIFORM,
+                        SpanLoad)
 
 _SPLIT_REL_TOL = 1e-9
 _SPLIT_ABS_TOL = 1e-9
@@ -217,6 +218,25 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                         analysis_case.member_spans.setdefault(element_id, []).append(
                             SpanLoad(PARTIAL, tuple(load.w1),
                                      a=start - lo, b=end - lo))
+                    continue
+
+                if load.kind == RAMP:
+                    # 与 partial 同样按重叠区间切，但强度要按位置线性插值到
+                    # 各段的两端——直接沿用整段的 w1/w2 会把斜率算错。
+                    start = np.asarray(load.w1, dtype=float)
+                    change = np.asarray(load.w2, dtype=float) - start
+                    whole = float(load.b - load.a)
+                    for index, element_id in enumerate(element_ids):
+                        lo, hi = boundaries[index], boundaries[index + 1]
+                        head = max(float(load.a), lo)
+                        tail = min(float(load.b), hi)
+                        if tail - head <= tolerance or whole <= 0.0:
+                            continue
+                        w_head = start + change * ((head - load.a) / whole)
+                        w_tail = start + change * ((tail - load.a) / whole)
+                        analysis_case.member_spans.setdefault(element_id, []).append(
+                            SpanLoad(RAMP, tuple(w_head), tuple(w_tail),
+                                     a=head - lo, b=tail - lo))
                     continue
 
                 # **不认识的类型必须炸，不能默默丢掉。**

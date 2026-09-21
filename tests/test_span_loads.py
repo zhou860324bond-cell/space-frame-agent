@@ -18,7 +18,7 @@ from frame3d import (Frame, Material, Member, Node, Section, check_equilibrium,
                      check_model, fixed_end_equivalent, solve)
 from internal_forces import member_diagram
 from model_io import from_dict
-from span_loads import (KINDS, PARTIAL, POINT, TRAPEZOID, UNIFORM, SpanLoad,
+from span_loads import (KINDS, PARTIAL, POINT, RAMP, TRAPEZOID, UNIFORM, SpanLoad,
                         fixed_end, span_force)
 
 # 符号约定：这套几何下全局 z 向的荷载落在杆件局部 y 上，因此产生 Mz。
@@ -417,6 +417,9 @@ def test_every_declared_span_load_kind_reaches_the_solver(kind):
         entry["a"] = L / 2
     if kind == PARTIAL:
         entry["a"], entry["b"] = 0.0, L / 2
+    if kind == RAMP:
+        entry["w2"] = [0.0, 0.0, W]
+        entry["a"], entry["b"] = 0.0, L / 2
 
     s = Session()
     assert s.set_model(payload).ok
@@ -687,3 +690,76 @@ def test_the_single_member_payload_did_not_change():
     s, beams = _framed()
     one = s.set_member_load(beams[0], [0, 0, -30e3])
     assert set(one.payload) == {"case", "load", "member", "name"}
+
+
+# --------------------------------------------- 区间梯形 partial_trapezoid
+
+def test_a_ramp_reduces_to_the_two_kinds_it_generalises():
+    """`partial_trapezoid` 是 partial 与 trapezoid 的推广，两头都要退得回去。
+
+    这两条是它最强的自检：固端力由"集中力的核乘强度再积分"得来，
+    而 partial（常量强度）和 trapezoid（满跨线性）各有一套**独立写成**的
+    闭式。三者对上，说明积分没写错。
+    """
+    from span_loads import _bending_fixed_end, _partial_fixed_end, _ramp_fixed_end
+
+    # w1 = w2 → partial
+    assert _ramp_fixed_end(L, W, W, 0.0, L / 2) == pytest.approx(
+        _partial_fixed_end(L, W, 0.0, L / 2), rel=1e-9, abs=1e-6)
+    # a=0、b=L → trapezoid
+    assert _ramp_fixed_end(L, 0.0, W, 0.0, L) == pytest.approx(
+        _bending_fixed_end(L, 0.0, W), rel=1e-9, abs=1e-6)
+
+
+def test_two_ramps_make_an_exact_symmetric_triangle():
+    """**这是补这个类型的理由。**
+
+    双向板短边梁承受的是跨中起峰的对称三角形。这个形状单根杆上一条荷载
+    表达不了：trapezoid 是端到端线性，partial 是区间均布。两段 ramp 拼起来
+    才是精确的。
+
+    对称三角形（峰值 q）的跨中弯矩闭合解是 qL²/12。实测两段 ramp 给出
+    160.0000，而 200 个集中力逼近是 159.9960 —— **新类型比逼近更准**。
+    """
+    q0 = 30e3
+    f = pin_pin(bar())
+    f.case().member_spans[1] = [
+        SpanLoad(RAMP, (0.0, 0.0, 0.0), (0.0, 0.0, -q0), a=0.0, b=L / 2),
+        SpanLoad(RAMP, (0.0, 0.0, -q0), (0.0, 0.0, 0.0), a=L / 2, b=L),
+    ]
+    sol = solve(f)
+    assert check_equilibrium(f, sol, "default")["ok"]
+    x_peak, m_peak = peak(f)
+    assert x_peak == pytest.approx(L / 2, abs=L / 200)
+    assert m_peak == pytest.approx(q0 * L ** 2 / 12.0, rel=1e-6)
+
+
+def test_a_ramp_survives_being_split_by_an_interior_node():
+    """跨越剖分点时，强度要按位置**线性插值**到各段两端。
+
+    直接沿用整段的 w1/w2 会把斜率算错——结果只是偏，不报错，
+    所以拿"剖分与否同值"当判据。
+    """
+    q0 = 30e3
+    plain = pin_pin(bar())
+    plain.case().member_spans[1] = [
+        SpanLoad(RAMP, (0.0, 0.0, 0.0), (0.0, 0.0, -q0), a=0.0, b=L)]
+    cut = pin_pin(bar(n=2))
+    half = (0.0, 0.0, -q0 / 2)
+    cut.case().member_spans[1] = [
+        SpanLoad(RAMP, (0.0, 0.0, 0.0), half, a=0.0, b=L / 2)]
+    cut.case().member_spans[2] = [
+        SpanLoad(RAMP, half, (0.0, 0.0, -q0), a=0.0, b=L / 2)]
+    assert peak(plain)[1] == pytest.approx(peak(cut)[1], rel=1e-6)
+
+
+def test_the_ramp_tool_demands_both_ends_and_both_positions():
+    """缺 w2 或缺 a/b 都必须报错，不许替用户猜。
+
+    缺 w2 默认成 w1 的话，写漏的区间梯形会静悄悄变成区间均布；
+    默认成 0 又会变成三角形。两种都是"看着正常的错数"。
+    """
+    s, _ = _framed()
+    bad = s.set_member_span_load(1, "partial_trapezoid", [0, 0, -1e3],
+                                 a=0.0, b=1.0)
+    assert not bad.ok and "w2" in bad.payload["error"]

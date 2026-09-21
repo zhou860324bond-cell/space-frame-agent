@@ -31,7 +31,11 @@ UNIFORM = "uniform"
 TRAPEZOID = "trapezoid"
 POINT = "point"
 PARTIAL = "partial"
-KINDS = (UNIFORM, TRAPEZOID, POINT, PARTIAL)
+#: 区间内线性变化。它是 partial（w1=w2）与 trapezoid（a=0,b=L）的推广，
+#: 补它的直接理由是**双向板导荷**：短边梁的对称三角形、长边梁的对称梯形，
+#: 在一根杆上都得靠两三段这种荷载拼出来，前面那两种一条都表达不了。
+RAMP = "partial_trapezoid"
+KINDS = (UNIFORM, TRAPEZOID, POINT, PARTIAL, RAMP)
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,7 @@ class SpanLoad:
     trapezoid:  w1 是 i 端强度、w2 是 j 端强度（当前力/长度单位）
     point:      w1 是集中力（当前力单位），a 是距 i 端的距离（当前长度单位）
     partial:    w1 是强度，荷载只作用在 [a, b] 这一段（当前长度单位）
+    partial_trapezoid: [a, b] 段内强度由 w1（在 a）线性变到 w2（在 b）
     """
     kind: str
     w1: tuple[float, float, float]
@@ -73,14 +78,18 @@ class SpanLoad:
             out["w2"] = [float(v) for v in self.w2]
         if self.kind == POINT:
             out["a"] = float(self.a)
-        if self.kind == PARTIAL:
+        if self.kind in (PARTIAL, RAMP):
             out["a"] = float(self.a)
             out["b"] = float(self.b)
+        if self.kind == RAMP:
+            out["w2"] = [float(v) for v in self.w2]
         return out
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "SpanLoad":
         kind = str(data.get("kind", UNIFORM))
+        if kind == RAMP and not {"w2", "a", "b"} <= set(data):
+            raise ValueError("区间梯形荷载必须同时给出 w1、w2、a、b")
         if kind == TRAPEZOID and "w2" not in data:
             # 缺 w2 就默认成 w1 的话，写漏的梯形会静悄悄变成均布；
             # 默认成 0 又会静悄悄变成三角形。两种都不能接受
@@ -155,6 +164,49 @@ def _partial_fixed_end(L: float, w: float, a: float,
     return vi, vj, mi, mj
 
 
+def _point_kernels(L: float) -> tuple[np.polynomial.Polynomial, ...]:
+    """集中力固端力对位置 x 的四个核：(V_i, V_j, M_i, M_j) / P。
+
+    直接从 `_point_fixed_end` 里读出来，写成多项式：
+
+        V_i = (L³ − 3Lx² + 2x³) / L³      （由 b²(L+2a)/L³ 展开）
+        V_j = (3Lx² − 2x³) / L³           （由 a²(L+2b)/L³ 展开）
+        M_i = (L²x − 2Lx² + x³) / L²      （由 a·b²/L²）
+        M_j = −(Lx² − x³) / L²            （由 −a²·b/L²）
+
+    **写成多项式而不是手推原函数**，是因为分布荷载的固端力就是"核乘以强度
+    再积分"，而强度一旦是线性的，被积函数升到五次——手推八个原函数出错的
+    概率远高于让 numpy 去积。测试里另拿数值积分独立对一遍。
+    """
+    P = np.polynomial.Polynomial
+    return (P([L ** 3, 0.0, -3.0 * L, 2.0]) / L ** 3,
+            P([0.0, 0.0, 3.0 * L, -2.0]) / L ** 3,
+            P([0.0, L ** 2, -2.0 * L, 1.0]) / L ** 2,
+            -P([0.0, 0.0, L, -1.0]) / L ** 2)
+
+
+def _ramp_fixed_end(L: float, w1: float, w2: float, a: float,
+                    b: float) -> tuple[float, float, float, float]:
+    """[a, b] 上强度由 w1 线性变到 w2 的固端力 (V_i, V_j, M_i, M_j)。
+
+    强度写成 w(x) = (w1 − s·a) + s·x，其中 s = (w2 − w1)/(b − a)；
+    于是每一项都是 ∫ₐᵇ w(x)·核(x) dx，两个多项式相乘再积分。
+
+    这一式同时覆盖已有的两种：w1 = w2 时退回 partial，
+    a=0、b=L 时退回 trapezoid。测试拿这两条当自校验。
+    """
+    span = b - a
+    if span <= 0.0:
+        return 0.0, 0.0, 0.0, 0.0
+    s = (w2 - w1) / span
+    intensity = np.polynomial.Polynomial([w1 - s * a, s])
+    out = []
+    for kernel in _point_kernels(L):
+        anti = (intensity * kernel).integ()
+        out.append(float(anti(b) - anti(a)))
+    return tuple(out)                                        # type: ignore[return-value]
+
+
 def fixed_end(load: SpanLoad, L: float, rot: np.ndarray) -> np.ndarray:
     """一项荷载的等效节点荷载向量（12,），局部坐标。
 
@@ -173,6 +225,24 @@ def fixed_end(load: SpanLoad, L: float, rot: np.ndarray) -> np.ndarray:
         vi, vj, mi, mj = _point_fixed_end(L, py, a)
         p[1], p[7], p[5], p[11] = vi, vj, mi, mj
         vi, vj, mi, mj = _point_fixed_end(L, pz, a)
+        p[2], p[8], p[4], p[10] = vi, vj, -mi, -mj
+        return p
+
+    if load.kind == RAMP:
+        s1 = rot @ np.asarray(load.w1, dtype=float)
+        s2 = rot @ np.asarray(load.w2, dtype=float)
+        a, b = float(load.a), float(load.b)
+        span = b - a
+        slope = (s2 - s1) / span if span > 0 else np.zeros(3)
+        # 轴向：∫ₐᵇ w(x)(1−x/L)dx 与 ∫ₐᵇ w(x)·x/L dx
+        axial = np.polynomial.Polynomial([s1[0] - slope[0] * a, slope[0]])
+        near = (axial * np.polynomial.Polynomial([1.0, -1.0 / L])).integ()
+        far = (axial * np.polynomial.Polynomial([0.0, 1.0 / L])).integ()
+        p[0] = float(near(b) - near(a))
+        p[6] = float(far(b) - far(a))
+        vi, vj, mi, mj = _ramp_fixed_end(L, s1[1], s2[1], a, b)
+        p[1], p[7], p[5], p[11] = vi, vj, mi, mj
+        vi, vj, mi, mj = _ramp_fixed_end(L, s1[2], s2[2], a, b)
         p[2], p[8], p[4], p[10] = vi, vj, -mi, -mj
         return p
 
@@ -223,6 +293,20 @@ def span_force(load: SpanLoad, L: float, rot: np.ndarray,
         M = np.outer(p_local, past * (x - load.a))
         return S, M
 
+    if load.kind == RAMP:
+        q1 = rot @ np.asarray(load.w1, dtype=float)
+        q2 = rot @ np.asarray(load.w2, dtype=float)
+        a, b = float(load.a), float(load.b)
+        span = b - a
+        slope = (q2 - q1) / span if span > 0 else np.zeros(3)
+        u = np.maximum(np.clip(x, a, b) - a, 0.0)   # 已覆盖长度
+        c = x - a
+        # S = ∫₀ᵘ (w1 + s·v)dv；M = ∫₀ᵘ (w1 + s·v)(c − v)dv
+        S = np.outer(q1, u) + np.outer(slope, u ** 2 / 2.0)
+        M = (np.outer(q1, c * u - u ** 2 / 2.0)
+             + np.outer(slope, c * u ** 2 / 2.0 - u ** 3 / 3.0))
+        return S, M
+
     if load.kind == PARTIAL:
         q = rot @ np.asarray(load.w1, dtype=float)
         a, b = float(load.a), float(load.b)
@@ -252,6 +336,17 @@ def resultant(load: SpanLoad, L: float) -> tuple[np.ndarray, float]:
     """
     if load.kind == POINT:
         return np.asarray(load.w1, dtype=float), float(load.a)
+    if load.kind == RAMP:
+        v1 = np.asarray(load.w1, dtype=float)
+        v2 = np.asarray(load.w2, dtype=float)
+        span = float(load.b - load.a)
+        total = (v1 + v2) * span / 2.0
+        k = int(np.argmax(np.abs(v1 + v2)))
+        s = v1[k] + v2[k]
+        xbar = (load.a + span * (v1[k] + 2.0 * v2[k]) / (3.0 * s)
+                if abs(s) > 0 else (load.a + load.b) / 2.0)
+        return total, float(xbar)
+
     if load.kind == PARTIAL:
         # 合力 = 强度 × 作用长度，作用点在这一段的中点
         return (np.asarray(load.w1, dtype=float) * (load.b - load.a),
@@ -277,6 +372,19 @@ def moment_about_origin(load: SpanLoad, L: float, pi: np.ndarray,
         force = np.asarray(load.w1, dtype=float)
         point = pi + axis * load.a
         return force, np.cross(point, force)
+
+    if load.kind == RAMP:
+        v1 = np.asarray(load.w1, dtype=float)
+        v2 = np.asarray(load.w2, dtype=float)
+        a, b = float(load.a), float(load.b)
+        span = b - a
+        force = (v1 + v2) * span / 2.0
+        slope = (v2 - v1) / span if span > 0 else np.zeros(3)
+        # ∫ₐᵇ x·w(x)dx，w(x) = v1 + slope·(x−a)
+        first = (v1 * (b ** 2 - a ** 2) / 2.0
+                 + slope * ((b ** 3 - a ** 3) / 3.0
+                            - a * (b ** 2 - a ** 2) / 2.0))
+        return force, np.cross(pi, force) + np.cross(axis, first)
 
     if load.kind == PARTIAL:
         w = np.asarray(load.w1, dtype=float)

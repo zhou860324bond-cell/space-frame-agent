@@ -316,9 +316,11 @@ class LoadsMixin:
         from copy import deepcopy
 
         kind = str(kind)
-        if kind not in {"uniform", "trapezoid", "point", "partial"}:
+        if kind not in {"uniform", "trapezoid", "point", "partial",
+                        "partial_trapezoid"}:
             return ToolResult(False, {
-                "error": "kind 只能是 uniform / trapezoid / point / partial"})
+                "error": "kind 只能是 uniform / trapezoid / point / partial / "
+                         "partial_trapezoid"})
         try:
             start = [float(value) for value in w1]
             end = [float(value) for value in (w2 if w2 is not None else w1)]
@@ -367,7 +369,7 @@ class LoadsMixin:
         # 名字不能叫 end —— 上文的 end 是 w2 向量，覆盖掉会让梯形荷载
         # 静默丢掉 j 端强度。
         span_end = None
-        if kind == "partial":
+        if kind in ("partial", "partial_trapezoid"):
             nodes = {int(node["id"]): node for node in self.model.get("nodes") or []}
             ni, nj = nodes[int(member["i"])], nodes[int(member["j"])]
             length = float(np.linalg.norm(np.array(
@@ -379,6 +381,10 @@ class LoadsMixin:
                     "error": "部分跨均布必须同时给出起点 a 与终点 b"})
             if not (np.isfinite(position) and np.isfinite(span_end)):
                 return ToolResult(False, {"error": "a 与 b 必须是有限数"})
+            if kind == "partial_trapezoid" and w2 is None:
+                return ToolResult(False, {
+                    "error": "区间梯形荷载必须给出 w2（区间终点处的强度）；"
+                             "两端相同的话用 kind=partial 更省事"})
             if not 0 <= position < span_end <= length:
                 # 不允许 a==b：那是个零长度的"荷载"，合力为零却照样占着一条
                 # 记录，以后查"为什么合力对不上"会白费很多时间。
@@ -400,7 +406,7 @@ class LoadsMixin:
             if any(start) or any(end):
                 start, conversion = self._to_global_intensity(
                     member, start, reference)
-                if kind == "trapezoid":
+                if kind in ("trapezoid", "partial_trapezoid"):
                     end, _ = self._to_global_intensity(member, end, reference)
                 else:
                     end = list(start)
@@ -421,7 +427,7 @@ class LoadsMixin:
                 if any(member_start) or any(member_end):
                     member_start, member_conversion = self._to_global_intensity(
                         known[target], member_start, reference)
-                    if kind == "trapezoid":
+                    if kind in ("trapezoid", "partial_trapezoid"):
                         member_end, _ = self._to_global_intensity(
                             known[target], member_end, reference)
                     else:
@@ -444,8 +450,8 @@ class LoadsMixin:
             for key in ("nodal_loads", "member_loads"):
                 case[key] = [entry for entry in case.get(key, [])
                              if entry.get("name") != load_name]
-            values_for_delete = member_start + (member_end if kind == "trapezoid"
-                                                else [])
+            values_for_delete = member_start + (
+                member_end if kind in ("trapezoid", "partial_trapezoid") else [])
             if any(value != 0 for value in values_for_delete):
                 entry: dict[str, Any] = {"name": load_name, "member": target,
                                          "kind": kind, "w1": member_start}
@@ -453,9 +459,11 @@ class LoadsMixin:
                     entry["w2"] = member_end
                 if kind == "point":
                     entry["a"] = position
-                if kind == "partial":
+                if kind in ("partial", "partial_trapezoid"):
                     entry["a"] = position
                     entry["b"] = span_end
+                if kind == "partial_trapezoid":
+                    entry["w2"] = member_end
                 entries.append(entry)
             case["member_spans"] = entries
 
