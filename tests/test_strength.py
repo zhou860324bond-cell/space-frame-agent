@@ -269,3 +269,98 @@ def test_allowable_stresses_follow_the_unit_system():
             == pytest.approx(r_si["members"][0]["strength"]["ratio"], rel=1e-12))
     assert (r_mm["members"][0]["buckling"]["ratio"]
             == pytest.approx(r_si["members"][0]["buckling"]["ratio"], rel=1e-12))
+
+
+# --------------------------------------------- 折算应力（强度理论）
+
+def _hn_beam(span: float, w: float):
+    """工字梁简支受均布。改跨度就能在弯曲控制与剪切控制之间切换。"""
+    import sections as sec
+    from agent import Session
+
+    hn = sec.i_section("HN400", 0.400, 0.200, 0.008, 0.013)
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0,
+          "yield_stress": 355e6, "allow_tension": 305e6}], [hn])
+    s.set_model({**s.model,
+                 "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                           {"id": 2, "x": span, "y": 0, "z": 0}],
+                 "members": [{"id": 1, "i": 1, "j": 2,
+                              "material": "Q355", "section": "HN400"}],
+                 "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                              {"node": 2, "fix": [0, 1, 1, 1, 0, 0]}]})
+    s.set_member_load(1, [0, 0, -w])
+    s.solve_model()
+    return s, hn
+
+
+def test_a_slender_beam_is_governed_by_the_extreme_fibre():
+    """细长梁上折算应力等于正应力：那里 τ=0，四个理论必然重合。
+
+    这一条是**下界校验**——新加的折算应力不该凭空抬高一根本来就由弯曲
+    控制的梁。若这里 σr4 > σ，说明 σ 与 τ 被凑到了截面上并不存在的同一点。
+    """
+    from strength import combined_stress_check
+
+    span, w = 6.0, 30e3
+    s, hn = _hn_beam(span, w)
+    c = combined_stress_check(s.frame, s.solution, 1,
+                              mapping=s.compilation.mapping, stations=101)
+    sigma = w * span ** 2 / 8 * hn["cy"] / hn["Iz"]
+    assert c["theories"]["4"]["point"] == "极端纤维"
+    assert c["theories"]["4"]["sigma_r"] == pytest.approx(sigma, rel=1e-3)
+    # τ=0 处四条理论同值
+    values = [c["theories"][t]["sigma_r"] for t in "1234"]
+    assert max(values) == pytest.approx(min(values), rel=1e-9)
+
+
+def test_a_short_deep_beam_is_governed_by_shear_and_normal_stress_misses_it():
+    """**这条是这个功能存在的理由。**
+
+    L/h = 2.5 的短深梁：只看正应力是 19.6 MPa、应力比 0.064，看着安全得很；
+    真实折算应力 54.6 MPa，差 2.78 倍。荷载再大一点就直接翻转结论。
+    控制点在中性轴——那里弯曲 σ=0 而 τ 最大，正应力校核永远看不到。
+    """
+    from strength import combined_stress_check
+
+    span, w = 1.0, 180e3
+    s, hn = _hn_beam(span, w)
+    c = combined_stress_check(s.frame, s.solution, 1,
+                              mapping=s.compilation.mapping, stations=101)
+    sigma = w * span ** 2 / 8 * hn["cy"] / hn["Iz"]
+    assert c["theories"]["4"]["point"] == "中性轴"
+    assert c["theories"]["4"]["sigma_r"] > 2.5 * sigma
+
+
+def test_pure_shear_orders_the_four_theories_the_textbook_way():
+    """纯剪下 σr1 < σr2 < σr4 < σr3，比值 1 : 1+ν : √3 : 2。
+
+    顺序反了说明某一条套错了公式。这是四条理论差别最大的状态，
+    第三理论比第四保守 15.5%——那 15.5% 正是选哪条理论的实际后果。
+    """
+    from strength import combined_stress_check
+
+    s, _ = _hn_beam(1.0, 180e3)
+    c = combined_stress_check(s.frame, s.solution, 1,
+                              mapping=s.compilation.mapping, stations=101)
+    r = {t: c["theories"][t]["sigma_r"] for t in "1234"}
+    assert r["1"] < r["2"] < r["4"] < r["3"]
+    tau = r["1"]                                   # 纯剪时 σ1 = τ
+    assert r["2"] == pytest.approx(1.3 * tau, rel=1e-3)      # ν=0.3
+    assert r["4"] == pytest.approx(math.sqrt(3.0) * tau, rel=1e-3)
+    assert r["3"] == pytest.approx(2.0 * tau, rel=1e-3)
+
+
+def test_the_tool_reports_both_conclusions_side_by_side():
+    """正应力与折算应力是两条独立结论，工具层要同时给出。
+
+    只留一条都不行：正应力那条按拉压分别比许用值（铸铁、木材必须），
+    折算应力那条才看得见剪切控制。
+    """
+    s, _ = _hn_beam(1.0, 180e3)
+    row = s.check_strength().payload["members"][0]
+    assert row["stress_ratio"] < row["combined_ratio"], (
+        "短深梁上折算应力必须比纯正应力更不利")
+    assert row["combined_point"] == "中性轴"
+    assert set(row["equivalent_stress_MPa"]) == {"σr1", "σr2", "σr3", "σr4"}

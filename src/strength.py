@@ -39,7 +39,8 @@ import numpy as np
 
 from frame3d import Frame
 from internal_forces import member_diagram, physical_member_diagram
-from stress import extreme_normal_stress
+from stress import (StressUnavailable, equivalent_stress,
+                    extreme_normal_stress)
 
 # 讲义里的四种经典杆端约束 → 计算长度系数
 MU_PINNED_PINNED = 1.0      # 两端铰支
@@ -106,6 +107,122 @@ def _member_view(frame: Frame, mapping, member_id: int):
     return first, first.releases_i, last.releases_j, ids
 
 
+# GB 50017 §6.1.5：折算应力允许取 β·f，β=1.1。
+# 理由是那一点处于局部高应力区、塑性重分布余地大，不是"放宽要求"。
+GB_BETA = 1.1
+
+#: 折算应力要在**三个特征点**上分别算，因为 σ 与 τ 的极值根本不在同一处：
+#:   极端纤维   σ 最大、τ = 0
+#:   中性轴     弯曲 σ = 0（只剩 N/A）、τ 最大
+#:   腹板边缘   两者同时都大 —— 控制点往往在这里，GB 50017 §6.1.5 验的就是它
+#: 只取 σmax 和 τmax 硬凑成 √(σmax²+3τmax²) 是错的：那个组合在截面上
+#: 并不存在，结果虚高，而且高多少说不清。
+POINT_FIBRE = "极端纤维"
+POINT_NEUTRAL = "中性轴"
+POINT_WEB = "腹板边缘"
+
+
+def _station_points(section, d):
+    """逐测点给出三个特征点上的 (σ, τ)，返回 [(名称, σ数组, τ数组), ...]。
+
+    缺剪切几何时只返回极端纤维那一项并把 τ 记为零——那等价于原来的纯正应力
+    校核，结论不会因为"少算了 τ"而偏不安全地放松，但会在返回值里标明。
+    """
+    from stress import shear_stress
+
+    low, high = extreme_normal_stress(section, d.N, d.My, d.Mz)
+    # 极端纤维取拉压两侧里绝对值大的那个：相当应力与符号无关的只有
+    # σr3/σr4，σr1/σr2 是认符号的，所以两侧都要留着给上层挑。
+    points = [(POINT_FIBRE, high, np.zeros_like(high)),
+              (POINT_FIBRE, low, np.zeros_like(low))]
+    try:
+        tau_y, tau_z = shear_stress(section, d.Vy, d.Vz)
+    except StressUnavailable:
+        return points, False
+
+    # 两个方向的剪应力是截面上同一个剪应力矢量的两个分量，合成用平方和
+    # 开方，不是直接相加——相加会虚高最多 41%。
+    tau = np.hypot(tau_y, tau_z)
+    sigma_axial = d.N / section.A
+    points.append((POINT_NEUTRAL, sigma_axial, tau))
+
+    if section.S_flange is not None and section.c_web is not None:
+        # 腹板边缘：z = 0，所以 My 在这一点不产生正应力；
+        # 中性轴以外只剩翼缘，静矩取 S_flange。
+        bend = np.abs(d.Mz) * section.c_web / section.Iz
+        tau_web = np.abs(d.Vy) * section.S_flange / (section.Iz * section.bz)
+        points.append((POINT_WEB, sigma_axial + bend, tau_web))
+        points.append((POINT_WEB, sigma_axial - bend, tau_web))
+    return points, True
+
+
+def combined_stress_check(frame: Frame, solution, member_id: int, *,
+                          mapping=None, cases: Iterable[str] | None = None,
+                          stations: int = 21) -> dict[str, Any]:
+    """一根构件的强度理论校核：材力四理论 + GB 50017 折算应力。
+
+    与既有的正应力校核**并列**，不是替换。两者回答的不是同一个问题：
+
+    * 正应力校核按拉、压分别比许用值——铸铁、砌体、木材抗拉抗压差好几倍，
+      必须分开，这是相当应力做不到的（σr3/σr4 都是非负的，丢掉了符号）。
+    * 相当应力把 σ 与 τ 合起来判，回答"这一点会不会屈服"。只有正应力时
+      腹板受剪那一段完全查不出来。
+
+    所以两条都留着，构件要两条都过才算通过。
+    """
+    member, _, _, _ = _member_view(frame, mapping, member_id)
+    section = frame.sections[member.section]
+    material = frame.materials[member.material]
+    ft, _fc, _src = _allowables(material)
+    names = list(cases) if cases is not None else list(solution.all_results())
+
+    best: dict[str, Any] = {}
+    has_shear = True
+    for name in names:
+        if mapping is None:
+            d = member_diagram(frame, solution, member_id, name, stations)
+        else:
+            d = physical_member_diagram(frame, solution, mapping,
+                                        member_id, name, stations)
+        points, got_shear = _station_points(section, d)
+        has_shear = has_shear and got_shear
+        for theory in ("1", "2", "3", "4"):
+            for label, sigma, tau in points:
+                sr = equivalent_stress(sigma, tau, theory, nu=material.nu)
+                k = int(np.argmax(sr))
+                value = float(sr[k])
+                prev = best.get(theory)
+                if prev is None or value > prev["sigma_r"]:
+                    best[theory] = {
+                        "sigma_r": value, "ratio": value / ft,
+                        "case": name, "x": float(d.x[k]), "point": label,
+                        "sigma": float(np.asarray(sigma)[k]),
+                        "tau": float(np.asarray(tau)[k]),
+                    }
+
+    gb = dict(best["4"])
+    gb["limit"] = GB_BETA * ft
+    gb["ratio"] = gb["sigma_r"] / gb["limit"]
+    gb["ok"] = gb["ratio"] <= 1.0
+    gb["basis"] = (f"GB 50017 §6.1.5 折算应力 √(σ²+3τ²) ≤ β·f，"
+                   f"β={GB_BETA}，f 取材料的 allow_tension。")
+    for theory in best:
+        best[theory]["ok"] = best[theory]["ratio"] <= 1.0
+
+    return {
+        "member": member_id,
+        "theories": best,
+        "gb50017": gb,
+        "has_shear": has_shear,
+        "limit_used": ft,
+        "note": ("截面缺少静矩/中性轴宽度，τ 按零处理——这一栏此时等价于纯正"
+                 "应力校核，不能当作计入剪切的结论。"
+                 if not has_shear else
+                 "σ 与 τ 在极端纤维、中性轴、腹板边缘三处分别取值后合成；"
+                 "不是拿 σmax 与 τmax 硬凑，那个组合在截面上并不存在。"),
+    }
+
+
 def check_member(frame: Frame, solution, member_id: int, *,
                  mapping=None, cases: Iterable[str] | None = None,
                  stations: int = 21,
@@ -165,6 +282,9 @@ def check_member(frame: Frame, solution, member_id: int, *,
                   "tension_case": axial_max_case,
                   "compression_case": axial_min_case},
     }
+    out["combined"] = combined_stress_check(
+        frame, solution, member_id, mapping=mapping, cases=names,
+        stations=stations)
     out["buckling"] = _euler(frame, member, section, material, length,
                              rel_i, rel_j, axial_min, axial_min_case,
                              slenderness_limit)
@@ -172,6 +292,10 @@ def check_member(frame: Frame, solution, member_id: int, *,
     failed = []
     if not out["strength"]["ok"]:
         failed.append("强度超限")
+    # 折算应力单独成一条结论。它查得出正应力查不出的东西——腹板受剪那一段
+    # 正应力可能很小，而 √(σ²+3τ²) 已经超了。两条都过才算通过。
+    if not out["combined"]["gb50017"]["ok"]:
+        failed.append("折算应力超限")
     if b is not None and not b["ok"]:
         failed.append(b["status"] if b["status"] == BUCKLING_SLENDER
                       else "稳定超限")
@@ -300,6 +424,8 @@ def check_strength(frame: Frame, solution, *, mapping=None,
             for mid in targets]
 
     strength_worst = max(rows, key=lambda r: r["strength"]["ratio"], default=None)
+    combined_worst = max(rows, key=lambda r: r["combined"]["gb50017"]["ratio"],
+                         default=None)
     compressed = [r for r in rows if r["buckling"] is not None]
     buckling_worst = max(compressed, key=lambda r: r["buckling"]["ratio"],
                          default=None)
@@ -323,6 +449,9 @@ def check_strength(frame: Frame, solution, *, mapping=None,
         "worst_strength": (None if strength_worst is None else
                            {"member": strength_worst["member"],
                             **strength_worst["strength"]}),
+        "worst_combined": (None if combined_worst is None else
+                           {"member": combined_worst["member"],
+                            **combined_worst["combined"]["gb50017"]}),
         "worst_buckling": (None if buckling_worst is None else
                            {"member": buckling_worst["member"],
                             **{k: v for k, v in buckling_worst["buckling"].items()

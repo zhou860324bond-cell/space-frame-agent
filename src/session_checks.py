@@ -254,6 +254,23 @@ class ChecksMixin:
                 "at_x_m": round(r["strength"]["x"] * U.length_to_m, 3),
                 "verdict": r["verdict"],
             }
+            c = r["combined"]
+            g = c["gb50017"]
+            row.update({
+                # 折算应力与上面的 stress_ratio 是**两条独立结论**：
+                # 前者把 σ 与 τ 合起来判，后者按拉压分别比许用值。
+                # 短深梁上两者能差两倍多（实测 L/h=2.5 时 2.78 倍），
+                # 只看正应力会把一根剪切控制的梁判成"安全得很"。
+                "combined_stress_MPa": round(g["sigma_r"] * U.stress_scale, 3),
+                "combined_ratio": round(g["ratio"], 4),
+                "combined_point": g["point"],
+                "combined_at_x_m": round(g["x"] * U.length_to_m, 3),
+                "equivalent_stress_MPa": {
+                    f"σr{t}": round(v["sigma_r"] * U.stress_scale, 3)
+                    for t, v in c["theories"].items()},
+            })
+            if not c["has_shear"]:
+                row["combined_note"] = c["note"]
             b = r["buckling"]
             if b is not None:
                 row.update({
@@ -285,6 +302,11 @@ class ChecksMixin:
                 "ratio": round(got["worst_strength"]["ratio"], 4),
                 "case": got["worst_strength"]["case"],
                 "governs": got["worst_strength"]["governs"]},
+            "worst_combined": got["worst_combined"] and {
+                "member": got["worst_combined"]["member"],
+                "ratio": round(got["worst_combined"]["ratio"], 4),
+                "point": got["worst_combined"]["point"],
+                "basis": got["worst_combined"]["basis"]},
             "worst_buckling": got["worst_buckling"] and {
                 "member": got["worst_buckling"]["member"],
                 "ratio": round(got["worst_buckling"]["ratio"], 4),
@@ -294,8 +316,10 @@ class ChecksMixin:
             "reading": "failed_members 是**真的超限**；inconclusive_members 是"
                        "「欧拉公式在这根杆上不适用（λ<λp，中小柔度）」，"
                        "既不是通过也不是不通过，转达时不要说成不安全。",
-            "limitation": "只算正应力（轴力 + 双向弯曲的极端纤维应力），"
-                          "**不含剪应力与扭转**，因此不是规范意义上的构件承载力验算。"
+            "limitation": "正应力校核按拉压分别比许用值；折算应力 √(σ²+3τ²) "
+                          "另算一条，在极端纤维、中性轴、腹板边缘三处取最不利。"
+                          "**仍不含扭转剪应力**（截面契约里没有扭转常数之外的壁厚分布），"
+                          "所以还不是完整的规范承载力验算。"
                           "逐杆欧拉校核回答「这一根会不会先屈」，"
                           "特征值屈曲分析回答「整体什么时候失稳」，"
                           "两者不能互相替代。",
