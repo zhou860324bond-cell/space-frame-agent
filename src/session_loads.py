@@ -586,6 +586,155 @@ class LoadsMixin:
                     "自动以它们为对象。",
         })
 
+    #: 活载布置方式。混凝土规范里的"最不利荷载位置"简化做法：
+    #:
+    #:   full      满布。支座负弯矩通常由它控制
+    #:   odd       奇数跨布置。跨中正弯矩最大值常出在这一组
+    #:   even      偶数跨布置。与 odd 互补
+    #:   adjacent  相邻两跨布置。某个支座的负弯矩峰值出在这一组，
+    #:             跨数多时它会生成 N−1 个工况，按需开
+    LIVE_PATTERNS = ("full", "odd", "even", "adjacent")
+
+    def _spans_of(self, member_ids: list[int]) -> tuple[list, str]:
+        """把一组梁按**跨**归类，返回 [(跨区间, [杆件号]), ...] 与说明。
+
+        同一跨的梁在多层框架里分布在各层，但它们在水平方向占的区间相同，
+        所以按"沿主导水平轴的起止坐标"归组，再从左到右排序。
+
+        归组结果会原样写进返回值——**这一步是几何推断，用户必须能核对**。
+        杆件方向不一致（比如混进了柱或另一方向的梁）时归出来的跨会很怪，
+        与其猜不如让人看见。
+        """
+        nodes = {int(n["id"]): n for n in self.model.get("nodes") or []}
+        members = {int(m["id"]): m for m in self.model.get("members") or []}
+        groups: dict[tuple, list[int]] = {}
+        axis_votes = {"x": 0, "y": 0}
+        for mid in member_ids:
+            m = members[mid]
+            ni, nj = nodes[int(m["i"])], nodes[int(m["j"])]
+            dx, dy = abs(nj["x"] - ni["x"]), abs(nj["y"] - ni["y"])
+            axis = "x" if dx >= dy else "y"
+            axis_votes[axis] += 1
+        main = "x" if axis_votes["x"] >= axis_votes["y"] else "y"
+        for mid in member_ids:
+            m = members[mid]
+            ni, nj = nodes[int(m["i"])], nodes[int(m["j"])]
+            lo, hi = sorted((round(ni[main], 6), round(nj[main], 6)))
+            groups.setdefault((lo, hi), []).append(mid)
+        ordered = [(key, sorted(groups[key])) for key in sorted(groups)]
+        note = (f"按沿 {main.upper()} 轴的起止坐标归出 {len(ordered)} 跨，"
+                "从左到右编号。同一跨在各层的梁归在一起——"
+                "布置是整片楼层同时切换的，不是逐层切换。")
+        return ordered, note
+
+    @_records
+    def generate_live_patterns(self, members, load: list[float],
+                               patterns=("full", "odd", "even"),
+                               prefix: str = "LL",
+                               replace: bool = True) -> ToolResult:
+        """生成活载的**最不利布置**工况：满布、隔跨、相邻跨。
+
+        连续梁与框架的跨中正弯矩不是满布时最大，而是**隔跨布置**时最大；
+        支座负弯矩则常由满布或相邻跨控制。只算满布会把跨中弯矩算小——
+        而且算小多少取决于跨数与刚度比，看不出来。
+
+        生成的是**工况**不是组合。接着把它们一起传给 generate_combinations
+        的 live 参数，每一种布置都会轮流当控制荷载。
+
+        这是规范里的简化做法。严格的"最不利荷载位置"要画影响线逐点找，
+        这里不冒充那个。
+        """
+        from copy import deepcopy
+
+        if len(load) != 3:
+            return ToolResult(False, {"error": "load 必须是三个数 [wx,wy,wz]"})
+        try:
+            values = [float(v) for v in load]
+        except (TypeError, ValueError):
+            return ToolResult(False, {"error": "荷载三个分量必须都是数字"})
+        if not all(np.isfinite(v) for v in values):
+            return ToolResult(False, {"error": "荷载分量必须是有限数"})
+        wanted = [str(p) for p in (patterns or ())]
+        unknown = [p for p in wanted if p not in self.LIVE_PATTERNS]
+        if unknown:
+            return ToolResult(False, {
+                "error": f"布置方式只能取 {list(self.LIVE_PATTERNS)}，"
+                         f"收到 {unknown}"})
+        if not wanted:
+            return ToolResult(False, {"error": "至少选一种布置方式"})
+
+        try:
+            ids = self._expand_members(members)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+        known = {int(m["id"]) for m in self.model.get("members") or []}
+        absent = sorted(set(ids) - known)
+        if absent:
+            return ToolResult(False, {"error": f"杆件 {absent} 不存在"})
+        if not ids:
+            return ToolResult(False, {"error": "至少选择一根杆件"})
+
+        spans, note = self._spans_of(ids)
+        if len(spans) < 2 and any(p != "full" for p in wanted):
+            return ToolResult(False, {
+                "error": f"只归出 {len(spans)} 跨，隔跨与相邻跨布置无从谈起。"
+                         "单跨结构直接用满布即可。",
+                "spans": [{"range": list(k), "members": v} for k, v in spans]})
+
+        plans: list[tuple[str, list[int]]] = []
+        for pattern in wanted:
+            if pattern == "full":
+                plans.append((f"{prefix}-满布",
+                              [m for _, group in spans for m in group]))
+            elif pattern == "odd":
+                plans.append((f"{prefix}-奇数跨",
+                              [m for k, (_, group) in enumerate(spans)
+                               for m in group if k % 2 == 0]))
+            elif pattern == "even":
+                plans.append((f"{prefix}-偶数跨",
+                              [m for k, (_, group) in enumerate(spans)
+                               for m in group if k % 2 == 1]))
+            else:                                   # adjacent
+                for k in range(len(spans) - 1):
+                    plans.append((f"{prefix}-相邻{k + 1}{k + 2}",
+                                  sorted(spans[k][1] + spans[k + 1][1])))
+
+        candidate = deepcopy(self.model)
+        cases = list(candidate.get("load_cases") or [])
+        made = {name for name, _ in plans}
+        if replace:
+            cases = [c for c in cases if c.get("name") not in made]
+        elif {c.get("name") for c in cases} & made:
+            return ToolResult(False, {
+                "error": f"工况 {sorted({c.get('name') for c in cases} & made)} "
+                         "已存在；要覆盖请传 replace=True"})
+        for name, targets in plans:
+            cases.append({"name": name, "nodal_loads": [], "member_spans": [],
+                          "settlements": [],
+                          "member_loads": [{"name": f"{name}-{mid}",
+                                            "member": mid, "w": values}
+                                           for mid in targets]})
+        candidate["load_cases"] = cases
+        errors = validate_payload(candidate)
+        if errors:
+            return ToolResult(False, {"errors": errors,
+                                      "hint": "工况未写入，原模型保持不变"})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            "spans": [{"range": list(k), "members": v} for k, v in spans],
+            "span_count": len(spans),
+            "cases": [{"name": name, "members": targets,
+                       "loaded_spans": len({k for k, (_, g) in enumerate(spans)
+                                            if set(g) & set(targets)})}
+                      for name, targets in plans],
+            "count": len(plans),
+            "grouping_note": note,
+            "note": "生成的是**工况**不是组合。把这些名字一起传给 "
+                    "generate_combinations 的 live 参数，每种布置都会轮流当"
+                    "控制荷载。跨中正弯矩常由隔跨布置控制，只算满布会算小。",
+        })
+
     def _load_case_in(self, candidate: dict[str, Any],
                       case_name: str | None) -> tuple[dict[str, Any] | None, str]:
         """在候选模型中取分析步；增量载荷工具共用，避免默认工况逻辑漂移。"""

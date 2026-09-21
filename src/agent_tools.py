@@ -850,6 +850,55 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "generate_live_patterns",
+            "description":
+                "生成活载的**最不利布置**工况：满布、隔跨（奇数跨/偶数跨）、相邻跨。"
+                "用户说「活载最不利布置」「隔跨布置」「棋盘布置」时用这个。"
+                "\n\n**连续梁与框架的跨中正弯矩不是满布时最大，而是隔跨布置时最大。**"
+                "实测三跨框架：跨中弯矩满布 28.7 kN·m、偶数跨布置 41.2 kN·m —— "
+                "只算满布会算小 43%，而且算小多少取决于跨数与刚度比，看不出来。"
+                "支座负弯矩则常由满布或相邻跨控制（实测相邻跨比满布大 6%）。"
+                "\n\n生成的是**工况**不是组合。接着把这些名字一起传给 "
+                "generate_combinations 的 live 参数，每种布置都会轮流当控制荷载。"
+                "\n跨的归类由几何推断（按沿主导水平轴的起止坐标），返回值里会原样"
+                "给出归组结果——**要核对**，混进了柱或另一方向的梁时归出来的跨会很怪。"
+                "\n这是规范里的简化做法；严格的「最不利荷载位置」要画影响线逐点找，"
+                "本工具不冒充那个，回答时要说明。",
+            "parameters": {
+                "type": "object",
+                "required": ["members", "load"],
+                "properties": {
+                    "members": {
+                        "description": "梁的编号、编号列表或集合名",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "load": {"type": "array", "minItems": 3, "maxItems": 3,
+                             "items": {"type": "number"},
+                             "description": "活载线荷载 [wx,wy,wz]，全局坐标，"
+                                            "向下写成 [0,0,-w]"},
+                    "patterns": {"type": "array",
+                                 "items": {"type": "string",
+                                           "enum": ["full", "odd", "even",
+                                                    "adjacent"]},
+                                 "description":
+                                     "默认 full/odd/even。adjacent 会生成 N−1 个"
+                                     "工况（N 是跨数），跨多时按需开"},
+                    "prefix": {"type": "string",
+                               "description": "工况名前缀，默认 LL"},
+                    "replace": {"type": "boolean",
+                                "description": "是否覆盖同名旧工况，默认是"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "generate_combinations",
             "description":
                 "按规范生成荷载组合并写入模型。用户说「按规范组合」「做荷载组合」"

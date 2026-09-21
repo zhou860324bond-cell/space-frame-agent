@@ -113,6 +113,8 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "analyze_joint_solid": (("node_id", "case"),
                             "节点局部实体：dry_run 只出规格；native 自研求解，"
                             "Abaqus 是可选对标后端"),
+    "generate_live_patterns": (("spans", "span_count", "cases", "count"),
+                               "活载布置：归出几跨、每个工况压哪些梁，都要给出来"),
     "generate_combinations": (("standard", "count", "combos", "gamma", "psi_c"),
                               "规范组合：用了哪套系数、生成了哪些组合，都要说清楚"),
     "apply_area_load": (("case", "load_path", "count", "entries", "detail"),

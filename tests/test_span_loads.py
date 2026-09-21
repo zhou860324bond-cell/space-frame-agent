@@ -1184,3 +1184,116 @@ def test_an_unknown_case_name_is_refused_before_anything_is_written():
     bad = s.generate_combinations(dead="DL", live="没有这个工况")
     assert not bad.ok
     assert list(s.model.get("combos") or []) == before
+
+
+# ----------------------------------------------------- 活载最不利布置
+
+def _three_span_frame():
+    """三跨单层框架，梁已归入集合「梁」。"""
+    from agent import Session
+
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q", "E": 2.06e11, "nu": 0.3}],
+        [{"name": "B", "A": 0.018, "Iy": 5e-5, "Iz": 2e-3, "J": 1e-6}])
+    r = s.generate_frame(spans=[6.0, 6.0, 6.0], storeys=[4.0])
+    s.assign_properties([int(m["id"]) for m in s.model["members"]],
+                        material="Q", section="B")
+    beams = r.payload["beam_member_ids"]
+    s.define_set("梁", member_ids=beams)
+    return s, beams
+
+
+def _midspan(s, member_id: int, case: str) -> float:
+    from internal_forces import member_diagram, member_length
+
+    length = member_length(s.frame, member_id)
+    d = member_diagram(s.frame, s.solution, member_id, case,
+                       at_x=np.array([length / 2]))
+    return float(d.Mz[0])
+
+
+def test_alternate_spans_beat_full_loading_at_midspan():
+    """**这是最不利布置存在的理由。**
+
+    连续梁与框架的跨中正弯矩不是满布时最大，而是隔跨布置时最大。
+    实测三跨框架的中跨：满布 28.7 kN·m、偶数跨布置 41.2 kN·m ——
+    只算满布会算小 43%，而且算小多少取决于跨数与刚度比，看不出来。
+    """
+    s, beams = _three_span_frame()
+    assert s.generate_live_patterns("梁", [0, 0, -20e3]).ok
+    assert s.solve_model().ok
+    full = _midspan(s, beams[1], "LL-满布")
+    even = _midspan(s, beams[1], "LL-偶数跨")
+    assert even > full * 1.3, (full, even)
+    # 边跨由奇数跨布置控制
+    assert _midspan(s, beams[0], "LL-奇数跨") > _midspan(s, beams[0], "LL-满布")
+
+
+def test_adjacent_spans_govern_the_support_moment():
+    """支座负弯矩由相邻跨布置控制，不是跨中那一组。
+
+    跨中和支座由**不同**的布置控制——这正是必须把几种布置都算一遍的原因。
+    """
+    from internal_forces import member_diagram
+
+    s, beams = _three_span_frame()
+    assert s.generate_live_patterns(
+        "梁", [0, 0, -20e3],
+        patterns=("full", "odd", "even", "adjacent")).ok
+    assert s.solve_model().ok
+
+    def left_support(case: str) -> float:
+        return float(member_diagram(s.frame, s.solution, beams[1], case,
+                                    stations=51).Mz[0])
+
+    assert left_support("LL-相邻12") < left_support("LL-满布")
+
+
+def test_the_span_grouping_is_reported_for_checking():
+    """跨的归类是**几何推断**，必须原样报出来让人核对。
+
+    混进了柱或另一方向的梁时归出来的跨会很怪，与其猜不如让人看见。
+    """
+    s, beams = _three_span_frame()
+    got = s.generate_live_patterns("梁", [0, 0, -20e3])
+    assert got.payload["span_count"] == 3
+    ranges = [tuple(item["range"]) for item in got.payload["spans"]]
+    assert ranges == [(0.0, 6.0), (6.0, 12.0), (12.0, 18.0)]
+    # 每跨的梁都列了出来，且互不重叠
+    everything = [m for item in got.payload["spans"] for m in item["members"]]
+    assert sorted(everything) == sorted(beams)
+
+
+def test_a_single_span_refuses_alternate_patterns_instead_of_faking_them():
+    """只有一跨时隔跨布置无从谈起，直接说清楚。
+
+    硬生成的话"奇数跨"等于满布、"偶数跨"是个空工况——后者还会被
+    no_applied_load 拦下来，用户拿到的是一串莫名其妙的错误。
+    """
+    from agent import Session
+
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q", "E": 2.06e11, "nu": 0.3}],
+        [{"name": "B", "A": 0.018, "Iy": 5e-5, "Iz": 2e-3, "J": 1e-6}])
+    r = s.generate_frame(spans=[6.0], storeys=[4.0])
+    s.assign_properties([int(m["id"]) for m in s.model["members"]],
+                        material="Q", section="B")
+    bad = s.generate_live_patterns(r.payload["beam_member_ids"], [0, 0, -20e3])
+    assert not bad.ok and "跨" in bad.payload["error"]
+
+
+def test_patterns_and_combinations_compose():
+    """布置生成工况，组合消费工况——每种布置都要轮流当控制荷载。
+
+    这条连的是规范层全链路：布置 → 组合 → 求解 → 包络。
+    """
+    s, beams = _three_span_frame()
+    made = s.generate_live_patterns("梁", [0, 0, -20e3])
+    names = [c["name"] for c in made.payload["cases"]]
+    got = s.generate_combinations(live=names)
+    assert got.ok
+    controlled = {c["name"] for c in got.payload["combos"]}
+    for name in names:
+        assert f"基本-{name}控制" in controlled
