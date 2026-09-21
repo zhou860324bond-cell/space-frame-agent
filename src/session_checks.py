@@ -25,6 +25,106 @@ from session_base import ToolResult
 
 class ChecksMixin:
     """校核：模态、屈曲、强度、对称性、编号、支座诊断。见模块 docstring。"""
+    def _elements_per_span(self, frame=None) -> tuple[int, int]:
+        """(最少单元数, 那一跨里的一个代表杆号)。算不出来时返回 (0, 0)。
+
+        数的是**每跨**几个单元，不是"每根构件几个单元"——这两个不一样，
+        而按后者判会造出假警告：用户把一根 8 m 梁手工拆成 4 根构件时，
+        每根仍只有 1 个单元，但那一跨实际有 4 个，结果误差 0.05%，
+        这时候还喊"网格太粗"就是喊狼来了。
+
+        "跨"的定义：沿着**共线、无支座、且只连两根杆**的中间节点把杆件串起来，
+        串不下去的地方（拐角、汇交、支座）就是跨的端点。这正好对应形函数
+        需要细分的那个尺度——决定一致质量阵/几何刚度阵精度的是两个约束点
+        之间放了几个单元。
+
+        模态与屈曲都靠形函数装配，两者都从上方逼近精确解；静力内力是解析
+        恢复的、与网格无关，所以这条只管这两项。
+        """
+        frame = frame if frame is not None else getattr(self, "frame", None)
+        if frame is None or not getattr(frame, "members", None):
+            return 0, 0
+        incident: dict[int, list[int]] = {}
+        axis: dict[int, np.ndarray] = {}
+        for mid, m in frame.members.items():
+            ni, nj = frame.nodes[m.i], frame.nodes[m.j]
+            vec = np.array([nj.x - ni.x, nj.y - ni.y, nj.z - ni.z], dtype=float)
+            norm = float(np.linalg.norm(vec))
+            if norm <= 0:
+                continue
+            axis[mid] = vec / norm
+            incident.setdefault(int(m.i), []).append(mid)
+            incident.setdefault(int(m.j), []).append(mid)
+
+        def continues_through(node_id: int) -> tuple[int, int] | None:
+            """这个节点是不是"跨内部"的点；是就返回它连的两根杆。"""
+            here = incident.get(node_id, [])
+            if len(here) != 2 or node_id in getattr(frame, "supports", {}):
+                return None
+            a, b = here
+            if abs(float(np.dot(axis[a], axis[b]))) < 0.999:
+                return None                       # 拐了弯，不是同一跨
+            return a, b
+
+        seen: set[int] = set()
+        smallest = (0, 0)
+        for mid in sorted(axis):
+            if mid in seen:
+                continue
+            chain = {mid}
+            # 从这根杆往两头走，能穿过去就继续
+            frontier = [(int(frame.members[mid].i), mid),
+                        (int(frame.members[mid].j), mid)]
+            while frontier:
+                node_id, came_from = frontier.pop()
+                pair = continues_through(node_id)
+                if pair is None:
+                    continue
+                nxt = pair[0] if pair[1] == came_from else pair[1]
+                if nxt in chain:
+                    continue
+                chain.add(nxt)
+                other = frame.members[nxt]
+                far = other.j if int(other.i) == node_id else other.i
+                frontier.append((int(far), nxt))
+            seen |= chain
+            if smallest[0] == 0 or len(chain) < smallest[0]:
+                smallest = (len(chain), min(chain))
+        return smallest
+
+    # 实测（逐级加密到收敛，再回看粗网格的偏差）：
+    #
+    #   单跨门式刚架，每构件 1 个单元 —— λ=1.66，收敛值 0.82，**偏高 102%**。
+    #   λ=1.66 是在说「还有 66% 余量」，而真相是 λ<1、它已经失稳了。
+    #   两个单元就收敛到 0.8229，再加密不变。
+    #
+    #   8 m 梁，1 个单元 —— 屈曲简支 +21.6%、悬臂 +0.75%、两端固接解不出来；
+    #                      模态简支 +11.0%、悬臂 +0.47%。
+    #
+    # 偏差方向永远是**偏高**（形函数比真实振型硬），也就是偏不安全那一侧。
+    # generate_frame 生成的恰好是每构件一个单元，所以这条会在最常见的
+    # 模型上触发——那不是误报，那正是它要拦的情形。
+    COARSE_MESH_ELEMENTS = 4
+
+    def _coarse_mesh_note(self, what: str, frame=None) -> dict[str, Any] | None:
+        """网格太粗时给一条带**实测数字**的提醒，够密就不啰嗦。"""
+        count, mid = self._elements_per_span(frame)
+        if not count or count >= self.COARSE_MESH_ELEMENTS:
+            return None
+        return {
+            "elements_in_span": count,
+            "member_in_that_span": mid,
+            "direction": "偏高",
+            "message": (
+                f"构件 {mid} 所在的那一跨只有 {count} 个单元。{what}靠形函数装配，"
+                "**从上方**逼近精确解——网格越粗报得越高，也就是偏不安全那一侧。"
+                "实测单跨门式刚架每构件一个单元时 λ=1.66，而收敛值是 0.82，"
+                "偏高 102%：前者在说「还有 66% 余量」，后者意味着它已经失稳。"
+                "两个单元就收敛。8 m 梁一个单元则是屈曲 +21.6%、模态 +11.0%（简支）。"
+                "要稳妥，每跨至少 4 个单元。"),
+            "how_to_fix": "在那一跨里加中间节点，让它至少有 4 个单元，再重算。",
+        }
+
     def modal_analysis(self, num_modes: int = 6) -> ToolResult:
         """自振频率与振型。结构固有属性，与荷载无关。"""
         errors = validate_payload(self.model)
@@ -32,7 +132,8 @@ class ChecksMixin:
             return ToolResult(False, {"errors": errors})
         try:
             from modal import modal
-            r = modal(from_dict(self.model), int(num_modes))
+            physical = from_dict(self.model)
+            r = modal(physical, int(num_modes))
         except ImportError as exc:
             return ToolResult(False, {"error": f"模态模块不可用：{exc}"})
         except (ValueError, np.linalg.LinAlgError) as exc:
@@ -46,6 +147,8 @@ class ChecksMixin:
             "total_mass_kg": round(r.total_mass, 6),
             "effective_mass_ratio_xyz": (None if share is None else
                                          [round(float(v), 4) for v in share]),
+            **({"mesh_warning": _coarse} if (_coarse := self._coarse_mesh_note(
+                "一致质量阵", physical)) else {}),
             "note": "一致质量矩阵，频率略高于精确解；每跨四个单元时误差 0.2% 以内。"
                     "有效质量比接近 1 才说明取的阶数够——差得远就加大 num_modes。",
         })
@@ -68,7 +171,20 @@ class ChecksMixin:
         except ImportError as exc:
             return ToolResult(False, {"error": f"屈曲模块不可用：{exc}"})
         except (ValueError, np.linalg.LinAlgError) as exc:
-            return ToolResult(False, {"error": str(exc)})
+            # 网格太粗时这里报的是"没有找到正的临界荷载因子，检查荷载方向与
+            # 约束"——把人指向荷载和约束，而真实原因常常是**一个单元根本没有
+            # 可屈曲的自由度**（两端固接单单元实测就是这样）。照那句话去查
+            # 荷载方向永远查不出问题，所以粗网格时要把这一条摆在前面。
+            payload: dict[str, Any] = {"error": str(exc)}
+            coarse = self._coarse_mesh_note("屈曲的几何刚度阵")
+            if coarse is not None:
+                payload["likely_cause"] = (
+                    f"构件 {coarse['member_in_that_span']} 所在的那一跨只有 "
+                    f"{coarse['elements_in_span']} 个单元。单元太少时跨内"
+                    "没有可屈曲的自由度，解不出正的临界因子——这比荷载方向或"
+                    "约束更可能是原因。先把构件拆细再试。")
+                payload["mesh"] = coarse
+            return ToolResult(False, payload)
         U = self.units
         worst = min(r.axial, key=lambda m: r.axial[m])
         return ToolResult(True, {
@@ -77,6 +193,8 @@ class ChecksMixin:
             "factors": [round(float(v), 6) for v in r.factors],
             "most_compressed_member": worst,
             "its_axial_kN": round(r.axial[worst] * U.force_scale, 6),
+            **({"mesh_warning": _coarse} if (_coarse := self._coarse_mesh_note(
+                "屈曲的几何刚度阵")) else {}),
             "note": "λ 是该工况荷载的临界放大倍数：λ=3 表示放大三倍才失稳。"
                     "这是**线性特征值屈曲**，假定失稳前保持线弹性、变形小、"
                     "轴力不随变形改变。真实结构有初始缺陷与残余应力，"

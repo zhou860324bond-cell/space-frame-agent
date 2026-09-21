@@ -229,3 +229,86 @@ def test_a_prepared_solution_can_be_reused():
     a = buckling(f, num_modes=1).critical
     b = buckling(f, num_modes=1, solution=sol).critical
     assert b == pytest.approx(a, rel=1e-12)
+
+
+# --------------------------------------------------------------- 粗网格闸
+
+def _beam_session(n: int):
+    """8 m 简支梁切成 n 段，端部受压。n 越小，网格越粗。"""
+    from agent import Session
+
+    E, A, IY, IZ, JT = 2.06e11, 8.6e-3, 3.0e-5, 1.0e-4, 1.0e-6
+    s = Session()
+    s.set_model({
+        "units": "N-m-Pa",
+        "nodes": [{"id": k + 1, "x": 8.0 * k / n, "y": 0, "z": 0}
+                  for k in range(n + 1)],
+        "members": [{"id": k + 1, "i": k + 1, "j": k + 2,
+                     "material": "S", "section": "B"} for k in range(n)],
+        "materials": [{"name": "S", "E": E, "nu": 0.3, "density": 7850.0}],
+        "sections": [{"name": "B", "A": A, "Iy": IY, "Iz": IZ, "J": JT}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                     {"node": n + 1, "fix": [0, 1, 1, 1, 0, 0]}],
+    })
+    s.set_nodal_load(n + 1, [-1.0e6, 0, 0, 0, 0, 0])
+    return s
+
+
+def test_coarse_mesh_is_called_out_in_buckling():
+    """一跨一个单元时屈曲报得太高，必须当场说出来。
+
+    实测单跨门式刚架每构件一个单元：λ=1.66，而收敛值 0.82——**偏高 102%**，
+    方向是偏不安全那一侧。λ=1.66 在说"还有 66% 余量"，真相是它已经失稳。
+    静力内力是解析恢复的、与网格无关，几何刚度阵不是，这个差别看不见，
+    所以只能由工具自己讲出来。
+    """
+    r = _beam_session(1).buckling_analysis()
+    assert r.ok
+    warn = r.payload.get("mesh_warning")
+    assert warn is not None, "一跨一个单元却没有任何网格提示"
+    assert warn["elements_in_span"] == 1
+    assert "偏不安全" in warn["message"]
+
+
+def test_a_properly_meshed_span_is_not_nagged():
+    """**这条是防喊狼来了的。**
+
+    判据数的是"每跨几个单元"而不是"每根构件几个单元"——两者不一样。
+    用户把一根 8 m 梁手工拆成 4 根构件时，每根仍只有 1 个单元，但那一跨
+    实际有 4 个，屈曲误差 0.05%。按构件数判会在这种正确模型上误报。
+    """
+    r = _beam_session(4).buckling_analysis()
+    assert r.ok
+    assert "mesh_warning" not in r.payload, "细分够了还提示，属于误报"
+
+
+def test_coarse_mesh_beats_load_direction_as_the_suspect():
+    """网格太粗导致解不出临界因子时，别把人指向荷载方向。
+
+    两端固接的梁只剖一个单元时，跨内没有可屈曲的自由度，屈曲必然失败。
+    原来只报"没有找到正的临界荷载因子，检查荷载方向与约束"——照着这句话
+    去查荷载方向永远查不出问题，因为荷载方向是对的。
+    """
+    s = _beam_session(1)
+    s.model["supports"] = [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]},
+                           {"node": 2, "fix": [0, 1, 1, 1, 1, 1]}]
+    r = s.buckling_analysis()
+    assert not r.ok
+    assert "likely_cause" in r.payload, "失败了却没说最可能的原因"
+    assert "单元" in r.payload["likely_cause"]
+
+
+def test_coarse_mesh_is_called_out_in_modal_too():
+    """一致质量阵和几何刚度阵同理，都从上方逼近——模态也要提示。
+
+    实测 8 m 简支梁一个单元 f1 偏高 11.0%，四个单元降到 0.026%。
+    模态走的是**物理模型**（不编译），所以这里单独验一遍它也接上了。
+    """
+    coarse = _beam_session(1).modal_analysis(num_modes=4)
+    fine = _beam_session(4).modal_analysis(num_modes=4)
+    assert coarse.ok and fine.ok
+    assert "mesh_warning" in coarse.payload
+    assert "mesh_warning" not in fine.payload
+    # 偏高的方向也一并钉住：粗网格的频率必须更高
+    assert (coarse.payload["modes"][0]["frequency_Hz"]
+            > fine.payload["modes"][0]["frequency_Hz"])
