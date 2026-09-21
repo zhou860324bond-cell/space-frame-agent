@@ -113,6 +113,8 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "analyze_joint_solid": (("node_id", "case"),
                             "节点局部实体：dry_run 只出规格；native 自研求解，"
                             "Abaqus 是可选对标后端"),
+    "apply_area_load": (("case", "load_path", "count", "entries", "detail"),
+                        "面荷载导线荷载：每根梁生成几段、怎么分的都要说清楚"),
     "check_strength": (("members", "ok", "failed_members",
                         "inconclusive_members", "limitation"),
                        "强度验算：逐杆一行；**「判不了」与「不合格」必须分开给**，"

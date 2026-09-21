@@ -287,6 +287,147 @@ class LoadsMixin:
             "note": "每根杆件各自一条命名荷载，可按名单独编辑或删除。",
         })
 
+    #: 导荷方式。板把面荷载传给周边梁的方式取决于板的长宽比：
+    #:
+    #:   one_way        单向板。板只沿一个方向传力，梁按**从属宽度**承受均布。
+    #:   two_way_short  双向板的**短边**梁：三角形，跨中峰值 q·Lx/2。
+    #:   two_way_long   双向板的**长边**梁：梯形，两端各升 Lx/2 后进入平台。
+    #:
+    #: 后两种是按"45° 分角线划分板块"得到的经典分配，混凝土教材里的标准做法。
+    LOAD_PATHS = ("one_way", "two_way_short", "two_way_long")
+
+    @_records
+    def apply_area_load(self, members, q: float, width: float,
+                        load_path: str = "one_way",
+                        case_name: str | None = None,
+                        name: str | None = None,
+                        direction: list[float] | None = None) -> ToolResult:
+        """把**面荷载**（力/面积）导成梁上的线荷载。
+
+        真实输入永远是 kN/m²——楼面恒载 3.5、雪载 0.5、活载 2.0。而求解器只
+        认 kN/m，中间那步"从属宽度、双向板分配"以前全靠手算，**算错了结果
+        看着完全正常**：量级对、图形也像那么回事，只是总重差一截。
+
+        ``q`` 是面荷载强度（正值表示大小），默认沿全局 −Z（重力方向），
+        可用 ``direction`` 改。``width`` 在 one_way 下是从属宽度，
+        在两种 two_way 下是板的**短跨** Lx。
+
+        三角形与梯形都用 partial_trapezoid 精确生成，**不走等效均布**——
+        等效均布只保证跨中弯矩相等，支座附近的剪力是另一回事。
+        """
+        from copy import deepcopy
+
+        try:
+            q = float(q)
+            width = float(width)
+        except (TypeError, ValueError):
+            return ToolResult(False, {"error": "q 与 width 必须是数字"})
+        if not (np.isfinite(q) and np.isfinite(width)):
+            return ToolResult(False, {"error": "q 与 width 必须是有限数"})
+        if width <= 0:
+            return ToolResult(False, {"error": "width 必须为正"})
+        load_path = str(load_path)
+        if load_path not in self.LOAD_PATHS:
+            return ToolResult(False, {
+                "error": f"load_path 只能是 {list(self.LOAD_PATHS)}"})
+
+        unit = np.array([0.0, 0.0, -1.0]) if direction is None else np.asarray(
+            direction, dtype=float)
+        norm = float(np.linalg.norm(unit))
+        if norm <= 0:
+            return ToolResult(False, {"error": "direction 不能是零向量"})
+        unit = unit / norm
+
+        try:
+            ids = self._expand_members(members)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+        if not ids:
+            return ToolResult(False, {"error": "至少选择一根杆件"})
+        known = {int(m["id"]): m for m in self.model.get("members") or []}
+        absent = sorted(set(ids) - set(known))
+        if absent:
+            return ToolResult(False, {"error": f"杆件 {absent} 不存在"})
+
+        nodes = {int(n["id"]): n for n in self.model.get("nodes") or []}
+        candidate = deepcopy(self.model)
+        case, chosen = self._load_case_in(candidate, case_name)
+        if case is None:
+            return ToolResult(False, {"error": f"工况 {chosen!r} 不存在"})
+
+        base = str(name or "Area").strip() or "Area"
+        report: list[dict[str, Any]] = []
+        fresh: list[dict[str, Any]] = []
+        for mid in ids:
+            member = known[mid]
+            ni, nj = nodes[int(member["i"])], nodes[int(member["j"])]
+            length = float(np.linalg.norm(np.array(
+                [nj[k] - ni[k] for k in ("x", "y", "z")], dtype=float)))
+            pieces, note = self._area_load_pieces(q, width, length, load_path,
+                                                  unit)
+            if pieces is None:
+                return ToolResult(False, {"error": note, "member": mid,
+                                          "member_length": round(length, 6)})
+            for index, piece in enumerate(pieces, 1):
+                fresh.append({"name": f"{base}-{mid}-{index}", "member": mid,
+                              **piece})
+            report.append({"member": mid, "length": round(length, 6),
+                           "pieces": len(pieces), "note": note})
+
+        names = {item["name"] for item in fresh}
+        for key in ("nodal_loads", "member_loads", "member_spans"):
+            case[key] = [entry for entry in case.get(key, [])
+                         if entry.get("name") not in names]
+        case["member_spans"] = list(case.get("member_spans", [])) + fresh
+
+        errors = validate_payload(candidate)
+        self.model = candidate
+        self._invalidate()
+        total = abs(q) * width * (len(ids) if load_path == "one_way" else 0)
+        return ToolResult(True, {
+            "case": chosen, "load_path": load_path, "members": ids,
+            "count": len(ids), "entries": len(fresh), "detail": report,
+            "analysis_ready": not errors, "warnings": errors,
+            **({"total_force_per_member_hint": round(total / max(len(ids), 1), 6)}
+               if load_path == "one_way" else {}),
+            "note": "三角形与梯形用 partial_trapezoid 精确生成，不是等效均布——"
+                    "等效均布只保证跨中弯矩相等，支座附近的剪力是另一回事。",
+        })
+
+    def _area_load_pieces(self, q: float, width: float, length: float,
+                          load_path: str, unit) -> tuple[list | None, str]:
+        """一根梁上该生成哪几段荷载。返回 (段列表, 说明)；不成立时段列表为 None。"""
+        if load_path == "one_way":
+            w = (q * width) * unit
+            return ([{"kind": "uniform", "w1": [float(v) for v in w]}],
+                    f"单向板从属宽度 {width:g}，线荷载 = q×宽度")
+
+        peak = (q * width / 2.0) * unit          # 两种双向板峰值都是 q·Lx/2
+        zero = [0.0, 0.0, 0.0]
+        if load_path == "two_way_short":
+            half = length / 2.0
+            return ([{"kind": "partial_trapezoid", "w1": zero,
+                      "w2": [float(v) for v in peak], "a": 0.0, "b": half},
+                     {"kind": "partial_trapezoid",
+                      "w1": [float(v) for v in peak], "w2": zero,
+                      "a": half, "b": length}],
+                    f"双向板短边梁：三角形，跨中峰值 q·Lx/2 = {abs(q) * width / 2:g}")
+
+        rise = width / 2.0
+        if 2.0 * rise >= length:
+            return (None,
+                    f"长边梁的梯形需要 Lx/2 = {rise:g} 在两端各升一段，"
+                    f"而杆长只有 {length:g}——这根梁其实不比短跨长，"
+                    "说明它不是长边，或者 width 传的不是短跨。")
+        return ([{"kind": "partial_trapezoid", "w1": zero,
+                  "w2": [float(v) for v in peak], "a": 0.0, "b": rise},
+                 {"kind": "partial", "w1": [float(v) for v in peak],
+                  "a": rise, "b": length - rise},
+                 {"kind": "partial_trapezoid", "w1": [float(v) for v in peak],
+                  "w2": zero, "a": length - rise, "b": length}],
+                f"双向板长边梁：梯形，两端各升 {rise:g}，平台 q·Lx/2 = "
+                f"{abs(q) * width / 2:g}")
+
     def _load_case_in(self, candidate: dict[str, Any],
                       case_name: str | None) -> tuple[dict[str, Any] | None, str]:
         """在候选模型中取分析步；增量载荷工具共用，避免默认工况逻辑漂移。"""

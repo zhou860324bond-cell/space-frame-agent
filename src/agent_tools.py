@@ -834,6 +834,58 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "apply_area_load",
+            "description":
+                "把**面荷载**（力/面积，如楼面恒载 3.5 kN/m²）导成梁上的线荷载。"
+                "用户给的荷载是「每平方米多少」时用这个，不要自己去乘从属宽度——"
+                "那一步算错结果看着完全正常：量级对、图形也像那么回事，只是总重差一截。"
+                "\n\n三种导荷方式，取决于板的长宽比："
+                "\none_way —— 单向板，width 是**从属宽度**，梁上均布 q×width；"
+                "\ntwo_way_short —— 双向板**短边**梁，三角形，width 是板的短跨 Lx，"
+                "跨中峰值 q·Lx/2；"
+                "\ntwo_way_long —— 双向板**长边**梁，梯形，width 仍是短跨 Lx，"
+                "两端各升 Lx/2 后进入平台 q·Lx/2。"
+                "\n\n三角形与梯形是**精确生成**的（用 partial_trapezoid 拼），"
+                "不是等效均布——等效均布只保证跨中弯矩相等，支座附近的剪力是另一回事。"
+                "\n校核过：4×6 双向板的四边梁合计 96.000 kN，与板自身 q×4×6 分毫不差，"
+                "既没漏也没重复计。",
+            "parameters": {
+                "type": "object",
+                "required": ["members", "q", "width"],
+                "properties": {
+                    "members": {
+                        "description": "杆件编号、编号列表或集合名（可混写）",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "q": {"type": "number", "exclusiveMinimum": 0,
+                          "description": "面荷载强度，力/面积。N-m-Pa 下是 N/m²，"
+                                         "4 kN/m² 写成 4000"},
+                    "width": {"type": "number", "exclusiveMinimum": 0,
+                              "description": "one_way 下是从属宽度；"
+                                             "两种 two_way 下是板的**短跨** Lx"},
+                    "load_path": {"type": "string",
+                                  "enum": ["one_way", "two_way_short",
+                                           "two_way_long"],
+                                  "description": "导荷方式，默认 one_way"},
+                    "direction": {"type": "array", "minItems": 3, "maxItems": 3,
+                                  "items": {"type": "number"},
+                                  "description": "荷载方向，默认全局 −Z（重力）。"
+                                                 "只取方向，大小由 q 决定"},
+                    "case_name": {"type": "string"},
+                    "name": {"type": "string",
+                             "description": "荷载名前缀；每段生成 前缀-杆号-序号"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "add_self_weight",
             "description": "按截面面积与材料密度生成各杆自重，追加到指定工况。"
                            "材料必须有 density（kg/m³，钢约 7850）。"

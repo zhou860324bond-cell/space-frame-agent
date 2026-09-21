@@ -763,3 +763,100 @@ def test_the_ramp_tool_demands_both_ends_and_both_positions():
     bad = s.set_member_span_load(1, "partial_trapezoid", [0, 0, -1e3],
                                  a=0.0, b=1.0)
     assert not bad.ok and "w2" in bad.payload["error"]
+
+
+# ----------------------------------------------------------- 面荷载导荷
+
+Q_AREA = 4e3            # 4 kN/m²
+
+
+def _simple(span: float):
+    """一根简支梁，用来量导荷后的总重。"""
+    from agent import Session
+
+    s = Session()
+    s.set_model({
+        "units": "N-m-Pa",
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": span, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "S", "section": "B"}],
+        "materials": [{"name": "S", "E": 2.06e11, "nu": 0.3, "density": 0.0}],
+        "sections": [{"name": "B", "A": 8.6e-3, "Iy": 3e-5, "Iz": 1e-4,
+                      "J": 1e-6}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                     {"node": 2, "fix": [0, 1, 1, 1, 0, 0]}],
+    })
+    return s
+
+
+def _carried(s) -> float:
+    """这根梁实际承受的总竖向荷载（kN），由反力量出来。"""
+    assert s.solve_model().ok
+    return s.query_results("reactions").payload["vertical_total_kN"]
+
+
+@pytest.mark.parametrize("path,span,width,expect", [
+    # 单向板：从属宽度 3、梁长 6 → q×3×6
+    ("one_way", 6.0, 3.0, Q_AREA * 3.0 * 6.0),
+    # 双向板短边梁：三角形，峰值 q·Lx/2，总重 = 峰值×L/2
+    ("two_way_short", 4.0, 4.0, (Q_AREA * 4.0 / 2) * 4.0 / 2),
+    # 双向板长边梁：梯形，总重 = 峰值×(L − Lx/2)
+    ("two_way_long", 6.0, 4.0, (Q_AREA * 4.0 / 2) * (6.0 - 2.0)),
+])
+def test_each_load_path_puts_the_right_total_on_the_beam(path, span, width,
+                                                         expect):
+    """导荷唯一的硬判据是**总重**——反力合计必须等于手算。
+
+    真实输入永远是 kN/m²，而求解器只认 kN/m。中间那步以前全靠手算，
+    **算错了结果看着完全正常**：量级对、弯矩图也像那么回事，只是总重差一截。
+    """
+    s = _simple(span)
+    assert s.apply_area_load([1], Q_AREA, width, path).ok
+    assert _carried(s) == pytest.approx(expect / 1e3, rel=1e-9)
+
+
+def test_the_four_beams_of_a_panel_carry_exactly_the_panel():
+    """**这条是双向板分配最强的校验。**
+
+    4×6 的板，两根短边梁 + 两根长边梁，合计必须精确等于 q×4×6。
+    分配少了就是漏载，多了就是重复计——两种都不会报错，只会让整栋楼的
+    总重悄悄偏掉。
+    """
+    short_span, long_span = 4.0, 6.0
+    carried = 0.0
+    for _ in range(2):
+        s = _simple(short_span)
+        assert s.apply_area_load([1], Q_AREA, short_span, "two_way_short").ok
+        carried += _carried(s)
+    for _ in range(2):
+        s = _simple(long_span)
+        assert s.apply_area_load([1], Q_AREA, short_span, "two_way_long").ok
+        carried += _carried(s)
+    panel = Q_AREA * short_span * long_span / 1e3
+    assert carried == pytest.approx(panel, rel=1e-9)
+
+
+def test_the_triangle_is_exact_not_an_equivalent_uniform():
+    """三角形是**精确生成**的，不是等效均布。
+
+    等效均布（5/8·q₀）只保证跨中弯矩相等；真实三角形的跨中弯矩是 q₀L²/12，
+    而 5/8 均布给出 (5/8)q₀L²/8 = 0.078 q₀L²，两者差 6.25%。
+    这里验的是前者。
+    """
+    span = 4.0
+    s = _simple(span)
+    assert s.apply_area_load([1], Q_AREA, span, "two_way_short").ok
+    assert s.solve_model().ok
+    peak_q = Q_AREA * span / 2.0
+    got = s.query_diagram("Mz", 1, stations=401).payload["peak"]
+    assert abs(got) == pytest.approx(peak_q * span ** 2 / 12.0 / 1e3, rel=1e-4)
+
+
+def test_a_long_edge_shorter_than_the_short_span_is_refused():
+    """长边梁比短跨还短，说明 width 传错了或者这根不是长边。
+
+    硬算的话梯形会退化成两段重叠的斜坡，给出一个没有物理意义的分布。
+    """
+    r = _simple(3.0).apply_area_load([1], Q_AREA, 4.0, "two_way_long")
+    assert not r.ok
+    assert "不是长边" in r.payload["error"] or "短跨" in r.payload["error"]
