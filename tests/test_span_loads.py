@@ -602,3 +602,88 @@ def test_a_point_load_cannot_be_given_per_horizontal_metre():
 def test_an_unknown_reference_is_rejected():
     s = _sloped()
     assert not s.set_member_load(1, [0, 0, -1e3], reference="plan").ok
+
+
+# ------------------------------------------------------- 按集合施加荷载
+
+def _framed():
+    """两跨两层一开间的框架，梁已归入集合「梁」。"""
+    from agent import Session
+
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q", "E": 2.06e11, "nu": 0.3}],
+        [{"name": "B", "A": 0.018, "Iy": 5e-5, "Iz": 2e-3, "J": 1e-6}])
+    r = s.generate_frame(spans=[6.0, 6.0], storeys=[4.0, 4.0], bays=[6.0])
+    s.assign_properties([int(m["id"]) for m in s.model["members"]],
+                        material="Q", section="B")
+    beams = r.payload["beam_member_ids"]
+    s.define_set("梁", member_ids=beams)
+    return s, beams
+
+
+def test_one_call_loads_a_whole_set():
+    """一句"给所有梁加 20 kN/m"以前要拆成几十次调用。
+
+    而漏掉其中两根**没有任何人会发现**：工具报成功、校验通过、结果也正常，
+    只是少了两根梁的荷载。判据是反力合计等于手算总重。
+    """
+    s, beams = _framed()
+    out = s.set_member_load("梁", [0, 0, -20e3])
+    assert out.ok and out.payload["count"] == len(beams)
+    assert len(s.model["load_cases"][0]["member_loads"]) == len(beams)
+    s.solve_model()
+    total = s.query_results("reactions").payload["vertical_total_kN"]
+    assert total == pytest.approx(20.0 * 6.0 * len(beams), rel=1e-9)
+
+
+def test_applying_to_a_set_twice_replaces_rather_than_stacks():
+    """重复施加必须是替换。每根杆件有**自己**的名字才做得到——
+
+    共用一个名字的话，按名替换会把前面几根刚写进去的又删掉，只剩最后一根。
+    """
+    s, beams = _framed()
+    s.set_member_load("梁", [0, 0, -20e3])
+    s.solve_model()
+    once = s.query_results("reactions").payload["vertical_total_kN"]
+    s.set_member_load("梁", [0, 0, -20e3])
+    s.solve_model()
+    twice = s.query_results("reactions").payload["vertical_total_kN"]
+    assert twice == pytest.approx(once, rel=1e-12)
+
+
+def test_a_span_load_on_a_set_reaches_every_member():
+    """梯形按集合施加，**每一根**都要写进去。
+
+    这一条盯的是"只取第一根"：我第一版就是那么写的，梯形看着施加成功，
+    实际只加到了集合里的第一根梁上——反力少了十三根的份，而工具报的是
+    成功。这一轮反复在修的正是这个形状的错。
+    """
+    s, beams = _framed()
+    out = s.set_member_span_load("梁", "trapezoid", [0, 0, 0], [0, 0, -15e3])
+    assert out.ok and out.payload["count"] == len(beams)
+    assert len(s.model["load_cases"][0]["member_spans"]) == len(beams)
+    s.solve_model()
+    total = s.query_results("reactions").payload["vertical_total_kN"]
+    assert total == pytest.approx(15.0 / 2 * 6.0 * len(beams), rel=1e-9)
+
+
+def test_a_positioned_load_on_a_set_is_refused():
+    """a / b 是沿杆长的**绝对距离**，一组长短不一的杆件共用没有意义。
+
+    短杆上会超界、长杆上位置也对不上。按比例自作主张更糟——那是另一个
+    物理量，而用户不会知道工具替他改了定义。
+    """
+    s, _ = _framed()
+    for kind, kwargs in (("point", {"a": 2.0}),
+                         ("partial", {"a": 1.0, "b": 3.0})):
+        r = s.set_member_span_load("梁", kind, [0, 0, -5e3], **kwargs)
+        assert not r.ok
+        assert "绝对距离" in r.payload["error"]
+
+
+def test_the_single_member_payload_did_not_change():
+    """单根路径的返回值必须一个字节没变——既有调用方和测试都靠它。"""
+    s, beams = _framed()
+    one = s.set_member_load(beams[0], [0, 0, -30e3])
+    assert set(one.payload) == {"case", "load", "member", "name"}

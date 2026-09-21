@@ -562,7 +562,19 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object", "required": ["member_id", "load"],
                 "properties": {
-                    "member_id": {"type": "integer"},
+                    "member_id": {
+                        "description":
+                            "杆件编号、编号列表，或已定义的**集合名**（可混写）。"
+                            "一句「给顶层所有梁加 5 kN/m」直接传集合名即可——"
+                            "以前要拆成几十次调用，而漏掉其中两根没有任何人会"
+                            "发现：工具报成功、校验通过、结果看着也正常。"
+                            "每根杆件各自一条命名荷载，可按名单独编辑。",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
                     "load": {"type": "array", "minItems": 3, "maxItems": 3,
                              "items": {"type": "number"},
                              "description": "全局 [wx,wy,wz]，N/m"},
@@ -599,7 +611,19 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object", "required": ["member_id", "kind", "w1"],
                 "properties": {
-                    "member_id": {"type": "integer"},
+                    "member_id": {
+                        "description":
+                            "杆件编号、编号列表，或已定义的**集合名**（可混写）。"
+                            "一句「给顶层所有梁加 5 kN/m」直接传集合名即可——"
+                            "以前要拆成几十次调用，而漏掉其中两根没有任何人会"
+                            "发现：工具报成功、校验通过、结果看着也正常。"
+                            "每根杆件各自一条命名荷载，可按名单独编辑。",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
                     "kind": {"type": "string",
                              "enum": ["uniform", "trapezoid", "point", "partial"]},
                     "w1": {"type": "array", "minItems": 3, "maxItems": 3,
