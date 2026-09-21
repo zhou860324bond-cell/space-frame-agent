@@ -131,9 +131,11 @@ class MainWindow(QMainWindow):
         chat_dock.setMinimumWidth(320)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, chat_dock)
         self.chat_dock = chat_dock
-        # 默认显示在右侧
-        self.chat_dock.setVisible(True)
-        self.chat_dock.raise_()
+        # **默认收起。** 这个面板固定占 400px、四分之一屏，而它只在"想让 AI
+        # 帮忙建模"时才用；更糟的是没配密钥时开局就是一大段配置说明，
+        # 第一眼看到的不是自己的模型而是一条错误。
+        # 收起后右缘的 FloatingAgentButton 会自动露出来，入口没丢。
+        self.chat_dock.setVisible(False)
 
         self.timeline = TimelinePanel(self)
         self.timeline.goto_step.connect(self.goto_step)
@@ -157,10 +159,10 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
                            self.results_dock)
         self.results_dock.hide()
-        # 结果面板是配角，不该抢视口的地方。给个偏小的初始高度，
-        # 用户想看细节自己拖大
+        # 这里原来还有一条 setMaximumHeight(260)，是停靠时代的产物——
+        # 那时它横在视口下沿，限高是为了不抢视口。现在它是独立浮窗，
+        # 限高只会让窗口拉不大、表格看不全。
         self.results.setMinimumHeight(120)
-        self.results.setMaximumHeight(260)
 
         self.diagram = DiagramPanel(self)
         self.diagram.locate.connect(self.locate)
@@ -170,11 +172,11 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
                            self.diagram_dock)
         self.diagram_dock.hide()
-        # 内力图和结果表放同一处，用页签切——它们都是"看数"，
-        # 分成两块会把视口挤没
-        self.tabifyDockWidget(self.results_dock, self.diagram_dock)
+        # 原来这里把内力图和结果表叠成页签，理由是"分成两块会把视口挤没"。
+        # 改成浮窗之后这个理由不成立了——浮窗压根不占视口，两个窗可以并排
+        # 对着看，比页签来回切更有用。tabify 还会把它们重新停靠回去。
 
-        # 截面优化：和结果/内力图叠成页签，都在底部
+        # 截面优化
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
         self.section_opt_dock = QDockWidget("截面优化", self)
         self.section_opt_dock.setObjectName("sectionOptDock")
@@ -182,7 +184,6 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
                            self.section_opt_dock)
         self.section_opt_dock.hide()
-        self.tabifyDockWidget(self.diagram_dock, self.section_opt_dock)
 
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
@@ -259,6 +260,8 @@ class MainWindow(QMainWindow):
         self._build_ribbon()
         self._build_menus()
         self._build_statusbar()
+        # 必须排在全部 dock 建好之后：它要逐个改造它们
+        self._detach_panels()
         self.refresh()
 
     # --- 构件 ---
@@ -399,6 +402,63 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
+    # 面板一律做成**独立浮窗**，不再停靠。
+    #
+    # 停靠的代价是：每开一个面板，中央视口就被挤小一次，而这些面板多数是
+    # "看一眼就关"的——属性、边界条件、截面优化、建模过程都是。视口被挤到
+    # 一半宽之后再想转个角度看模型，得先把面板关掉，这个来回是纯浪费。
+    # 浮窗则是叠在视口上方，关掉就还原，视口尺寸从头到尾不变。
+    #
+    # 仍然用 QDockWidget 而不是 QDialog：`visibilityChanged`、`setVisible`、
+    # `windowTitle` 这一整套接口窗口各处都在用（浮动按钮的显隐、菜单勾选状态
+    # 都挂在上面），换成对话框等于把它们全改一遍，没有收益。
+    # 禁掉全部停靠区之后，它就是个关不回去的独立小窗。
+    FLOATING_PANELS = {
+        # 面板属性名:       (初始宽, 初始高, 落在哪个角)
+        "tree_dock":       (300, 520, "left-top"),
+        "props_dock":      (320, 420, "left-bottom"),
+        "timeline_dock":   (320, 420, "left-bottom"),
+        "chat_dock":       (400, 640, "right-top"),
+        "sketch_dock":     (420, 600, "right-top"),
+        "bc_dock":         (400, 560, "right-top"),
+        "results_dock":    (760, 300, "bottom"),
+        "diagram_dock":    (760, 340, "bottom"),
+        "section_opt_dock": (560, 420, "right-bottom"),
+    }
+
+    def _detach_panels(self) -> None:
+        """把全部停靠面板改造成独立浮窗，并给每个安排一个落点。"""
+        from PySide6.QtWidgets import QDockWidget
+
+        for name, spec in self.FLOATING_PANELS.items():
+            dock = getattr(self, name, None)
+            if dock is None:
+                continue
+            width, height, anchor = spec
+            dock.setAllowedAreas(Qt.DockWidgetArea.NoDockWidgetArea)
+            dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable
+                             | QDockWidget.DockWidgetFeature.DockWidgetMovable)
+            dock.setFloating(True)
+            dock.resize(width, height)
+            self._place_panel(dock, width, height, anchor)
+
+    def _place_panel(self, dock, width: int, height: int, anchor: str) -> None:
+        """按角落摆放，别让九个浮窗全叠在左上角。
+
+        坐标算在**主窗口**的屏幕位置上，不是屏幕原点——多显示器下后者会把
+        面板扔到另一块屏幕上去。
+        """
+        margin = 16
+        base = self.frameGeometry()
+        x, y = base.x() + margin, base.y() + 96
+        if anchor.startswith("right"):
+            x = base.x() + base.width() - width - margin
+        elif anchor == "bottom":
+            x = base.x() + (base.width() - width) // 2
+        if anchor.endswith("bottom") or anchor == "bottom":
+            y = base.y() + base.height() - height - margin * 3
+        dock.move(max(0, x), max(0, y))
+
     def _build_ribbon(self) -> None:
         from . import ribbon
 
@@ -425,6 +485,7 @@ class MainWindow(QMainWindow):
     def _on_ribbon_page_changed(self, index: int) -> None:
         """把当前模块的下一步操作写出来，避免用户在功能区里猜流程。"""
         page = self.ribbon.tabText(index)
+        self.quickbar.show_context_for(page, self.mode)
         hints = {
             "项目": "项目：新建或打开模型；建模过程可随时撤销。",
             "建模": "建模：创建几何后，用“选择节点/杆件”进入对象选择。",
@@ -581,6 +642,10 @@ class MainWindow(QMainWindow):
 
     def set_mode(self, name: str) -> None:
         self.mode = name
+        # 中段控件也要跟着换：看变形图时要的是工况和放大，不是建节点
+        if hasattr(self, "quickbar"):
+            self.quickbar.show_context_for(
+                self.ribbon.tabText(self.ribbon.currentIndex()), name)
         if name in {"变形", "云图"} and self.session.solution is not None:
             self.viewport.set_pick_mode("member")
         act = self.mode_actions.get(name)

@@ -28,6 +28,7 @@ pytestmark = pytest.mark.skipif(                             # noqa: E402
     not opengl_available(),
     reason="无可用 OpenGL，桌面端 VTK 视口无法初始化，跳过")
 
+from PySide6.QtCore import Qt                               # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton     # noqa: E402
 
 from desktop import commands, icons                 # noqa: E402
@@ -80,6 +81,216 @@ def test_every_command_explains_itself():
 
 
 # ------------------------------------------------- 功能区
+
+def test_panels_are_independent_windows_not_docks(qt_app):
+    """所有面板都是独立浮窗，**停不回去**。
+
+    停靠的代价是每开一个面板中央视口就被挤小一次，而这些面板多数"看一眼
+    就关"——属性、边界条件、截面优化、建模过程都是。视口被挤到一半宽之后
+    再想转角度看模型，得先关面板，这个来回是纯浪费。
+
+    仍然用 QDockWidget 而不是 QDialog：visibilityChanged / setVisible /
+    windowTitle 这套接口窗口各处都在用（浮动按钮显隐、菜单勾选状态都挂在
+    上面）。禁掉全部停靠区之后，它就是个关不回去的小窗。
+    """
+    w = MainWindow()
+    assert w.FLOATING_PANELS, "面板清单不能是空的"
+    for name in w.FLOATING_PANELS:
+        dock = getattr(w, name)
+        assert dock.allowedAreas() == Qt.DockWidgetArea.NoDockWidgetArea, (
+            f"{name} 还允许停靠——拖一下就会把视口挤小")
+        assert dock.isFloating(), f"{name} 没有浮起来"
+        assert dock.windowTitle().strip(), f"{name} 没有标题，浮窗上会是一条空标题栏"
+
+
+def test_opening_panels_never_shrinks_the_viewport(qt_app):
+    """这是"改成浮窗"的**目的本身**：视口宽度不随面板开关变化。"""
+    w = MainWindow()
+    w.resize(1400, 900)
+    qt_app.processEvents()
+    before = (w.viewport.width(), w.viewport.height())
+    for name in w.FLOATING_PANELS:
+        getattr(w, name).setVisible(True)
+    qt_app.processEvents()
+    assert (w.viewport.width(), w.viewport.height()) == before, (
+        f"开了 {len(w.FLOATING_PANELS)} 个面板后视口从 {before} 变成了 "
+        f"{(w.viewport.width(), w.viewport.height())}")
+
+
+def test_floating_panels_do_not_clutter_the_taskbar(qt_app):
+    """浮窗必须是 Tool 窗：浮在主窗之上、跟着主窗走、不在任务栏各占一格。
+
+    九个面板要是各自变成一个任务栏条目，那是另一种反人类。
+    """
+    w = MainWindow()
+    for name in w.FLOATING_PANELS:
+        dock = getattr(w, name)
+        assert dock.parent() is w, f"{name} 脱离了主窗，就不会跟着主窗关闭"
+        assert dock.windowFlags() & Qt.WindowType.Tool, f"{name} 不是 Tool 窗"
+
+
+def test_every_workspace_button_says_what_it_does(qt_app):
+    """常驻工具栏的按钮必须带文字，纯图标只留给含义早已固化的那几个。
+
+    原来这条栏是 18 个 20px 的无字线框图标（视角×5、选择×2、编辑×3、
+    标注/属性/撤销/重做×4、显示×4）。不逐个悬停认不出任何一个——
+    这是整个界面最劝退的一处。
+
+    白名单只放撤销/重做和两个显示开关：⟲⟳ 是跨软件的通用约定，
+    配字反而占地方。其余一律配字。
+    """
+    from PySide6.QtWidgets import QToolButton
+
+    from PySide6.QtCore import Qt
+
+    # 查的是**显示样式**，不是 b.text()。挂了 defaultAction 的 QToolButton，
+    # b.text() 永远返回动作文本，跟屏幕上有没有字无关——按它断言等于没测。
+    icon_only_ok = {"撤销", "重做", "编号标注", "属性"}
+    w = MainWindow()
+    naked = []
+    for b in w.quickbar.findChildren(QToolButton):
+        if not b.property("ribbon"):
+            continue                      # 非命令按钮（如坐标建点）另算
+        act = b.defaultAction()
+        if act is None or act.text() in icon_only_ok:
+            continue
+        if b.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly:
+            naked.append(act.text())
+    assert len(naked) == 0, f"这些按钮只画了图标、屏幕上没有字：{naked}"
+    # 白名单之外确实有一批按钮被查到，否则这条断言是空过的
+    examined = [b for b in w.quickbar.findChildren(QToolButton)
+                if b.property("ribbon") and b.defaultAction() is not None
+                and b.defaultAction().text() not in icon_only_ok]
+    assert len(examined) >= 12, f"只查到 {len(examined)} 个按钮，白名单开太大了"
+
+
+def test_the_display_mode_is_visible_as_a_labelled_row(qt_app):
+    """显示模式是**状态不是动作**，必须一眼看出当前在哪个。
+
+    原来它和旁边的动作按钮长得一模一样——四个无字小图标，既看不出
+    自己在看模型还是看云图，也容易误点。现在是一排带字的互斥按钮。
+    """
+    w = MainWindow()
+    assert set(w.quickbar.mode_buttons) == set(MODES), (
+        f"模式按钮与 MODES 不一致：{sorted(w.quickbar.mode_buttons)}")
+    for label, button in w.quickbar.mode_buttons.items():
+        assert button.text() == label, (
+            f"模式按钮该显示短名 {label!r}，实际是 {button.text()!r}")
+    w.set_mode("模型")
+    assert w.quickbar.mode_buttons["模型"].defaultAction().isChecked()
+
+
+def test_the_context_strip_follows_the_mode_before_the_page(qt_app):
+    """中段控件按阶段切换，且**显示模式优先于功能区页**。
+
+    刚建完模型就去看变形图、页签还停在"建模"，是很常见的路径。
+    这时该给的是工况与放大倍数，不是"建节点/建杆件"。
+    """
+    w = MainWindow()
+    build, result = 0, 1
+
+    w.ribbon.setCurrentIndex(w.ribbon.indexOf(w.ribbon.pages["建模"]))
+    assert w.quickbar.context.currentIndex() == build
+
+    w.ribbon.setCurrentIndex(w.ribbon.indexOf(w.ribbon.pages["结果"]))
+    assert w.quickbar.context.currentIndex() == result
+
+    # 页签退回建模，但显示模式仍是变形 —— 模式说了算
+    w.set_mode("变形")
+    w.ribbon.setCurrentIndex(w.ribbon.indexOf(w.ribbon.pages["建模"]))
+    assert w.quickbar.context.currentIndex() == result, (
+        "正在看变形图时不该把中段换回建模控件")
+
+
+def test_precise_modelling_controls_only_appear_while_placing(qt_app):
+    """工作平面/捕捉/坐标建点只在真的要放点时出现。
+
+    这一组实测占 425px，是整条工具栏原先放不下模式切换的直接原因；
+    而不点节点的时候它一个都用不上——它们只影响"下一个点落在哪儿"。
+    """
+    w = MainWindow()
+    assert w.quickbar.precise.isHidden(), "默认不该占着位置"
+    w.actions_by_name["model_node"].setChecked(True)
+    assert not w.quickbar.precise.isHidden(), "开始建节点了就该出现"
+    w.actions_by_name["model_node"].setChecked(False)
+    assert w.quickbar.precise.isHidden(), "退出建点应当收起"
+
+
+def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app):
+    """功能区可收起，但页签必须留着。
+
+    顶部原来四层吃掉约 260px，在 1000px 高的窗口上是 26%，而功能区是其中
+    最高、又最"查完就不用"的一层。收起时只收内容：页签同时是"我在哪个
+    模块"的指示，一起藏掉是另一种反人类。
+    """
+    w = MainWindow()
+    tall = w.ribbon.maximumHeight()
+    assert not w.ribbon.is_collapsed()
+
+    w.ribbon.toggle_collapsed()
+    assert w.ribbon.is_collapsed()
+    assert w.ribbon.maximumHeight() < tall
+    assert w.ribbon.tabBar().isVisibleTo(w.ribbon), "页签不能跟着收掉"
+    assert w.ribbon.count() == 7, "收起不该动页签本身"
+
+    w.ribbon.toggle_collapsed()
+    assert not w.ribbon.is_collapsed()
+    assert w.ribbon.maximumHeight() == tall
+
+
+def test_the_assistant_starts_out_of_the_way_but_reachable(qt_app):
+    """AI 面板默认收起，右缘的浮动按钮是它的入口。
+
+    这个面板固定占 400px、四分之一屏，只在想让 AI 帮忙建模时才用；
+    没配密钥时开局还是一大段配置说明——第一眼看到的不该是一条错误。
+    """
+    w = MainWindow()
+    assert w.chat_dock.isHidden(), "AI 面板不该默认占着四分之一屏"
+    assert not w.agent_button.isHidden(), "收起后必须留下可见的入口"
+
+
+def test_toolbar_inputs_fit_their_worst_case_text(qt_app):
+    """常驻工具栏上的输入控件必须放得下它们**真会显示**的最长文本。
+
+    这条闸拦的是"写死像素宽度"。工作平面的 z 输入框原先是
+    `setFixedWidth(78)`，而它量程 ±1e6、3 位小数——实拍里 "0.000" 的最后
+    一位被切掉、上下箭头压在数字上，显示成 "0.00("。
+
+    界面裁切不崩、不报错、不影响任何计算，只会让人**读错数字**，
+    所以自己测不出来，只能变成测试。
+
+    比的是控件的最小宽度与 `_fits` 算出来的需求。两边用同一套字体度量，
+    所以换字号、换 DPI、切英文都不会假红；而一旦有人改回硬编码像素，
+    这里立刻就红。
+    """
+    from desktop.ribbon import _fits
+
+    w = MainWindow()
+    bar = w.quickbar
+    worst = [
+        # (控件, 它真会显示的最长文本)
+        (bar.plane, "XZ"),
+        (bar.offset, "-99999.999"),       # 工作平面位置，负值 + 3 位小数
+        (bar.snap, "关闭"),
+        (bar.scale, "自动"),
+    ]
+    for widget, sample in worst:
+        need = _fits(widget, sample)
+        assert widget.minimumWidth() >= need, (
+            f"{widget.objectName() or type(widget).__name__} 最小宽度 "
+            f"{widget.minimumWidth()} 放不下 {sample!r}（需要 {need}）——"
+            "别写死像素，用 ribbon._fits 推导")
+
+
+def test_fits_is_derived_from_the_widget_not_a_constant(qt_app):
+    """`_fits` 必须随文本变长而变宽，否则它只是换了个地方的魔数。"""
+    from desktop.ribbon import _fits
+
+    w = MainWindow()
+    short = _fits(w.quickbar.offset, "0")
+    long = _fits(w.quickbar.offset, "-99999.999")
+    assert long > short, "_fits 没有真的度量文本"
+
 
 def test_the_ribbon_pages_follow_the_workflow(qt_app):
     """页签顺序就是分析流程：建模 → 加荷载 → 算 → 看结果。
