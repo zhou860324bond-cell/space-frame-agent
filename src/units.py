@@ -56,6 +56,9 @@ class UnitSystem:
     # 215000000 谁也认不出来，写成 215 一眼就知道。
     stress_scale: float = 1.0
     stress_unit: str = "MPa"
+    # 质量一律报 kg。**毫米制下模型里的质量是吨**（密度 t/mm³ × mm³），
+    # 直接标成 kg 会小 1000 倍——总质量那一栏看着像个小构件。
+    mass_scale: float = 1.0
 
 
 _SYSTEMS = {
@@ -65,14 +68,16 @@ _SYSTEMS = {
                    force_scale=1e-3,    # N  → kN
                    moment_scale=1e-3,   # N·m → kN·m
                    line_load_scale=1e-3,    # N/m → kN/m
-                   stress_scale=1e-6),      # Pa  → MPa
+                   stress_scale=1e-6,       # Pa  → MPa
+                   mass_scale=1.0),         # kg → kg
     MM: UnitSystem(name=MM, length="mm", gravity=9806.65, density="t/mm³",
                    length_to_m=1e-3,
                    disp_scale=1.0,      # mm → mm
                    force_scale=1e-3,    # N  → kN
                    moment_scale=1e-6,   # N·mm → kN·m
                    line_load_scale=1.0,     # N/mm → kN/m
-                   stress_scale=1.0),       # MPa → MPa
+                   stress_scale=1.0,        # MPa → MPa
+                   mass_scale=1e3),         # t  → kg
 }
 
 NAMES = tuple(_SYSTEMS)

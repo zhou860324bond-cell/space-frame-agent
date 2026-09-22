@@ -143,17 +143,21 @@ class ChecksMixin:
         # 悬臂柱把振型取满也只报得出 84%，而"加大 num_modes"这条建议在那里
         # 是无效的——差的那 16% 不在振型里，在支座上。网格越粗越明显。
         cumulative = r.cumulative_ratio[-1]
+        # 质量一律报 kg。**毫米制下模型里的质量是吨**（密度 t/mm³），
+        # 直接标 _kg 会小 1000 倍，总质量那栏看着像个小构件。
+        mass = physical.unit_system.mass_scale
         payload = {
+            # 参与系数 Γ 有意**不报**：它随振型归一化方式和单位制而变
+            # （量纲是 √质量），单看一个数没有意义。反应谱内部要用它，
+            # 但摆给用户只会被当成可比的量。mass_ratio 才是无量纲的判据。
             "modes": [{"order": k + 1,
                        "frequency_Hz": round(float(f), 6),
                        "period_s": round(float(1.0 / f), 6) if f > 0 else None,
-                       "participation_xyz": [round(float(v), 6)
-                                             for v in r.participation[k]],
                        "mass_ratio_xyz": [round(float(v), 4)
                                           for v in r.mass_ratio[k]]}
                       for k, f in enumerate(r.frequencies)],
-            "total_mass_kg": round(r.total_mass, 6),
-            "participable_mass_kg": [round(float(v), 6)
+            "total_mass_kg": round(r.total_mass * mass, 6),
+            "participable_mass_kg": [round(float(v) * mass, 6)
                                      for v in r.participable_mass],
             "cumulative_mass_ratio_xyz": [round(float(v), 4)
                                           for v in cumulative],
@@ -179,7 +183,7 @@ class ChecksMixin:
             alpha_max: float | None = None, tg: float = 0.35,
             spectrum_points: list | None = None,
             combination: str = "CQC", damping: float = 0.05,
-            gravity: float = 9.81) -> ToolResult:
+            gravity: float | None = None) -> ToolResult:
         """振型分解反应谱法（地震作用）。
 
         谱二选一：``alpha_max`` + ``tg`` 走 GB 50011 的设计谱（地震影响系数，
@@ -205,9 +209,15 @@ class ChecksMixin:
             if spectrum_points:
                 curve = table_spectrum(spectrum_points)
             else:
+                # **g 跟着单位制走。** 硬编码 9.81 在毫米制下小 1000 倍，
+                # 而地震作用整体跟着小 1000 倍——数看着"很安全"，
+                # 而且不会报任何错。units.py 开头那段说的就是这件事。
+                weight = (float(gravity) if gravity is not None
+                          else physical.unit_system.gravity)
                 alpha = gb50011_spectrum(float(alpha_max), float(tg),
                                          damping=float(damping))
-                def curve(period, _alpha=alpha, _g=float(gravity)):
+
+                def curve(period, _alpha=alpha, _g=weight):
                     return _alpha(period) * _g
             result = response_spectrum(
                 physical, curve, direction=str(direction),
@@ -224,7 +234,10 @@ class ChecksMixin:
             "mass_ratio": round(float(result.mass_ratio), 4),
             "modes": [{"order": k + 1,
                        "period_s": round(float(t), 6),
-                       "spectral_acceleration": round(float(a), 6),
+                       # 谱加速度折成 m/s²：模型是毫米制时它本来是
+                       # mm/s²，不折算的话同一条谱在两套单位下报出两个数。
+                       "spectral_acceleration_m_s2": round(
+                           float(a) * physical.unit_system.length_to_m, 6),
                        "base_shear_kN": round(float(v) / 1e3, 4)}
                       for k, (t, a, v) in enumerate(zip(
                           result.periods, result.spectral_acceleration,

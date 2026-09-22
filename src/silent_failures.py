@@ -339,6 +339,22 @@ def check_near_singular_stiffness(model: Frame, sol: Solution) -> dict[str, Any]
     K = full[free][:, free]
     n = K.shape[0]
 
+    # **先做对称 Jacobi 缩放，再算条件数。**
+    #
+    # 原始 K 的条件数跟着单位制走：同一个结构存成 N-mm-MPa，长度的数值大 1000
+    # 倍，转动与平动那两批对角元的量级差得更开，条件数能大好几个数量级。而
+    # 这里的阈值（1e8 / 1e12）是按 SI 定的——于是一个完全正常的模型换到毫米制
+    # 就被报成"接近奇异"。实测同一榀框架：SI 下 6.5e3，毫米制下 7.1e8，
+    # 刚好越过警告线。
+    #
+    # D = diag(1/√Kᵢᵢ) 之后条件数量的才是**真正的**病态（机构、零刚度杆、
+    # 刚度跨数量级），与单位制无关。求解器早就是这么做的（frame3d.solve 里
+    # 的 K_scaled），这里只是跟上同一套。
+    diagonal = np.asarray(K.diagonal(), dtype=float)
+    safe = np.where(np.abs(diagonal) > 0, np.abs(diagonal), 1.0)
+    scale = sp.diags(1.0 / np.sqrt(safe))
+    K = (scale @ K @ scale).tocsr()
+
     # 小矩阵转稠密算精确条件数；大矩阵用范数估计
     if n <= 2000:
         K_dense = K.toarray()
@@ -472,6 +488,14 @@ def check_load_magnitude_anomaly(model: Frame, sol: Solution) -> dict[str, Any]:
     # 取典型材料的弹性模量
     typical_E = max(m.E for m in model.materials.values())
     dim = _structure_dimension(model)
+    areas = sorted(s.A for s in model.sections.values() if s.A > 0)
+    if not areas:
+        return _finding("load_magnitude_anomaly", "载荷量级异常",
+                        SEVERITY_INFO, STATUS_PASS,
+                        "无有效截面面积，跳过载荷量级检查")
+    typical_area = float(areas[len(areas) // 2])
+    stress_scale = model.unit_system.stress_scale
+    stress_unit = model.unit_system.stress_unit
 
     anomalies = []
     for name in sol.all_results():
@@ -479,21 +503,31 @@ def check_load_magnitude_anomaly(model: Frame, sol: Solution) -> dict[str, Any]:
         applied_mag = float(np.linalg.norm(applied))
         if applied_mag < 1e-10:
             continue
-        # 典型应力量级 = 载荷 / 典型截面积（假设 0.01 m²）
-        typical_area = 0.01  # m²，约 10cm x 10cm
+        # 典型应力量级 = 载荷 / 典型截面积。
+        #
+        # **用模型里真实的截面积，不要写死一个数。** 原来这里是
+        # `typical_area = 0.01  # m²`——毫米制下截面积是几千 mm²，拿 0.01 去
+        # 除，估算应力凭空大 10⁶ 倍，于是一个**专门用来抓单位错误**的检查
+        # 自己被单位骗了：完全正常的模型换到毫米制就报"载荷过大，可能把 kN
+        # 当成了 N"。模型里本来就有面积，没有理由去猜。
+        #
+        # 取中位数而不是最小值：一根细缀条不该把整个模型判成异常。
         stress_estimate = applied_mag / typical_area
         # 如果估算应力超过材料屈服强度的 100 倍（钢约 235MPa，取 10GPa 为阈值）
         # 或者应力极小（< 1Pa），都可能是单位问题
         if stress_estimate > typical_E * 0.1:  # 应力 > 0.1 E，物理上不可能
             anomalies.append({
                 "case": name, "applied_load_N": applied_mag,
-                "estimated_stress_Pa": stress_estimate,
+                "estimated_stress": round(stress_estimate * stress_scale, 3),
+                "stress_unit": stress_unit,
                 "issue": "载荷过大，估算应力超过 0.1E，可能单位是 kN 但当作 N 使用",
             })
-        elif stress_estimate < 1e-3:  # 应力 < 0.001 Pa
+        # "太小"的门槛也要跟着单位走：0.001 Pa 与 0.001 MPa 差 10⁶。
+        elif stress_estimate * stress_scale < 1e-9:
             anomalies.append({
                 "case": name, "applied_load_N": applied_mag,
-                "estimated_stress_Pa": stress_estimate,
+                "estimated_stress": round(stress_estimate * stress_scale, 6),
+                "stress_unit": stress_unit,
                 "issue": "载荷过小，可能单位是 N 但实际应该是 kN",
             })
 
@@ -505,7 +539,11 @@ def check_load_magnitude_anomaly(model: Frame, sol: Solution) -> dict[str, Any]:
             STATUS_WARN,
             f"{len(anomalies)} 个工况载荷量级与材料不匹配："
             + "; ".join(f"{a['case']}: {a['issue']}" for a in anomalies),
-            {"anomalies": anomalies, "typical_E_Pa": typical_E, "structure_dimension_m": dim},
+            {"anomalies": anomalies,
+             "typical_E": round(typical_E * stress_scale, 3),
+             "stress_unit": stress_unit,
+             "typical_area": typical_area,
+             "structure_dimension_m": dim},
             "检查载荷单位是否与材料单位一致。如果材料 E 用 Pa（N/m²），"
             "载荷应该用 N、尺寸用 m；如果载荷用 kN，材料 E 应该用 kPa（kN/m²）。",
         )

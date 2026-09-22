@@ -466,10 +466,15 @@ def _euler(frame, member, section, material, length, rel_i, rel_j,
     elif valid is False:
         status = BUCKLING_NA
         if code is not None:
+            # 应力换算走单位制，**不要硬编码 /1e6**：那只对 SI 成立。
+            # 毫米制下模型里的应力本来就是 MPa，再除一次会把 150 MPa
+            # 报成 0.0 MPa——数看着"很安全"，而结论恰恰相反。
+            units = frame.unit_system
             warnings.append(
                 f"欧拉公式在这根杆上不适用，但规范法给出了结论："
                 f"φ={code['phi']:.4f}（{curve} 类截面），"
-                f"N/(φA)={code['sigma'] / 1e6:.1f} MPa，"
+                f"N/(φA)={code['sigma'] * units.stress_scale:.1f}"
+                f" {units.stress_unit}，"
                 f"应力比 {code['ratio']:.3f} —— 以这一条为准。")
         # 措辞里**不放本杆的 λ 和 N/Pcr**：那两个数每根都不同，会让汇总层
         # 攒出十几条只差小数点的"同一句话"。逐杆的数在表里，警告只说结论。
