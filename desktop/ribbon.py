@@ -520,7 +520,9 @@ def build(window) -> Ribbon:
     # ========== 分析 ==========
     p = r.page("分析")
     g = p.group("求解")
-    g.add_large(a["solve"]); g.add_small(a["analysis_step"])
+    g.add_large(a["solve"]); g.add_small(a["solve_options"])
+    g = p.group("分析步")
+    g.add_large(a["step_manager"]); g.add_small(a["amplitude"])
     g = p.group("特征值")
     g.add_small(a["buckling"])
     g = p.group("局部实体")

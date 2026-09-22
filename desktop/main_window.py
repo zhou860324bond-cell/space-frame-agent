@@ -1970,8 +1970,26 @@ class MainWindow(QMainWindow):
         self._after_manual_edit(
             f"杆件 {member_id} 的 {end_text} 已创建{type_text}；橙色球为杆端释放")
 
+    def open_step_manager(self) -> None:
+        """分析步管理器。内核早就支持跨步传播与失活，界面一直够不到。"""
+        from .step_dialog import StepManagerDialog
+
+        dialog = StepManagerDialog(self.session, self)
+        dialog.exec()
+        self.refresh()
+
+    def open_amplitude_manager(self) -> None:
+        """幅值曲线管理器。"""
+        from .step_dialog import AmplitudeDialog
+
+        AmplitudeDialog(self.session, self).exec()
+
     def edit_analysis_step(self) -> None:
-        """Abaqus Step 风格：先选分析过程，再提交作业。"""
+        """选求解过程和增量数。
+
+        **这不是分析步管理器**——它只设置一次普通求解用哪种过程。真正的
+        分析步（可增删、跨步传播、失活）在 open_step_manager 里。
+        """
         from PySide6.QtWidgets import QInputDialog
         labels = ["线性静力", "P-Delta 二阶弹性", "双线性轴向材料非线性"]
         current = {"linear": 0, "pdelta": 1, "material": 2}.get(

@@ -123,8 +123,19 @@ COMMANDS: tuple[Command, ...] = (
             "在中文与英文界面之间切换（功能区、菜单、状态栏；对话框仍为中文）",
             "toggle_language", "", True),
 
-    Command("analysis_step", "分析步", "timeline",
-            "选择线性静力、P-Delta 或双线性轴向材料非线性及增量参数", "edit_analysis_step"),
+    # 这个按钮从前叫「分析步」，但它做的是选求解过程和增量数——跟真正的
+    # Step 对象没有关系。名字改诚实，真正的分析步管理器另立一个。
+    Command("solve_options", "求解设置", "timeline",
+            "选择线性静力、P-Delta 或双线性轴向材料非线性及增量参数",
+            "edit_analysis_step"),
+    Command("step_manager", "分析步", "timeline",
+            "分析步管理器：新建、删除、按顺序求解。荷载与边界条件在步之间传播，"
+            "上一步有而这一步没提的会自动沿用",
+            "open_step_manager"),
+    Command("amplitude", "幅值曲线", "timeline",
+            "幅值曲线管理器：荷载在分析步内怎么随伪时间变化。"
+            "重力配 STEP、侧力配 RAMP 就是推覆加载",
+            "open_amplitude_manager"),
     Command("solve", "求解", "solve", "按当前分析步求解，并执行收敛与平衡检查",
             "solve", "F5"),
     Command("modal", "模态", "modal", "自振频率与振型（需要材料密度）",

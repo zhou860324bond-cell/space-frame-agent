@@ -98,15 +98,41 @@ class FormRow(QHBoxLayout):
         self.addWidget(widget, 1)
 
 
+def emphasis(text: str) -> str:
+    """把 `**重点**` 变成真正的加粗，顺带堵住 Markdown 星号漏进界面。
+
+    这个项目的中文说明一律是 Markdown 风格写的——docstring、工具描述、
+    返回值里的 note 全是 `**这样**`。同一句话复制到界面上时，星号会**原样
+    显示**：用户看到的是「漏写不等于撤销」外面挂着四个星号。不会崩、不会
+    报错，只是难看且显得业余，所以没人会专门去测它。
+
+    `result_rows.py` 早就为此写过一行 `replace("**", "")`——那是把重点抹掉。
+    这里改成真的加粗：作者想强调的那一处，界面上也确实被强调。
+    """
+    from html import escape
+
+    parts = escape(str(text)).split("**")
+    # 偶数段是正文、奇数段是被星号夹住的内容；星号数量不成对时原样退回，
+    # 猜一个"大概是想加粗哪里"只会得到更奇怪的结果。
+    if len(parts) % 2 == 0:
+        return escape(str(text))
+    return "".join(p if i % 2 == 0 else f"<b>{p}</b>"
+                   for i, p in enumerate(parts))
+
+
 class HintLabel(QLabel):
-    """提示文字：小号、灰色、无背景。"""
+    """提示文字：小号、灰色、无背景。`**重点**` 会被渲染成加粗。"""
 
     def __init__(self, text: str, parent=None):
-        super().__init__(text, parent)
+        super().__init__(emphasis(text), parent)
+        self.setTextFormat(Qt.TextFormat.RichText)
         self.setStyleSheet(
             f"color: {theme.INK_DIM}; font-size: 8pt; "
             f"padding: 2px 4px; background: transparent; border: none;")
         self.setWordWrap(True)
+
+    def setText(self, text: str) -> None:      # noqa: N802 — Qt 的命名
+        super().setText(emphasis(text))
 
 
 def style_dialog(dialog, min_width: int = 420, min_height: int = 300):

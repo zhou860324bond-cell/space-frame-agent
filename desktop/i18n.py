@@ -56,6 +56,7 @@ ZH_EN: dict[str, str] = {
     "选择杆件": "Member", "建节点": "+Node", "建杆件": "+Member",
     "删除选中": "Delete", "编号标注": "Labels", "荷载数值": "Load Values",
     "中 / EN": "EN / 中", "分析步": "Step", "模态": "Modal",
+    "求解设置": "Procedure", "幅值曲线": "Amplitude",
     "屈曲": "Buckling", "模型检查": "Check", "分析网格": "Mesh",
     "节点实体": "Joint", "模型": "Model", "变形": "Deformed",
     "梁内力云图": "Contour", "内力分量": "Component",
