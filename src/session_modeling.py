@@ -1188,7 +1188,12 @@ class ModelingMixin:
                 "available": sorted({str(s.get("name")) for s in supports})})
         candidate = deepcopy(self.model)
         candidate["supports"] = keep
-        errors = validate_payload(candidate)
+        # **只拦这次删除引入的错误。** 拿整个模型去校验的话，"还没定义材料"
+        # 这种本来就存在的问题会把删除挡住——而几何刚建好、属性还没指派，
+        # 正是最可能想删掉一条支座重来的时候。实测 generate_frame 之后
+        # 一条也删不掉，报的却是 "materials is a required property"。
+        before = set(validate_payload(self.model))
+        errors = [e for e in validate_payload(candidate) if e not in before]
         if errors:
             return ToolResult(False, {
                 "errors": errors,

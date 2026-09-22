@@ -296,3 +296,65 @@ def test_no_dialog_leaks_markdown(app, cls, size):
     leaked = [label.text()[:50] for label in dialog.findChildren(QLabel)
               if "**" in label.text()]
     assert not leaked, f"{cls.__name__} 把 Markdown 星号漏给用户了：{leaked}"
+
+
+# --- 生成器建的支座也要管得了 ---------------------------------------------
+
+def generated_session():
+    """参数化生成的模型——**最常用的一条路径**，而它以前是管不了的。"""
+    from agent import Session
+
+    s = Session()
+    s.generate_frame(spans=[6.0, 6.0], storeys=[3.6], bays=[6.0])
+    return s
+
+
+def test_supports_made_by_the_generator_get_names(app):
+    """生成器不给支座起名字，而边界条件是按名字管理的。
+
+    没名字的话管理器里显示成"(未命名-节点1)"这种合成标签，照着它删会报
+    "没有名为 '(未命名-节点1)' 的边界条件"——**列得出来，一个也删不掉**。
+    """
+    session = generated_session()
+    names = [item.get("name") for item in session.model["supports"]]
+    assert all(names), f"生成器建的支座没有名字：{names}"
+
+
+def test_the_manager_can_delete_a_support_the_generator_made(app, quiet):
+    """整条链路：生成 → 管理器列出 → 选中 → 删掉。"""
+    session = generated_session()
+    # 再加一组不同的约束，否则删掉唯一一组会让结构变成机构（那该被拦）
+    top = [n["id"] for n in session.model["nodes"] if n["z"] > 0][:2]
+    session.set_supports(top, fix=[0, 1, 0, 0, 0, 0])
+
+    dialog = BCManagerDialog(session)
+    before = dialog.table.rowCount()
+    assert before >= 2
+    dialog.table.selectRow(before - 1)
+    dialog._remove()
+    assert not quiet["warn"], quiet["warn"]
+    assert dialog.table.rowCount() == before - 1
+
+
+def test_deleting_is_not_blocked_by_unrelated_model_problems(app):
+    """几何刚建好、材料还没指派时也要删得动。
+
+    以前这里拿**整个模型**去校验，于是"还没定义材料"这种本来就存在的问题
+    把删除挡住了，报的却是 "materials is a required property"——而几何刚
+    建好正是最可能想删掉一条支座重来的时候。
+    """
+    session = generated_session()
+    assert not session.model.get("materials"), "这个模型本来就该还没有材料"
+    top = [n["id"] for n in session.model["nodes"] if n["z"] > 0][:2]
+    session.set_supports(top, fix=[0, 1, 0, 0, 0, 0])
+
+    result = session.delete_boundary_condition("BC-2")
+    assert result.ok, result.payload
+
+
+def test_deleting_the_last_support_is_still_refused(app):
+    """删光了就是机构，这条必须还拦得住——放宽校验不能把它一起放过去。"""
+    session = generated_session()
+    result = session.delete_boundary_condition("BC-1")
+    assert not result.ok
+    assert len(session.model["supports"]) > 0
