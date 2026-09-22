@@ -516,6 +516,9 @@ def build(window) -> Ribbon:
     g.add_large(a["create_load"]); g.add_large(a["gravity"])
     g = p.group("工况")
     g.add_small(a["load"]); g.add_small(a["combo"])
+    g = p.group("规范与导荷")
+    g.add_large(a["code_combo"]); g.add_small(a["live_pattern"])
+    g.add_small(a["area_load"]); g.add_small(a["bc_manager"])
 
     # ========== 分析 ==========
     p = r.page("分析")

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
-                               QVBoxLayout, QWidget)
+                               QSizePolicy, QVBoxLayout, QWidget)
 
 from . import theme
 
@@ -121,7 +121,16 @@ def emphasis(text: str) -> str:
 
 
 class HintLabel(QLabel):
-    """提示文字：小号、灰色、无背景。`**重点**` 会被渲染成加粗。"""
+    """提示文字：小号、灰色、无背景。`**重点**` 会被渲染成加粗。
+
+    **自动换行的 QLabel 默认会被压扁。** 它的 sizeHint 是按"排成一行"算的，
+    布局照那个高度分配空间，于是折行之后最后一两行被切掉——切掉的往往正是
+    那句"选错不会报错"。实测规范组合少 9px、面荷载少 26px。
+
+    所以这里把 heightForWidth 接进尺寸策略，并在每次改变宽度后据实抬高
+    minimumHeight。提示文字是这个项目交付能力边界的主要位置，被切掉等于
+    没写。
+    """
 
     def __init__(self, text: str, parent=None):
         super().__init__(emphasis(text), parent)
@@ -130,9 +139,23 @@ class HintLabel(QLabel):
             f"color: {theme.INK_DIM}; font-size: 8pt; "
             f"padding: 2px 4px; background: transparent; border: none;")
         self.setWordWrap(True)
+        policy = self.sizePolicy()
+        policy.setHeightForWidth(True)
+        policy.setVerticalPolicy(QSizePolicy.Policy.MinimumExpanding)
+        self.setSizePolicy(policy)
 
     def setText(self, text: str) -> None:      # noqa: N802 — Qt 的命名
         super().setText(emphasis(text))
+        self._fit()
+
+    def resizeEvent(self, event):              # noqa: N802 — Qt 的命名
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self) -> None:
+        width = self.width()
+        if width > 0:
+            self.setMinimumHeight(self.heightForWidth(width))
 
 
 def style_dialog(dialog, min_width: int = 420, min_height: int = 300):

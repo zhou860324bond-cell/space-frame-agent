@@ -132,6 +132,19 @@ COMMANDS: tuple[Command, ...] = (
             "分析步管理器：新建、删除、按顺序求解。荷载与边界条件在步之间传播，"
             "上一步有而这一步没提的会自动沿用",
             "open_step_manager"),
+    Command("code_combo", "规范组合", "combo",
+            "按 GB 50068 / GB 50009 生成荷载组合，每个可变荷载轮流当控制荷载。"
+            "漏一个组合完全看不出来",
+            "open_code_combinations"),
+    Command("live_pattern", "活载布置", "load",
+            "活载最不利布置：只算满布会把跨中弯矩算小 43%",
+            "open_live_patterns"),
+    Command("area_load", "面荷载", "load",
+            "把 kN/m² 按单向板或双向板导成梁上的线荷载",
+            "open_area_load"),
+    Command("bc_manager", "边界条件管理器", "support",
+            "整张表列出全部边界条件并可删除。改错了不报错，摆出来才核对得了",
+            "open_bc_manager"),
     Command("amplitude", "幅值曲线", "timeline",
             "幅值曲线管理器：荷载在分析步内怎么随伪时间变化。"
             "重力配 STEP、侧力配 RAMP 就是推覆加载",

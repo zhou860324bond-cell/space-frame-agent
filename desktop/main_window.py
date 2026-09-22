@@ -1970,6 +1970,34 @@ class MainWindow(QMainWindow):
         self._after_manual_edit(
             f"杆件 {member_id} 的 {end_text} 已创建{type_text}；橙色球为杆端释放")
 
+    def open_code_combinations(self) -> None:
+        """按规范生成荷载组合。"""
+        from .load_code_dialog import CombinationDialog
+
+        CombinationDialog(self.session, self).exec()
+        self.refresh()
+
+    def open_live_patterns(self) -> None:
+        """活载最不利布置。"""
+        from .load_code_dialog import LivePatternDialog
+
+        LivePatternDialog(self.session, self).exec()
+        self.refresh()
+
+    def open_area_load(self) -> None:
+        """面荷载导成线荷载。"""
+        from .load_code_dialog import AreaLoadDialog
+
+        AreaLoadDialog(self.session, self).exec()
+        self.refresh()
+
+    def open_bc_manager(self) -> None:
+        """边界条件管理器。"""
+        from .load_code_dialog import BCManagerDialog
+
+        BCManagerDialog(self.session, self).exec()
+        self.refresh()
+
     def open_step_manager(self) -> None:
         """分析步管理器。内核早就支持跨步传播与失活，界面一直够不到。"""
         from .step_dialog import StepManagerDialog

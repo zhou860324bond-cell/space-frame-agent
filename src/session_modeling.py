@@ -62,6 +62,22 @@ BC_TYPE_NOTES = {
 }
 
 
+def _next_bc_name(existing: list[dict]) -> str:
+    """下一个没被占用的 BC-n。
+
+    **默认名以前是常量 "BC-1"。** 于是不指定名字连建四个支座，四个都叫
+    BC-1——而 delete_boundary_condition 是按名字匹配的，删「一条」会把四条
+    一起删掉。删完模型没有支座了，那一步倒是会被校验挡住；但只要还剩别的
+    支座，它就悄悄删多了，而"少了几个约束"从结果里看不出来，只会表现为
+    位移偏大。Abaqus 的 BC 名是自动递增的，这里照做。
+    """
+    used = {str(item.get("name") or "") for item in existing}
+    index = 1
+    while f"BC-{index}" in used:
+        index += 1
+    return f"BC-{index}"
+
+
 class ModelingMixin:
     """建模：几何生成与图元增删改。见模块 docstring。"""
     # --- 工具实现 ---
@@ -1067,7 +1083,7 @@ class ModelingMixin:
         return ToolResult(True, payload)
 
     def set_supports(self, node_ids, fix: list[int] | None = None,
-                     name: str = "BC-1",
+                     name: str | None = None,
                      spring: list[float] | None = None,
                      bc_type: str | None = None) -> ToolResult:
         """给节点或节点集合统一施加位移边界；边界属于 Initial 阶段。
@@ -1138,8 +1154,8 @@ class ModelingMixin:
         selected = set(ids)
         supports = [support for support in candidate.get("supports") or []
                     if int(support["node"]) not in selected]
+        bc_name = str(name).strip() if name else _next_bc_name(supports)
         if any(fix) or stiffness:
-            bc_name = str(name or "BC-1").strip() or "BC-1"
             supports.extend({"name": bc_name, "node": node,
                              "fix": [int(v) for v in fix],
                              **({"spring": list(stiffness)} if stiffness else {})}
@@ -1152,7 +1168,7 @@ class ModelingMixin:
         self.model = candidate
         self._invalidate()
         return ToolResult(True, {
-            "nodes": ids, "fix": list(fix), "name": str(name or "BC-1"),
+            "nodes": ids, "fix": list(fix), "name": bc_name,
             "step": "Initial", "analysis_ready": not errors,
             "warnings": errors, "summary": describe(self.model),
         })
