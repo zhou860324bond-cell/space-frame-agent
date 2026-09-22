@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from workflow import WorkflowPhase, inspect_workflow
+from . import glyphs
 
 
 def draft_target(status) -> tuple[str, str, str]:
@@ -124,7 +125,7 @@ class WorkflowBar(QWidget):
             states[active_stage] = "active"
             if active_stage == "define":
                 states["model"] = "done"
-                suffixes["model"] = "  ✓"
+                suffixes["model"] = f"  {glyphs.TICK}"
             states["validate"] = "blocked"
             suffixes["validate"] = f"  !{len(status.validation_errors)}"
             self._next_stage = active_stage
@@ -132,13 +133,13 @@ class WorkflowBar(QWidget):
             action = "修正模型"
         elif phase is WorkflowPhase.READY:
             for stage in ("model", "define", "validate"):
-                states[stage], suffixes[stage] = "done", "  ✓"
+                states[stage], suffixes[stage] = "done", f"  {glyphs.TICK}"
             states["solve"] = "active"
             self._next_stage = "solve"
             message, action = "模型已通过确定性校验，可以提交分析", "开始求解"
         else:
             for stage, _ in self.STAGES:
-                states[stage], suffixes[stage] = "done", "  ✓"
+                states[stage], suffixes[stage] = "done", f"  {glyphs.TICK}"
             states["results"] = "active"
             self._next_stage = "results"
             message, action = "求解完成，可查看变形与内力，并做强度、对称性校核，最后出报告", "查看结果"

@@ -159,8 +159,21 @@ class HintLabel(QLabel):
 
 
 def style_dialog(dialog, min_width: int = 420, min_height: int = 300):
-    """给对话框应用统一、紧凑的专业样式。"""
-    dialog.setMinimumSize(min_width, min_height)
+    """给对话框应用统一、紧凑的专业样式，并定下**初始**大小。
+
+    ``min_height`` 是希望打开时有多高，**不是硬下限**。
+
+    原来这里是 ``setMinimumSize(min_width, min_height)``，而 Qt 的
+    setMinimumSize 会**盖掉布局算出来的最小高度**：内容放不下时不会撑开窗口，
+    而是把所有控件按比例压扁。边界条件对话框实测需要 694px、这里钉死 520px，
+    结果六行自由度被压成 8px 高（文字本身要 17px），勾选框和标签直接重叠。
+    一次压扁 26 个控件，而且不报任何错。
+
+    所以高度交给布局：只锁宽度，高度用 resize 给个初始值，Qt 在显示时会
+    自动撑到 minimumSizeHint。窗口仍然可以被用户拉大，只是拉不到放不下。
+    """
+    dialog.setMinimumWidth(min_width)
+    dialog.resize(min_width, min_height)
     dialog.setStyleSheet(f"""
         QDialog {{
             background: {theme.PANEL};

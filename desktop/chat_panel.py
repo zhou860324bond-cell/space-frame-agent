@@ -9,10 +9,10 @@
 ```
 你：24 米跨门式刚架，柱脚铰接，屋面恒载 8 kN/m
 ────────────────────────────────────────
-    ⚙ define_materials_and_sections
-    ⚙ generate_portal_frame   spans=[24.0] eave_height=7.5
-    ⚙ set_load_cases
-    ⚙ solve_model
+    ◆ define_materials_and_sections
+    ◆ generate_portal_frame   spans=[24.0] eave_height=7.5
+    ◆ set_load_cases
+    ◆ solve_model
 Agent：已建好并求解……最大竖向位移 32.7 mm
 ```
 
@@ -38,6 +38,7 @@ from . import theme
 # 出来的数还是求解器算的。没有密钥、没有网的场合（答辩现场很常见）
 # 靠它演示完整链路
 from .demo_script import DEMO_PROMPT, demo_provider
+from . import glyphs
 
 
 class PromptEdit(QPlainTextEdit):
@@ -346,8 +347,8 @@ class ChatPanel(QWidget):
         from model_router import ModelRouter
         if isinstance(provider, ModelRouter) and provider.call_history:
             last = provider.call_history[-1]
-            fallback = " ⚠️降级" if last.was_fallback else ""
-            status = "✅" if last.success else f"❌{last.error[:30] if last.error else ''}"
+            fallback = f" {glyphs.WARN}降级" if last.was_fallback else ""
+            status = (glyphs.TICK if last.success else f"{glyphs.CROSS}{last.error[:30] if last.error else ''}")
             parts.append(f"最近模型：{last.model} {status}{fallback}")
         self.lbl_call_status.setText("　|　".join(parts))
 
@@ -417,7 +418,7 @@ class ChatPanel(QWidget):
         """
         brief = _brief_args(args)
         colour = theme.INK_MUTED if ok else theme.WARN
-        mark = "⚙" if ok else "✕"
+        mark = glyphs.BUSY if ok else glyphs.CROSS
         self._html(f'<p style="margin:1px 0 1px 18px;color:{colour};'
                    f'font-family:Consolas,monospace;font-size:11px;">'
                    f'{mark} {_esc(name)}　{_esc(brief)}</p>')

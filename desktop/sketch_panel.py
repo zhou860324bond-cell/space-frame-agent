@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
 from . import theme
 from .image_preprocess_widget import ImagePreprocessWidget
 from .issue_panel import IssuePanel, confidence_band
+from . import glyphs
 
 
 def _provider_with_credentials(default: str = "openai") -> str:
@@ -92,7 +93,7 @@ class SketchPanel(QWidget):
         self._set_stage(1, "等待选择图像并确认工作平面")
 
         # 不常改的提供商、模型和密钥默认收起，主流程只留图片与确认。
-        self.btn_settings = QPushButton("识别设置 ▸")
+        self.btn_settings = QPushButton(f"识别设置 {glyphs.DISCLOSE_CLOSED}")
         self.btn_settings.setCheckable(True)
         layout.addWidget(self.btn_settings)
         self.settings_widget = QWidget(self)
@@ -139,7 +140,8 @@ class SketchPanel(QWidget):
         self.btn_settings.toggled.connect(self.settings_widget.setVisible)
         self.btn_settings.toggled.connect(
             lambda checked: self.btn_settings.setText(
-                "识别设置 ▾" if checked else "识别设置 ▸"))
+                f"识别设置 {glyphs.DISCLOSE_OPEN}" if checked
+                else f"识别设置 {glyphs.DISCLOSE_CLOSED}"))
         layout.addWidget(self.settings_widget)
 
         # 图片选择和预览
@@ -212,7 +214,8 @@ class SketchPanel(QWidget):
         self.edit_widget.setVisible(False)
         layout.addWidget(self.edit_widget)
 
-        self.btn_boundaries = QPushButton("支座与节点荷载 ▸")
+        self.btn_boundaries = QPushButton(
+            f"支座与节点荷载 {glyphs.DISCLOSE_CLOSED}")
         self.btn_boundaries.setCheckable(True)
         self.btn_boundaries.setVisible(False)
         layout.addWidget(self.btn_boundaries)
@@ -282,7 +285,8 @@ class SketchPanel(QWidget):
         self.btn_boundaries.toggled.connect(self.boundary_widget.setVisible)
         self.btn_boundaries.toggled.connect(
             lambda checked: self.btn_boundaries.setText(
-                "支座与节点荷载 ▾" if checked else "支座与节点荷载 ▸"))
+                f"支座与节点荷载 {glyphs.DISCLOSE_OPEN}" if checked
+                else f"支座与节点荷载 {glyphs.DISCLOSE_CLOSED}"))
         layout.addWidget(self.boundary_widget)
 
         # 状态标签
@@ -296,13 +300,15 @@ class SketchPanel(QWidget):
         self.txt_result.setReadOnly(True)
         self.txt_result.setPlaceholderText("识别结果会显示在这里…")
         self.txt_result.setMaximumHeight(120)
-        self.btn_details = QPushButton("识别详情与 JSON ▸")
+        self.btn_details = QPushButton(
+            f"识别详情与 JSON {glyphs.DISCLOSE_CLOSED}")
         self.btn_details.setCheckable(True)
         self.btn_details.setVisible(False)
         self.btn_details.toggled.connect(self.txt_result.setVisible)
         self.btn_details.toggled.connect(
             lambda checked: self.btn_details.setText(
-                "识别详情与 JSON ▾" if checked else "识别详情与 JSON ▸"))
+                f"识别详情与 JSON {glyphs.DISCLOSE_OPEN}" if checked
+                else f"识别详情与 JSON {glyphs.DISCLOSE_CLOSED}"))
         layout.addWidget(self.btn_details)
         self.txt_result.setVisible(False)
         layout.addWidget(self.txt_result)
@@ -745,7 +751,7 @@ class SketchPanel(QWidget):
             scale = ("尺度已确认" if draft.scale_status == "confirmed"
                      else "尺度待标定")
             self.lbl_status.setText(
-                f"✅ 识别成功（{result.attempts} 次尝试）："
+                f"{glyphs.TICK} 识别成功（{result.attempts} 次尝试）："
                 f"{n_nodes} 节点 · {n_members} 杆件 · {n_supports} 支座 · {scale} · "
                 f"{len(draft.warnings)} 个警告")
             self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
@@ -763,7 +769,8 @@ class SketchPanel(QWidget):
             self._set_stage(3, "二维识别已完成；请校核覆盖、尺度和结构拓扑")
             self._update_load_enabled()
         else:
-            self.lbl_status.setText(f"❌ 识别失败（{result.attempts} 次尝试）")
+            self.lbl_status.setText(
+                f"{glyphs.CROSS} 识别失败（{result.attempts} 次尝试）")
             self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
             self._set_stage(2, "识别未完成；当前计算模型没有改变")
             dump = self._dump_failure(result)
@@ -832,7 +839,7 @@ class SketchPanel(QWidget):
         self._stop_elapsed_ticker()
         self.btn_recognize.setEnabled(True)
         self.btn_pick.setEnabled(True)
-        self.lbl_status.setText(f"❌ 调用失败：{exc_type}: {msg}")
+        self.lbl_status.setText(f"{glyphs.CROSS} 调用失败：{exc_type}: {msg}")
         self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
         self._set_stage(2, "识别未完成；当前计算模型没有改变")
 
@@ -1538,7 +1545,8 @@ class SketchPanel(QWidget):
         self._reset_confirmation()
         self._refresh_result_text()
         self.lbl_status.setText(
-            f"✅ 尺度已确认：{self._result_draft.scale_evidence}。请重新核对覆盖标注。")
+            f"{glyphs.TICK} 尺度已确认：{self._result_draft.scale_evidence}。"
+            "请重新核对覆盖标注。")
         self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
         self._update_load_enabled()
 

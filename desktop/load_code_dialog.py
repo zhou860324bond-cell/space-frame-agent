@@ -255,12 +255,14 @@ class AreaLoadDialog(QDialog):
         self.q.setValue(4.0)
         self.q.setSuffix("  kN/m²")
         form.addLayout(FormRow("面荷载", self.q))
-        self.width = QDoubleSpinBox()
-        self.width.setRange(0.001, 1e6)
-        self.width.setDecimals(3)
-        self.width.setValue(3.0)
-        self.width.setSuffix("  m")
-        self.width_row = FormRow("受荷宽度", self.width)
+        self.span = QDoubleSpinBox()
+        self.span.setRange(0.001, 1e6)
+        self.span.setDecimals(3)
+        self.span.setValue(3.0)
+        self.span.setSuffix("  m")
+        # **不要叫 self.width。** 那会覆盖 QWidget.width()，
+        # 之后任何 dialog.width() 都变成"调用一个 spinbox"。
+        self.width_row = FormRow("受荷宽度", self.span)
         form.addLayout(self.width_row)
         self.path = QComboBox()
         for label, _ in LOAD_PATHS:
@@ -295,7 +297,7 @@ class AreaLoadDialog(QDialog):
             QMessageBox.information(self, "还没选梁", "先填要导荷的梁。")
             return
         result = self.session.apply_area_load(
-            members, self.q.value() * 1e3, self.width.value(),
+            members, self.q.value() * 1e3, self.span.value(),
             load_path=LOAD_PATHS[self.path.currentIndex()][1],
             case_name=self.case.currentText())
         if not result.ok:

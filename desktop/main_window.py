@@ -41,6 +41,7 @@ from . import result_rows                           # noqa: E402
 from .viewport import Viewport                     # noqa: E402
 from .worker import Runner                         # noqa: E402
 from .workflow_bar import WorkflowBar, draft_target  # noqa: E402
+from . import glyphs
 
 def _takes_command(handler) -> bool:
     """处理函数要不要收那条 Command。
@@ -580,7 +581,7 @@ class MainWindow(QMainWindow):
         self.main_menu = root
         self.menu_button = QToolButton(self.ribbon)
         self.menu_button.setObjectName("mainMenuButton")
-        self.menu_button.setText("☰  菜单")
+        self.menu_button.setText(f"{glyphs.MENU}  菜单")
         self.menu_button.setToolTip("文件、建模、分析、结果与视图菜单")
         self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_button.setMenu(root)
@@ -1302,7 +1303,7 @@ class MainWindow(QMainWindow):
         want = "en" if self.actions_by_name["lang"].isChecked() else "zh"
         if not i18n.set_language(want):
             return
-        self.menu_button.setText(i18n.tr("☰  菜单"))
+        self.menu_button.setText(i18n.tr(f"{glyphs.MENU}  菜单"))
         i18n.retranslate(
             (self.ribbon, self.quickbar, self.workflow_bar, self.results,
              self.chat_dock, self.results_dock, self.diagram_dock,

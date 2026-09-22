@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QButtonGroup, QComboBox, QDialog,
                                QSpinBox, QVBoxLayout, QWidget)
 
 from . import dialog_styles, theme
+from . import glyphs
 
 
 class SketchCanvas(QWidget):
@@ -406,10 +407,10 @@ class SketchDialog(QDialog):
         tool_group = QGroupBox("草图工具")
         tool_layout = QVBoxLayout(tool_group)
         self.btn_chain = QPushButton("╱ 连续画线")
-        self.btn_rect = QPushButton("▭ 画矩形")
+        self.btn_rect = QPushButton(f"{glyphs.RECT} 画矩形")
         self.btn_point = QPushButton("● 画点")
-        self.btn_delete = QPushButton("✕ 删除")
-        self.btn_undo = QPushButton("↶ 撤销")
+        self.btn_delete = QPushButton(f"{glyphs.CROSS} 删除")
+        self.btn_undo = QPushButton("撤销")
         self.btn_clear = QPushButton("清空")
         for b in (self.btn_chain, self.btn_rect, self.btn_point, self.btn_delete,
                   self.btn_undo, self.btn_clear):

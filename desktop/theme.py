@@ -603,23 +603,10 @@ QCheckBox, QRadioButton {{
     color: {INK};
     spacing: 6px;
 }}
-QCheckBox::indicator, QRadioButton::indicator {{
-    width: 15px;
-    height: 15px;
-    border: 1px solid {BORDER_LIGHT};
-    border-radius: {RADIUS_SM};
-    background: {PANEL};
-}}
-QRadioButton::indicator {{
-    border-radius: 8px;
-}}
-QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
-    border-color: {ACCENT};
-}}
-QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
-    background: {ACCENT_DIM};
-    border-color: {ACCENT};
-}}
+/* 勾选框与单选钮的指示器**有意不在这里写样式**。
+   样式表一旦给 ::indicator 加规则，Qt 就改走 QStyleSheetStyle 的绘制
+   通路，绕过 desktop/qt_style.py 的自绘——而样式表画不出对勾，也画
+   不出圆：选中态会退回一个纯色方块，单选钮和勾选框长得一模一样。 */
 """
 
 

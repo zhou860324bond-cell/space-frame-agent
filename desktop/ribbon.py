@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QGridLayout,
                                QVBoxLayout, QWidget)
 
 from . import icons
+from . import glyphs
 
 LARGE = QSize(30, 30)
 SMALL = QSize(20, 20)
@@ -169,7 +170,8 @@ class Ribbon(QTabWidget):
         return self._collapsed
 
     def _sync_toggle(self) -> None:
-        self._toggle.setText("⌄" if self._collapsed else "⌃")
+        self._toggle.setText(glyphs.CHEVRON_DOWN if self._collapsed
+                             else glyphs.CHEVRON_UP)
         self._toggle.setToolTip("展开功能区（也可双击页签）" if self._collapsed
                                 else "收起功能区，把高度让给视口（也可双击页签）")
 

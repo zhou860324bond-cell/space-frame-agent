@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import theme
+from . import glyphs
 
 STEP_INDEX = Qt.ItemDataRole.UserRole + 1
 LOCATE = Qt.ItemDataRole.UserRole + 2
@@ -68,7 +69,7 @@ class TimelinePanel(QWidget):
 
         for k in range(len(history)):
             step = history[k]
-            mark = "✗" if not step.ok else " "
+            mark = glyphs.CROSS if not step.ok else " "
             item = QListWidgetItem(
                 f"{step.index + 1}　{mark} {step.summary}\n     {step.changed}")
             item.setData(STEP_INDEX, k)

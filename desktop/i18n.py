@@ -39,7 +39,7 @@ ZH_EN: dict[str, str] = {
     # --- 常驻快捷栏 ---
     "工作平面": "Work plane", "捕捉": "Snap", "关闭": "Off",
     "坐标建点": "Point by XYZ", "放大": "Scale", "自动": "Auto",
-    "☰  菜单": "☰  Menu",
+    "≡  菜单": "≡  Menu",
     # --- 动作标签 ---
     "新建": "New", "打开": "Open", "保存": "Save", "单位制": "Units",
     "Agent 对话": "Agent Chat", "撤销": "Undo", "重做": "Redo",

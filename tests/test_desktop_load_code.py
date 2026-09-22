@@ -150,7 +150,7 @@ def test_area_load_reaches_the_model(app, quiet):
     dialog = AreaLoadDialog(session)
     dialog.members.setText("1, 2, 3")
     dialog.q.setValue(4.0)
-    dialog.width.setValue(3.0)
+    dialog.span.setValue(3.0)
     dialog.case.setCurrentText("DL")
     dialog._apply()
 
