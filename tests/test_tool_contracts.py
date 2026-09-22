@@ -97,8 +97,11 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
                       "单根杆件的内力，**必须带单位**"),
     "query_envelope": (("component", "unit", "peak", "governing_case"),
                        "包络峰值与控制组合，**必须带单位**"),
-    "modal_analysis": (("modes", "total_mass_kg", "effective_mass_ratio_xyz"),
-                       "各阶频率周期，有效质量比用于判断阶数够不够"),
+    "modal_analysis": (("modes", "total_mass_kg", "participable_mass_kg",
+                        "cumulative_mass_ratio_xyz"),
+                       "各阶频率周期与参与质量比。**可参与质量必须一起给**："
+                       "参与比的分母是它不是总质量，只给比值的话用户没法判断"
+                       "「上不去」是阶数不够还是质量压在支座上"),
     "buckling_analysis": (("factors", "critical_factor",
                            "most_compressed_member"),
                           "屈曲因子与最大受压杆件"),
@@ -119,6 +122,11 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
                                   "删边界条件会让结构少约束，所以要报剩下多少"),
     "generate_live_patterns": (("spans", "span_count", "cases", "count"),
                                "活载布置：归出几跨、每个工况压哪些梁，都要给出来"),
+    "response_spectrum_analysis": (("direction", "combination", "base_shear_kN",
+                                    "mass_ratio", "modes", "sign"),
+                                   "反应谱：基底剪力与逐阶贡献；"
+                                   "**「结果没有符号」这句必须给**——"
+                                   "少了它用户会把它当普通工况直接叠加"),
     "set_member_connection": (("members", "end", "dof", "stiffness", "note"),
                               "半刚性连接：实际用了多大刚度要给出来——"
                               "按 EI/L 倍数给的时候用户并不知道绝对值是多少"),

@@ -253,3 +253,41 @@ def test_a_load_case_the_user_named_default_is_not_dropped():
     frame = from_dict(payload)
     assert list(frame.load_cases) == ["default"]
     assert frame.load_cases["default"].member_loads[1][2] == pytest.approx(UDL)
+
+
+# --- 平动方向的连接弹簧 ---------------------------------------------------
+#
+# 静力凝聚不区分转动与平动，所以轴向、剪切方向的连接弹簧本来就该能用。
+# 但"本来就该"不算数——没有测试覆盖的能力等于没有，而且它会在下一次改
+# 凝聚时悄悄坏掉。
+
+def axial_bar(load=50e3, **member_kwargs):
+    """只受轴力的杆：i 端可装轴向连接弹簧。"""
+    length = 4.0
+    f = Frame()
+    f.nodes[1] = Node(1, 0, 0, 0)
+    f.nodes[2] = Node(2, length, 0, 0)
+    f.members[1] = Member(1, 1, 2, "S", "M", **member_kwargs)
+    f.sections["S"] = Section("S", AREA, 2e-4, IZ, 1e-5)
+    f.materials["M"] = Material("M", E, NU)
+    f.supports[1] = (1,) * 6
+    f.supports[2] = (0, 1, 1, 1, 1, 1)      # 只放开轴向
+    f.nodal_loads[2] = (load, 0, 0, 0, 0, 0)
+    return f
+
+
+@pytest.mark.parametrize("stiffness", [1e12, 1e9, 1e8, 3e7])
+def test_an_axial_connection_spring_matches_the_closed_form(stiffness):
+    """δ = PL/EA + P/k：杆的伸长再串一个连接弹簧的伸长。"""
+    load, length = 50e3, 4.0
+    model = axial_bar(load, springs_i={"ux": stiffness})
+    elongation = solve(model).U[model.node_dofs(2)[0]]
+    assert elongation == pytest.approx(
+        load * length / (E * AREA) + load / stiffness, rel=1e-10)
+
+
+def test_an_axial_connection_does_not_disturb_the_plain_bar():
+    load, length = 50e3, 4.0
+    model = axial_bar(load)
+    elongation = solve(model).U[model.node_dofs(2)[0]]
+    assert elongation == pytest.approx(load * length / (E * AREA), rel=1e-12)

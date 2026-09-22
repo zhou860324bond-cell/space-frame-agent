@@ -63,7 +63,8 @@ _TRANSLATE = {
     "member_length_over_deflection": "「杆长/挠度」",
     "span_over_deflection": "「跨度/挠度」",
     "max_displacement": "「最大节点位移」",
-    "effective_mass_ratio_xyz": "「有效质量比」",
+    "cumulative_mass_ratio_xyz": "「累计参与质量比」",
+    "participable_mass_kg": "「可参与质量」",
     "most_compressed_member": "「最大受压杆件」",
     "num_modes": "阶数",
     "传 member": "指定杆件",
@@ -198,11 +199,17 @@ def modal(payload: dict) -> Rows:
     cols = ["阶次", "频率 (Hz)", "周期 (s)"]
     rows = [[m.get("order", i + 1), _r(m.get("frequency_Hz"), 4),
              _r(m.get("period_s"), 5)] for i, m in enumerate(modes)]
-    ratio = payload.get("effective_mass_ratio_xyz") or []
+    # 参与质量比的分母是**能参与振动的**质量，不是总质量：压在支座上的
+    # 那部分永远不参与。两个数都摆出来，用户才分得清"比值上不去"是阶数
+    # 不够还是质量在支座上——后者加多少阶都没用。
+    ratio = payload.get("cumulative_mass_ratio_xyz") or []
+    participable = payload.get("participable_mass_kg") or []
     title = (f"自振特性，共 {len(rows)} 阶　"
              f"总质量 {_r(payload.get('total_mass_kg'), 1)} kg")
+    if participable:
+        title += f"（可参与 {_r(participable[0], 1)} kg）"
     if ratio:
-        title += ("　有效质量比 X/Y/Z："
+        title += ("　累计参与质量比 X/Y/Z："
                   + " / ".join(f"{_r(v, 3)}" for v in ratio))
     return title + _note(payload), cols, rows, [None] * len(rows)
 

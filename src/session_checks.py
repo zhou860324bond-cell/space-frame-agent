@@ -138,20 +138,105 @@ class ChecksMixin:
             return ToolResult(False, {"error": f"模态模块不可用：{exc}"})
         except (ValueError, np.linalg.LinAlgError) as exc:
             return ToolResult(False, {"error": str(exc)})
-        share = r.effective_mass.sum(axis=0) / r.total_mass if r.total_mass else None
-        return ToolResult(True, {
+        # 参与质量比的分母是**能参与振动的**质量 rᵀM_ff r，不是 Σ ρAL。
+        # 压在支座上的那部分永远不参与：拿 Σ ρAL 当分母，一根剖成 4 段的
+        # 悬臂柱把振型取满也只报得出 84%，而"加大 num_modes"这条建议在那里
+        # 是无效的——差的那 16% 不在振型里，在支座上。网格越粗越明显。
+        cumulative = r.cumulative_ratio[-1]
+        payload = {
             "modes": [{"order": k + 1,
                        "frequency_Hz": round(float(f), 6),
-                       "period_s": round(float(1.0 / f), 6) if f > 0 else None}
+                       "period_s": round(float(1.0 / f), 6) if f > 0 else None,
+                       "participation_xyz": [round(float(v), 6)
+                                             for v in r.participation[k]],
+                       "mass_ratio_xyz": [round(float(v), 4)
+                                          for v in r.mass_ratio[k]]}
                       for k, f in enumerate(r.frequencies)],
             "total_mass_kg": round(r.total_mass, 6),
-            "effective_mass_ratio_xyz": (None if share is None else
-                                         [round(float(v), 4) for v in share]),
-            **({"mesh_warning": _coarse} if (_coarse := self._coarse_mesh_note(
-                "一致质量阵", physical)) else {}),
+            "participable_mass_kg": [round(float(v), 6)
+                                     for v in r.participable_mass],
+            "cumulative_mass_ratio_xyz": [round(float(v), 4)
+                                          for v in cumulative],
             "note": "一致质量矩阵，频率略高于精确解；每跨四个单元时误差 0.2% 以内。"
-                    "有效质量比接近 1 才说明取的阶数够——差得远就加大 num_modes。",
-        })
+                    "**参与质量比的分母是 participable_mass（能参与振动的质量），"
+                    "不是 total_mass**——压在支座上的质量永远不参与，"
+                    "两者的差随网格变粗而变大。",
+        }
+        short = {axis: float(cumulative[k])
+                 for k, axis in enumerate("XYZ") if cumulative[k] < 0.9}
+        if short:
+            payload["mass_ratio_warning"] = (
+                "这些方向的累计参与质量比不到 90%（GB 50011 的门槛）："
+                + "、".join(f"{axis} {value:.1%}" for axis, value in short.items())
+                + "。加大 num_modes 再算。**判据只对要做地震分析的方向适用**"
+                  "——竖向柱在轴向的前几阶本来就接近 0，那不是缺陷。")
+        if _coarse := self._coarse_mesh_note("一致质量阵", physical):
+            payload["mesh_warning"] = _coarse
+        return ToolResult(True, payload)
+
+    def response_spectrum_analysis(
+            self, direction: str = "x", num_modes: int = 12,
+            alpha_max: float | None = None, tg: float = 0.35,
+            spectrum_points: list | None = None,
+            combination: str = "CQC", damping: float = 0.05,
+            gravity: float = 9.81) -> ToolResult:
+        """振型分解反应谱法（地震作用）。
+
+        谱二选一：``alpha_max`` + ``tg`` 走 GB 50011 的设计谱（地震影响系数，
+        内部乘 g 变成加速度），或者 ``spectrum_points`` 直接给 (周期, 加速度)
+        表。
+
+        **返回的内力和位移没有符号。** SRSS 与 CQC 都是平方和开方，出来的
+        只有大小。地震往复，把它当普通工况直接叠加到重力上，得到的只是两个
+        方向里恰好同号的那一个——必须按 ±  分别组合。
+        """
+        errors = validate_payload(self.model)
+        if errors:
+            return ToolResult(False, {"errors": errors})
+        if alpha_max is None and not spectrum_points:
+            return ToolResult(False, {
+                "error": "要么给 alpha_max（走 GB 50011 设计谱），"
+                         "要么给 spectrum_points（自定义谱表）",
+                "example": {"alpha_max": 0.08, "tg": 0.35}})
+        try:
+            from spectrum import (gb50011_spectrum, response_spectrum,
+                                  table_spectrum)
+            physical = from_dict(self.model)
+            if spectrum_points:
+                curve = table_spectrum(spectrum_points)
+            else:
+                alpha = gb50011_spectrum(float(alpha_max), float(tg),
+                                         damping=float(damping))
+                def curve(period, _alpha=alpha, _g=float(gravity)):
+                    return _alpha(period) * _g
+            result = response_spectrum(
+                physical, curve, direction=str(direction),
+                num_modes=int(num_modes), combination=str(combination),
+                damping=float(damping))
+        except ImportError as exc:
+            return ToolResult(False, {"error": f"反应谱模块不可用：{exc}"})
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+
+        payload = {
+            "direction": str(direction), "combination": str(combination),
+            "base_shear_kN": round(result.base_shear / 1e3, 4),
+            "mass_ratio": round(float(result.mass_ratio), 4),
+            "modes": [{"order": k + 1,
+                       "period_s": round(float(t), 6),
+                       "spectral_acceleration": round(float(a), 6),
+                       "base_shear_kN": round(float(v) / 1e3, 4)}
+                      for k, (t, a, v) in enumerate(zip(
+                          result.periods, result.spectral_acceleration,
+                          result.modal_base_shear, strict=True))],
+            "sign": "**这些量没有符号。** 地震往复，与重力组合时要按 ± 各算一次；"
+                    "直接当普通工况叠加，得到的只是两个方向里恰好同号的那一个。",
+        }
+        if result.mass_ratio < 0.9:
+            payload["mass_ratio_warning"] = (
+                f"取用的 {num_modes} 阶只覆盖 {result.mass_ratio:.1%} 的参与质量，"
+                "GB 50011 要求不小于 90%。加大 num_modes 再算。")
+        return ToolResult(True, payload)
 
     def buckling_analysis(self, case: str | None = None,
                           num_modes: int = 4) -> ToolResult:

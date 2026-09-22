@@ -1134,6 +1134,47 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "response_spectrum_analysis",
+            "description":
+                "振型分解反应谱法（地震作用）。用户说「算地震」「按抗规做」"
+                "「7 度设防」「水平地震作用」时用这个。"
+                "\n\n**返回的内力和位移没有符号。** SRSS 与 CQC 都是平方和开方，"
+                "出来的只有大小。地震往复，与重力组合时必须按 ± 各算一次——"
+                "直接当普通工况叠加进去，得到的只是两个方向里恰好同号的那一个。"
+                "返回里的 sign 字段要原样转达。"
+                "\n谱二选一：alpha_max + tg 走 GB 50011 设计谱（地震影响系数，"
+                "多遇地震 7 度 0.08、8 度 0.16），或 spectrum_points 给自定义"
+                "(周期, 加速度) 表。"
+                "\nmass_ratio 低于 0.9 时返回里会有 mass_ratio_warning，"
+                "要照做加大 num_modes——GB 50011 要求累计参与质量不小于 90%。",
+            "parameters": {
+                "type": "object", "properties": {
+                    "direction": {"type": "string", "enum": ["x", "y", "z"]},
+                    "num_modes": {"type": "integer", "minimum": 2},
+                    "alpha_max": {"type": "number", "exclusiveMinimum": 0,
+                                  "description": "地震影响系数最大值，"
+                                                 "如多遇地震 7 度 0.08"},
+                    "tg": {"type": "number", "exclusiveMinimum": 0,
+                           "description": "特征周期 s"},
+                    "spectrum_points": {
+                        "type": "array", "minItems": 2,
+                        "items": {"type": "array", "minItems": 2,
+                                  "maxItems": 2,
+                                  "items": {"type": "number"}},
+                        "description": "自定义谱 [[周期, 加速度 m/s²], ...]"},
+                    "combination": {"type": "string", "enum": ["CQC", "SRSS"],
+                                    "description": "频率接近的振型不独立，"
+                                                   "默认 CQC"},
+                    "damping": {"type": "number", "exclusiveMinimum": 0,
+                                "exclusiveMaximum": 1},
+                    "gravity": {"type": "number", "exclusiveMinimum": 0},
+                }, "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_member_connection",
             "description":
                 "给杆端装半刚性连接（转动弹簧）。用户说「梁柱节点不是刚接」"
@@ -1548,7 +1589,13 @@ TOOLS: list[dict[str, Any]] = [
                            "结果是结构固有属性，与荷载无关——不要传工况。"
                            "\n返回里出现 mesh_warning 时**必须转达**：一致质量阵靠形函数"
                            "装配，网格越粗频率报得越高。实测 8 m 简支梁一跨一个单元时"
-                           "基频偏高 11%，四个单元降到 0.026%。",
+                           "基频偏高 11%，四个单元降到 0.026%。"
+                           "\n\n**参与质量比的分母是 participable_mass，不是 total_mass。**"
+                           "压在支座上的质量永远不参与振动，两者的差随网格变粗而变大"
+                           "——一根剖成 4 段的悬臂柱，按 total_mass 算把振型取满也只有"
+                           "84%。所以看 cumulative_mass_ratio_xyz，不要自己拿有效质量"
+                           "去除 total_mass；那样算出来的比值永远到不了 1，而"
+                           "「加大 num_modes」这条建议在那里是无效的。",
             "parameters": {
                 "type": "object",
                 "properties": {
