@@ -174,21 +174,48 @@ def convert_model(model: dict, to: str) -> dict:
                         **({"c_web": s["c_web"] * f["length"]}
                            if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    def spring(values):
+        """六个方向的支承刚度：前三个是力/长度，后三个是力·长度/弧度。"""
+        return [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])
+                for k, v in enumerate(values)]
+
     out["supports"] = [
-        {**s, **({"spring": [v * (f["spring_translation"] if k < 3
-                                  else f["spring_rotation"])
-                             for k, v in enumerate(s["spring"])]}
-                 if "spring" in s else {})}
+        {**s, **({"spring": spring(s["spring"])} if "spring" in s else {})}
         for s in model.get("supports", [])]
+    # 分析步里可以改写支座，那里的弹簧刚度同样要换。**同一种量出现在两个
+    # 地方**，只换一处的话，用了分析步的模型在毫米制下就会带着一个没换过的
+    # 弹簧——顶层那个换了、步里那个没换，两者还会同时存在。
+    if model.get("steps"):
+        out["steps"] = [
+            {**st, **({"supports": {
+                node: {**entry,
+                       **({"spring": spring(entry["spring"])}
+                          if "spring" in entry else {})}
+                for node, entry in st["supports"].items()}}
+                if st.get("supports") else {})}
+            for st in model["steps"]]
     out["nodes"] = [{**n, "x": n["x"] * f["length"], "y": n["y"] * f["length"],
                      "z": n["z"] * f["length"]}
                     for n in model.get("nodes", [])]
+    def connection(table):
+        """半刚性连接刚度，键是局部自由度名：平动与转动的量纲不同。
+
+        漏掉它，毫米制下连接刚度会差好几百倍——实测悬臂挠度 −60.17 mm
+        变成 −21638 mm，而模型校验照样通过。
+        """
+        return {dof: value * (f["spring_rotation"] if dof.startswith("r")
+                              else f["spring_translation"])
+                for dof, value in table.items()}
+
     out["members"] = [
         {**m,
          **({"offset_i": [v * f["length"] for v in m["offset_i"]]}
             if "offset_i" in m else {}),
          **({"offset_j": [v * f["length"] for v in m["offset_j"]]}
-            if "offset_j" in m else {})}
+            if "offset_j" in m else {}),
+         **({"connections": {end: connection(table)
+                             for end, table in m["connections"].items()}}
+            if "connections" in m else {})}
         for m in model.get("members", [])]
 
     def case(block: dict) -> dict:
@@ -213,6 +240,11 @@ def convert_model(model: dict, to: str) -> dict:
                     item["w2"] = [v * s for v in e["w2"]]
                 if "a" in e:
                     item["a"] = e["a"] * f["length"]
+                # **b 和 a 一样是沿杆的位置。** 漏掉它，部分跨荷载在毫米制下
+                # 变成"从 1000 mm 起到 4 mm 止"——区间反过来了。实测悬臂挠度
+                # 从 −12.47 mm 变成 +0.228 mm，连符号都反，而且不报任何错。
+                if "b" in e:
+                    item["b"] = e["b"] * f["length"]
                 spans.append(item)
             got["member_spans"] = spans
         if block.get("member_strains"):
