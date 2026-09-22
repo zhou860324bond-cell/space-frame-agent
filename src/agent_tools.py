@@ -1134,6 +1134,50 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "set_member_connection",
+            "description":
+                "给杆端装半刚性连接（转动弹簧）。用户说「梁柱节点不是刚接」"
+                "「端板连接」「角钢连接」「节点有转动刚度」时用这个。"
+                "\n\n**真实的梁柱节点既不是铰也不是刚接。** 两头都按极限算，"
+                "弯矩分布差得很远：两跨连续梁实测，刚接支座弯矩 90 kN·m，"
+                "连接刚度取 3EI/L 时只剩 45 kN·m，差出来的那部分全跑到跨中去了"
+                "——而两种算法都不会报错。回答时要把这个差别说出来。"
+                "\n刚度优先用 connection_type 按**梁线刚度 EI/L 的倍数**给"
+                "（端板 20、平端板 8、顶底角钢 3、腹板角钢 1）；绝对刚度离开"
+                "截面和跨度就没有意义，同一个端板装在不同梁上相对刚度差几倍。"
+                "\n理想铰是 k=0 的极限，用杆端释放表达，不要在这里填 0；"
+                "刚接是 k=∞ 的极限，不装弹簧就是。",
+            "parameters": {
+                "type": "object", "required": ["member_ids"],
+                "properties": {
+                    "member_ids": {
+                        "description": "杆件编号、编号列表或集合名",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "end": {"type": "string", "enum": ["i", "j", "both"],
+                            "description": "装在哪一端；默认 j"},
+                    "dof": {"type": "string",
+                            "enum": ["ux", "uy", "uz", "rx", "ry", "rz"],
+                            "description": "局部自由度；梁端弯矩通常是 rz"},
+                    "stiffness": {"type": "number", "exclusiveMinimum": 0,
+                                  "description": "绝对连接刚度，力·长度/弧度"},
+                    "connection_type": {
+                        "type": "string",
+                        "enum": ["端板", "平端板", "顶底角钢", "腹板角钢"],
+                        "description": "按 EI/L 的倍数给刚度，比绝对值可用"},
+                    "clear": {"type": "boolean",
+                              "description": "去掉该端连接弹簧，恢复刚接"},
+                }, "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "add_step",
             "description":
                 "新增一个分析步（Abaqus 的 Step）。用户说「先满载再撤活载」"

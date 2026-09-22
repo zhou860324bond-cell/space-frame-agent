@@ -306,7 +306,8 @@ def _material_system(model: Frame, U: np.ndarray, case: LoadCase,
         axial_k = tangent * section.A / L
         kt[0, 0] = kt[6, 6] = axial_k
         kt[0, 6] = kt[6, 0] = -axial_k
-        kt, _ = _condense(kt, member.released_indices(), member.id)
+        kt, _ = _condense(kt, member.released_indices(), member.id,
+                          member.spring_indices())
         kg = B.T @ T.T @ kt @ T @ B
         for a in range(12):
             for b in range(12):

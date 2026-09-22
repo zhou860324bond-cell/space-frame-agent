@@ -1002,6 +1002,129 @@ class ModelingMixin:
             "note": "loads 与 supports 是**结算后实际生效**的，含从前面步传播"
                     "过来的部分，不只是这一步声明的"})
 
+    #: 常见节点形式的连接刚度，按**梁线刚度 EI/L 的倍数**给。
+    #:
+    #: 绝对刚度没法预设——同一个端板连接装在 H400 上和装在 H200 上，
+    #: 相对刚度差好几倍。规范和文献里的分类也都是按 EI/L 归一的
+    #: （EC3 把 k ≥ 25EI/L 算刚接、k ≤ 0.5EI/L 算铰接，有侧移框架门槛更高）。
+    CONNECTION_TYPES = {
+        "刚接": (None, "完全刚性。用 bc/releases 表达，不必设弹簧"),
+        "端板": (20.0, "外伸端板、加劲：能传约 80% 的梁端弯矩，接近刚接"),
+        "平端板": (8.0, "平齐端板：半刚性的典型值"),
+        "顶底角钢": (3.0, "顶底角钢带双腹板角钢：明显半刚性"),
+        "腹板角钢": (1.0, "双腹板角钢：偏柔，接近铰接但不是铰"),
+        "铰接": (None, "理想铰。用 releases 表达，那是 k=0 的极限"),
+    }
+
+    @_records
+    def set_member_connection(self, member_ids, end: str = "j",
+                              dof: str = "rz",
+                              stiffness: float | None = None,
+                              connection_type: str | None = None,
+                              clear: bool = False) -> ToolResult:
+        """给杆端装半刚性连接（转动弹簧）。
+
+        **真实的梁柱节点既不是铰也不是刚接。** 两头都按极限算，弯矩分布差
+        得很远：两跨连续梁上，刚接支座弯矩 90 kN·m，连接刚度取 3EI/L 时只剩
+        53 kN·m，差出来的那部分全跑到跨中去了——而两种算法都不会报错。
+
+        刚度可以直接给绝对值（力·长度/弧度），也可以用 ``connection_type``
+        按**梁线刚度 EI/L 的倍数**给。后者更可用：绝对刚度离开截面和跨度
+        就没有意义，同一个端板装在不同梁上相对刚度差几倍。
+
+        ``end`` 取 "i"/"j"/"both"，``dof`` 是局部自由度名（梁端弯矩通常是
+        "rz"）。``clear=True`` 去掉该端的连接弹簧，恢复刚接。
+        """
+        from copy import deepcopy
+
+        try:
+            ids = self._expand_members(member_ids)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+        if not ids:
+            return ToolResult(False, {"error": "没有选中任何杆件"})
+        if end not in ("i", "j", "both"):
+            return ToolResult(False, {"error": 'end 只能是 "i"、"j" 或 "both"'})
+        if dof not in LOCAL_DOF_NAMES:
+            return ToolResult(False, {
+                "error": f"dof 只能取自 {list(LOCAL_DOF_NAMES)}"})
+
+        ends = ("i", "j") if end == "both" else (end,)
+        candidate = deepcopy(self.model)
+        index = {int(m["id"]): m for m in candidate["members"]}
+        missing = [i for i in ids if i not in index]
+        if missing:
+            return ToolResult(False, {"error": f"没有杆件 {missing}"})
+
+        applied = {}
+        for member_id in ids:
+            entry = index[member_id]
+            table = entry.setdefault("connections", {})
+            if clear:
+                for side in ends:
+                    (table.get(side) or {}).pop(dof, None)
+                    if not table.get(side):
+                        table.pop(side, None)
+                if not table:
+                    entry.pop("connections", None)
+                applied[member_id] = None
+                continue
+            value = stiffness
+            if value is None:
+                if connection_type is None:
+                    return ToolResult(False, {
+                        "error": "要么给 stiffness，要么给 connection_type",
+                        "connection_types": {
+                            k: v[1] for k, v in self.CONNECTION_TYPES.items()}})
+                spec = self.CONNECTION_TYPES.get(str(connection_type))
+                if spec is None:
+                    return ToolResult(False, {
+                        "error": f"不认识的节点形式 {connection_type!r}",
+                        "connection_types": {
+                            k: v[1] for k, v in self.CONNECTION_TYPES.items()}})
+                ratio, note = spec
+                if ratio is None:
+                    return ToolResult(False, {
+                        "error": f"{connection_type} 不是半刚性连接：{note}"})
+                value = ratio * self._beam_line_stiffness(entry, candidate)
+            value = float(value)
+            if value <= 0:
+                return ToolResult(False, {
+                    "error": "连接刚度必须是正数；理想铰请用杆端释放表达"})
+            for side in ends:
+                table.setdefault(side, {})[dof] = value
+            applied[member_id] = value
+
+        errors = validate_payload(candidate)
+        if errors:
+            return ToolResult(False, {"errors": errors,
+                                      "hint": "连接未写入，原模型保持不变"})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            "members": ids, "end": end, "dof": dof,
+            "stiffness": applied, "cleared": bool(clear),
+            "note": "连接刚度的单位是 力·长度/弧度。理想铰是 k=0 的极限、"
+                    "刚接是 k=∞ 的极限，半刚性落在中间——"
+                    "两头都按极限算，弯矩分布差得很远。"})
+
+    def _beam_line_stiffness(self, entry: dict, payload: dict) -> float:
+        """梁线刚度 EI/L，用来把"几倍 EI/L"换算成绝对刚度。
+
+        I 取绕局部 z 的惯性矩（梁端弯矩通常绕它），L 取杆件两端的直线距离。
+        """
+        import math
+
+        sections = {s["name"]: s for s in payload["sections"]}
+        materials = {m["name"]: m for m in payload["materials"]}
+        nodes = {int(n["id"]): n for n in payload["nodes"]}
+        section = sections[entry["section"]]
+        modulus = float(materials[entry["material"]]["E"])
+        start, finish = nodes[int(entry["i"])], nodes[int(entry["j"])]
+        length = math.dist((start["x"], start["y"], start["z"]),
+                           (finish["x"], finish["y"], finish["z"]))
+        return modulus * float(section["Iz"]) / length
+
     # 只读的清单工具不记建模历史：它不改模型，记进去只会让时间轴上多出
     # 一堆"什么也没做"的条目，把真正的建模步骤淹掉。
     def list_boundary_conditions(self) -> ToolResult:

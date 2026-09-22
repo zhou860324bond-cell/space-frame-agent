@@ -122,6 +122,15 @@ class Member:
     ref_vector: tuple[float, float, float] | None = None
     releases_i: tuple[str, ...] = ()
     releases_j: tuple[str, ...] = ()
+    #: 半刚性连接：该端局部自由度名 → 连接刚度（转动是 力·长度/弧度）。
+    #:
+    #: **理想铰与刚接都是它的极限**，真实的梁柱节点落在中间：腹板角钢连接
+    #: 大约能传 20% 的梁线刚度，端板连接能传 80%——两头都按极限算，
+    #: 得到的弯矩分布差得很远，而两种算法都不会报错。
+    #:
+    #: 与 releases 互斥：同一个自由度既释放又给刚度是自相矛盾的，会被拒绝。
+    springs_i: dict[str, float] = field(default_factory=dict)
+    springs_j: dict[str, float] = field(default_factory=dict)
     # 节点到可变形梁端的刚域偏移，使用全局坐标。零值保持旧模型行为。
     offset_i: tuple[float, float, float] = (0.0, 0.0, 0.0)
     offset_j: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -131,6 +140,43 @@ class Member:
     mu_z: float | None = None
 
     def released_indices(self) -> tuple[int, ...]:
+        """要凝聚掉的局部自由度：理想释放的，加上装了连接弹簧的。
+
+        两类都要先当作未知量消掉，区别只在凝聚时 K_rr 上加不加 k_s。
+        """
+        idx: set[int] = set()
+        for name in self.releases_i:
+            idx.add(_dof_index(name, self.id))
+        for name in self.releases_j:
+            idx.add(6 + _dof_index(name, self.id))
+        idx |= set(self.spring_indices())
+        return tuple(sorted(idx))
+
+    def spring_indices(self) -> dict[int, float]:
+        """半刚性连接刚度，键是局部自由度序号（0–11）。
+
+        刚度非正就当成没装弹簧——0 会被误解成"刚度为零即铰接"，而那该用
+        releases 明确表达；这里拒绝，免得两种写法给出同一个结果却读起来
+        像不同的意思。
+        """
+        out: dict[int, float] = {}
+        for offset, table in ((0, self.springs_i), (6, self.springs_j)):
+            for name, value in (table or {}).items():
+                stiffness = float(value)
+                if stiffness <= 0.0:
+                    raise ValueError(
+                        f"杆件 {self.id} 的连接刚度 {name}={value} 不是正数；"
+                        "要表达理想铰请用 releases，那是 k=0 的极限")
+                out[offset + _dof_index(name, self.id)] = stiffness
+        overlap = out.keys() & set(self._released_only())
+        if overlap:
+            names = [LOCAL_DOF_NAMES[i % 6] for i in sorted(overlap)]
+            raise ValueError(
+                f"杆件 {self.id} 的自由度 {names} 既释放又给了连接刚度；"
+                "这两件事自相矛盾，请二选一")
+        return out
+
+    def _released_only(self) -> tuple[int, ...]:
         idx: set[int] = set()
         for name in self.releases_i:
             idx.add(_dof_index(name, self.id))
@@ -439,35 +485,72 @@ class _Condensation:
     released: tuple[int, ...]
     inv_rr: np.ndarray
     k_rk: np.ndarray
+    #: 带转动弹簧（半刚性连接）的自由度。非空时凝聚不把这些行列清零——
+    #: 节点那一侧的转角仍然是未知量，弹簧两端各转各的。
+    sprung: tuple[int, ...] = ()
+    #: 完整的 K[r,:]（含 released 自身那几列），半刚性回算位移要用。
+    k_rows: np.ndarray | None = None
 
 
-def _condense(k: np.ndarray, released: tuple[int, ...], member_id: int):
-    """按 f_released = 0 做静力凝聚，返回 (凝聚后刚度, 凝聚信息)。
+def _condense(k: np.ndarray, released: tuple[int, ...], member_id: int,
+              springs: dict[int, float] | None = None):
+    """静力凝聚，返回 (凝聚后刚度, 凝聚信息)。
 
-    释放端不传力，故 k* = k_KK - k_KR k_RR^-1 k_RK，等效荷载同理缩并。
-    两端同时释放轴向或扭转会让 k_RR 奇异——那在力学上就是一根散架的杆，直接报错。
+    **释放与半刚性连接是同一个公式的两端。** 在杆端自由度上串一个转动弹簧
+    k_s，把"杆端转角"这个多出来的未知量消掉，得到
+
+        K* = K − K[:,r] (K_rr + k_s)⁻¹ K[r,:]
+
+    k_s = 0 就是理想铰（该行该列全变成零，退化成经典的释放凝聚）；
+    k_s → ∞ 时修正项趋于零，回到刚接。半刚性连接落在两者之间，不需要
+    另写一套单元——**两套各自维护的单元刚度迟早会漂移**，而漂移了不会报错，
+    只是两条路径给出的内力不一样。
+
+    ``springs`` 是 {局部自由度序号: 转动刚度}，其自由度同时进 ``released``：
+    先把它们当作待凝聚的未知量，再由 k_s 决定凝聚得多彻底。
+
+    两端同时释放轴向或扭转会让 k_RR 奇异——那在力学上就是一根散架的杆，
+    直接报错。有弹簧时 k_RR + k_s 不再奇异，所以只对纯释放的那些查。
     """
     if not released:
         return k, None
+    stiffness = dict(springs or {})
     kept = tuple(i for i in range(12) if i not in released)
-    k_rr = k[np.ix_(released, released)]
-    if np.linalg.cond(k_rr) > _RELEASE_COND_LIMIT:
-        names = [(LOCAL_DOF_NAMES[i] if i < 6 else LOCAL_DOF_NAMES[i - 6]) for i in released]
-        raise ValueError(
-            f"杆件 {member_id} 的释放组合 {names} 使单元成为机构"
-            "（例如两端同时释放轴向或扭转），无法静力凝聚"
-        )
+    k_rr = k[np.ix_(released, released)].copy()
+    free = tuple(i for i in released if not stiffness.get(i))
+    if free:
+        block = k[np.ix_(free, free)]
+        if np.linalg.cond(block) > _RELEASE_COND_LIMIT:
+            names = [(LOCAL_DOF_NAMES[i] if i < 6 else LOCAL_DOF_NAMES[i - 6])
+                     for i in free]
+            raise ValueError(
+                f"杆件 {member_id} 的释放组合 {names} 使单元成为机构"
+                "（例如两端同时释放轴向或扭转），无法静力凝聚"
+            )
+    for position, index in enumerate(released):
+        k_rr[position, position] += stiffness.get(index, 0.0)
     inv_rr = np.linalg.inv(k_rr)
     k_kr = k[np.ix_(kept, released)]
     k_rk = k[np.ix_(released, kept)]
-    star = np.zeros((12, 12))
-    star[np.ix_(kept, kept)] = k[np.ix_(kept, kept)] - k_kr @ inv_rr @ k_rk
-    return star, _Condensation(kept, released, inv_rr, k_rk)
+    if not stiffness:
+        # 纯释放：被释放的行列整体为零，与旧实现逐位相同
+        star = np.zeros((12, 12))
+        star[np.ix_(kept, kept)] = k[np.ix_(kept, kept)] - k_kr @ inv_rr @ k_rk
+        return star, _Condensation(kept, released, inv_rr, k_rk)
+    rows = k[released, :]
+    star = k - k[:, released] @ inv_rr @ rows
+    return star, _Condensation(kept, released, inv_rr, k_rk,
+                               tuple(released), rows)
 
 
 def _condense_load(p: np.ndarray, cond: _Condensation | None) -> np.ndarray:
     if cond is None:
         return p
+    if cond.sprung:
+        # 半刚性：杆端荷载经弹簧传到节点，比例由 (K_rr + k_s)⁻¹ 决定。
+        # 铰接是它 k_s=0 的特例，刚接是 k_s→∞ 时修正项消失。
+        released = list(cond.released)
+        return p - cond.k_rows.T @ cond.inv_rr @ p[released]
     star = np.zeros(12)
     k_kr = cond.k_rk.T
     star[list(cond.kept)] = p[list(cond.kept)] - k_kr @ cond.inv_rr @ p[list(cond.released)]
@@ -479,6 +562,12 @@ def _released_projection(cond: _Condensation | None) -> np.ndarray:
     P = np.eye(12)
     if cond is None:
         return P
+    if cond.sprung:
+        # 半刚性：杆端转角 = 节点转角 + 弹簧变形，后者是 −(K_rr+k_s)⁻¹K[r,:]·d。
+        # 节点那一侧的转角不被抹掉——弹簧两端各转各的，这正是半刚性的含义。
+        rows = np.zeros((12, 12))
+        rows[list(cond.released), :] = -cond.inv_rr @ cond.k_rows
+        return P + rows
     P[list(cond.released), :] = 0.0
     P[np.ix_(cond.released, cond.kept)] = -cond.inv_rr @ cond.k_rk
     return P
@@ -538,7 +627,8 @@ def _member_matrices(model: Frame, m: Member):
     L, R = local_axes(pi, pj, m.ref_vector)
     mat, sec = model.materials[m.material], model.sections[m.section]
     k_local = local_stiffness(L, mat.E, mat.G, sec)
-    k_star, cond = _condense(k_local, m.released_indices(), m.id)
+    k_star, cond = _condense(k_local, m.released_indices(), m.id,
+                             m.spring_indices())
     return L, R, transformation(R), rigid_offset_transform(m), k_local, k_star, cond
 
 
@@ -636,6 +726,26 @@ def constrained_dofs(model: Frame) -> np.ndarray:
     return np.array(sorted(set(fixed)), dtype=int)
 
 
+def _recover_end_rotations(u_local: np.ndarray, p: np.ndarray,
+                           cond: _Condensation) -> np.ndarray:
+    """把节点侧位移还原成**杆端**位移。
+
+    纯释放与半刚性是两个不同的式子，混用不会报错，只会让内力差几十个百分点：
+
+    * 理想铰：节点那一侧的转角没有意义（凝聚已把它的刚度清零），杆端转角
+      整个由凝聚关系给出；
+    * 半刚性：杆端转角 = **节点转角 + 弹簧变形**。少掉前一项，等于默认
+      节点不转——实测两跨连续梁上端弯矩差了 63%。
+    """
+    out = np.array(u_local, dtype=float)
+    rel = list(cond.released)
+    if cond.sprung:
+        out[rel] = out[rel] + cond.inv_rr @ (p[rel] - cond.k_rows @ u_local)
+        return out
+    out[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ u_local[list(cond.kept)])
+    return out
+
+
 def _member_forces(model: Frame, U: np.ndarray, case: LoadCase) -> dict[int, np.ndarray]:
     """回算杆端力。被释放的自由度用凝聚关系还原其真实位移。"""
     out: dict[int, np.ndarray] = {}
@@ -645,8 +755,7 @@ def _member_forces(model: Frame, U: np.ndarray, case: LoadCase) -> dict[int, np.
         u_local = T @ B @ U[dofs]
         p = equivalent_local_load(model, m, case, L, R)
         if cond is not None:
-            kept, rel = list(cond.kept), list(cond.released)
-            u_local[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ u_local[kept])
+            u_local = _recover_end_rotations(u_local, p, cond)
         # 内力回算必须把固端力减回来，否则跨中弯矩全错
         out[m.id] = k_local @ u_local - p
     return out
@@ -666,8 +775,9 @@ def member_local_displacements(model: Frame, member: Member,
     p = (np.zeros(12) if case is None
          else equivalent_local_load(model, member, case, L, R))
     if cond is not None:
-        kept, rel = list(cond.kept), list(cond.released)
-        q[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ q[kept])
+        # 与内力回算共用同一个还原式。**两处各写一份迟早会漂移**，
+        # 而漂移了不会报错：画出来的变形图和算出来的内力各说各话。
+        q = _recover_end_rotations(q, p, cond)
     return q
 
 

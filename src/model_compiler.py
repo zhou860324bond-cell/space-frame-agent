@@ -148,16 +148,25 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
             element_to_physical[element_id] = physical_id
 
         for index, element_id in enumerate(element_ids):
+            last = index == len(element_ids) - 1
+            # **一律用关键字传。** Member 的字段是会加的，位置传参下新增一个
+            # 字段就会把后面的实参整体挪位——offset 被当成连接刚度之类，
+            # 模型照样编译得出来，只是算的不是那个结构。
             frame.members[element_id] = Member(
-                element_id, node_ids[index], node_ids[index + 1],
-                member.section, member.material, member.ref_vector,
-                member.releases_i if index == 0 else (),
-                member.releases_j if index == len(element_ids) - 1 else (),
-                member.offset_i if index == 0 else (0.0, 0.0, 0.0),
-                member.offset_j if index == len(element_ids) - 1 else (0.0, 0.0, 0.0),
+                id=element_id, i=node_ids[index], j=node_ids[index + 1],
+                section=member.section, material=member.material,
+                ref_vector=member.ref_vector,
+                releases_i=member.releases_i if index == 0 else (),
+                releases_j=member.releases_j if last else (),
+                # 连接弹簧与释放同理：它们是**整根构件两端**的节点构造，
+                # 剖分出来的中间段之间是连续的，不能每段都来一个。
+                springs_i=member.springs_i if index == 0 else {},
+                springs_j=member.springs_j if last else {},
+                offset_i=member.offset_i if index == 0 else (0.0, 0.0, 0.0),
+                offset_j=member.offset_j if last else (0.0, 0.0, 0.0),
                 # μ 是**整根构件**的属性，各段原样带上。稳定校核按物理构件整
                 # 根算（见 strength.py），这里带上只是让单元自己也说得清楚。
-                member.mu_y, member.mu_z,
+                mu_y=member.mu_y, mu_z=member.mu_z,
             )
 
         boundaries = [0.0, *interior, length]

@@ -28,6 +28,15 @@ _RELEASE_LIST = {
     "uniqueItems": True,
     "items": {"type": "string", "enum": list(LOCAL_DOF_NAMES)},
 }
+
+#: 半刚性连接刚度表：自由度名 → 正的连接刚度。零在这里没有意义——
+#: "刚度为零"该用 releases 明确写成理想铰，两种写法给同一个结果却读起来
+#: 像两回事，所以 schema 层就拒绝。
+_CONNECTION_MAP = {
+    "type": "object",
+    "propertyNames": {"enum": list(LOCAL_DOF_NAMES)},
+    "additionalProperties": {"type": "number", "exclusiveMinimum": 0},
+}
 _NODAL_LOADS = {
     "type": "array",
     "items": {
@@ -195,6 +204,13 @@ MODEL_SCHEMA: dict[str, Any] = {
                     "releases": {
                         "type": "object", "additionalProperties": False,
                         "properties": {"i": _RELEASE_LIST, "j": _RELEASE_LIST},
+                    },
+                    # 半刚性连接刚度：自由度名 → 刚度。理想铰（releases）是
+                    # 它 k=0 的极限，刚接是 k=∞ 的极限；同一自由度不能两边都写。
+                    "connections": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {"i": _CONNECTION_MAP,
+                                       "j": _CONNECTION_MAP},
                     },
                 },
             },
@@ -398,14 +414,24 @@ def from_dict(data: dict[str, Any]) -> Frame:
         f.nodes[int(n["id"])] = Node(int(n["id"]), float(n["x"]), float(n["y"]), float(n["z"]))
     for m in data["members"]:
         rel = m.get("releases") or {}
+        springs = m.get("connections") or {}
+        # **一律用关键字。** 这里原本是位置传参，而 Member 的字段是会加的：
+        # 在 releases_j 后面插一个新字段，offset_i 就会被静默塞进那个新字段，
+        # 模型照样读得进来，只是刚域偏移变成了连接刚度。
         f.members[int(m["id"])] = Member(
-            int(m["id"]), int(m["i"]), int(m["j"]), m["section"], m["material"],
-            tuple(m["ref_vector"]) if m.get("ref_vector") else None,
-            tuple(rel.get("i", ())), tuple(rel.get("j", ())),
-            tuple(float(v) for v in m.get("offset_i", (0.0, 0.0, 0.0))),
-            tuple(float(v) for v in m.get("offset_j", (0.0, 0.0, 0.0))),
-            float(m["mu_y"]) if m.get("mu_y") is not None else None,
-            float(m["mu_z"]) if m.get("mu_z") is not None else None,
+            id=int(m["id"]), i=int(m["i"]), j=int(m["j"]),
+            section=m["section"], material=m["material"],
+            ref_vector=tuple(m["ref_vector"]) if m.get("ref_vector") else None,
+            releases_i=tuple(rel.get("i", ())),
+            releases_j=tuple(rel.get("j", ())),
+            springs_i={str(k): float(v)
+                       for k, v in (springs.get("i") or {}).items()},
+            springs_j={str(k): float(v)
+                       for k, v in (springs.get("j") or {}).items()},
+            offset_i=tuple(float(v) for v in m.get("offset_i", (0.0, 0.0, 0.0))),
+            offset_j=tuple(float(v) for v in m.get("offset_j", (0.0, 0.0, 0.0))),
+            mu_y=float(m["mu_y"]) if m.get("mu_y") is not None else None,
+            mu_z=float(m["mu_z"]) if m.get("mu_z") is not None else None,
         )
     for s in data["supports"]:
         f.supports[int(s["node"])] = tuple(int(v) for v in s["fix"])
@@ -415,8 +441,14 @@ def from_dict(data: dict[str, Any]) -> Frame:
     _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):
         _fill_case(f, f.case(str(c["name"])), c)
-    # 只写了多工况时，别留一个空的 default 干扰结果表
-    if data.get("load_cases") and not any(
+    # 只写了多工况时，别留一个空的 default 干扰结果表。
+    #
+    # **但用户自己起名叫 default 的那条不能删。** 它和自动建出来的空壳是同
+    # 一个对象，一并 pop 掉的话整条工况连同荷载一起消失，而模型照样读得进来
+    # ——接下来是"求解时没有任何荷载"，指向的却不是真正的原因。
+    named_default = any(str(c.get("name")) == DEFAULT_CASE
+                        for c in data.get("load_cases") or [])
+    if data.get("load_cases") and not named_default and not any(
             data.get(k) for k in ("nodal_loads", "member_loads",
                                   "member_spans", "settlements",
                                   "member_strains")):

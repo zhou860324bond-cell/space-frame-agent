@@ -119,6 +119,9 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
                                   "删边界条件会让结构少约束，所以要报剩下多少"),
     "generate_live_patterns": (("spans", "span_count", "cases", "count"),
                                "活载布置：归出几跨、每个工况压哪些梁，都要给出来"),
+    "set_member_connection": (("members", "end", "dof", "stiffness", "note"),
+                              "半刚性连接：实际用了多大刚度要给出来——"
+                              "按 EI/L 倍数给的时候用户并不知道绝对值是多少"),
     "add_step": (("added", "count", "steps", "note"),
                  "加分析步：要把**结算后实际生效**的荷载与支座给出来，"
                  "只回显声明会把传播这件事藏起来"),
