@@ -373,7 +373,12 @@ rejected_conflict 全部排除。对每条证据，先把标注值换算为米�
 status=`unknown`。所有判断使用换算后的双精度米/像素值，恰好 2% 不算冲突。
 
 `axis_mapping` 必须是 `{first_axis,second_axis,offset_axis,image_right_sign,image_up_sign}`，
-两个 sign 固定为整数 `1`。三种合法值分别为 `XY: X/Y/Z`、`XZ: X/Z/Y`、`YZ: Y/Z/X`。
+两个 sign 固定为整数 `1`。这一整段由 `validate_v2_draft` 逐字校验：
+字段集合、三个轴与 `plane` 的对应关系、两个 sign 的取值，错一处就拒收。之所以要卡死，
+是因为物化时 `image_to_model` 只读 `work_plane.plane` 并自己重算映射，草稿里声明的 `axis_mapping`
+一个字都不读——放行一份「声明 Y/X/Z、却标着 plane=XZ」的草稿，用户在确认界面上确认的是前者，
+落进模型的几何却是后者。同理 `offset` 必须是有限数，否则物化会直接抛 `KeyError`。
+三种合法值分别为 `XY: X/Y/Z`、`XZ: X/Z/Y`、`YZ: Y/Z/X`。
 换言之：`XY: a=X,b=Y,offset=Z`；`XZ: a=X,b=Z,offset=Y`；`YZ: a=Y,b=Z,offset=X`。
 默认锚点按 `(u 最小, v 最大, node_id 最小)` 排序，即图中最左、再最低的节点；其模型坐标
 由三个有限数组成的 `anchor_coordinates_xyz` 完整给出，默认两平面轴及偏移轴均为 0；用户修改

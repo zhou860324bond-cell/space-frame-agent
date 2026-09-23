@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from agent import Session  # noqa: E402
 from desktop.issue_panel import IssuePanel, confidence_band  # noqa: E402
 from desktop.sketch_panel import SketchPanel  # noqa: E402
+from image_preprocess import work_plane_payload  # noqa: E402
 from sketch_topology import detect_topology  # noqa: E402
 from multimodal_workflow import MultimodalControllerState  # noqa: E402
 from dimension_constraints import add_member_length_dimension  # noqa: E402
@@ -47,7 +48,7 @@ def base_draft():
             "supports": [], "load_cases": []},
         "source": {"width_px": 101, "height_px": 101,
                    "preprocessing": {"perspective_status": "unconfirmed"}},
-        "work_plane": {"status": "proposed", "plane": "XZ"},
+        "work_plane": work_plane_payload("XZ"),
         "scale": {"status": "unknown"}, "entities": [
             {"kind": "node", "id": "node-1", "source": "vision",
              "confidence": 0.5, "recognition_confidence": 0.5, "verified": False,

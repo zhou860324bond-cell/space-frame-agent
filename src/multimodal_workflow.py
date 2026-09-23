@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from change_preview import model_digest
+from image_preprocess import axis_mapping
 from multimodal_contract import canonical_digest
 
 V2_DRAFT_FORMAT = "space-frame-recognition-draft/v2"
@@ -39,6 +40,43 @@ def draft_digest(draft: Mapping[str, Any]) -> str:
 def _finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) \
         and math.isfinite(float(value))
+
+
+def _work_plane_errors(work_plane: Any) -> list[str]:
+    """按 v2 契约逐字检查 work_plane。
+
+    物化时 image_to_model 只认 work_plane["plane"]，自己重算轴映射。草稿里
+    声明的 axis_mapping 一个字都不读——所以它必须在这里被钉死，否则草稿可以
+    声明一套映射、几何按另一套生成，而用户在确认界面上看到的是前者。
+    """
+    if not isinstance(work_plane, dict)             or work_plane.get("status") not in ("proposed", "confirmed")             or work_plane.get("plane") not in ("XY", "XZ", "YZ"):
+        return ["work_plane 无效"]
+    errors: list[str] = []
+    if not _finite(work_plane.get("offset")):
+        errors.append("work_plane.offset 必须是有限数")
+    expected = axis_mapping(work_plane["plane"])
+    mapping = work_plane.get("axis_mapping")
+    if not isinstance(mapping, dict):
+        errors.append("work_plane.axis_mapping 必须是对象")
+        return errors
+    if set(mapping) != set(expected):
+        errors.append(f"work_plane.axis_mapping 的字段必须恰好是 "
+                      f"{sorted(expected)}，实际 {sorted(mapping)}")
+        return errors
+    for key in ("first_axis", "second_axis", "offset_axis"):
+        if mapping[key] != expected[key]:
+            errors.append(
+                f"work_plane.axis_mapping.{key} 与 plane="
+                f"{work_plane['plane']} 矛盾：契约要求 {expected[key]!r}，"
+                f"草稿写的是 {mapping[key]!r}。物化只认 plane，"
+                "这里放行就会「确认一套、生成另一套」。")
+    for key in ("image_right_sign", "image_up_sign"):
+        if not isinstance(mapping[key], int) or isinstance(mapping[key], bool)                 or mapping[key] != 1:
+            errors.append(
+                f"work_plane.axis_mapping.{key} 固定为整数 1，草稿写的是 "
+                f"{mapping[key]!r}；image_to_model 不读这个字段，"
+                "写别的值不会让图像方向翻转。")
+    return errors
 
 
 def validate_v2_draft(draft: Any) -> list[str]:
@@ -96,11 +134,7 @@ def validate_v2_draft(draft: Any) -> list[str]:
             errors.append(f"image_model 杆件 {member_id} 自连接或重复")
         edges.add(edge)
 
-    work_plane = draft.get("work_plane")
-    if (not isinstance(work_plane, dict)
-            or work_plane.get("status") not in ("proposed", "confirmed")
-            or work_plane.get("plane") not in ("XY", "XZ", "YZ")):
-        errors.append("work_plane 无效")
+    errors.extend(_work_plane_errors(draft.get("work_plane")))
     scale = draft.get("scale")
     if not isinstance(scale, dict) or scale.get("status") not in (
             "unknown", "confirmed", "conflict"):
