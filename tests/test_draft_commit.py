@@ -338,3 +338,74 @@ def test_a_coincident_node_is_still_caught_in_a_millimetre_model():
     with pytest.raises(DraftCommitError, match="重合"):
         prepared, _ = prepare_commit(draft, baseline)
     assert prepared is None
+
+
+# --- 提交闸门：前提没确认就不许落地 ---------------------------------------
+#
+# 这几条守的是整个多模态功能的**安全底线**：尺度决定图上一个像素代表多少米，
+# 透视校正决定那张图能不能当正投影读。任一项没确认，模型里的坐标就没有
+# 意义——而它们依然是合法的数字，求解、出图、校核全都跑得通，只是算的是
+# 一个不存在的结构。
+#
+# 原先只有 fixture 把前提设成"好值"，**没有一条负向测试**。_ready() 里少查
+# 一项不会有任何提示。
+
+def armed(draft_mutation=None):
+    """走完整路径：破坏前提 → 预演 → 装进状态机。
+
+    **先破坏、再预演**：预演绑定草稿摘要，预演之后再改会被"已陈旧"挡掉，
+    所以真正要试的是"这份草稿本来就没确认过前提"。
+    """
+    session = Session()
+    draft = ready_draft()
+    if draft_mutation is not None:
+        draft_mutation(draft)
+    prepared, preview = prepare_commit(draft, session.model)
+    return session, armed_state(prepared, preview)
+
+
+def test_a_draft_with_everything_confirmed_commits():
+    """对照组。没有它，下面三条全绿也可能只是因为路径根本走不通。"""
+    session, state = armed()
+    assert state.can_commit(session.model)
+    assert commit_prepared(session, state,
+                           confirmed_at="2026-09-23T00:00:00Z").ok
+    assert session.model["nodes"]
+
+
+@pytest.mark.parametrize(("label", "mutate"), [
+    ("尺度未确认", lambda d: d.__setitem__("scale", {
+        "status": "unknown", "length_per_pixel": None, "unit": "m/px",
+        "anchor_node": 1, "anchor_coordinates_xyz": [0.0, 0.0, 0.0],
+        "evidence_ids": []})),
+    ("透视校正被拒绝",
+     lambda d: d["source"]["preprocessing"].__setitem__(
+         "perspective_status", "rejected")),
+    ("透视校正未确认",
+     lambda d: d["source"]["preprocessing"].__setitem__(
+         "perspective_status", "unconfirmed")),
+])
+def test_an_unconfirmed_prerequisite_blocks_the_commit(label, mutate):
+    """尺度或透视没确认时，一个节点都不许落进模型。"""
+    session, state = armed(mutate)
+    assert not state.can_commit(session.model), f"{label} 居然可以提交"
+    with pytest.raises(DraftCommitError):
+        commit_prepared(session, state, confirmed_at="2026-09-23T00:00:00Z")
+    assert not session.model.get("nodes"), f"{label} 之后模型里出现了节点"
+
+
+def test_editing_the_draft_after_the_preview_invalidates_it():
+    """预演绑定草稿摘要：预演之后再改草稿，这份预演必须作废。
+
+    否则"预演给你看一个样子、提交进去另一个样子"——而预演正是用户唯一
+    能核对的地方。
+    """
+    session = Session()
+    prepared, preview = prepare_commit(ready_draft(), session.model)
+    prepared["scale"]["length_per_pixel"] = 0.02      # 改了尺度
+    state = MultimodalControllerState()
+    state.load_image("a" * 64)
+    job = state.start_recognition("job")
+    state.complete_recognition(job, prepared)
+    with pytest.raises(ValueError, match="陈旧"):
+        state.set_commit_preview(preview)
