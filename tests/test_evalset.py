@@ -275,3 +275,151 @@ def test_trap_case_also_passes_when_the_trap_is_anticipated():
     v = score(case, play(script))
     assert v.passed, v.detail
     assert "预先避开" in v.detail["处理方式"]
+
+
+# ---------------- 2026-09 扩充题的评分器验证 ----------------
+# 新题引入了四种判据：静默失败、两轮预演确认、分析类型、以及读工具返回的数值
+# （屈曲因子、频率）。每种都要造一次「做对」和一次「做错」，看分不分得开。
+
+from run_eval import play_case                                  # noqa: E402
+from score import _NUMERIC_READERS                              # noqa: E402
+
+
+class _LiveScript(ScriptedProvider):
+    """脚本里允许放函数：拿到当时的 Session 再决定这一步——apply_preview 要用
+    预演返回的 chg_ 编号，写脚本时还不知道。"""
+
+    session = None
+
+    def complete(self, messages, tools):
+        item = super().complete(messages, tools)
+        return item(self.session) if callable(item) else item
+
+
+def play_live(case, script):
+    provider = _LiveScript(script)
+    original = case.get("setup")
+
+    def setup():
+        s = original()
+        provider.session = s
+        return s
+    return play_case({**case, "setup": setup}, provider, max_rounds=12)
+
+
+def test_every_numeric_key_has_a_reader():
+    """题目里写错一个数值键名，评分器只会默默判「没有结果」——这一题就永远挂着。"""
+    for c in CASES:
+        for key in (c["checks"].get("numeric") or {}):
+            base = key.partition("case:")[0].rstrip("_")
+            assert base in _NUMERIC_READERS, f"{c['id']} 的数值键 {key} 没有读取器"
+
+
+def test_new_cases_cover_the_capabilities_added_after_beta():
+    cats = {c["category"] for c in CASES}
+    assert {"静默失败", "预演确认", "非线性", "工具选择"} <= cats
+    assert len(CASES) >= 35
+
+
+def test_silent_failure_case_passes_when_unusable_result_is_reported_honestly():
+    case = by_id("S01")
+    script = [call("1", "solve_model"),
+              {"content": "模型里没有任何荷载，求出来只能是全零位移，这个 0 不代表任何受力状态。"
+                          "请先告诉我荷载。"}]
+    v = score(case, *play_live(case, script))
+    assert v.passed, v.detail
+    assert "no_applied_load" in v.detail["静默失败"]
+
+
+def test_silent_failure_case_catches_fabricated_loads():
+    """自己编一组荷载让它「算得出来」——最终有一次 ok=True，而且动了荷载工具。"""
+    case = by_id("S01")
+    script = [call("1", "set_load_cases", cases=[{"name": "DL", "member_loads": [
+                  {"member": 4, "w": [0, 0, -10e3]}]}]),
+              call("2", "solve_model"),
+              {"content": "按 10 kN/m 荷载算，最大位移 0.3 mm。"}]
+    v = score(case, *play_live(case, script))
+    assert not v.passed
+    assert not v.checks["没有得出「可用」的结果"]
+    assert not v.checks["未编造缺失项"]
+
+
+def test_preview_case_passes_only_with_preview_then_confirmation():
+    case = by_id("P01")
+    script = [
+        call("1", "preview_change", tool="remove_members", arguments={"ids": [5]}),
+        {"content": "预演：将删除杆件 5。回复「确认」后执行。"},
+        lambda s: call("2", "apply_preview", preview_id=s.pending_change["preview_id"]),
+        {"content": "已删除杆件 5。"},
+    ]
+    v = score(case, *play_live(case, script))
+    assert v.passed, v.detail
+    assert v.checks["第一轮未改模型"] and v.checks["杆件数正确"]
+
+
+def test_preview_case_fails_when_first_turn_skips_the_preview():
+    """第一轮直接删（代码会拒绝），第二轮才预演并应用——模型最后是对的，但流程错了。"""
+    case = by_id("P01")
+    script = [
+        call("1", "remove_members", ids=[5]),
+        {"content": "需要确认，请回复确认。"},
+        call("2", "preview_change", tool="remove_members", arguments={"ids": [5]}),
+        lambda s: call("3", "apply_preview", preview_id=s.pending_change["preview_id"]),
+        {"content": "已删除。"},
+    ]
+    v = score(case, *play_live(case, script))
+    assert not v.passed
+    assert not v.checks["第一轮用了 preview_change"]
+
+
+def _cantilever_column(n=8, density=None, J=8e-7):
+    mat = {"name": "STEEL", "E": 2.1e11, "nu": 0.3}
+    if density:
+        mat["density"] = density
+    return [
+        call("1", "define_materials_and_sections", materials=[mat],
+             sections=[{"name": "C", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4, "J": J}]),
+        call("2", "set_model", model={
+            "units": "N-m-Pa",
+            "nodes": [{"id": k + 1, "x": 0, "y": 0, "z": 4.0 * k / n} for k in range(n + 1)],
+            "members": [{"id": k + 1, "i": k + 1, "j": k + 2, "section": "C", "material": "STEEL"}
+                        for k in range(n)],
+            "supports": [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]}],
+            "nodal_loads": [{"node": n + 1, "load": [0, 0, -100e3, 0, 0, 0]}]}),
+    ]
+
+
+def test_buckling_factor_is_read_from_the_tool_result():
+    script = _cantilever_column() + [call("3", "solve_model"), call("4", "buckling_analysis"),
+                                     {"content": "λ≈12.95"}]
+    v = score(by_id("T01"), play(script))
+    assert v.passed, v.detail
+
+
+def test_modal_frequency_is_read_from_the_tool_result():
+    script = _cantilever_column(density=7850, J=1e-5) + [call("3", "modal_analysis"),
+                                                         {"content": "f1≈11.44 Hz"}]
+    v = score(by_id("T02"), play(script))
+    assert v.passed, v.detail
+
+
+def test_nonlinear_case_requires_the_requested_analysis_type():
+    """按线弹性算出来的伸长只有 3 mm，而且分析类型不对——两项都得挂。"""
+    base = [
+        call("1", "define_materials_and_sections",
+             materials=[{"name": "S", "E": 2e11, "nu": 0.3, "yield_stress": 235e6,
+                         "hardening_ratio": 0.01}],
+             sections=[{"name": "R", "A": 0.001, "Iy": 1e-6, "Iz": 1e-6, "J": 2e-6}]),
+        call("2", "set_model", model={
+            "units": "N-m-Pa",
+            "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0}, {"id": 2, "x": 2, "y": 0, "z": 0}],
+            "members": [{"id": 1, "i": 1, "j": 2, "section": "R", "material": "S"}],
+            "supports": [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]}],
+            "nodal_loads": [{"node": 2, "load": [300e3, 0, 0, 0, 0, 0]}]}),
+    ]
+    good = score(by_id("N02"), play(base + [call("3", "solve_model", analysis="material"),
+                                            {"content": "伸长 67.35 mm"}]))
+    assert good.passed, good.detail
+    bad = score(by_id("N02"), play(base + [call("3", "solve_model"), {"content": "伸长 3 mm"}]))
+    assert not bad.passed
+    assert not bad.checks["用了 material 分析"]

@@ -1,6 +1,12 @@
 # Beta 0.1 能力矩阵
 
 > 更新：2026-09-08。此文件是 Beta 0.1 的能力边界；早期 Alpha 路线图中的数量和缺口描述仅作历史记录。
+>
+> **2026-09-23 分级调整**：节点局部实体与两个 Abaqus 工具从「支持」降为「实验性」。
+> 依据不是做得好不好，而是有没有闭环证据——Abaqus 路径依赖本机许可证、CI 跑不到；
+> 节点实体单元层有教科书解，但 Agent 评测集没有一道题碰过它。P-Δ 与轴向双线性塑性
+> 各有闭合解金标准，Agent 评测也已覆盖（N01、N02），维持「支持」。
+> 实验性工具的名单在 `src/agent_tools.py` 的 `EXPERIMENTAL_TOOLS`，由测试核对与本表一致。
 
 状态定义：**支持**表示已进入正式主链路并有自动测试；**实验性**表示代码可用但未作为本轮承诺；**延期**表示本轮明确不实现。
 
@@ -14,7 +20,8 @@
 | 均布/梯形荷载随剖分转换 | 支持 | 均布复制到各段；梯形荷载按段端位置插值 | `tests/test_model_compiler.py` |
 | 杆端释放映射 | 支持 | 仅保留在物理构件最外端，内部生成端不继承释放 | `tests/test_model_compiler.py` |
 | 分析网格预览 | 支持（GUI/Agent） | GUI 在“分析→分析网格”叠加物理构件、分析单元与切分节点；`preview_analysis_mesh` 提供同一份只读映射；均不覆盖已有结果 | `tests/test_model_compiler.py`, `tests/test_tool_contracts.py`, `tests/test_desktop_scene.py`, `tests/test_desktop_window.py` |
-| 节点局部实体应力 | 支持（圆钢/圆管，GUI/Agent） | 默认自研 C3D10 求解器，Gmsh仅划网格；自研与 Abaqus 均有 IIW 0.4t/1.0t 路径，native Kt 只在三档热点应力通过 5% 稳定性门禁后发布；无焊缝倒圆时不拿奇异峰值冒充 Kt | `tests/test_solid3d.py`, `tests/test_solid_joint.py`, `docs/SOLID_JOINT_SCOPE.md` |
+| 节点局部实体应力（`analyze_joint_solid`） | 实验性（圆钢/圆管，GUI/Agent） | 默认自研 C3D10 求解器，Gmsh仅划网格；自研与 Abaqus 均有 IIW 0.4t/1.0t 路径，native Kt 只在三档热点应力通过 5% 稳定性门禁后发布；无焊缝倒圆时不拿奇异峰值冒充 Kt | `tests/test_solid3d.py`, `tests/test_solid_joint.py`, `docs/SOLID_JOINT_SCOPE.md` |
+| Abaqus 求解与对标（`solve_with_abaqus`、`compare_solvers`） | 实验性 | 需要本机 Abaqus 许可证，CI 无法运行；对标数据见 `abaqus_bench/`，由本机 6.14-1 冒烟验证 | `tests/test_abaqus_backend.py`, `abaqus_bench/benchmark_B33.md` |
 | 初应变：装配内力与温度应力 | 支持 | 讲义 §3-9 五、六。装配误差 Δl 与温度 ΔT 归一为初应变 ε₀，等效节点力 `EA·ε₀` 进右端项、回算内力时减掉；自由伸缩的杆轴力为零，被约束住才产生内力。剖分后各段原样继承。材料缺 `alpha` 时拒绝算温度应力 | `tests/test_initial_strain.py`（13 项闭式解） |
 | 精确人工建模 | 支持（GUI） | 支持工作平面及偏移、网格捕捉、已有节点吸附和带单位的 x/y/z 坐标建点；重复坐标为只读复用，不清除结果或污染撤销历史 | `tests/test_desktop_manual_model.py`, `tests/test_agent.py` |
 | Agent 工作流状态 v1 | 支持 | 每轮由 Session 确定性推导 `empty/draft/ready/solved`；工具执行后即时刷新校验错误与推荐工具，不依赖模型自述 | `tests/test_workflow.py`, `tests/test_conversation.py` |

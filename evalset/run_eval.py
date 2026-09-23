@@ -3,7 +3,7 @@ r"""跑评测集，产出一份可直接放进报告的成绩单。
     cd /d C:\Users\你的用户名\Desktop\agent开发
     .venv\Scripts\activate.bat
     set PYTHONPATH=src;evalset
-    python evalset\run_eval.py                      # 全部 14 题
+    python evalset\run_eval.py                      # 全部题目
     python evalset\run_eval.py --id R01 A01         # 只跑指定题
     python evalset\run_eval.py --category 解析解
     python evalset\run_eval.py --model deepseek-v4-pro
@@ -30,11 +30,13 @@ for _p in (_ROOT / "src", Path(__file__).resolve().parent):
 
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
 
 from agent import DeepSeekProvider, Session, run_turn, MAX_ROUNDS
+from conversation import Conversation
 from cases import CASES
 from score import Verdict, aggregate, score
 
@@ -45,13 +47,39 @@ use_utf8()
 from agent_live import load_api_key  # noqa: E402  复用同一套密钥读取，避免两处实现
 
 
+def play_case(case: dict, provider, max_rounds: int):
+    """按题目的形态跑完对话，返回 (最后一轮的 TurnResult, 第一轮快照或 None)。
+
+    单轮题照旧走 run_turn——原 14 题的跑法一个字不变，历史成绩才还能比。
+    带 setup 的题从预置模型起步；带 followup 的题走 Conversation，和桌面端
+    聊天面板同一条路径：第二轮看得见第一轮的问答，预演—确认才接得上。
+    """
+    session = case["setup"]() if "setup" in case else Session()
+    before = json.dumps(session.model, sort_keys=True, ensure_ascii=False)
+    if "followup" not in case:
+        out = run_turn(case["prompt"], provider, session=session, max_rounds=max_rounds)
+        first = {"model_before": before, "tools": [n for n, _ in out.tool_calls],
+                 "model_after": json.dumps(session.model, sort_keys=True, ensure_ascii=False)}
+        return out, (first if "setup" in case else None)
+
+    chat = Conversation(provider, session=session, max_rounds=max_rounds)
+    first_out = chat.ask(case["prompt"])
+    first = {"model_before": before, "tools": [n for n, _ in first_out.tool_calls],
+             "model_after": json.dumps(session.model, sort_keys=True, ensure_ascii=False)}
+    out = chat.ask(case["followup"])
+    out.tool_calls = first_out.tool_calls + out.tool_calls
+    out.rounds += first_out.rounds
+    out.stopped_by_limit = out.stopped_by_limit or first_out.stopped_by_limit
+    return out, first
+
+
 def run_one(case: dict, api_key: str, model: str, max_rounds: int) -> Verdict:
     """跑一题。任何异常都收成这一题的失败，不许打断整批。"""
     started = time.time()
     provider = None
     try:
         provider = DeepSeekProvider(api_key=api_key, model=model)
-        out = run_turn(case["prompt"], provider, session=Session(), max_rounds=max_rounds)
+        out, first = play_case(case, provider, max_rounds)
     except Exception as exc:  # noqa: BLE001  评测要跑满所有题：一题崩了记进 Verdict.error 继续下一题
         v = Verdict(case_id=case["id"], category=case["category"])
         v.error = f"{type(exc).__name__}: {exc}"
@@ -60,7 +88,7 @@ def run_one(case: dict, api_key: str, model: str, max_rounds: int) -> Verdict:
             v.usage = provider.usage
         return v
     out.usage = provider.usage
-    v = score(case, out)
+    v = score(case, out, first)
     v.seconds = time.time() - started
     v.usage = provider.usage
     if out.stopped_by_limit:
