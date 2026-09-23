@@ -67,6 +67,14 @@ TOOLS = [
     ("check_strength", {}),
     ("response_spectrum_analysis",
      {"direction": "x", "num_modes": 10, "alpha_max": 0.08, "tg": 0.35}),
+    # 查询类工具也在给用户报数字，而且各自做单位换算——
+    # 求解对了不等于报出去的对。
+    ("query_results", {"what": "max_displacement"}),
+    ("query_results", {"what": "max_deflection"}),
+    ("query_results", {"what": "reactions"}),
+    ("query_results", {"what": "member_forces", "member_id": 2}),
+    ("query_envelope", {"component": "Mz"}),
+    ("query_diagram", {"component": "Mz"}),
 ]
 
 
@@ -76,8 +84,14 @@ def run(session, name, kwargs):
     return getattr(session, name)(**kwargs)
 
 
+def _label(entry) -> str:
+    name, kwargs = entry
+    extra = kwargs.get("what") or kwargs.get("component")
+    return f"{name}-{extra}" if extra else name
+
+
 @pytest.mark.parametrize(("name", "kwargs"), TOOLS,
-                         ids=[name for name, _ in TOOLS])
+                         ids=[_label(entry) for entry in TOOLS])
 def test_the_numbers_do_not_depend_on_the_unit_system(name, kwargs):
     """同一个结构，两种单位制，工具报出来的每个数都必须一样。"""
     si = run(frame_session("N-m-Pa"), name, kwargs)
@@ -109,7 +123,8 @@ def test_the_tool_list_covers_the_analysis_tools():
     """**新增分析工具要在 TOOLS 里加一行**，否则这道闸门管不到它。"""
     covered = {name for name, _ in TOOLS}
     expected = {"solve_model", "modal_analysis", "buckling_analysis",
-                "check_strength", "response_spectrum_analysis"}
+                "check_strength", "response_spectrum_analysis",
+                "query_results", "query_envelope", "query_diagram"}
     assert expected <= covered, f"这些分析工具没进闸门：{sorted(expected - covered)}"
 
 
