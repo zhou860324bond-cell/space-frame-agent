@@ -466,3 +466,103 @@ def test_prompt_shows_how_to_express_a_load():
     assert '"nodal_loads"' in prompt and '"member_loads"' in prompt
     assert '"unit"' in prompt and '"direction"' in prompt
     assert "不要自己换算" in prompt
+
+
+def _recognized_draft(supports, member_loads):
+    """按提示词的形状造一份识别输出，交给 _fill_bookkeeping 规整。"""
+    from sketch_parser import _fill_bookkeeping
+    return _fill_bookkeeping({
+        "image_model": {
+            "nodes": [{"id": 1, "u": 0.0, "v": 1.0},
+                      {"id": 2, "u": 1.0, "v": 1.0}],
+            "members": [{"id": 1, "i": 1, "j": 2, "material": None,
+                         "section": None}],
+            "supports": supports,
+            "load_cases": [{"name": "DL", "nodal_loads": [],
+                            "member_loads": member_loads}],
+        }}, "a" * 64, "drawing.png")
+
+
+def test_recognition_scaffolding_does_not_ride_into_the_model():
+    """value/unit/direction 和 kind 是识别期的脚手架，翻译完必须拆掉。
+
+    契约里 image_model 的荷载用现有载荷合同（w / load）、支座是
+    {name,node,fix[6]}。留着脚手架的话它们会一路 deepcopy 进 SI 模型，
+    最后被 schema 以"多余属性"拒收——错误信息指着大模型的词汇
+    （'direction'、'unit'、'value' were unexpected），而不是用户能动手的东西。
+    """
+    from model_io import validate_payload
+    from sketch_topology import materialize_geometry
+    draft = _recognized_draft(
+        [{"node": 1, "kind": "pinned"}, {"node": 2, "kind": "roller"}],
+        [{"member": 1, "value": 18.0, "unit": "kN/m", "direction": [0, 0, -1]}])
+    draft["work_plane"]["status"] = "confirmed"
+    draft["scale"] = {"status": "confirmed", "length_per_pixel": 0.01,
+                      "unit": "m/px", "anchor_node": 1,
+                      "anchor_coordinates_xyz": [0.0, 0.0, 0.0],
+                      "evidence_ids": []}
+    draft["source"].update({"width_px": 601, "height_px": 401})
+
+    item = draft["image_model"]["load_cases"][0]["member_loads"][0]
+    assert item == {"member": 1, "w": [0.0, 0.0, -18000.0]}
+    assert all("kind" not in s for s in draft["image_model"]["supports"])
+
+    errors = validate_payload(materialize_geometry(draft)) or []
+    # 材料/截面为空是**设计如此**：草稿不编造工程默认值，留给用户在提交时指定。
+    # 这里要盯的是别的——不许再有任何"多余属性"。
+    assert not [e for e in errors if "Additional properties" in e], errors
+
+
+def test_unconvertible_unit_raises_a_blocking_issue_instead_of_vanishing():
+    """认不出单位时整条荷载会没有 w；那不能是悄悄发生的。
+
+    闷掉的后果是荷载凭空消失，而模型照样算得出一个像模像样的结果。
+    契约规定这种情况用 load_incomplete 阻断。
+    """
+    draft = _recognized_draft(
+        [], [{"member": 1, "value": 18.0, "unit": "t/m",
+              "direction": [0, 0, -1]}])
+    assert "w" not in draft["image_model"]["load_cases"][0]["member_loads"][0]
+    blocking = [i for i in draft["issues"]
+                if i["category"] == "load_incomplete"]
+    assert len(blocking) == 1, draft["issues"]
+    issue = blocking[0]
+    assert issue["severity"] == "blocking" and issue["status"] == "open"
+    assert issue["entity_refs"] == ["member:1"]
+    # 图上的原话要带上，否则用户无从判断是哪条荷载、写的是什么
+    assert "t/m" in issue["message"] and "18.0" in issue["message"]
+
+
+def test_unknown_support_kind_is_reported_even_when_the_model_named_it():
+    """原来只靠 setdefault("name", "待确认支座") 留印。
+
+    模型自己给了 name，痕迹就什么都不剩——弹性支座一声不响变成铰接，
+    刚度变了而没有任何提示。
+    """
+    draft = _recognized_draft(
+        [{"node": 2, "kind": "弹性支座", "name": "S1"}], [])
+    support = draft["image_model"]["supports"][0]
+    assert support["fix"] == [1, 1, 1, 0, 0, 0] and support["name"] == "S1"
+    guessed = [i for i in draft["issues"] if i["entity_refs"] == ["node:2"]]
+    assert len(guessed) == 1, draft["issues"]
+    assert guessed[0]["severity"] == "blocking"
+    assert "弹性支座" in guessed[0]["message"]
+    # 界面只给 low_confidence 一类"确认"按钮——猜出来的铰接需要人工点头，
+    # 而不是一条只能干瞪眼的阻断。
+    from desktop.issue_panel import _CONFIRMABLE
+    assert guessed[0]["category"] in _CONFIRMABLE
+
+
+def test_model_reported_issues_keep_their_place_ahead_of_generated_ones():
+    """模型自己报的问题排在前面，代码补的跟在后面，编号连续不重复。"""
+    from sketch_parser import _fill_bookkeeping
+    draft = _fill_bookkeeping({
+        "issues": ["模型自己报的一句话"],
+        "image_model": {
+            "supports": [{"node": 9, "kind": "看不清"}],
+            "load_cases": [{"name": "DL", "member_loads": [
+                {"member": 3, "value": 1.0, "unit": "喵"}]}]}},
+        "a" * 64, "drawing.png")
+    ids = [i["id"] for i in draft["issues"]]
+    assert ids == ["I1", "I2", "I3"], draft["issues"]
+    assert draft["issues"][0]["message"] == "模型自己报的一句话"

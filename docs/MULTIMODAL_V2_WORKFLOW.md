@@ -224,6 +224,18 @@ ID/名称唯一且引用必须命中 image_model。
 `image_model` 允许尚未确认的荷载方向、数值或单位为 null，但引用不可悬空，并用
 `load_incomplete` 阻断；材料/截面允许 null 且只形成草稿提示。
 
+提示词让模型照抄图上的数字和单位（`value`/`unit`/`direction`），支座照抄符号类型（`kind`）；
+换算成分量向量和六自由度掩码由代码做。**这几个字段是识别期的脚手架，翻译完就地拆掉**——
+留着会一路拷进 SI 模型，被 schema 以"多余属性"拒收，而错误信息指着大模型的词汇，
+不是用户能动手的东西。认得的单位是 N、kN、N/m、kN/m、N·m、kN·m；认得的支座类型是
+fixed、pinned、roller。
+
+认不出时一律留痕，不许闷掉：单位换算不出来就按上面的规定记 `load_incomplete` 阻断，
+并把图上的原话（值、单位、方向）写进 message；支座类型认不出来仍按铰接兜底，但要记一条
+`low_confidence` 阻断——界面只给这一类"确认"按钮，猜出来的铰接正需要一次人工点头。
+只靠默认名 `待确认支座` 留印是不够的：模型自己给了 name 就什么痕迹都不剩，
+弹性支座会一声不响地变成铰接。
+
 `model` 在工作平面、尺度未 confirmed 或任一保留荷载不完整时必须为 null；条件满足后由
 image_model 一次性确定性物化。该 model 是 `FrameDraft.to_model()` 可直接消费的 Domain IR v1 形状：
 `schema_version=1`、`units`、`nodes[{id,x,y,z}]`、
