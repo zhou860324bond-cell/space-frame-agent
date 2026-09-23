@@ -30,7 +30,6 @@ for _p in (_ROOT / "src", Path(__file__).resolve().parent):
 
 import argparse
 import hashlib
-import os
 import statistics
 import subprocess
 import sys
@@ -48,22 +47,14 @@ from console import use_utf8   # 见 src/console.py：别让一个字符打死�
 use_utf8()
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-# 按模块名找，而不是按目录写死——布局变了指纹也还算得出来
+# 指纹覆盖 **src/ 下全部 .py**，外加评测自己的三份脚本。
 #
-# **agent_tools.py 必须在列。** 指纹把 agent.py 列进来的本意是盯住工具描述
-# （"工具描述一改就等于提示词变了"），但那 1180 行 TOOLS 后来搬去了
-# agent_tools.py。只留 agent.py 的话，改一个工具描述指纹察觉不到——
-# 指纹还在，保护没了。这是搬文件时漏掉的一处，补回来。
-#
-# session_*.py 同理：Session 的方法体从 agent.py 搬了出去，而工具的实际
-# 行为就在那些方法里。指纹要绑的是"这一版代码"，不是"这一个文件"。
-FINGERPRINT_MODULES = ("frame3d.py", "model_io.py", "generator.py",
-                       "agent.py", "agent_tools.py",
-                       "session_base.py", "session_modeling.py",
-                       "session_loads.py", "session_solving.py",
-                       "session_query.py", "session_checks.py",
-                       "plot3d.py", "cases.py", "score.py")
-_SKIP_DIRS = {".venv", "__pycache__", ".pytest_cache", ".git"}
+# 以前是一份手写名单，而名单漏过不止一次：TOOLS 搬去 agent_tools.py 时漏过，
+# 2026-09-23 又发现漏了 silent_failures.py——它的 unusable 提示原样进工具回包、
+# 被模型读到，改了提示词却不变指纹。同一次还查出漏了 conversation.py（两轮题
+# 走它）、workflow.py（每次调用都带工作流状态）、change_preview.py（预演闸门）。
+# 名单靠人记，总会漏；整个 src/ 一起算，宁可多敏感，不能漏。
+EVAL_SCRIPTS = ("cases.py", "score.py", "run_eval.py")
 
 
 def code_fingerprint() -> dict[str, str]:
@@ -81,25 +72,17 @@ def code_fingerprint() -> dict[str, str]:
     except (OSError, subprocess.SubprocessError):
         pass
 
-    # 用 os.walk 并就地剪掉 .venv 等目录。rglob 会先把 .venv 里上万个文件全走一遍
-    # 再过滤，挂载目录下慢到能把测试拖超时。
-    found: dict[str, Path] = {}
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
-        for name in sorted(filenames):
-            if name in FINGERPRINT_MODULES and name not in found:
-                found[name] = Path(dirpath) / name
-
+    files = sorted((ROOT / "src").glob("*.py")) + [HERE / n for n in EVAL_SCRIPTS]
+    missing = [f.name for f in files if not f.exists()]
     digest = hashlib.sha256()
-    for name in FINGERPRINT_MODULES:
-        path = found.get(name)
-        if path is None:
+    for path in files:
+        if not path.exists():
             continue
-        digest.update(name.encode("utf-8"))
-        digest.update(path.read_bytes())
+        digest.update(path.relative_to(ROOT).as_posix().encode("utf-8"))
+        # 换行统一成 LF：Windows 检出是 CRLF，Linux 是 LF，同一版代码不该两个指纹
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
     info["源码摘要"] = digest.hexdigest()[:12]
-    info["计入文件数"] = "%d/%d" % (len(found), len(FINGERPRINT_MODULES))
-    missing = [n for n in FINGERPRINT_MODULES if n not in found]
+    info["计入文件数"] = "%d/%d" % (len(files) - len(missing), len(files))
     if missing:
         info["未找到"] = "、".join(missing)
     return info
