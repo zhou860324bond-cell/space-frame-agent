@@ -254,3 +254,87 @@ def test_the_guard_lets_the_known_collections_through():
     target = int(prepared["merge_plan"]["member_id_map"]["1"])
     for collection in ("member_loads", "member_spans", "member_strains"):
         assert [e["member"] for e in case[collection]] == [target], collection
+
+
+# --- 草稿与模型的单位制 ---------------------------------------------------
+#
+# 识别管线产出的草稿固定是 N-m-Pa，而用户可以把项目切到 N-mm-MPa（钢结构
+# 详图常用）。合并以前**完全不看单位**：草稿里写 1.0 意思是 1 米，直接并进
+# 毫米制模型就成了 1 毫米——小 1000 倍。12 米的框架旁边挂一根 1 毫米的杆，
+# 模型依然合法，能求解、出数、没有任何提示。
+
+def mm_baseline() -> dict:
+    from units import convert_model
+    return convert_model(baseline_with_two_members(), "N-mm-MPa")
+
+
+def test_a_metre_draft_lands_at_the_right_size_in_a_millimetre_model():
+    """1 米的草稿并进毫米制模型，必须变成 1000 mm，不是 1 mm。"""
+    from units import convert_model
+
+    baseline = mm_baseline()
+    draft = draft_with_case({"name": "D",
+                             "member_loads": [{"member": 1,
+                                               "w": [0.0, 0.0, -20e3]}]})
+    assert draft["model"]["units"] == "N-m-Pa"
+    span = abs(draft["model"]["nodes"][1]["x"] - draft["model"]["nodes"][0]["x"])
+
+    prepared, _ = prepare_commit(draft, baseline)
+    candidate = materialize_candidate(prepared, baseline)
+    added = [n for n in candidate["nodes"]
+             if n["id"] not in {item["id"] for item in baseline["nodes"]}]
+    got = abs(added[1]["x"] - added[0]["x"])
+    assert got == pytest.approx(span * 1e3), (
+        f"草稿跨度 {span} m 并进毫米制模型后是 {got}，应当是 {span * 1e3} mm")
+    # 换算不能只动坐标：线荷载在毫米制下是 N/mm
+    case = next(c for c in candidate["load_cases"] if c["name"] == "D")
+    expected = convert_model(
+        {"units": "N-m-Pa", "materials": [], "sections": [], "nodes": [],
+         "members": [], "supports": [],
+         "member_loads": [{"member": 1, "w": [0.0, 0.0, -20e3]}]},
+        "N-mm-MPa")["member_loads"][0]["w"][2]
+    assert case["member_loads"][0]["w"][2] == pytest.approx(expected)
+
+
+def test_committing_into_an_empty_model_keeps_the_projects_unit_system():
+    """replace_empty 原先整个 return deepcopy(model)，连 units 一起替换。
+
+    用户把项目切到毫米制、再提交一张图，结果单位被悄悄换回米制——
+    之后所有输入都按错的单位理解。
+    """
+    from units import convert_model
+
+    empty = convert_model(Session().model, "N-mm-MPa")
+    draft = ready_draft()
+    prepared, _ = prepare_commit(draft, empty)
+    candidate = materialize_candidate(prepared, empty)
+    assert candidate["units"] == "N-mm-MPa", "提交之后项目的单位制被改掉了"
+    span = abs(candidate["nodes"][1]["x"] - candidate["nodes"][0]["x"])
+    assert span == pytest.approx(1000.0), (
+        f"草稿的 1 m 在毫米制空模型里应当是 1000 mm，实际 {span}")
+
+
+def test_the_coincidence_tolerance_is_the_same_physical_distance():
+    """重合容差是**物理距离**，不能随单位制变。
+
+    写死的 1e-6 只在米制下是 1 微米；毫米制下同一个数是 1 纳米，紧了
+    1000 倍——两个实际重合的节点会被当成两个，用户得到一根没连上的杆。
+    """
+    from multimodal_contract import MODEL_COINCIDENCE_M
+    from units import of
+
+    metres = MODEL_COINCIDENCE_M / of({"units": "N-m-Pa"}).length_to_m
+    millimetres = MODEL_COINCIDENCE_M / of({"units": "N-mm-MPa"}).length_to_m
+    assert metres * of({"units": "N-m-Pa"}).length_to_m == pytest.approx(
+        millimetres * of({"units": "N-mm-MPa"}).length_to_m)
+
+
+def test_a_coincident_node_is_still_caught_in_a_millimetre_model():
+    """容差放宽之后，重合保护不能失效——那是另一条该守住的规则。"""
+    baseline = mm_baseline()
+    draft = ready_draft()
+    # 草稿节点 1 在原点，基线节点 1 也在原点：并进去必须被拦
+    prepared = None
+    with pytest.raises(DraftCommitError, match="重合"):
+        prepared, _ = prepare_commit(draft, baseline)
+    assert prepared is None
