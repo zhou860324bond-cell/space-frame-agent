@@ -25,7 +25,7 @@
 | 初应变：装配内力与温度应力 | 支持 | 讲义 §3-9 五、六。装配误差 Δl 与温度 ΔT 归一为初应变 ε₀，等效节点力 `EA·ε₀` 进右端项、回算内力时减掉；自由伸缩的杆轴力为零，被约束住才产生内力。剖分后各段原样继承。材料缺 `alpha` 时拒绝算温度应力 | `tests/test_initial_strain.py`（13 项闭式解） |
 | 精确人工建模 | 支持（GUI） | 支持工作平面及偏移、网格捕捉、已有节点吸附和带单位的 x/y/z 坐标建点；重复坐标为只读复用，不清除结果或污染撤销历史 | `tests/test_desktop_manual_model.py`, `tests/test_agent.py` |
 | Agent 工作流状态 v1 | 支持 | 每轮由 Session 确定性推导 `empty/draft/ready/solved`；工具执行后即时刷新校验错误与推荐工具，不依赖模型自述 | `tests/test_workflow.py`, `tests/test_conversation.py` |
-| Agent 变更预演与确认 v1 | 支持 | 写操作可在隔离 Session 预演并返回实体级 diff/前后哈希；Agent 删除已有节点或杆件时由代码强制预演，只有后续用户消息明确确认且模型未变化才可应用 | `tests/test_change_preview.py`, `tests/test_conversation.py` |
+| Agent 变更预演与确认 v1 | 支持 | 写操作可在隔离 Session 预演并返回实体级 diff/前后哈希；Agent 删除已有节点或杆件、或一轮内累计改动 2 个及以上「本轮之前已有」的节点/杆件/支座时，由代码强制预演（按副本试跑的实际效果判定，拆成多次单项修改也会被累计拦下；荷载不在此列）；只有后续用户消息明确确认且模型未变化才可应用 | `tests/test_change_preview.py`, `tests/test_conversation.py` |
 | 线性静力 Result DB | 支持 | `Analysis→Step→Frame→FieldOutput`；U/UR/RF/RM/N/Vy/Vz/T/My/Mz | `tests/test_result_db.py` |
 | 结果元数据 | 支持 | 单位、位置、坐标系、平均规则、模型哈希、求解状态 | `tests/test_result_db.py` |
 | 物理构件结果聚合 | 支持 | 首末物理端结果不平均；跨分析段连续恢复内力与挠度 | `tests/test_model_compiler.py` |
