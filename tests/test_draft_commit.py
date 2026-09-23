@@ -155,3 +155,102 @@ def test_add_only_refuses_duplicate_member_created_by_reuse():
     with pytest.raises(DraftCommitError, match="重复"):
         prepared, _ = prepare_commit(draft, baseline, node_reuse={1: 1, 2: 2})
         materialize_candidate(prepared, baseline)
+
+
+# --- 并入已有模型时，每一种荷载的编号都要重映射 ---------------------------
+#
+# add_only 模式下草稿的节点/杆件编号要往后排。合并代码按一张 load_collections
+# 表逐类重映射，**不在表里的键会被当成工况元数据原样拷贝**——连同里面的
+# node / member 引用。member_strains 就这么漏在外面过：草稿写"杆件 1 升温
+# 30 度"，并进一个已有两根杆的模型后，那条初应变仍然指着**基线的**杆件 1，
+# 而不是它自己那根。模型照样合法，自检也查不出来。
+
+def baseline_with_two_members() -> dict:
+    """已有 3 节点 / 2 杆件的模型——草稿并进来时编号必须从 3、4 往后排。"""
+    session = Session()
+    session.add_nodes([[0, 0, 0], [6, 0, 0], [12, 0, 0]])
+    session.define_materials_and_sections(
+        materials=[{"name": "M", "E": 2.1e11, "nu": 0.3}],
+        sections=[{"name": "S", "A": 0.02, "Iy": 2e-4, "Iz": 4e-4,
+                   "J": 1e-5}])
+    session.add_members([[1, 2], [2, 3]], "S", "M")
+    session.set_supports([1], fix=[1, 1, 1, 1, 1, 1])
+    return session.model
+
+
+def draft_with_case(case: dict) -> dict:
+    draft = ready_draft()
+    # 挪开草稿几何，避开"与现有节点重合"的保护——那是另一条规则
+    for node in draft["model"]["nodes"]:
+        node["y"] = 5.0
+    draft["model"]["load_cases"] = [case]
+    return draft
+
+
+@pytest.mark.parametrize(("collection", "item", "key"), [
+    ("member_loads", {"member": 1, "w": [0.0, 0.0, -20e3]}, "member"),
+    ("member_spans", {"member": 1, "kind": "point", "w1": [0, 0, -1e4],
+                      "a": 0.5}, "member"),
+    ("member_strains", {"member": 1, "delta_t": 30.0}, "member"),
+    ("nodal_loads", {"node": 1, "load": [0, 0, -1e3, 0, 0, 0]}, "node"),
+    ("settlements", {"node": 1, "d": [0.0, 0.0, -0.01, 0.0, 0.0, 0.0]},
+     "node"),
+])
+def test_every_load_collection_gets_its_ids_remapped(collection, item, key):
+    """每一种荷载集合的编号都必须跟着合并计划走。
+
+    判据是**对着合并计划里的映射表**，不是"看起来变了"：漏映射的那一项
+    会停在草稿里的原编号上，而那个编号在基线里往往也存在——荷载就悄悄
+    落到了另一根杆件上。
+    """
+    baseline = baseline_with_two_members()
+    draft = draft_with_case({"name": "C", collection: [item]})
+    prepared, _ = prepare_commit(draft, baseline)
+    plan = prepared["merge_plan"]
+    candidate = materialize_candidate(prepared, baseline)
+
+    if key == "member":
+        expected = int(plan["member_id_map"][str(item["member"])])
+    else:
+        expected = next(int(action["target_id"])
+                        for action in plan["node_actions"]
+                        if int(action["draft_id"]) == item["node"])
+    case = next(c for c in candidate["load_cases"] if c["name"] == "C")
+    assert [entry[key] for entry in case[collection]] == [expected], (
+        f"{collection} 的 {key} 没有跟着合并计划重映射")
+
+
+def test_a_load_collection_the_merge_does_not_know_is_refused():
+    """工况里出现合并流程不认识的键时要**拦住**，不能原样拷贝。
+
+    原样拷贝正是上面那个 bug 的来路：不在 load_collections 表里的键被当成
+    元数据带过去，里面的编号一个都不会改。Schema 将来再长一种荷载时，
+    这条会立刻红，而不是等到某个模型把荷载加到了别的杆件上。
+    """
+    baseline = baseline_with_two_members()
+    draft = draft_with_case({
+        "name": "X",
+        "member_loads": [{"member": 1, "w": [0.0, 0.0, -1e3]}],
+        "将来的新集合": [{"member": 1}],
+    })
+    with pytest.raises(DraftCommitError, match="不认识的字段"):
+        prepare_commit(draft, baseline)
+
+
+def test_the_guard_lets_the_known_collections_through():
+    """拦截不能误伤：五种已知集合同时出现也要过。"""
+    baseline = baseline_with_two_members()
+    draft = draft_with_case({
+        "name": "ALL",
+        "nodal_loads": [{"node": 2, "load": [0, 0, -1e3, 0, 0, 0]}],
+        "member_loads": [{"member": 1, "w": [0.0, 0.0, -2e4]}],
+        "member_spans": [{"member": 1, "kind": "point", "w1": [0, 0, -1e4],
+                          "a": 0.5}],
+        "member_strains": [{"member": 1, "delta_t": 30.0}],
+    })
+    prepared, _ = prepare_commit(draft, baseline)
+    candidate = materialize_candidate(prepared, baseline)
+    case = next(c for c in candidate["load_cases"] if c["name"] == "ALL")
+    target = int(prepared["merge_plan"]["member_id_map"]["1"])
+    for collection in ("member_loads", "member_spans", "member_strains"):
+        assert [e["member"] for e in case[collection]] == [target], collection

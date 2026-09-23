@@ -183,7 +183,23 @@ def materialize_candidate(draft: Mapping[str, Any],
             result["member"] = member_map[int(result["member"])]
         return result
 
-    load_collections = ("nodal_loads", "member_loads", "member_spans", "settlements")
+    # **这五种都要走 mapped_load。** 不在这张表里的键会被当成工况元数据
+    # 原样拷贝过去——包括里面的 node / member 引用，而 add_only 模式下编号
+    # 是要重排的。member_strains 以前就漏在外面：草稿里写"杆件 1 升温 30 度"，
+    # 并进一个已有两根杆的模型后，那条初应变仍然指着**基线的**杆件 1，
+    # 而不是它自己那根（应当是 3）。模型照样合法，没有任何东西会发现。
+    load_collections = ("nodal_loads", "member_loads", "member_spans",
+                        "settlements", "member_strains")
+    # 工况里除了这几种集合，就只剩一个名字。多出来的键说明 schema 长了新
+    # 东西而这里没跟上——那正是上面那个 bug 的来路，所以直接拦住。
+    case_metadata = {"name"}
+    for source_case in model.get("load_cases") or []:
+        unknown = sorted(set(source_case) - set(load_collections) - case_metadata)
+        if unknown:
+            raise DraftCommitError(
+                f"荷载工况 {source_case.get('name')!r} 里有合并流程不认识的字段 "
+                f"{unknown}；它们会被原样拷贝、其中的编号不会重映射。"
+                "先在 load_collections 里给它们加上处理，再提交。")
     for collection in load_collections:
         existing_names = {str(item.get("name", ""))
                           for item in candidate.get(collection) or []}
