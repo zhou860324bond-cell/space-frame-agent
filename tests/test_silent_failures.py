@@ -330,3 +330,52 @@ def test_settlement_only_case_is_an_action():
     findings = {f["id"]: f for f in sf.detect_silent_failures(s.frame, s.solution)}
     assert findings["no_applied_load"]["status"] == "pass", \
         "沉降工况不是空求解"
+
+
+# ---------------- zero_internal_force 的错因要说对 ----------------
+# 荷载全部加在支座被约束的方向上时，原先的提示说「可能是机构，或荷载加在孤立
+# 节点上」——两条都不是。刚度矩阵好好的，节点也连着杆；荷载只是直接进了反力。
+
+_MS_ZIF = {"materials": [{"name": "STEEL", "E": 2.1e11, "nu": 0.3}],
+           "sections": [{"name": "COLUMN", "A": 0.012, "Iy": 8e-5, "Iz": 2.4e-4, "J": 1e-6},
+                        {"name": "BEAM", "A": 0.010, "Iy": 4e-5, "Iz": 3e-4, "J": 8e-7}]}
+
+
+def _two_span():
+    s = Session()
+    s.dispatch("define_materials_and_sections", _MS_ZIF)
+    s.dispatch("generate_frame", {"spans": [6, 6], "storeys": [4], "column_section": "COLUMN",
+                                  "beam_section": "BEAM", "material": "STEEL", "base": "fixed"})
+    return s
+
+
+def test_load_on_a_fixed_support_is_diagnosed_as_such():
+    s = _two_span()
+    s.dispatch("set_load_cases", {"cases": [{"name": "P", "nodal_loads": [
+        {"node": 1, "load": [0, 0, -50e3, 0, 0, 0]}]}]})
+    r = s.dispatch("solve_model", {})
+    assert not r.ok
+    assert r.payload["unusable"]["checks"] == ["zero_internal_force"]
+    hint = " ".join(r.payload["unusable"]["next"])
+    assert "支座" in hint and "节点 1 的 uz" in hint
+    assert "机构" not in hint                     # 不再把错因报成机构
+
+
+def test_load_partly_on_a_free_direction_is_not_blamed_on_the_support():
+    """柱底铰接放开了转动，力矩加在 ry 上就会进杆件——这不是「荷载在支座上」。"""
+    s = _two_span()
+    s.dispatch("edit_node", {"node_id": 1, "fix": [1, 1, 1, 0, 0, 0]})
+    s.dispatch("set_load_cases", {"cases": [{"name": "P", "nodal_loads": [
+        {"node": 1, "load": [0, 0, -50e3, 0, 10e3, 0]}]}]})
+    r = s.dispatch("solve_model", {})
+    names = [d["id"] for d in r.payload["silent_failures"]["summary"].get("critical_details", [])]
+    assert "zero_internal_force" not in names
+
+
+def test_diagnosis_helper_rejects_cases_with_member_loads():
+    s = _two_span()
+    s.dispatch("set_load_cases", {"cases": [{"name": "P",
+        "nodal_loads": [{"node": 1, "load": [0, 0, -50e3, 0, 0, 0]}],
+        "member_loads": [{"member": 4, "w": [0, 0, -10e3]}]}]})
+    s.dispatch("solve_model", {})
+    assert sf._loads_sitting_on_supports(s.frame, "P") is None

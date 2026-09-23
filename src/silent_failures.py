@@ -226,6 +226,34 @@ def check_zero_reaction_with_load(model: Frame, sol: Solution) -> dict[str, Any]
 # 检测项 3: 有载荷但内力为零
 # ---------------------------------------------------------------------------
 
+_DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
+
+
+def _loads_sitting_on_supports(model: Frame, case: str) -> dict[int, list[str]] | None:
+    """这个工况的荷载是否**全部**落在支座被约束的方向上。
+
+    是则返回 {节点: [被约束且受荷的方向]}，否则 None。只看节点荷载：
+    有杆件荷载的工况，荷载必然先进杆件，不会是这种情形。
+
+    这是 zero_internal_force 最常见、也最容易被误诊的一种成因——荷载直接
+    进了支座反力，杆件一点力都不受。它既不是机构（刚度矩阵好好的），也不是
+    荷载加在了孤立节点上，原先的提示把两种错因都报了，偏偏没报这一种。
+    """
+    lc = model.load_cases.get(case)
+    if lc is None or lc.member_loads or lc.member_spans or not lc.nodal_loads:
+        return None
+    hits: dict[int, list[str]] = {}
+    for nid, load in lc.nodal_loads.items():
+        fix = model.supports.get(nid, (0,) * 6)
+        for k, value in enumerate(load):
+            if abs(float(value)) < 1e-12:
+                continue
+            if not fix[k]:
+                return None                 # 有一个分量作用在自由方向，就不是这种情形
+            hits.setdefault(nid, []).append(_DOF_NAMES[k])
+    return hits or None
+
+
 def check_zero_internal_force(model: Frame, sol: Solution) -> dict[str, Any]:
     """有外载荷但所有杆件内力为零 — 载荷没有传递到杆件，可能是机构或载荷作用点错误。"""
     bad_cases = []
@@ -237,9 +265,31 @@ def check_zero_internal_force(model: Frame, sol: Solution) -> dict[str, Any]:
         for f in result.member_forces.values():
             max_force = max(max_force, float(np.abs(f).max()))
         if max_force < 1e-10:
-            bad_cases.append({"case": name, "applied_load_N": float(np.linalg.norm(applied))})
+            entry = {"case": name, "applied_load_N": float(np.linalg.norm(applied))}
+            on_supports = _loads_sitting_on_supports(model, name)
+            if on_supports:
+                entry["loads_on_restrained_dofs"] = {
+                    str(nid): dofs for nid, dofs in on_supports.items()}
+            bad_cases.append(entry)
 
     if bad_cases:
+        on_support = [b for b in bad_cases if "loads_on_restrained_dofs" in b]
+        hints = []
+        if on_support:
+            where = "；".join(
+                f"工况 {b['case']}：" + "、".join(
+                    f"节点 {nid} 的 {'/'.join(dofs)}"
+                    for nid, dofs in b["loads_on_restrained_dofs"].items())
+                for b in on_support)
+            hints.append(
+                f"荷载全部加在支座被约束的方向上（{where}），由支座反力直接承担，"
+                "不经过任何杆件——结果里只有反力有意义，位移与内力为零是真实的。"
+                "若本意是让结构受力，把荷载改到非支座节点或杆件上；"
+                "不要擅自改动用户指定的荷载位置，先向用户说明。")
+        if len(on_support) < len(bad_cases):
+            hints.append(
+                "结构可能是机构（可刚体运动），或载荷作用在自由节点上未与杆件连接。"
+                "检查节点是否都被至少一根杆件连接、载荷节点 ID 是否正确。")
         return _finding(
             "zero_internal_force",
             "有载荷但内力为零",
@@ -248,8 +298,7 @@ def check_zero_internal_force(model: Frame, sol: Solution) -> dict[str, Any]:
             f"{len(bad_cases)} 个工况有外载荷但所有杆件内力为零："
             + ", ".join(b["case"] for b in bad_cases),
             {"cases": bad_cases},
-            "结构可能是机构（可刚体运动），或载荷作用在自由节点上未与杆件连接。"
-            "检查节点是否都被至少一根杆件连接、载荷节点 ID 是否正确。",
+            "".join(hints),
         )
     return _finding(
         "zero_internal_force", "有载荷但内力为零", SEVERITY_CRITICAL, STATUS_PASS,
