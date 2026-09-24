@@ -14,11 +14,11 @@ import sys
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QDialog, QDockWidget, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QPushButton,
-                               QScrollArea, QStatusBar, QTabWidget, QToolBar,
+                               QScrollArea, QStatusBar, QToolBar,
                                QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -35,7 +35,7 @@ from .sketch_panel import SketchPanel                # noqa: E402
 from .section_opt_panel import SectionOptPanel       # noqa: E402
 from .bc_panel import BCPanel                          # noqa: E402
 from .properties import PropertiesPanel             # noqa: E402
-from .floating_button import FloatingAgentButton      # noqa: E402
+from .drawers import BOTTOM, LEFT, RIGHT, DrawerHost, SideRail  # noqa: E402
 from . import dialog_styles                         # noqa: E402
 from . import result_rows                           # noqa: E402
 from .viewport import Viewport                     # noqa: E402
@@ -111,41 +111,70 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("FrameLab Studio — 空间刚架分析")
         self.resize(1440, 900)
-        self.setDockNestingEnabled(True)
-        self.setTabPosition(Qt.DockWidgetArea.BottomDockWidgetArea,
-                            QTabWidget.TabPosition.South)
 
         self.viewport = Viewport(self)
-        self.setCentralWidget(self.viewport)
+        # 视口居中，两侧各一条**固定宽度**的窄栏放抽屉开关。窄栏是布局里
+        # 的普通控件，所以永远看得见、点得着（上一版画在视口上的 AI 按钮会
+        # 被 VTK 的原生窗口盖掉）；宽度固定，所以开关抽屉时视口一动不动。
+        self.left_rail = SideRail(LEFT, self)
+        self.right_rail = SideRail(RIGHT, self)
+        center = QWidget(self)
+        row = QHBoxLayout(center)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self.left_rail)
+        row.addWidget(self.viewport, 1)
+        row.addWidget(self.right_rail)
+        self.setCentralWidget(center)
 
         # 求解和大模型调用都得离开界面线程，否则窗口会变"未响应"
         self.runner = Runner(self)
 
+        # 三个抽屉：左放"模型是什么"，右放"找人帮忙/定义边界"，底放"算出了
+        # 什么"。每侧一个抽屉、多页用页签切——不再是九个各自漂着的小窗。
+        self.drawers = DrawerHost(self, self.viewport)
+        self.drawers.on_insets = self._on_drawer_insets
+        self.left_drawer = self.drawers.drawer(LEFT, 290)
+        self.right_drawer = self.drawers.drawer(RIGHT, 420)
+        self.bottom_drawer = self.drawers.drawer(BOTTOM, 300)
+
         self.chat = ChatPanel(self.session, self.runner, self)
         self.chat.model_changed.connect(self._on_chat_changed)
         self.chat.busy_changed.connect(self._on_busy)
-        chat_dock = QDockWidget("AI 助手", self)
-        chat_dock.setObjectName("assistantDock")
-        chat_dock.setWidget(self.chat)
-        chat_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea
-                                   | Qt.DockWidgetArea.LeftDockWidgetArea)
-        chat_dock.setMinimumWidth(320)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, chat_dock)
-        self.chat_dock = chat_dock
-        # **默认收起。** 这个面板固定占 400px、四分之一屏，而它只在"想让 AI
-        # 帮忙建模"时才用；更糟的是没配密钥时开局就是一大段配置说明，
-        # 第一眼看到的不是自己的模型而是一条错误。
-        # 收起后右缘的 FloatingAgentButton 会自动露出来，入口没丢。
-        self.chat_dock.setVisible(False)
+        # **默认收起。** 它只在"想让 AI 帮忙建模"时才用；没配密钥时开局
+        # 还是一大段配置说明——第一眼看到的不该是一条错误。
+        # 入口是右侧窄栏最上面那颗「AI」按钮，一点召唤，再点收起。
+        self.chat_dock = self.right_drawer.add_page("chat", "AI 助手", self.chat)
+
+        self.bc = BCPanel(self.session, self)
+        self.bc.changed.connect(
+            lambda: self._after_manual_edit("边界条件或荷载已修改"))
+        self.bc_dock = self.right_drawer.add_page(
+            "bc", "边界条件", self._scrolled(self.bc))
+
+        # 手绘草图 → 模型：通过建模页的「草图识别」按钮打开
+        self.sketch = SketchPanel(self.session, self.runner, self)
+        self.sketch.model_loaded.connect(self._on_sketch_loaded)
+        self.sketch_dock = self.right_drawer.add_page(
+            "sketch", "手绘草图", self._scrolled(self.sketch))
+
+        self.tree = ModelTree(self)
+        self.tree.activated_item.connect(self._on_tree_action)
+        self.tree_dock = self.left_drawer.add_page("tree", "模型树", self.tree)
+        # 开局视作"自动收起"状态：第一次刷新时若已有模型，就把树展开
+        self._tree_auto_hidden = True
+        # 用户亲手收起过模型树，就别在下一次刷新时又自作主张地弹出来
+        self._tree_dismissed = False
+        self._pending_command = None
+
+        self.properties = PropertiesPanel(self.session, self)
+        self.properties.edited.connect(self._on_property_edited)
+        self.props_dock = self.left_drawer.add_page("props", "属性", self.properties)
 
         self.timeline = TimelinePanel(self)
         self.timeline.goto_step.connect(self.goto_step)
-        self.timeline_dock = QDockWidget("建模过程", self)
-        self.timeline_dock.setObjectName("timelineDock")
-        self.timeline_dock.setWidget(self.timeline)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,
-                           self.timeline_dock)
-        self.timeline_dock.hide()
+        self.timeline_dock = self.left_drawer.add_page(
+            "timeline", "建模过程", self.timeline)
 
         self.results = ResultPanel(self)
         self.results.locate.connect(self.locate)
@@ -154,79 +183,16 @@ class MainWindow(QMainWindow):
         self.results.stress_requested.connect(self.show_section_stress)
         self.result_display_options = self.results.display_options()
         self._last_probe = None
-        self.results_dock = QDockWidget("结果", self)
-        self.results_dock.setObjectName("resultsDock")
-        self.results_dock.setWidget(self.results)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
-                           self.results_dock)
-        self.results_dock.hide()
-        # 这里原来还有一条 setMaximumHeight(260)，是停靠时代的产物——
-        # 那时它横在视口下沿，限高是为了不抢视口。现在它是独立浮窗，
-        # 限高只会让窗口拉不大、表格看不全。
         self.results.setMinimumHeight(120)
+        self.results_dock = self.bottom_drawer.add_page("results", "结果表", self.results)
 
         self.diagram = DiagramPanel(self)
         self.diagram.locate.connect(self.locate)
-        self.diagram_dock = QDockWidget("内力图", self)
-        self.diagram_dock.setObjectName("diagramDock")
-        self.diagram_dock.setWidget(self.diagram)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
-                           self.diagram_dock)
-        self.diagram_dock.hide()
-        # 原来这里把内力图和结果表叠成页签，理由是"分成两块会把视口挤没"。
-        # 改成浮窗之后这个理由不成立了——浮窗压根不占视口，两个窗可以并排
-        # 对着看，比页签来回切更有用。tabify 还会把它们重新停靠回去。
+        self.diagram_dock = self.bottom_drawer.add_page("diagram", "内力图", self.diagram)
 
-        # 截面优化
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
-        self.section_opt_dock = QDockWidget("截面优化", self)
-        self.section_opt_dock.setObjectName("sectionOptDock")
-        self.section_opt_dock.setWidget(self.section_opt)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
-                           self.section_opt_dock)
-        self.section_opt_dock.hide()
-
-        self.properties = PropertiesPanel(self.session, self)
-        self.properties.edited.connect(self._on_property_edited)
-        self.props_dock = QDockWidget("属性", self)
-        self.props_dock.setObjectName("propertiesDock")
-        self.props_dock.setWidget(self.properties)
-        self.props_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea
-                                        | Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.props_dock)
-        # 属性面板默认隐藏，选中对象后自动显示
-        self.props_dock.setVisible(False)
-
-        # 手绘草图 → 模型：隐藏，通过 Part 模块的"草图建模"按钮弹出对话框
-        self.sketch = SketchPanel(self.session, self.runner, self)
-        self.sketch.model_loaded.connect(self._on_sketch_loaded)
-        self.sketch_dock = QDockWidget("手绘草图", self)
-        self.sketch_dock.setObjectName("sketchDock")
-        self.sketch_scroll = QScrollArea(self.sketch_dock)
-        self.sketch_scroll.setWidgetResizable(True)
-        self.sketch_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.sketch_scroll.setWidget(self.sketch)
-        self.sketch_dock.setWidget(self.sketch_scroll)
-        self.sketch_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea
-                                          | Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.sketch_dock)
-        self.sketch_dock.setVisible(False)
-
-        # 边界条件面板：隐藏，通过 Load 模块的"创建边界条件"按钮弹出对话框
-        self.bc = BCPanel(self.session, self)
-        self.bc.changed.connect(
-            lambda: self._after_manual_edit("边界条件或荷载已修改"))
-        self.bc_dock = QDockWidget("边界条件", self)
-        self.bc_dock.setObjectName("boundaryDock")
-        self.bc_scroll = QScrollArea(self.bc_dock)
-        self.bc_scroll.setWidgetResizable(True)
-        self.bc_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.bc_scroll.setWidget(self.bc)
-        self.bc_dock.setWidget(self.bc_scroll)
-        self.bc_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea
-                                      | Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.bc_dock)
-        self.bc_dock.setVisible(False)
+        self.section_opt_dock = self.bottom_drawer.add_page(
+            "section_opt", "截面优化", self.section_opt)
 
         self.viewport.picked.connect(self._on_picked)
         self.viewport.probed.connect(self.probe_member_result)
@@ -236,33 +202,13 @@ class MainWindow(QMainWindow):
         self.viewport.escape_pressed.connect(self.cancel_interaction)
         self.viewport.context_requested.connect(self._show_viewport_context_menu)
 
-        self.tree = ModelTree(self)
-        self.tree.activated_item.connect(self._on_tree_action)
-        dock = QDockWidget("模型树", self)
-        dock.setObjectName("modelTreeDock")
-        dock.setWidget(self.tree)
-        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
-                             | Qt.DockWidgetArea.RightDockWidgetArea)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self.tree_dock = dock
-        self._tree_auto_hidden = False
-
-        # ===== 最后创建浮动按钮，确保它在所有组件之上 =====
-        # 右侧中间圆形按钮 —— 点击召唤/收起 AI 助手对话框
-        # 放在视口右侧边缘，对话框显示时也挡不住
-        self.agent_button = FloatingAgentButton(self)
-        self.agent_button.clicked.connect(self.toggle_agent_panel)
-        self.chat_dock.visibilityChanged.connect(self._on_chat_visibility)
-        self.agent_button.show()
-        self.agent_button.raise_()
+        self._build_rails()
 
         self._build_actions()
         self._build_empty_state()
         self._build_ribbon()
         self._build_menus()
         self._build_statusbar()
-        # 必须排在全部 dock 建好之后：它要逐个改造它们
-        self._detach_panels()
         self.refresh()
 
     # --- 构件 ---
@@ -312,12 +258,19 @@ class MainWindow(QMainWindow):
         self.empty_state = panel
         self._position_empty_state()
 
+    def _on_drawer_insets(self, left: int, right: int, bottom: int) -> None:
+        self.viewport.set_overlay_insets(left, right, bottom)
+        self._position_empty_state()
+
     def _position_empty_state(self) -> None:
         if not hasattr(self, "empty_state"):
             return
-        area = self.viewport.rect()
-        x = max(12, (area.width() - self.empty_state.width()) // 2)
-        y = max(12, (area.height() - self.empty_state.height()) // 2)
+        # 居中在**没被抽屉盖住**的那一块里
+        left, right, bottom = (self.drawers.insets() if hasattr(self, "drawers")
+                               else (0, 0, 0))
+        area = self.viewport.rect().adjusted(left, 0, -right, -bottom)
+        x = area.left() + max(12, (area.width() - self.empty_state.width()) // 2)
+        y = area.top() + max(12, (area.height() - self.empty_state.height()) // 2)
         self.empty_state.move(x, y)
         self.empty_state.raise_()
 
@@ -358,7 +311,7 @@ class MainWindow(QMainWindow):
         self.act_generate = self.actions_by_name["frame"]
         self.act_report = self.actions_by_name["report"]
         self.act_chat = self.actions_by_name["chat"]
-        self.act_chat.setChecked(True)
+        self.act_chat.setChecked(False)
         # 这两个开关的初值必须和视口的实际状态一致，否则第一次点是反的
         self.actions_by_name["load_labels"].setChecked(self.viewport.load_labels)
         self.actions_by_name["lang"].setChecked(False)
@@ -403,62 +356,94 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
-    # 面板一律做成**独立浮窗**，不再停靠。
-    #
-    # 停靠的代价是：每开一个面板，中央视口就被挤小一次，而这些面板多数是
-    # "看一眼就关"的——属性、边界条件、截面优化、建模过程都是。视口被挤到
-    # 一半宽之后再想转个角度看模型，得先把面板关掉，这个来回是纯浪费。
-    # 浮窗则是叠在视口上方，关掉就还原，视口尺寸从头到尾不变。
-    #
-    # 仍然用 QDockWidget 而不是 QDialog：`visibilityChanged`、`setVisible`、
-    # `windowTitle` 这一整套接口窗口各处都在用（浮动按钮的显隐、菜单勾选状态
-    # 都挂在上面），换成对话框等于把它们全改一遍，没有收益。
-    # 禁掉全部停靠区之后，它就是个关不回去的独立小窗。
-    FLOATING_PANELS = {
-        # 面板属性名:       (初始宽, 初始高, 落在哪个角)
-        "tree_dock":       (300, 520, "left-top"),
-        "props_dock":      (320, 420, "left-bottom"),
-        "timeline_dock":   (320, 420, "left-bottom"),
-        "chat_dock":       (400, 640, "right-top"),
-        "sketch_dock":     (420, 600, "right-top"),
-        "bc_dock":         (400, 560, "right-top"),
-        "results_dock":    (760, 300, "bottom"),
-        "diagram_dock":    (760, 340, "bottom"),
-        "section_opt_dock": (560, 420, "right-bottom"),
-    }
+    # 全部面板把手（PanelHandle），测试与"全部收起"按它逐个检查。
+    PANELS = ("tree_dock", "props_dock", "timeline_dock", "chat_dock", "bc_dock",
+              "sketch_dock", "results_dock", "diagram_dock", "section_opt_dock")
 
-    def _detach_panels(self) -> None:
-        """把全部停靠面板改造成独立浮窗，并给每个安排一个落点。"""
-        from PySide6.QtWidgets import QDockWidget
+    # 两侧窄栏上的抽屉开关：(键, 抽屉属性名, 按钮文字, 提示, 是否主按钮)。
+    # 边界条件与手绘草图不上栏——它们由功能区命令打开，是"做一件事"的面板，
+    # 不是常驻参考，放上来只会让栏变长。
+    LEFT_RAIL = (
+        ("tree", "left_drawer", "模型树", "模型树：材料、截面、约束、荷载与结果", False),
+        ("props", "left_drawer", "属性", "选中对象的属性，可就地修改（Ctrl+P）", False),
+        ("timeline", "left_drawer", "过程", "建模过程：逐步回看、跳回任意一步（Ctrl+H）", False),
+    )
+    RIGHT_RAIL = (
+        ("chat", "right_drawer", "AI\n助手", "AI 助手：一点召唤，再点收起（Ctrl+G）", True),
+        None,
+        ("results", "bottom_drawer", "结果", "结果表：位移、反力、杆端力与校验清单", False),
+        ("diagram", "bottom_drawer", "内力图", "单杆内力图：沿杆长的 N/V/M 曲线", False),
+        ("section_opt", "bottom_drawer", "优化", "截面优化", False),
+    )
 
-        for name, spec in self.FLOATING_PANELS.items():
-            dock = getattr(self, name, None)
-            if dock is None:
-                continue
-            width, height, anchor = spec
-            dock.setAllowedAreas(Qt.DockWidgetArea.NoDockWidgetArea)
-            dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable
-                             | QDockWidget.DockWidgetFeature.DockWidgetMovable)
-            dock.setFloating(True)
-            dock.resize(width, height)
-            self._place_panel(dock, width, height, anchor)
+    @staticmethod
+    def _scrolled(widget: QWidget) -> QScrollArea:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setWidget(widget)
+        return area
 
-    def _place_panel(self, dock, width: int, height: int, anchor: str) -> None:
-        """按角落摆放，别让九个浮窗全叠在左上角。
+    def _build_rails(self) -> None:
+        self._rail_targets: dict[str, tuple] = {}
+        for rail, spec in ((self.left_rail, self.LEFT_RAIL),
+                           (self.right_rail, self.RIGHT_RAIL)):
+            for item in spec:
+                if item is None:
+                    rail.add_separator()
+                    continue
+                key, drawer_name, text, tip, primary = item
+                button = rail.add_button(key, text, tip, primary=primary)
+                button.clicked.connect(lambda _=False, k=key: self._on_rail(k))
+                self._rail_targets[key] = (getattr(self, drawer_name), button)
+        for drawer in (self.left_drawer, self.right_drawer, self.bottom_drawer):
+            drawer.opened_changed.connect(lambda _on: self._sync_rails())
+            drawer.page_changed.connect(lambda _key: self._sync_rails())
+        # 保留旧名字：别处（测试、快捷键说明）按 agent_button 找 AI 入口
+        self.agent_button = self.right_rail.buttons["chat"]
 
-        坐标算在**主窗口**的屏幕位置上，不是屏幕原点——多显示器下后者会把
-        面板扔到另一块屏幕上去。
-        """
-        margin = 16
-        base = self.frameGeometry()
-        x, y = base.x() + margin, base.y() + 96
-        if anchor.startswith("right"):
-            x = base.x() + base.width() - width - margin
-        elif anchor == "bottom":
-            x = base.x() + (base.width() - width) // 2
-        if anchor.endswith("bottom") or anchor == "bottom":
-            y = base.y() + base.height() - height - margin * 3
-        dock.move(max(0, x), max(0, y))
+    def _on_rail(self, key: str) -> None:
+        drawer, _button = self._rail_targets[key]
+        drawer.toggle_page(key)
+        if key == "tree" and not drawer.is_open():
+            self._tree_dismissed = True
+        self._on_drawer_page_opened(key)
+
+    def _on_drawer_page_opened(self, key: str) -> None:
+        """面板打开时补一次刷新——关着的面板不跟随模型变化，省掉无用功。"""
+        handle = getattr(self, {"tree": "tree_dock", "props": "props_dock",
+                                "timeline": "timeline_dock", "chat": "chat_dock",
+                                "results": "results_dock", "diagram": "diagram_dock",
+                                "section_opt": "section_opt_dock"}.get(key, ""), None)
+        if handle is None or not handle.isVisible():
+            return
+        if key == "props":
+            self.properties.session = self.session
+            self.properties.refresh()
+        elif key == "timeline":
+            self.timeline.rebuild(self.session.history)
+        elif key == "diagram":
+            self.diagram.attach(self.session, self.case)
+        elif key == "tree":
+            self.tree.rebuild(self.session, self.result)
+        elif key == "chat":
+            self.set_prompt("AI 助手已展开，可以输入自然语言描述模型需求")
+
+    def _sync_rails(self) -> None:
+        """窄栏按钮、功能区开关动作，与抽屉的真实状态保持一致。"""
+        for key, (drawer, button) in self._rail_targets.items():
+            on = drawer.is_open() and drawer.current_key() == key
+            if button.isChecked() != on:
+                button.setChecked(on)
+        for action_name, handle in (("chat", self.chat_dock), ("props", self.props_dock),
+                                    ("timeline", self.timeline_dock),
+                                    ("curve", self.diagram_dock)):
+            action = self.actions_by_name.get(action_name) if hasattr(
+                self, "actions_by_name") else None
+            if action is not None and action.isChecked() != handle.isVisible():
+                action.blockSignals(True)
+                action.setChecked(handle.isVisible())
+                action.blockSignals(False)
 
     def _build_ribbon(self) -> None:
         from . import ribbon
@@ -641,7 +626,9 @@ class MainWindow(QMainWindow):
 
     # --- 状态 ---
 
-    def set_mode(self, name: str) -> None:
+    def set_mode(self, name: str, redraw: bool = True) -> None:
+        """切换显示模式。紧接着要 refresh() 的调用方传 redraw=False，
+        免得同一帧画两遍——大模型上一遍就是几百毫秒。"""
         self.mode = name
         # 中段控件也要跟着换：看变形图时要的是工况和放大，不是建节点
         if hasattr(self, "quickbar"):
@@ -652,7 +639,8 @@ class MainWindow(QMainWindow):
         act = self.mode_actions.get(name)
         if act is not None:
             act.setChecked(True)
-        self.redraw()
+        if redraw:
+            self.redraw()
 
     def new_model(self) -> None:
         self._replace_session(Session())
@@ -706,7 +694,7 @@ class MainWindow(QMainWindow):
         if result.ok:
             cases = list(result.payload["cases"])
             self.case = self.case if self.case in cases else cases[0]
-            self.set_mode("变形")
+            self.set_mode("变形", redraw=False)          # 末尾的 refresh 会画
             # 静默失败检测摘要 + 实验胶囊路径（solve_model 自动跑的两项质检）
             sf = result.payload.get("silent_failures")
             if sf and sf.get("findings"):
@@ -717,10 +705,14 @@ class MainWindow(QMainWindow):
                     self.statusBar().showMessage(
                         f"静默检测 {passed}/{len(sf['findings'])} 通过，"
                         f"{len(bad)} 项异常：{names}{'…' if len(bad) > 3 else ''}。"
-                        f"结果面板可查看详情。", 15000)
+                        f"点右侧「结果」查看详情。", 15000)
                 else:
                     self.statusBar().showMessage(
                         f"静默检测全部 {len(sf['findings'])} 项通过", 8000)
+            # 总览先填好，不弹出——想看数字时点右侧「结果」就在那儿
+            caption, cols, rows, loc = result_rows.to_rows("solve", result.payload)
+            self.results.show_rows(caption, cols, rows, loc,
+                                   result_rows.row_marks("solve", result.payload))
             cap = result.payload.get("capsule")
             if cap:
                 self.statusBar().showMessage(
@@ -827,7 +819,7 @@ class MainWindow(QMainWindow):
         if self.case not in cases:
             self.case = cases[0]
         if self.mode == "模型":
-            self.set_mode("变形")
+            self.set_mode("变形", redraw=False)          # 调用方随后都会 refresh
 
     def _demo_prompt(self) -> None:
         self.chat_dock.setVisible(True)
@@ -893,14 +885,21 @@ class MainWindow(QMainWindow):
                     overlay_deformed=options["overlay_deformed"],
                     show_extrema=options["show_extrema"])
         elif self.mode == "模态":
-            got = self.session.modal_analysis(num_modes=6)
-            if not got.ok:
-                QMessageBox.information(self, "无法进行模态分析",
-                                        str(got.payload.get("error", ""))[:400])
-                self.set_mode("模型")
-                return
-            from modal import modal
-            r = modal(frame, 6)
+            # 同一个 Frame 只算一次。原来每次重画（切工况、改放大系数、开关
+            # 标注）都把模态分析完整跑**两遍**——校验一遍、画图再一遍。
+            cached = getattr(self, "_modal_view", None)
+            if cached is not None and cached[0] is frame:
+                r = cached[1]
+            else:
+                got = self.session.modal_analysis(num_modes=6)
+                if not got.ok:
+                    QMessageBox.information(self, "无法进行模态分析",
+                                            str(got.payload.get("error", ""))[:400])
+                    self.set_mode("模型")
+                    return
+                from modal import modal
+                r = modal(frame, 6)
+                self._modal_view = (frame, r)
             f1 = r.frequencies[0]
             self.viewport.show_mode(frame, r.shapes, 0,
                                     f"第 1 阶　{f1:.3f} Hz　周期 {1 / f1:.4f} s")
@@ -951,9 +950,9 @@ class MainWindow(QMainWindow):
                 self.tree_dock.hide()
             self._tree_auto_hidden = True
         elif self._tree_auto_hidden:
-            self.tree_dock.show()
-            self.tree_dock.raise_()
             self._tree_auto_hidden = False
+            if not self._tree_dismissed and not self.left_drawer.is_open():
+                self.tree_dock.show()
 
 
 
@@ -1363,8 +1362,13 @@ class MainWindow(QMainWindow):
         self._apply_model_mode()
         self._apply_pick_mode()
         self.viewport.set_selection(None, None)
+        if getattr(self, "_pending_command", None):
+            self._pending_command = None
+            changed = True
         if changed:
             self.statusBar().showMessage("已退出当前操作，回到浏览", 3000)
+        elif self.drawers.close_all():
+            self.statusBar().showMessage("已收起面板", 2000)
 
     # --- 精确建模：工作平面 / 网格捕捉 / 精确坐标 ---
 
@@ -1569,13 +1573,17 @@ class MainWindow(QMainWindow):
         # **选中就显示属性。** 这一步是把"拾取"这条路走完：
         # 之前点中一根杆只能看到它多长，改不了
         self.properties.show_object(kind, ident)
-        self.props_dock.show()
-        self.props_dock.raise_()
+        # 建模时点中就把属性摆出来，这是"拾取"这条路的终点；看结果时点选是
+        # 在查数（值写进结果表与状态栏），再弹一个抽屉只会把模型又挤掉一块。
+        # 左抽屉本来就开着时照常切到属性页。
+        if self.mode in ("模型", "分析网格") or self.left_drawer.is_open():
+            self.props_dock.show()
         # 边界条件面板也更新
         self.bc.set_selection(kind, ident)
         # 点中一根杆，内力图就切到它——**这是"在哪"和"多大"接起来的一步**
         if kind == "member" and self.diagram_dock.isVisible():
             self.diagram.member.setCurrentText(str(ident))
+        self._resume_pending_command(kind)
 
     def _describe_selection(self, kind: str, ident: int) -> None:
         """选中之后在状态栏说清楚它是谁、在哪。
@@ -2043,9 +2051,7 @@ class MainWindow(QMainWindow):
 
     def create_bc(self) -> None:
         """Abaqus 式：选中节点，创建边界条件（勾选自由度）。"""
-        if getattr(self, "_selected_kind", None) != "node":
-            self.set_prompt("创建边界条件：请先在视口中选中一个节点，然后点击此按钮")
-            self.statusBar().showMessage("请先选中一个节点，然后创建边界条件。", 5000)
+        if not self._require_selection("create_bc", ("node",), "创建边界条件"):
             return
         from .bc_dialog import BCDialog
         nid = self._selected_id
@@ -2081,30 +2087,55 @@ class MainWindow(QMainWindow):
     }
 
     def _sync_selection_actions(self) -> None:
-        """按当前选择开关那些"必须先选中"的按钮。
+        """这些命令**始终可点**，只把"它要作用在谁身上"写进提示。
 
-        原来这些按钮永远可点，点了只在状态栏闪一句五秒后消失的提示。
-        用户看到的是"点了没反应"——这正是"很多功能都是摆设"那类抱怨的来源。
-        **前置条件应该看得见**：不满足就置灰，并把原因写进 tooltip。
+        上一版是没选中就置灰。置灰比"点了没反应"好，但仍然要求用户先猜对
+        顺序：先去找「选择节点」、点中一个、再回来点命令。实测最常见的抱怨
+        恰恰是"很多按钮点不了"。CAE 的通行做法（Abaqus 的提示区、PrePoMax
+        的选择模式）是**命令在前、拾取在后**：点了命令，它告诉你去点什么，
+        点中之后自动接着走。见 `_require_selection`。
         """
         kind = getattr(self, "_selected_kind", None)
         for name, accepted in self._NEEDS_SELECTION.items():
             action = self.actions_by_name.get(name)
             if action is None:
                 continue
-            allowed = kind in accepted
-            action.setEnabled(allowed)
+            action.setEnabled(True)
             what = "节点或杆件" if len(accepted) > 1 else "节点"
-            action.setToolTip(action.text() if allowed
-                              else f"请先在视口中选中一个{what}")
+            action.setToolTip(action.text() if kind in accepted
+                              else f"{action.text()}：点击后在视口中点选一个{what}")
+
+    def _require_selection(self, handler: str, accepted: tuple[str, ...],
+                           label: str) -> bool:
+        """命令需要一个选中对象。有就放行；没有就进入拾取，点中后自动续上。"""
+        if getattr(self, "_selected_kind", None) in accepted:
+            self._pending_command = None
+            return True
+        self._pending_command = (handler, accepted, label)
+        current = next((k for k, a in self.pick_actions.items() if a.isChecked()), None)
+        # 已经在合适的拾取模式里就沿用；否则取最后一个（荷载默认拾杆件）
+        mode = current if current in accepted else accepted[-1]
+        self.pick_actions[mode].setChecked(True)
+        self.viewport.set_pick_mode(mode)
+        what = "节点或杆件" if len(accepted) > 1 else "节点"
+        self.set_prompt(f"{label}：请在视口中点选一个{what}（Esc 取消）")
+        self.statusBar().showMessage(f"{label}：在视口中点选一个{what}", 6000)
+        return False
+
+    def _resume_pending_command(self, kind: str) -> None:
+        pending = getattr(self, "_pending_command", None)
+        if not pending or kind not in pending[1]:
+            return
+        self._pending_command = None
+        self.set_prompt(f"{pending[2]}：已选中，填写参数")
+        # 等这次拾取事件走完再弹对话框，否则 VTK 的鼠标状态会卡在按下
+        QTimer.singleShot(0, getattr(self, pending[0]))
 
     def create_load(self) -> None:
         """Abaqus 式：选中对象，创建载荷。"""
-        kind = getattr(self, "_selected_kind", None)
-        if kind not in ("node", "member"):
-            self.set_prompt("创建载荷：请先在视口中选中一个节点或杆件，然后点击此按钮")
-            self.statusBar().showMessage("请先选中一个节点或杆件，然后创建载荷。", 5000)
+        if not self._require_selection("create_load", ("node", "member"), "创建载荷"):
             return
+        kind = self._selected_kind
         from .load_dialog import LoadDialog
         ident = self._selected_id
         available = [case["name"] for case in self.session.model.get("load_cases", [])]
@@ -2472,71 +2503,33 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def toggle_agent_panel(self) -> None:
-        """切换 AI 助手对话框显示/隐藏（右侧浮动按钮调用）。"""
-        visible = self.chat_dock.isVisible()
-        self.chat_dock.setVisible(not visible)
-        if not visible:
-            self.chat_dock.raise_()
-            self.act_chat.setChecked(True)
-            self.set_prompt("AI 助手已展开，可以输入自然语言描述模型需求")
+        """召唤/收起 AI 助手（右侧窄栏的「AI」按钮与 Ctrl+G 共用）。"""
+        self.right_drawer.toggle_page("chat")
+        if self.chat_dock.isVisible():
+            self._on_drawer_page_opened("chat")
+            self.chat.setFocus()
         else:
-            self.act_chat.setChecked(False)
             self.set_prompt("就绪 | 选择上方功能区模块开始建模")
-        # 对话框显示/隐藏后，更新按钮位置
-        self._update_agent_button_pos()
 
     def showEvent(self, event):
-        """窗口显示时，确保浮动按钮在最上层并位置正确。"""
         super().showEvent(event)
-        if not getattr(self, "_initial_workspace_sized", False):
-            # 实测 1680x1000 窗口下，顶部五条横带吃掉 257px（26% 高），
-            # 左右停靠区 250+380=630px（38% 宽）——三维视口只剩不到一半窗口。
-            # 空项目时模型树里全是"（0）"，右侧对话区也大片空白，
-            # 却占着最贵的横向空间。**默认宽度按"够用"取，不按"能塞下"取。**
-            self.resizeDocks([self.tree_dock], [200], Qt.Orientation.Horizontal)
-            self.resizeDocks([self.chat_dock], [330], Qt.Orientation.Horizontal)
-            self._initial_workspace_sized = True
-        self._update_agent_button_pos()
+        self.drawers.relayout()
         self._position_empty_state()
 
     def resizeEvent(self, event):
-        """窗口大小变化时，更新浮动按钮位置。"""
         super().resizeEvent(event)
-        self._update_agent_button_pos()
         self._position_empty_state()
-
-    def _update_agent_button_pos(self):
-        """Only show the compact assistant launcher when its dock is closed."""
-        if not hasattr(self, 'agent_button'):
-            return
-        dock_visible = hasattr(self, 'chat_dock') and self.chat_dock.isVisible()
-        self.agent_button.setVisible(not dock_visible)
-        if dock_visible:
-            return
-        x = self.width() - self.agent_button.width() - 14
-        y = max(180, (self.height() - self.agent_button.height()) // 2)
-        self.agent_button.move(x, y)
-        self.agent_button.raise_()
-
-    def _on_chat_visibility(self, visible: bool) -> None:
-        if hasattr(self, "act_chat"):
-            self.act_chat.setChecked(visible)
-        self._update_agent_button_pos()
 
     def toggle_props(self) -> None:
         on = self.actions_by_name["props"].isChecked()
         self.props_dock.setVisible(on)
         if on:
-            self.props_dock.raise_()
-            self.properties.refresh()
+            self._on_drawer_page_opened("props")
 
     def toggle_chat(self) -> None:
-        """切换 AI 助手对话框显示/隐藏（功能区按钮调用）。"""
-        visible = self.act_chat.isChecked()
-        self.chat_dock.setVisible(visible)
-        if visible:
-            self.chat_dock.raise_()
-            self.set_prompt("AI 助手已展开，可以输入自然语言描述模型需求")
+        """功能区/菜单里的「Agent 对话」开关。"""
+        if self.act_chat.isChecked() != self.chat_dock.isVisible():
+            self.toggle_agent_panel()
 
     # --- 文件 ---
 
@@ -2760,8 +2753,7 @@ class MainWindow(QMainWindow):
         造成“按钮点了却不知道为什么不算”的前置条件：选中节点、整体梁模型
         已求解、当前没有别的作业。
         """
-        if getattr(self, "_selected_kind", None) != "node":
-            self.set_prompt("节点实体：请先用“选择节点”在视口中选中一个节点")
+        if not self._require_selection("run_solid_joint", ("node",), "节点实体"):
             return
         if self.session.solution is None:
             QMessageBox.information(

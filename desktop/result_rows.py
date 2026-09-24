@@ -408,7 +408,52 @@ def generic(payload: dict) -> Rows:
     return "结果", ["项", "值"], rows, [None] * len(rows)
 
 
-HANDLERS = {"envelope": envelope, "buckling": buckling, "modal": modal,
+def solve_summary(payload: dict) -> Rows:
+    """求解总览：每个工况/组合一行——最大节点位移、单元内最大挠度、平衡。
+
+    求解完成后自动填进结果页，**但不自动弹出**：结果先画在模型上，表是
+    "想看数字时点一下右侧「结果」"的事。这张表回答的是求完之后第一个问题
+    ——"每个工况大概多大、有没有哪个不对劲"，而不是逐节点逐杆的明细。
+    """
+    cases = payload.get("cases") or {}
+    cols = ["工况/组合", "最大节点位移 (mm)", "所在节点", "单元内最大挠度 (mm)",
+            "平衡", "提示"]
+    rows, loc = [], []
+    for name, entry in cases.items():
+        entry = entry or {}
+        node = entry.get("at_node")
+        note = entry.get("warning") or entry.get("note") or ""
+        rows.append([name, _r(entry.get("max_displacement_mm"), 4),
+                     node if node is not None else "",
+                     _r(entry.get("max_deflection_mm"), 4),
+                     "通过" if entry.get("equilibrium_ok") else "未通过",
+                     clean(note, 120)])
+        loc.append(("node", int(node)) if node is not None else None)
+    title = f"求解完成，共 {len(rows)} 个工况/组合。点一行在视口中定位最大位移节点。"
+    silent = payload.get("silent_failures") or {}
+    findings = silent.get("findings") or []
+    bad = [f for f in findings if f.get("status") != "pass"]
+    if findings:
+        title += (f"\n静默失败检测 {len(findings) - len(bad)}/{len(findings)} 通过"
+                  + (f"：{'、'.join(str(f.get('name')) for f in bad[:4])} 需要关注"
+                     if bad else ""))
+    return title, cols, rows, loc
+
+
+def _solve_marks(payload: dict) -> list[str | None]:
+    out: list[str | None] = []
+    for entry in (payload.get("cases") or {}).values():
+        entry = entry or {}
+        if not entry.get("equilibrium_ok"):
+            out.append(FAIL)
+        elif entry.get("warning"):
+            out.append(UNCLEAR)
+        else:
+            out.append(None)
+    return out
+
+
+HANDLERS = {"solve": solve_summary, "envelope": envelope, "buckling": buckling, "modal": modal,
             "deflection": deflection, "solid_joint": solid_joint,
             "strength": strength, "symmetry": symmetry, "numbering": numbering}
 
@@ -437,7 +482,8 @@ def _symmetry_marks(payload: dict) -> list[str | None]:
     return out
 
 
-_MARKERS = {"strength": _strength_marks, "symmetry": _symmetry_marks}
+_MARKERS = {"strength": _strength_marks, "symmetry": _symmetry_marks,
+            "solve": _solve_marks}
 
 
 def row_marks(kind: str, payload: dict) -> list[str | None]:

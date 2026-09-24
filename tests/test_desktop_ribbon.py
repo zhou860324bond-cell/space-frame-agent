@@ -82,51 +82,134 @@ def test_every_command_explains_itself():
 
 # ------------------------------------------------- 功能区
 
-def test_panels_are_independent_windows_not_docks(qt_app):
-    """所有面板都是独立浮窗，**停不回去**。
+def test_panels_live_in_three_drawers_not_loose_windows(qt_app):
+    """面板收进左、右、底三个抽屉，每侧一个，多个面板用页签切。
 
-    停靠的代价是每开一个面板中央视口就被挤小一次，而这些面板多数"看一眼
-    就关"——属性、边界条件、截面优化、建模过程都是。视口被挤到一半宽之后
-    再想转角度看模型，得先关面板，这个来回是纯浪费。
-
-    仍然用 QDockWidget 而不是 QDialog：visibilityChanged / setVisible /
-    windowTitle 这套接口窗口各处都在用（浮动按钮显隐、菜单勾选状态都挂在
-    上面）。禁掉全部停靠区之后，它就是个关不回去的小窗。
+    上一版是九个各自漂着的浮窗：会压在功能区与快捷栏上把按钮挡住（实拍里
+    模型树正好盖住「侧视/顶视」），拖走了找不回来。抽屉的位置由视口决定。
     """
     w = MainWindow()
-    assert w.FLOATING_PANELS, "面板清单不能是空的"
-    for name in w.FLOATING_PANELS:
-        dock = getattr(w, name)
-        assert dock.allowedAreas() == Qt.DockWidgetArea.NoDockWidgetArea, (
-            f"{name} 还允许停靠——拖一下就会把视口挤小")
-        assert dock.isFloating(), f"{name} 没有浮起来"
-        assert dock.windowTitle().strip(), f"{name} 没有标题，浮窗上会是一条空标题栏"
+    drawers = {w.left_drawer, w.right_drawer, w.bottom_drawer}
+    assert set(w.drawers.drawers.values()) == drawers
+    for name in w.PANELS:
+        handle = getattr(w, name)
+        assert handle._drawer in drawers, f"{name} 不在任何一个抽屉里"
+        assert handle.windowTitle().strip(), f"{name} 没有标题，页签会是空的"
 
 
 def test_opening_panels_never_shrinks_the_viewport(qt_app):
-    """这是"改成浮窗"的**目的本身**：视口宽度不随面板开关变化。"""
+    """抽屉叠在视口上，**视口尺寸从头到尾不变**——包括三个抽屉同时开着。"""
     w = MainWindow()
     w.resize(1400, 900)
+    w.show()
     qt_app.processEvents()
     before = (w.viewport.width(), w.viewport.height())
-    for name in w.FLOATING_PANELS:
+    for name in w.PANELS:
         getattr(w, name).setVisible(True)
-    qt_app.processEvents()
-    assert (w.viewport.width(), w.viewport.height()) == before, (
-        f"开了 {len(w.FLOATING_PANELS)} 个面板后视口从 {before} 变成了 "
-        f"{(w.viewport.width(), w.viewport.height())}")
+        qt_app.processEvents()
+        assert (w.viewport.width(), w.viewport.height()) == before, (
+            f"开了 {name} 后视口从 {before} 变成了 "
+            f"{(w.viewport.width(), w.viewport.height())}")
+    w.close()
 
 
-def test_floating_panels_do_not_clutter_the_taskbar(qt_app):
-    """浮窗必须是 Tool 窗：浮在主窗之上、跟着主窗走、不在任务栏各占一格。
+def test_drawers_are_tool_windows_owned_by_the_main_window(qt_app):
+    """Tool 窗：浮在主窗之上、跟着主窗最小化、不在任务栏各占一格。"""
+    w = MainWindow()
+    for drawer in w.drawers.drawers.values():
+        assert drawer.parent() is w, "脱离了主窗，就不会跟着主窗关闭"
+        assert drawer.windowFlags() & Qt.WindowType.Tool, "不是 Tool 窗"
 
-    九个面板要是各自变成一个任务栏条目，那是另一种反人类。
+
+def test_drawers_stay_inside_the_viewport_and_never_overlap(qt_app):
+    """抽屉永远在视口矩形之内，底部抽屉让开两侧的抽屉。
+
+    这条是实拍抓到的：截面优化页的最小尺寸是 1200×390，QStackedWidget 取
+    各页最小尺寸的最大值，于是 Qt 无视给定位置，把底部抽屉撑到盖住右抽屉、
+    越出视口下沿。每页包一层滚动区之后才老实待在分给它的矩形里。
     """
     w = MainWindow()
-    for name in w.FLOATING_PANELS:
-        dock = getattr(w, name)
-        assert dock.parent() is w, f"{name} 脱离了主窗，就不会跟着主窗关闭"
-        assert dock.windowFlags() & Qt.WindowType.Tool, f"{name} 不是 Tool 窗"
+    w.resize(1200, 800)
+    w.show()
+    w.chat_dock.show()
+    w.tree_dock.show()
+    w.section_opt_dock.show()           # 最小尺寸最大的那一页
+    qt_app.processEvents()
+    area = w.drawers.viewport_rect()
+    left, right, bottom = (w.left_drawer.geometry(), w.right_drawer.geometry(),
+                           w.bottom_drawer.geometry())
+    for side, geometry in (("left", left), ("right", right), ("bottom", bottom)):
+        assert area.contains(geometry), f"{side} 抽屉 {geometry} 越出了视口 {area}"
+        assert geometry == w.drawers.geometry_for(side), (
+            f"{side} 抽屉没待在分给它的位置：{geometry}")
+    assert not bottom.intersects(left) and not bottom.intersects(right)
+    w.close()
+
+
+def test_drawers_never_cover_the_toolbars(qt_app):
+    """抽屉的上沿就是视口的上沿——功能区、快捷栏、流程条上的按钮永远点得着。"""
+    w = MainWindow()
+    w.resize(1200, 800)
+    w.show()
+    w.tree_dock.show()
+    w.chat_dock.show()
+    qt_app.processEvents()
+    top = w.drawers.viewport_rect().top()
+    for drawer in (w.left_drawer, w.right_drawer):
+        assert drawer.geometry().top() >= top
+    bar = w.workflow_bar
+    bar_bottom = bar.mapToGlobal(bar.rect().bottomLeft()).y()
+    assert w.left_drawer.geometry().top() > bar_bottom
+    w.close()
+
+
+def test_one_button_on_the_right_summons_and_dismisses_the_assistant(qt_app):
+    """右侧窄栏最上面那颗「AI」：一点召唤，再点收起；菜单里的开关同步。"""
+    w = MainWindow()
+    assert w.chat_dock.isHidden()
+    w.agent_button.click()
+    assert w.chat_dock.isVisible()
+    assert w.agent_button.isChecked() and w.act_chat.isChecked()
+    w.agent_button.click()
+    assert w.chat_dock.isHidden()
+    assert not w.agent_button.isChecked() and not w.act_chat.isChecked()
+
+
+def test_rail_buttons_follow_the_real_drawer_state(qt_app):
+    """抽屉被别的途径关掉（×、Esc、切到别的页）时，窄栏按钮不能还亮着。"""
+    w = MainWindow()
+    results = w.right_rail.buttons["results"]
+    diagram = w.right_rail.buttons["diagram"]
+    results.click()
+    assert results.isChecked() and w.results_dock.isVisible()
+    diagram.click()                      # 同一个抽屉换页
+    assert diagram.isChecked() and not results.isChecked()
+    w.bottom_drawer.close_button.click()
+    assert not diagram.isChecked() and w.diagram_dock.isHidden()
+
+
+def test_escape_folds_a_drawer_when_there_is_nothing_else_to_cancel(qt_app):
+    w = MainWindow()
+    w.results_dock.show()
+    w.cancel_interaction()
+    assert w.results_dock.isHidden()
+
+
+def test_opening_a_drawer_moves_viewport_overlays_out_from_under_it(qt_app):
+    """左上角模式提示、左下角坐标轴要让开被抽屉盖住的边。"""
+    w = MainWindow()
+    w.resize(1200, 800)
+    w.show()
+    qt_app.processEvents()
+    w.tree_dock.show()
+    qt_app.processEvents()
+    left, _right, _bottom = w.drawers.insets()
+    assert left == w.left_drawer.geometry().width()
+    assert w.viewport._insets[0] == left
+    w.tree_dock.hide()
+    qt_app.processEvents()
+    assert w.viewport._insets == (0, 0, 0)
+    w.close()
 
 
 def test_every_workspace_button_says_what_it_does(qt_app):
@@ -239,7 +322,7 @@ def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app
 
 
 def test_the_assistant_starts_out_of_the_way_but_reachable(qt_app):
-    """AI 面板默认收起，右缘的浮动按钮是它的入口。
+    """AI 面板默认收起，右侧窄栏上的「AI」按钮是它的入口。
 
     这个面板固定占 400px、四分之一屏，只在想让 AI 帮忙建模时才用；
     没配密钥时开局还是一大段配置说明——第一眼看到的不该是一条错误。

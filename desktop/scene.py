@@ -102,6 +102,32 @@ def _polyline(points: np.ndarray) -> pv.PolyData:
     return mesh
 
 
+def _polylines(chunks: list[np.ndarray]) -> pv.PolyData:
+    """多条折线**一次**建成一个 PolyData，各条的点互不合并。
+
+    原来是每根杆建一个 PolyData 再 `merge`：一千多根杆就是一千多次
+    PyVista 对象构造与属性检查，实测 1330 根杆光这一步 2 秒——每切一次
+    显示模式、每改一个数都要付一次。这里只做一次 numpy 拼接。
+    点的顺序与原来逐块 merge(merge_points=False) 的结果一致。
+    """
+    if not chunks:
+        return pv.PolyData()
+    sizes = np.fromiter((len(c) for c in chunks), dtype=np.int64, count=len(chunks))
+    starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+    total = int(sizes.sum())
+    # 每条线的连接表是 [n, s, s+1, …, s+n-1]；一次性拼出来
+    lines = np.empty(total + len(chunks), dtype=np.int64)
+    heads = starts + np.arange(len(chunks))
+    lines[heads] = sizes
+    mask = np.ones(len(lines), dtype=bool)
+    mask[heads] = False
+    lines[mask] = np.arange(total)
+    mesh = pv.PolyData()
+    mesh.points = np.vstack(chunks).astype(float)
+    mesh.lines = lines
+    return mesh
+
+
 def analysis_mesh_polylines(frame, preview: dict) -> pv.PolyData:
     """把 ``preview_analysis_mesh`` 的分析单元转换为独立线段。"""
     coordinates = {int(node_id): np.asarray(node.xyz, dtype=float)
@@ -109,18 +135,22 @@ def analysis_mesh_polylines(frame, preview: dict) -> pv.PolyData:
     for item in preview.get("split_node_details", ()):
         coordinates[int(item["node"])] = np.asarray(item["coordinates"], dtype=float)
 
-    blocks: list[pv.PolyData] = []
+    chunks: list[np.ndarray] = []
+    elements: list[int] = []
+    physical: list[int] = []
     for item in preview.get("analysis_element_details", ()):
         i, j = int(item["i"]), int(item["j"])
         if i not in coordinates or j not in coordinates:
             raise ValueError(f"分析单元 {item.get('element')} 引用了没有坐标的节点")
-        block = _polyline(np.vstack([coordinates[i], coordinates[j]]))
-        block.cell_data["analysis_element"] = [int(item["element"])]
-        block.cell_data["physical_member"] = [int(item["physical_member"])]
-        blocks.append(block)
-    if not blocks:
+        chunks.append(np.vstack([coordinates[i], coordinates[j]]))
+        elements.append(int(item["element"]))
+        physical.append(int(item["physical_member"]))
+    if not chunks:
         return pv.PolyData()
-    return blocks[0].merge(blocks[1:], merge_points=False)
+    mesh = _polylines(chunks)
+    mesh.cell_data["analysis_element"] = np.asarray(elements)
+    mesh.cell_data["physical_member"] = np.asarray(physical)
+    return mesh
 
 
 def analysis_split_points(preview: dict) -> pv.PolyData:
@@ -179,7 +209,9 @@ def member_polylines(frame, solution=None, case: str | None = None,
 
     scalars 给了分量名（"N"/"Mz"…）就把该分量逐点挂上去，供云图着色。
     """
-    blocks: list[pv.PolyData] = []
+    chunks: list[np.ndarray] = []
+    values: list[np.ndarray] = []
+    owners: list[np.ndarray] = []
     name = case
     if solution is not None and name is None:
         name = solution.primary
@@ -212,22 +244,23 @@ def member_polylines(frame, solution=None, case: str | None = None,
                 np.interp(station_x, x, recovered[:, k]) for k in range(3)])
             pts = pts + scale * displacement
 
-        block = _polyline(pts)
+        chunks.append(pts)
         if diagram is not None:
-            block[scalars] = member_scalar(frame, member, diagram, scalars)
-        block["member"] = np.full(len(pts), mid)
-        blocks.append(block)
+            values.append(np.asarray(
+                member_scalar(frame, member, diagram, scalars), dtype=float))
+        owners.append(np.full(len(pts), mid))
 
-    # 人工建模早期可能只有节点、还没有杆件：此时 blocks 为空，
-    # 返回一个空 PolyData 而不是 blocks[0] 越界崩溃
-    if not blocks:
+    # 人工建模早期可能只有节点、还没有杆件：返回空 PolyData 而不是越界崩溃
+    if not chunks:
         return pv.PolyData()
     # 杆端截面力属于各杆件的局部结果，节点处允许跳变（不同局部轴、端释放、
     # 节点集中荷载都会造成差异）。PyVista 默认合并重合点，会把相邻杆的杆端
     # 标量覆盖/混合成一个值。Abaqus 的 beam section forces 也是按单元端分别
-    # 存储，因此这里必须保留每根杆自己的端点。
-    merged = (blocks[0].merge(blocks[1:], merge_points=False)
-              if len(blocks) > 1 else blocks[0])
+    # 存储，因此这里必须保留每根杆自己的端点——`_polylines` 从不合并点。
+    merged = _polylines(chunks)
+    if values:
+        merged[scalars] = np.concatenate(values)
+    merged["member"] = np.concatenate(owners)
     return merged
 
 
@@ -281,23 +314,29 @@ def banded_segments(line: pv.PolyData, name: str,
     step = (hi - lo) / levels if hi > lo else 0.0
     edges = [lo + k * step for k in range(1, levels)] if step > 0 else []
 
-    out_pts: list[np.ndarray] = []
-    out_cells: list[int] = []
-    out_band: list[float] = []
-    for pa, pb, value in cut_at(line, name, edges):
-        k = len(out_pts)
-        out_pts.append(pa)
-        out_pts.append(pb)
-        out_cells.extend((2, k, k + 1))
-        out_band.append(float(band_value(band_index(value, clim, levels),
-                                         clim, levels)))
+    starts, ends, values = cut_arrays(line, name, edges)
+    mesh = _segments(starts, ends)
+    if mesh.n_points:
+        mesh.cell_data[name + BAND_SUFFIX] = band_value(
+            band_index(values, clim, levels), clim, levels)
+    return mesh
 
+
+def _segments(starts: np.ndarray, ends: np.ndarray) -> pv.PolyData:
+    """一组互不相连的两点线段。"""
     mesh = pv.PolyData()
-    if not out_pts:
+    if not len(starts):
         return mesh
-    mesh.points = np.asarray(out_pts, dtype=float)
-    mesh.lines = np.asarray(out_cells, dtype=int)
-    mesh.cell_data[name + BAND_SUFFIX] = np.asarray(out_band, dtype=float)
+    count = len(starts)
+    points = np.empty((2 * count, 3), dtype=float)
+    points[0::2] = starts
+    points[1::2] = ends
+    cells = np.empty((count, 3), dtype=np.int64)
+    cells[:, 0] = 2
+    cells[:, 1] = np.arange(0, 2 * count, 2)
+    cells[:, 2] = cells[:, 1] + 1
+    mesh.points = points
+    mesh.lines = cells.ravel()
     return mesh
 
 
@@ -306,30 +345,68 @@ def cut_at(line: pv.PolyData, name: str, edges):
 
     切分点由线性插值定出，所以边界的位置是**算出来的**，不是按段长凑的。
     分级着色和"量程外"的标记都用这一个入口，两者的边界因此永远对得上。
+    计算在 `cut_arrays` 里一次做完，这里只是逐条交出。
+    """
+    starts, ends, values = cut_arrays(line, name, edges)
+    for pa, pb, value in zip(starts, ends, values, strict=True):
+        yield pa, pb, float(value)
+
+
+def cut_arrays(line: pv.PolyData, name: str, edges
+               ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`cut_at` 的数组版：返回 (起点[n,3], 终点[n,3], 段中点值[n])。
+
+    原来是逐段 Python 循环——一千多根杆、每根二十来段、再按十几级色带切，
+    就是八万多次循环、五万多次 band_index，云图一切换就卡两秒。这里对全部
+    线段一次算：每段的候选切点 [0, 1, 落在段内的各色带边界]，按 12 位小数
+    取整去重后升序，相邻两点成一小段。与原逐段写法逐条一致，顺序也一致
+    （先按折线、再按段、段内由 0 到 1）。
     """
     values = np.asarray(line[name], dtype=float)
     points = np.asarray(line.points, dtype=float)
-    edges = list(edges)
-    connectivity = np.asarray(line.lines, dtype=int)
+    edges = np.asarray(sorted(edges), dtype=float)
+    connectivity = np.asarray(line.lines, dtype=np.int64)
+    first, second = [], []
     cursor = 0
     while cursor < connectivity.size:
         count = int(connectivity[cursor])
         ids = connectivity[cursor + 1: cursor + 1 + count]
         cursor += count + 1
         # VTK 的 lines 数组里一条折线有 count 个点、count-1 段，成对滑窗
-        for a, b in zip(ids[:-1], ids[1:], strict=False):
-            pa, pb = points[a], points[b]
-            va, vb = float(values[a]), float(values[b])
-            cuts = [0.0, 1.0]
-            if va != vb:
-                lower, upper = (va, vb) if va < vb else (vb, va)
-                cuts += [(edge - va) / (vb - va)
-                         for edge in edges if lower < edge < upper]
-            cuts = sorted(set(round(c, 12) for c in cuts))
-            for t0, t1 in zip(cuts[:-1], cuts[1:], strict=False):
-                mid = 0.5 * (t0 + t1)
-                yield (pa + t0 * (pb - pa), pa + t1 * (pb - pa),
-                       va + mid * (vb - va))
+        first.append(ids[:-1])
+        second.append(ids[1:])
+    if not first:
+        empty = np.empty((0, 3))
+        return empty, empty, np.empty(0)
+    a = np.concatenate(first)
+    b = np.concatenate(second)
+    pa, pb = points[a], points[b]
+    va, vb = values[a], values[b]
+
+    cuts = np.full((len(a), len(edges) + 2), np.nan)
+    cuts[:, 0] = 0.0
+    cuts[:, 1] = 1.0
+    if len(edges):
+        lower = np.minimum(va, vb)[:, None]
+        upper = np.maximum(va, vb)[:, None]
+        inside = (lower < edges[None, :]) & (edges[None, :] < upper)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = (edges[None, :] - va[:, None]) / (vb - va)[:, None]
+        cuts[:, 2:] = np.where(inside, t, np.nan)
+    cuts = np.round(cuts, 12)
+    cuts.sort(axis=1)                                   # NaN 排在最后
+    repeated = np.zeros_like(cuts, dtype=bool)
+    repeated[:, 1:] = cuts[:, 1:] == cuts[:, :-1]
+    cuts[repeated] = np.nan
+    cuts.sort(axis=1)
+    t0, t1 = cuts[:, :-1], cuts[:, 1:]
+    valid = ~np.isnan(t0) & ~np.isnan(t1)
+    row = np.nonzero(valid)[0]
+    t0, t1 = t0[valid], t1[valid]
+    delta = pb[row] - pa[row]
+    mid = 0.5 * (t0 + t1)
+    return (pa[row] + t0[:, None] * delta, pa[row] + t1[:, None] * delta,
+            va[row] + mid * (vb[row] - va[row]))
 
 
 def out_of_range_tubes(line: pv.PolyData, component: str,
@@ -342,20 +419,11 @@ def out_of_range_tubes(line: pv.PolyData, component: str,
     "这里已经出图了"一眼可见。裁剪本身仍然照旧写在说明里。
     """
     lo, hi = float(clim[0]), float(clim[1])
-    out_pts: list[np.ndarray] = []
-    out_cells: list[int] = []
-    for pa, pb, value in cut_at(line, component, (lo, hi)):
-        if lo <= value <= hi:
-            continue
-        k = len(out_pts)
-        out_pts.append(pa)
-        out_pts.append(pb)
-        out_cells.extend((2, k, k + 1))
-    mesh = pv.PolyData()
-    if not out_pts:
+    starts, ends, values = cut_arrays(line, component, (lo, hi))
+    outside = (values < lo) | (values > hi)
+    mesh = _segments(starts[outside], ends[outside])
+    if not mesh.n_points:
         return mesh
-    mesh.points = np.asarray(out_pts, dtype=float)
-    mesh.lines = np.asarray(out_cells, dtype=int)
     return mesh.tube(radius=radius, n_sides=24, capping=False)
 
 
@@ -487,6 +555,56 @@ def member_local_axis_labels(frame, member_id: int,
         "local x (i->j)", "local y", "local z"]
 
 
+_ARROW_TEMPLATE: pv.PolyData | None = None
+
+
+def _arrow_template() -> pv.PolyData:
+    """沿 +x、长度 1、尾端在原点的箭头。所有荷载箭头都是它的实例。"""
+    global _ARROW_TEMPLATE
+    if _ARROW_TEMPLATE is None:
+        _ARROW_TEMPLATE = pv.Arrow(start=(0.0, 0.0, 0.0), direction=(1.0, 0.0, 0.0),
+                                   scale=1.0, tip_length=0.26, tip_radius=0.06,
+                                   shaft_radius=0.014, tip_resolution=24,
+                                   shaft_resolution=16)
+    return _ARROW_TEMPLATE
+
+
+def _instanced(template: pv.PolyData, origins: np.ndarray, axes: np.ndarray,
+               scales: np.ndarray) -> pv.PolyData:
+    """把绕 x 轴对称的模板摆到每个 (起点, 方向, 缩放) 上，拼成一个网格。
+
+    原来每个箭头一次 `pv.Arrow(...)` 再逐个 merge：一个满布均布荷载的
+    十层框架有近六千个箭头，**实测 56 秒**，切一次显示模式就卡一分钟。
+    箭头绕自身轴旋转对称，所以只需把模板的 x 轴转到荷载方向，另外两轴
+    随便取一组正交基——这一步对全部实例一次用 numpy 算完。
+    """
+    base = np.asarray(template.points, dtype=float)
+    faces = np.asarray(template.faces)
+    axes = np.asarray(axes, dtype=float)
+    reference = np.where(np.abs(axes[:, 2:3]) < 0.9,
+                         np.array([[0.0, 0.0, 1.0]]), np.array([[0.0, 1.0, 0.0]]))
+    side = np.cross(reference, axes)
+    side /= np.linalg.norm(side, axis=1)[:, None]
+    up = np.cross(axes, side)
+    count, k = len(axes), len(base)
+    points = (np.asarray(origins, dtype=float)[:, None, :]
+              + np.asarray(scales, dtype=float)[:, None, None]
+              * (base[None, :, 0:1] * axes[:, None, :]
+                 + base[None, :, 1:2] * side[:, None, :]
+                 + base[None, :, 2:3] * up[:, None, :]))
+    # faces 是 [n, i0, i1, …, n, …] 的扁平表：只给顶点号加偏移，不动计数位
+    is_index = np.ones(len(faces), dtype=bool)
+    pos = 0
+    while pos < len(faces):
+        is_index[pos] = False
+        pos += int(faces[pos]) + 1
+    tiled = np.tile(faces, count)
+    offsets = np.repeat(np.arange(count, dtype=faces.dtype) * k, len(faces))
+    mask = np.tile(is_index, count)
+    tiled[mask] += offsets[mask]
+    return pv.PolyData(points.reshape(-1, 3), tiled)
+
+
 def load_arrows(frame, case: str, size: float | None = None,
                 per_member: int = 7) -> dict[str, pv.PolyData]:
     """荷载与分析步给定位移箭头，按物理类型分组。
@@ -507,32 +625,28 @@ def load_arrows(frame, case: str, size: float | None = None,
             return None
         mag = np.linalg.norm(np.array(vectors), axis=1)
         peak = float(mag.max()) or 1.0
-        made, tails = [], []
-        for p, v, m in zip(points, vectors, mag, strict=True):
-            # 反对称梯形荷载可能恰好在某个显示站点过零。零向量不能传给
-            # pv.Arrow；VTK 会归一化它并产生 NaN，严重时在渲染线程原生崩溃。
-            if m <= 1e-15 * peak:
-                continue
-            length = span * 0.06 * (0.45 + 0.55 * m / peak)
-            direction = np.asarray(v, dtype=float) / m
-            # 箭头尾端接在作用点上，箭头指向荷载方向
-            tail = np.asarray(p) - direction * length
-            tails.append(tail)
-            made.append(pv.Arrow(start=tail,
-                                 direction=direction, scale=length,
-                                 tip_length=0.26, tip_radius=0.06,
-                                 shaft_radius=0.014,
-                                 tip_resolution=24, shaft_resolution=16))
-        if groups is not None and len(tails) == len(groups):
-            group_values = np.asarray(groups)
-            tail_values = np.asarray(tails)
-            for group in dict.fromkeys(groups):
-                rail = tail_values[group_values == group]
-                if len(rail) >= 2:
-                    made.append(_polyline(rail).tube(
-                        radius=span * 0.0011, n_sides=20, capping=True))
-        if not made:
+        vec = np.asarray(vectors, dtype=float)
+        # 反对称梯形荷载可能恰好在某个显示站点过零。零向量没有方向，
+        # 归一化会产生 NaN，严重时在渲染线程原生崩溃——先剔掉。
+        keep = mag > 1e-15 * peak
+        if not keep.any():
             return None
+        pts = np.asarray(points, dtype=float)[keep]
+        lengths = span * 0.06 * (0.45 + 0.55 * mag[keep] / peak)
+        directions = vec[keep] / mag[keep][:, None]
+        # 箭头尾端接在作用点上，箭头指向荷载方向
+        tails = pts - directions * lengths[:, None]
+        made = [_instanced(_arrow_template(), tails, directions, lengths)]
+        if groups is not None and len(groups) == len(points):
+            group_values = np.asarray(groups, dtype=object)[keep]
+            rails = []
+            for group in dict.fromkeys(group_values):
+                rail = tails[group_values == group]
+                if len(rail) >= 2:
+                    rails.append(rail)
+            if rails:
+                made.append(_polylines(rails).tube(
+                    radius=span * 0.0011, n_sides=20, capping=True))
         return made[0].merge(made[1:]) if len(made) > 1 else made[0]
 
     def circular_arrows(points, vectors) -> pv.PolyData | None:
@@ -779,6 +893,9 @@ def rigid_link_polylines(frame, solution=None, case: str | None = None,
     blocks = []
     for mid in sorted(frame.members):
         member = frame.members[mid]
+        # 没有刚域的杆两端就在节点上，没有连线可画——别为它恢复挠度
+        if not (any(member.offset_i) or any(member.offset_j)):
+            continue
         end_points = member_endpoints(frame, member)
         recovered = None
         if solution is not None and scale:
@@ -797,11 +914,8 @@ def rigid_link_polylines(frame, solution=None, case: str | None = None,
                           if solution is not None else mode_vector)
                 p_node += scale * vector[frame.node_dofs(nid)[:3]]
                 p_end += scale * recovered[0 if end == 0 else -1]
-            blocks.append(_polyline(np.vstack([p_node, p_end])))
-    if not blocks:
-        return pv.PolyData()
-    return (blocks[0].merge(blocks[1:], merge_points=False)
-            if len(blocks) > 1 else blocks[0])
+            blocks.append(np.vstack([p_node, p_end]))
+    return _polylines(blocks)
 
 
 def hinge_glyphs(frame, scale: float | None = None) -> pv.PolyData:
@@ -924,12 +1038,8 @@ def highlight_members(frame, member_ids, radius_scale: float = 1.6) -> pv.PolyDa
     if not ids:
         return pv.PolyData()
     r = radius_scale * TUBE_RATIO * model_size(frame)
-    blocks = []
-    for mid in ids:
-        m = frame.members[mid]
-        blocks.append(_polyline(np.vstack(member_endpoints(frame, m))))
-    merged = blocks[0].merge(blocks[1:]) if len(blocks) > 1 else blocks[0]
-    return merged.tube(radius=r, n_sides=32, capping=True)
+    blocks = [np.vstack(member_endpoints(frame, frame.members[mid])) for mid in ids]
+    return _polylines(blocks).tube(radius=r, n_sides=32, capping=True)
 
 
 def highlight_nodes(frame, node_ids) -> pv.PolyData:
@@ -947,10 +1057,8 @@ def mode_shape_tubes(frame, shapes: np.ndarray, mode: int, scale: float,
     for mid in sorted(frame.members):
         points, displacement = member_mode_displacement(
             frame, shapes, mode, mid, STATIONS)
-        blocks.append(_polyline(points + scale * displacement))
-    merged = (blocks[0].merge(blocks[1:], merge_points=False)
-              if len(blocks) > 1 else blocks[0])
-    return merged.tube(radius=r, n_sides=32, capping=True)
+        blocks.append(points + scale * displacement)
+    return _polylines(blocks).tube(radius=r, n_sides=32, capping=True)
 
 
 def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list]:

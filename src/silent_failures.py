@@ -364,9 +364,15 @@ def check_near_singular_stiffness(model: Frame, sol: Solution) -> dict[str, Any]
             cond = float("inf")
     else:
         # 大矩阵：用 1-范数和无穷范数的乘积估计（上界）
+        # ‖K⁻¹‖₁ 用 LU 分解作用在向量上来估，**不显式求逆**：显式逆是一个
+        # 稠密的 n×n，1.5 万自由度时要 4 s 以上，而 onenormest 本来只需要
+        # 几次"乘以 K⁻¹"。K 对称，转置作用与原作用相同。
         try:
-            from scipy.sparse.linalg import onenormest
-            cond = float(onenormest(K) * onenormest(sp.linalg.inv(K.tocsc())))
+            from scipy.sparse.linalg import LinearOperator, onenormest, splu
+            lu = splu(K.tocsc())
+            inverse = LinearOperator((n, n), matvec=lu.solve, rmatvec=lu.solve,
+                                     dtype=float)
+            cond = float(onenormest(K) * onenormest(inverse))
         except Exception:  # noqa: BLE001  条件数估不出来就记 -1.0，下游 `if cond < 0` 会出一条 finding
             cond = -1.0  # 无法估计
 

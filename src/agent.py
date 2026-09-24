@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,6 +173,10 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
     pending_change: dict[str, Any] | None = field(default=None, repr=False)
     authorized_preview_id: str | None = field(default=None, repr=False)
     _applying_preview: bool = field(default=False, repr=False)
+    # preview_frame 的缓存：(模型指纹, Frame 或校验失败的错误文字)。
+    _preview_cache: tuple | None = field(default=None, repr=False, compare=False)
+    # validation_errors 的缓存：(模型指纹, 错误清单)。
+    _validation_cache: tuple | None = field(default=None, repr=False, compare=False)
 
     # --- 撤销 / 重做 ---
     #
@@ -654,10 +659,45 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         """
         if self.frame is not None:
             return self.frame
-        errors = validate_payload(self.model)
+        # **按内容缓存。** 界面每次重画、每点选一个对象都要调这里，而整份
+        # 模型的 jsonschema 校验加装配，1300 根杆时要 0.4 s——点一下卡半秒。
+        # 模型字典在各处被就地修改，没有可靠的"改过了"标记，所以用内容指纹：
+        # 序列化一遍只要几毫秒，比校验便宜两个数量级，而且不可能漏判。
+        key = self._model_key()
+        cached = self._preview_cache
+        if cached is not None and cached[0] == key:
+            if isinstance(cached[1], str):
+                raise ValueError(cached[1])
+            return cached[1]
+        errors = self.validation_errors()
         if errors:
-            raise ValueError("模型不合法：" + "；".join(errors[:3]))
-        return compile_model(self.model).analysis_model
+            message = "模型不合法：" + "；".join(errors[:3])
+            self._preview_cache = (key, message)
+            raise ValueError(message)
+        frame = compile_model(self.model, validated=True).analysis_model
+        self._preview_cache = (key, frame)
+        return frame
+
+    def _model_key(self) -> bytes:
+        """模型内容的指纹。模型字典在各处被就地修改，没有"改过了"的标记，
+        内容指纹是唯一不会漏判的缓存键。"""
+        return hashlib.blake2b(
+            json.dumps(self.model, sort_keys=True, default=str).encode(),
+            digest_size=16).digest()
+
+    def validation_errors(self) -> list[str]:
+        """`validate_payload(self.model)`，模型没变就不重算。
+
+        界面每次刷新都要问一句"现在能不能求解"（流程条、树、状态栏），
+        每问一次就是一遍 jsonschema 加全模型检查。返回副本，调用方改了
+        也不会污染缓存。
+        """
+        key = self._model_key()
+        cached = self._validation_cache
+        if cached is None or cached[0] != key:
+            cached = (key, list(validate_payload(self.model)))
+            self._validation_cache = cached
+        return list(cached[1])
 
     def _invalidate(self) -> None:
         self.frame = None

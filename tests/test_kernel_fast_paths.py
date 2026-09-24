@@ -121,7 +121,7 @@ def test_scatter_matches_the_elementwise_loop_including_shared_dofs():
     all_dofs.append(list(all_dofs[0]))          # 整块重叠，必须相加
     blocks = [rng.standard_normal((12, 12)) for _ in all_dofs]
     expected = np.zeros((n, n))
-    for dofs, ke in zip(all_dofs, blocks):
+    for dofs, ke in zip(all_dofs, blocks, strict=True):
         for a in range(12):
             for b in range(12):
                 expected[dofs[a], dofs[b]] += ke[a, b]

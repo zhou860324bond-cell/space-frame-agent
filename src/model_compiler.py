@@ -56,9 +56,14 @@ class CompiledModel:
     diagnostics: tuple[str, ...] = ()
 
 
-def compile_model(payload: dict[str, Any]) -> CompiledModel:
-    """校验并编译 Domain IR，集中力位置和显式内节点成为分析切分点。"""
-    errors = validate_payload(payload)
+def compile_model(payload: dict[str, Any], *,
+                  validated: bool = False) -> CompiledModel:
+    """校验并编译 Domain IR，集中力位置和显式内节点成为分析切分点。
+
+    ``validated=True`` 表示调用方刚校验过同一份 payload（Session 按内容
+    指纹缓存了结果），这里不再重复一遍 jsonschema。
+    """
+    errors = [] if validated else validate_payload(payload)
     if errors:
         raise CompilationError(errors)
 
@@ -80,6 +85,13 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
     generated_nodes: dict[int, tuple[int, float]] = {}
     diagnostics: list[str] = []
 
+    # 全部节点坐标一次取成数组。下面"哪些节点正好落在这根杆中间"原来是
+    # 每根杆遍历全部节点的 Python 双重循环——一千多根杆、五百多个节点就是
+    # 七十万次迭代，编译一次两秒。判据与原来逐条相同，只是按杆向量化。
+    all_node_ids = np.fromiter(physical.nodes, dtype=np.int64, count=len(physical.nodes))
+    node_xyz = np.array([(n.x, n.y, n.z) for n in physical.nodes.values()],
+                        dtype=float).reshape(-1, 3)
+
     for physical_id in sorted(physical.members):
         member = physical.members[physical_id]
         pi, pj = member_endpoints(physical, member)
@@ -93,16 +105,17 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
         ]
         direction = pj - pi
         explicit_points: list[tuple[float, int]] = []
-        for node_id, node in physical.nodes.items():
-            if node_id in (member.i, member.j):
-                continue
-            offset = node.xyz - pi
-            position = float(np.dot(offset, direction) / length)
-            if position <= tolerance or length - position <= tolerance:
-                continue
-            projection = pi + (position / length) * direction
-            if float(np.linalg.norm(node.xyz - projection)) <= tolerance:
-                explicit_points.append((position, node_id))
+        if len(all_node_ids):
+            positions = (node_xyz - pi) @ direction / length
+            inside = ((positions > tolerance) & (length - positions > tolerance)
+                      & (all_node_ids != member.i) & (all_node_ids != member.j))
+            if inside.any():
+                projections = pi + (positions[inside] / length)[:, None] * direction
+                gaps = np.linalg.norm(node_xyz[inside] - projections, axis=1)
+                for position, node_id in zip(positions[inside][gaps <= tolerance],
+                                             all_node_ids[inside][gaps <= tolerance],
+                                             strict=True):
+                    explicit_points.append((float(position), int(node_id)))
 
         split_points: list[tuple[float, int | None]] = []
         for position, node_id in sorted(explicit_points):

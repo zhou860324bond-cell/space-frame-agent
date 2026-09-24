@@ -428,25 +428,78 @@ def test_the_camera_is_not_reset_on_every_redraw(qt_app):
     assert not w.viewport._first_render, "首帧之后就不该再自动摆相机了"
 
 
-def test_selection_dependent_buttons_are_disabled_until_something_is_picked(qt_app):
-    """必须先选中的按钮，没选中时要置灰。
+def test_selection_commands_are_always_clickable_and_say_what_to_pick(qt_app):
+    """要作用在某个对象上的命令**始终可点**，提示里写明要点什么。
 
-    原来它们永远可点，点了只在状态栏闪一句五秒后消失的提示——用户看到的是
-    "点了没反应"，这正是"很多功能都是摆设"那类抱怨的来源。前置条件应该看得见。
+    置灰比"点了没反应"好，但仍然要用户先猜对顺序；实测最常见的抱怨正是
+    "很多按钮点不了"。现在是命令在前、拾取在后，见下一条。
     """
     w = MainWindow()
     load = w.actions_by_name["create_load"]
     bc = w.actions_by_name["create_bc"]
-    assert not load.isEnabled() and not bc.isEnabled()
-    assert "请先" in load.toolTip()
-
-    w._on_picked("node", 1)
-    assert load.isEnabled() and bc.isEnabled(), "选中节点后两个都可用"
+    assert load.isEnabled() and bc.isEnabled()
+    assert "点选" in load.toolTip() and "节点或杆件" in load.toolTip()
 
     w._on_picked("member", 1)
-    assert load.isEnabled(), "杆件可以施加载荷"
-    assert not bc.isEnabled(), "边界条件只能加在节点上"
-    assert "节点" in bc.toolTip()
+    assert load.isEnabled() and bc.isEnabled()
+    assert "节点" in bc.toolTip() and "点选" in bc.toolTip(), "杆件不能加边界条件"
+
+
+def test_a_command_without_a_selection_waits_for_a_pick_then_runs(qt_app):
+    """没选中就点「创建载荷」：进入拾取、提示去点什么；点中后自动接着走。"""
+    s = built()
+    w = MainWindow(s)
+    member = s.model["members"][0]["id"]
+    calls = []
+    w.create_load()                              # 真实入口：没选中
+    assert w._pending_command is not None
+    assert w.pick_actions["member"].isChecked(), "荷载默认拾杆件"
+    assert "点选" in w.lbl_prompt.text()
+
+    w.create_load = lambda: calls.append(w._selected_id)   # 续上时调的是它
+    w._on_picked("member", member)
+    qt_app.processEvents()
+    assert calls == [member]
+    assert w._pending_command is None
+
+
+def test_a_pick_of_the_wrong_kind_keeps_waiting(qt_app):
+    """边界条件只能加在节点上：点中杆件不续上，继续等节点。"""
+    s = built()
+    w = MainWindow(s)
+    w.create_bc()
+    assert w.pick_actions["node"].isChecked()
+    w._on_picked("member", s.model["members"][0]["id"])
+    qt_app.processEvents()
+    assert w._pending_command is not None
+
+
+def test_escape_abandons_a_waiting_command(qt_app):
+    w = MainWindow(built())
+    w.create_bc()
+    w.cancel_interaction()
+    assert w._pending_command is None
+
+
+def test_solving_fills_the_result_summary_without_popping_it_open(qt_app):
+    """求解完先把结果画在模型上；总览表填好但不弹出，想看时点右侧「结果」。"""
+    w = MainWindow(built())
+    solved(w)
+    assert w.result.ok
+    assert w.results_dock.isHidden(), "求解完不该自动弹出一块抽屉挡住模型"
+    assert "求解完成" in w.results.caption.text()
+    assert w.results.table.rowCount() == len(w.result.payload["cases"])
+
+
+def test_picking_while_viewing_results_does_not_pop_the_property_drawer(qt_app):
+    """看结果时点选是在查数，再弹一个属性抽屉只会把模型又挤掉一块。"""
+    s = built()
+    w = MainWindow(s)
+    solved(w)
+    assert w.mode == "变形"
+    w.tree_dock.hide()
+    w._on_picked("member", s.model["members"][0]["id"])
+    assert w.props_dock.isHidden()
 
 
 def test_property_edit_keeps_the_object_selected_and_highlighted(qt_app):

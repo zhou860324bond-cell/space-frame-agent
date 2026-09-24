@@ -1141,9 +1141,16 @@ def check_model(model: Frame) -> list[str]:
 
     # 当前内核没有 tie/MPC。两个坐标重合但编号不同的节点在图上像一个节点，
     # 在刚度矩阵里却完全断开，是最危险的“看起来正确”。严格模型中直接拒绝。
+    # 用 KD 树找近邻对而不是两两比较：五百个节点两两比就是十几万次向量
+    # 运算，界面每刷新一次流程条都要校验一遍，实测占掉一秒多。报告的
+    # 顺序仍按节点插入次序，与原来的双重循环逐条一致。
     node_list = list(model.nodes.values())
-    for index, a in enumerate(node_list):
-        for b in node_list[index + 1:]:
+    if len(node_list) > 1:
+        from scipy.spatial import cKDTree
+
+        coords = np.array([(n.x, n.y, n.z) for n in node_list], dtype=float)
+        for ia, ib in sorted(cKDTree(coords).query_pairs(r=1e-9)):
+            a, b = node_list[ia], node_list[ib]
             if float(np.linalg.norm(a.xyz - b.xyz)) < 1e-9:
                 issues.append(f"节点 {a.id} 与节点 {b.id} 坐标重合；请合并为同一节点")
 

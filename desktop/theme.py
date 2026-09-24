@@ -685,3 +685,73 @@ QToolButton[ribbon="small"][role="primary"]:hover {{
 """
 
 STYLESHEET = STYLESHEET + RIBBON_QSS
+
+# 抽屉与两侧窄栏（desktop/drawers.py）
+
+DRAWER_QSS = f"""
+QFrame#sideRail {{
+    background: {PANEL};
+    border: none;
+}}
+QFrame#sideRail[side="left"] {{ border-right: 1px solid {BORDER}; }}
+QFrame#sideRail[side="right"] {{ border-left: 1px solid {BORDER}; }}
+QFrame#railSeparator {{ background: {BORDER}; border: none; margin: 2px 6px; }}
+QToolButton#railButton {{
+    color: {INK_MUTED};
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: {RADIUS_MD};
+    font-size: 8pt;
+    padding: 2px 0px;
+}}
+QToolButton#railButton:hover {{
+    background: {PANEL_HOVER};
+    color: {INK};
+}}
+QToolButton#railButton:checked {{
+    background: {SELECTION};
+    border-color: {ACCENT};
+    color: {ACCENT_DIM};
+    font-weight: 600;
+}}
+QToolButton#railButton[primary="true"] {{
+    background: {ACCENT};
+    color: #ffffff;
+    font-weight: 700;
+}}
+QToolButton#railButton[primary="true"]:hover {{ background: {ACCENT_HOVER}; }}
+QToolButton#railButton[primary="true"]:checked {{
+    background: {ACCENT_DIM};
+    border-color: {ACCENT_DIM};
+    color: #ffffff;
+}}
+QFrame#drawer {{
+    background: {PANEL_ALT};
+    border: 1px solid {BORDER};
+}}
+QLabel#drawerTitle {{ color: {INK}; font-weight: 600; padding: 4px 0px; }}
+QTabBar#drawerTabs::tab {{
+    padding: 5px 12px;
+    margin-right: 2px;
+    color: {INK_MUTED};
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+}}
+QTabBar#drawerTabs::tab:selected {{
+    color: {ACCENT_DIM};
+    border-bottom: 2px solid {ACCENT};
+    font-weight: 600;
+}}
+QTabBar#drawerTabs::tab:hover {{ color: {INK}; }}
+QToolButton#drawerClose {{
+    color: {INK_MUTED};
+    font-size: 12pt;
+    min-width: 26px;
+    min-height: 26px;
+    border-radius: {RADIUS_SM};
+}}
+QToolButton#drawerClose:hover {{ background: {PANEL_HOVER}; color: {INK}; }}
+"""
+
+STYLESHEET = STYLESHEET + DRAWER_QSS

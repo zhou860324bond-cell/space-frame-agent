@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import os
 
 import numpy as np
@@ -33,6 +35,30 @@ from . import scene, theme
 # 逻辑照测，像素交给有 GL 的机器。
 CAN_RENDER = os.environ.get("QT_QPA_PLATFORM", "") != "offscreen"
 
+
+
+def _batched(method):
+    """一次重画只渲染一帧。
+
+    PyVista 每 `add_mesh` / `add_point_labels` 一次就同步渲染一次**整个
+    场景**。一次重画要加十几个图元，于是大模型上同一帧被画十几遍——卡顿
+    的一大半在这里。重画期间关掉渲染，结束时补一帧；可嵌套，最外层负责补。
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        depth = getattr(self, "_batch_depth", 0)
+        self._batch_depth = depth + 1
+        plotter = self.plotter
+        if depth == 0:
+            plotter.suppress_rendering = True
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._batch_depth = depth
+            if depth == 0:
+                plotter.suppress_rendering = False
+                plotter.render()
+    return wrapper
 
 class _NullCamera:
     def zoom(self, _factor) -> None:
@@ -385,16 +411,75 @@ class Viewport(QWidget):
 
     # --- 基础 ---
 
-    def resizeEvent(self, event):
-        """窗口大小变化时，更新坐标系指示器位置。"""
-        super().resizeEvent(event)
+    _insets = (0, 0, 0)
+    _inset_zoom = 1.0
+
+    def set_overlay_insets(self, left: int, right: int, bottom: int) -> None:
+        """抽屉盖住了视口的哪几条边。左上角的模式提示、左下角的坐标轴
+        指示器都挪进没被盖住的那一块，不然一开模型树它们就被压在底下。"""
+        insets = (int(left), int(right), int(bottom))
+        if insets == self._insets:
+            return
+        self._insets = insets
+        self._place_overlays()
+        if self.mode_badge.isVisible():
+            self._update_mode_badge()
+        if CAN_RENDER and self._inset_camera():
+            self.plotter.render()
+
+    def _inset_camera(self) -> bool:
+        """让模型落在**没被抽屉盖住**的那一块里，而不是躲在抽屉后面。
+
+        抽屉叠在视口上（所以视口尺寸不变、不用重排），代价是盖住一部分画面。
+        底部结果抽屉一开，模型下半截就进了抽屉底下——这正是"看结果挤占视觉
+        空间"。所以抽屉开合时同步挪相机：
+
+        * `WindowCenter` 把投影中心平移到空闲区域的中心。它只动投影、不动
+          视角与焦点，拾取照样准，抽屉一收回去原样复位；
+        * 再按空闲区域与整个视口的边长比缩小一次，原来刚好铺满视口的模型
+          现在刚好铺满露出来的那一块。记下缩过多少，下次按比值补，不累积。
+
+        返回是否真的改了相机。
+        """
+        if not CAN_RENDER:
+            return False
+        width, height = max(1, self.width()), max(1, self.height())
+        left, right, bottom = self._insets
+        free_w = max(1, width - left - right)
+        free_h = max(1, height - bottom)
+        center_x = left + free_w / 2.0
+        center_y = free_h / 2.0                      # 从上沿量起
+        nx = (center_x - width / 2.0) / (width / 2.0)
+        ny = (height / 2.0 - center_y) / (height / 2.0)
+        camera = self.plotter.renderer.GetActiveCamera()
+        # VTK 在投影之后平移 -WindowCenter，所以要把焦点送到 (nx, ny) 就取负
+        before = camera.GetWindowCenter()
+        camera.SetWindowCenter(-nx, -ny)
+        target = min(free_w / width, free_h / height)
+        ratio = target / self._inset_zoom
+        changed = abs(before[0] + nx) > 1e-9 or abs(before[1] + ny) > 1e-9
+        if abs(ratio - 1.0) > 1e-9:
+            camera.Zoom(ratio)
+            self._inset_zoom = target
+            changed = True
+        return changed
+
+    def _place_overlays(self) -> None:
         if hasattr(self, 'axis_indicator'):
             self.axis_indicator.move(
-                10,
-                self.height() - self.axis_indicator.height() - 10
+                10 + self._insets[0],
+                self.height() - self.axis_indicator.height() - 10 - self._insets[2]
             )
             self.axis_indicator.raise_()
 
+    def resizeEvent(self, event):
+        """窗口大小变化时，更新坐标系指示器位置。"""
+        super().resizeEvent(event)
+        self._place_overlays()
+        if any(self._insets):
+            self._inset_camera()
+
+    @_batched
     def clear(self) -> None:
         if not CAN_RENDER:
             return
@@ -466,6 +551,7 @@ class Viewport(QWidget):
                                       name="_problem_nodes", point_size=20,
                                       render_points_as_spheres=True)
 
+    @_batched
     def set_selection(self, kind: str | None, ident: int | None) -> None:
         self.selection = (kind, ident) if kind and ident is not None else None
         if self._frame is not None and CAN_RENDER:
@@ -475,6 +561,7 @@ class Viewport(QWidget):
             self._decorate(self._frame)
             self.plotter.render()
 
+    @_batched
     def set_problem_refs(self, refs: list[tuple[str, int]]) -> None:
         """同时标出一个诊断问题涉及的节点和杆件。"""
         self.problem_refs = [(kind, int(ident)) for kind, ident in refs
@@ -485,6 +572,7 @@ class Viewport(QWidget):
             self._decorate(self._frame)
             self.plotter.render()
 
+    @_batched
     def set_result_marker(self, point, label: str = "") -> None:
         """在结果极值或探针截面处放置可追溯标记。"""
         if not CAN_RENDER or self._frame is None:
@@ -510,6 +598,7 @@ class Viewport(QWidget):
                 always_visible=True, show_points=False)
         self.plotter.render()
 
+    @_batched
     def set_labels(self, on: bool) -> None:
         self.show_labels = bool(on)
         if self._frame is not None and CAN_RENDER:
@@ -603,7 +692,7 @@ class Viewport(QWidget):
         bits.append("Esc 退出")
         self.mode_badge.setText("　｜　".join(bits))
         self.mode_badge.adjustSize()
-        self.mode_badge.move(12, 12)
+        self.mode_badge.move(12 + self._insets[0], 12)
         self.mode_badge.setVisible(True)
         self.mode_badge.raise_()
 
@@ -725,6 +814,9 @@ class Viewport(QWidget):
             self.plotter.enable_parallel_projection()
         getattr(self.plotter, f"view_{name}", self.plotter.view_isometric)()
         self.plotter.camera.zoom(1.3)
+        # 标准视角会重置相机，之前为抽屉做的缩放随之作废，按当前遮挡重做
+        self._inset_zoom = 1.0
+        self._inset_camera()
 
     def reset_camera(self) -> None:
         if not CAN_RENDER:
@@ -804,6 +896,7 @@ class Viewport(QWidget):
         self.load_labels = on
         return True
 
+    @_batched
     def show_model(self, frame, case: str | None = None,
                    supports: bool = True, loads: bool = True) -> dict:
         """求解前的模型视图。"""
@@ -870,6 +963,7 @@ class Viewport(QWidget):
         self.plotter.render()
         return info
 
+    @_batched
     def show_analysis_mesh(self, frame, preview: dict) -> None:
         """显示求解器实际消费的分析单元，同时保留物理构件轮廓。"""
         if not CAN_RENDER:
@@ -905,6 +999,7 @@ class Viewport(QWidget):
         self._fit()
         self.plotter.render()
 
+    @_batched
     def show_deformed(self, frame, solution, case: str, scale: float,
                       overlay: bool = True, supports: bool = True) -> None:
         if not CAN_RENDER:
@@ -937,6 +1032,7 @@ class Viewport(QWidget):
         self._fit()
         self.plotter.render()
 
+    @_batched
     def show_contour(self, frame, solution, case: str, component: str,
                      scale: float = 0.0, title: str | None = None,
                      percentile: float | None = scene.CONTOUR_PERCENTILE,
@@ -1064,6 +1160,7 @@ class Viewport(QWidget):
         self.plotter.render()
         return clim
 
+    @_batched
     def show_mode(self, frame, shapes: np.ndarray, mode: int,
                   label: str = "") -> None:
         """振型 / 失稳模态。振型无量纲，按模型尺寸定一个好看的放大倍数。"""

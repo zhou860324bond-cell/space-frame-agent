@@ -27,7 +27,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -151,6 +151,9 @@ def diagram_stations(frame: Frame, solution, member_id: int,
     return x
 
 
+_DIAGRAM_MEMO: dict = {"frame": None, "solution": None, "data": {}}
+
+
 def member_diagram(frame: Frame, solution, member_id: int,
                    case: str | None = None, stations: int = 21,
                    at_x: np.ndarray | None = None) -> MemberDiagram:
@@ -158,7 +161,29 @@ def member_diagram(frame: Frame, solution, member_id: int,
 
     at_x 给定时直接在这些位置求值，不再自行插入跳跃点——包络用它把
     各工况对齐到同一套测点。
+
+    不带 at_x 的调用按 (frame, solution) 缓存，缓存方式与理由同
+    `member_displacement`：一张云图要先画中心线、再找全局极值，同一根杆
+    的内力分布原来要算两遍。返回的是独立副本。
     """
+    if at_x is not None:
+        return _member_diagram(frame, solution, member_id, case, stations, at_x)
+    memo = _DIAGRAM_MEMO
+    if memo["frame"] is not frame or memo["solution"] is not solution:
+        memo.update(frame=frame, solution=solution, data={})
+    key = (member_id, case or solution.primary, stations)
+    hit = memo["data"].get(key)
+    if hit is None:
+        hit = _member_diagram(frame, solution, member_id, case, stations, None)
+        memo["data"][key] = hit
+    return replace(hit, x=hit.x.copy(), N=hit.N.copy(), Vy=hit.Vy.copy(),
+                   Vz=hit.Vz.copy(), T=hit.T.copy(), My=hit.My.copy(),
+                   Mz=hit.Mz.copy())
+
+
+def _member_diagram(frame: Frame, solution, member_id: int,
+                    case: str | None, stations: int,
+                    at_x: np.ndarray | None) -> MemberDiagram:
     if member_id not in frame.members:
         raise KeyError(f"没有编号为 {member_id} 的杆件")
     if at_x is None and stations < 2:
@@ -316,6 +341,14 @@ def member_deflection(frame: Frame, solution, member_id: int,
     return x, v, w
 
 
+# member_displacement 的单槽缓存：只记"最近一次的 (frame, solution)"。
+# 画一张变形图要问三遍同一根杆的挠度——定自动放大系数一遍、画中心线一遍、
+# 画刚域连线又一遍——每遍都是一次高分辨率积分。一千多根杆时每遍一秒多。
+# 用对象身份（is）而不是 id() 做键：对象被回收后 id 会被复用，拿 id 当键
+# 会把上一个模型的挠度安到新模型上。这里持有强引用，所以不会发生。
+_DISPLACEMENT_MEMO: dict = {"frame": None, "solution": None, "data": {}}
+
+
 def member_displacement(frame: Frame, solution, member_id: int,
                         case: str | None = None, stations: int = 101):
     """杆件中心线的完整全局位移，返回 ``(x, displacement[n,3])``。
@@ -323,9 +356,24 @@ def member_displacement(frame: Frame, solution, member_id: int,
     横向 v/w 来自单元内曲率积分，已经包含两端节点横移；轴向位移在线性梁
     单元内插值。所有后处理都应走这个入口，避免桌面、PNG、Plotly 各自拼一遍
     位移后出现“某个视图对、另一个视图错”。
+
+    同一对 (frame, solution) 下结果会被缓存；返回的是副本，调用方随便改。
     """
-    member = frame.members[member_id]
     name = case or solution.primary
+    memo = _DISPLACEMENT_MEMO
+    if memo["frame"] is not frame or memo["solution"] is not solution:
+        memo.update(frame=frame, solution=solution, data={})
+    key = (member_id, name, stations)
+    hit = memo["data"].get(key)
+    if hit is None:
+        hit = _member_displacement(frame, solution, member_id, name, stations)
+        memo["data"][key] = hit
+    return hit[0].copy(), hit[1].copy()
+
+
+def _member_displacement(frame: Frame, solution, member_id: int, name: str,
+                         stations: int):
+    member = frame.members[member_id]
     x, v, w = member_deflection(frame, solution, member_id, name, stations)
     pi, pj = member_endpoints(frame, member)
     _, rot = local_axes(pi, pj, member.ref_vector)

@@ -134,11 +134,11 @@ class SolvingMixin:
     def solve_model(self, analysis: str = "linear", increments: int = 10,
                     max_iter: int = 40, tolerance: float = 1e-7,
                     amplitudes: dict | None = None) -> ToolResult:
-        errors = validate_payload(self.model)
+        errors = self.validation_errors()
         if errors:
             return ToolResult(False, {"errors": errors,
                                       "hint": "先按上面的清单修正模型，再重新求解"})
-        self.compilation = compile_model(self.model)
+        self.compilation = compile_model(self.model, validated=True)
         self.frame = self.compilation.analysis_model
         self.result_db = None
         try:
