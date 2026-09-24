@@ -63,7 +63,7 @@ ZH_EN: dict[str, str] = {
     "屈曲": "Buckling", "模型检查": "Check", "分析网格": "Mesh",
     "节点实体": "Joint", "模型": "Model", "变形": "Deformed",
     "梁内力云图": "Contour", "内力分量": "Component",
-    "清除结果": "Clear", "内力图": "Diagram",
+    "清除结果": "Clear", "内力图": "Diagram", "单杆内力图": "Member Chart",
     "包络": "Envelope", "最大挠度": "Deflection", "报告": "Report",
     "强度验算": "Strength", "对称性": "Symmetry",
     "编号与存储": "Numbering", "前视": "Front", "侧视": "Side",

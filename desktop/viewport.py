@@ -1074,6 +1074,86 @@ class Viewport(QWidget):
         self.plotter.render()
 
     @_batched
+    def show_force_diagram(self, frame, solution, case: str, component: str,
+                           size_ratio: float = scene.DIAGRAM_SIZE_RATIO) -> dict:
+        """三维内力图：杆件画成细线，旁边画出该分量沿杆的分布形状。
+
+        结构软件（SAP2000、ETABS、盈建科）看杆系结果靠的是这个，不是给
+        杆件上色——着色管把剪力、轴力这类沿杆不变的量画成"一根杆一个颜色"，
+        看不出大小。这里图形的**高度就是数值**，弯矩画在受拉侧，
+        颜色只是辅助：负蓝、零灰、正红，全结构共用一个比例尺。
+        """
+        from units import of as unit_system
+        system = unit_system(frame)
+        if component in {"T", "My", "Mz", "M"}:
+            value_scale, unit = system.moment_scale, system.moment_unit
+        else:
+            value_scale, unit = system.force_scale, system.force_unit
+        got = scene.force_diagram(frame, solution, case, component,
+                                  value_scale=value_scale, size_ratio=size_ratio)
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return got
+        self.clear()
+        # 杆件退成细线作参照：主角是图形，杆件只交代"画在哪根杆旁边"
+        self.plotter.add_mesh(scene.member_polylines(frame), color=theme.MEMBER,
+                              render_lines_as_tubes=True, line_width=3,
+                              name="_diagram_members")
+        for mesh in scene.support_glyphs(frame).values():
+            self.plotter.add_mesh(mesh, color=theme.SUPPORT, smooth_shading=True,
+                                  ambient=0.28, diffuse=0.72)
+        peak = abs(got["peak"]["value"])
+        clim = (-peak, peak) if peak > 0 else (-1.0, 1.0)
+        ribbon = got["ribbon"]
+        if ribbon.n_points:
+            # 发散色标：正负画在杆的两侧，颜色也跟着分两头，零是中性灰。
+            # 不打光——这是一张"图"，不是三维物体，明暗只会干扰读色。
+            self.plotter.add_mesh(
+                ribbon, scalars="value", cmap=theme.diverging_cmap(), clim=clim,
+                opacity=0.82, lighting=False, show_scalar_bar=False,
+                interpolate_before_map=True, name="_diagram_fill")
+            self.plotter.add_scalar_bar(
+                title="", n_labels=7, n_colors=256, vertical=True, fmt="%.3g",
+                color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
+                width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+            self.plotter.add_mesh(got["outline"], color=theme.VIEWPORT_INK,
+                                  line_width=1.6, name="_diagram_outline")
+        shown = got["peak"]
+        label = component
+        if component == "M":
+            label = "M (dominant plane)"
+        elif component == "V":
+            label = "V (dominant plane)"
+        self.plotter.add_text(f"{label}  [{unit}]", position=(0.795, 0.735),
+                              viewport=True, color=theme.VIEWPORT_INK,
+                              font_size=10, name="_contour_bar_title")
+        bending = component in {"M", "Mz", "My"}
+        caption = self.plotter.add_text(
+            "BEAM INTERNAL-FORCE DIAGRAM\n"
+            + f"{label} [{unit}] - "
+            + ("drawn on the tension side" if bending
+               else "drawn toward + local axis")
+            + " - one scale for all members",
+            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
+            font_size=9, name="_contour_definition")
+        if caption is not None:
+            caption.GetTextProperty().SetVerticalJustificationToTop()
+        if shown["member"] is not None and shown["point"] is not None:
+            self.plotter.add_point_labels(
+                [shown["point"]],
+                [f"{shown['value']:+.3g} {unit} | M{shown['member']} "
+                 f"x={shown['x']:.3g}"],
+                name="_diagram_peak", font_size=9, text_color=theme.VIEWPORT_INK,
+                shape=None, always_visible=True, show_points=True,
+                point_color=theme.HIGHLIGHT, point_size=10)
+        self._contour_actors = True
+        self._place_contour_overlays()
+        self._decorate(frame)
+        self._fit()
+        return got
+
+    @_batched
     def show_contour(self, frame, solution, case: str, component: str,
                      scale: float = 0.0, title: str | None = None,
                      percentile: float | None = scene.CONTOUR_PERCENTILE,

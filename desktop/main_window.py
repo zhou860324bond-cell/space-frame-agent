@@ -91,7 +91,7 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 
 
 # 视口显示模式。切模式时整个场景重建。
-MODES = ("模型", "分析网格", "变形", "云图", "模态")
+MODES = ("模型", "分析网格", "变形", "云图", "内力图", "模态")
 
 
 class MainWindow(QMainWindow):
@@ -188,7 +188,7 @@ class MainWindow(QMainWindow):
 
         self.diagram = DiagramPanel(self)
         self.diagram.locate.connect(self.locate)
-        self.diagram_dock = self.bottom_drawer.add_page("diagram", "内力图", self.diagram)
+        self.diagram_dock = self.bottom_drawer.add_page("diagram", "单杆内力图", self.diagram)
 
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
         self.section_opt_dock = self.bottom_drawer.add_page(
@@ -322,6 +322,7 @@ class MainWindow(QMainWindow):
                              "分析网格": self.actions_by_name["analysis_mesh"],
                              "变形": self.actions_by_name["deformed"],
                              "云图": self.actions_by_name["contour"],
+                             "内力图": self.actions_by_name["force_diagram"],
                              "模态": self.actions_by_name["modal"]}
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -372,7 +373,7 @@ class MainWindow(QMainWindow):
         ("chat", "right_drawer", "AI\n助手", "AI 助手：一点召唤，再点收起（Ctrl+G）", True),
         None,
         ("results", "bottom_drawer", "结果", "结果表：位移、反力、杆端力与校验清单", False),
-        ("diagram", "bottom_drawer", "内力图", "单杆内力图：沿杆长的 N/V/M 曲线", False),
+        ("diagram", "bottom_drawer", "单杆", "单杆内力图：沿杆长的 N/V/M 曲线", False),
         ("section_opt", "bottom_drawer", "优化", "截面优化", False),
     )
 
@@ -544,7 +545,8 @@ class MainWindow(QMainWindow):
                            "load", "combo")),
                  ("分析", ("solve", None, "modal", "buckling", "solid_joint", None,
                            "diagnose", "analysis_mesh")),
-                 ("结果", ("model", "deformed", "contour", "diagram", None,
+                 ("结果", ("model", "deformed", "contour", "force_diagram",
+                           "diagram", None,
                            "envelope", "clear_results", "labels")),
                  ("视图", ("iso", "front", "side", "top", "fit", None,
                            "bg_settings", "grid_floor", "labels", "load_labels",
@@ -634,7 +636,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "quickbar"):
             self.quickbar.show_context_for(
                 self.ribbon.tabText(self.ribbon.currentIndex()), name)
-        if name in {"变形", "云图"} and self.session.solution is not None:
+        if name in {"变形", "云图", "内力图"} and self.session.solution is not None:
             self.viewport.set_pick_mode("member")
         act = self.mode_actions.get(name)
         if act is not None:
@@ -884,6 +886,13 @@ class MainWindow(QMainWindow):
                     levels=options.get("levels"),
                     overlay_deformed=options["overlay_deformed"],
                     show_extrema=options["show_extrema"])
+        elif self.mode == "内力图":
+            component = self.component
+            if component == scene.STRESS:
+                # 应力没有"受拉侧"这回事，也不是一个沿杆可画成形状的内力
+                component = "M"
+            self.viewport.show_force_diagram(frame, self.session.solution,
+                                             self.case, component)
         elif self.mode == "模态":
             # 同一个 Frame 只算一次。原来每次重画（切工况、改放大系数、开关
             # 标注）都把模态分析完整跑**两遍**——校验一遍、画图再一遍。
@@ -2676,6 +2685,11 @@ class MainWindow(QMainWindow):
             self.results_dock.raise_()
             self.set_mode("云图")
 
+    def show_force_diagram(self) -> None:
+        """三维内力图。不弹结果抽屉：图本身就是结果，别再挡住它。"""
+        if self._needs_solution():
+            self.set_mode("内力图")
+
     def pick_component(self) -> None:
         """选择梁中心线内力结果显示哪个分量。
 
@@ -2712,7 +2726,10 @@ class MainWindow(QMainWindow):
                 return
         self.component = key
         if self._needs_solution():
-            self.set_mode("云图")
+            # 正在看内力图时换分量就留在内力图；应力只能画云图（它没有受拉侧，
+            # 也不是一个能沿杆画成形状的内力）
+            keep = self.mode == "内力图" and key != scene.STRESS
+            self.set_mode("内力图" if keep else "云图")
 
     def _needs_solution(self) -> bool:
         """需要结果的动作先过这道闸。

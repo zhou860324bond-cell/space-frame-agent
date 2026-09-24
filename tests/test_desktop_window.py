@@ -657,6 +657,21 @@ def test_the_result_panel_defaults_to_continuous_colouring(qt_app):
     assert window.result_display_options["levels"] == 0
 
 
+def test_the_force_diagram_mode_draws_diagrams_and_keeps_the_picked_component(
+        qt_app):
+    """「内力图」是一个显示模式；在内力图里换分量不会被踢回云图。"""
+    window = solved(MainWindow(built()))
+    drawn = []
+    window.viewport.show_force_diagram = (
+        lambda frame, solution, case, component: drawn.append(component))
+    window.show_force_diagram()
+    assert window.mode == "内力图"
+    assert window.mode_actions["内力图"].isChecked()
+    assert drawn[-1] == window.component
+    window._set_component("Vz")
+    assert window.mode == "内力图" and drawn[-1] == "Vz"
+
+
 def test_turning_off_contour_shading_gives_flat_colour(qt_app):
     """要精确对色标读数时可以关掉打光，这时必须是纯平涂。"""
     window = solved(MainWindow(built()))

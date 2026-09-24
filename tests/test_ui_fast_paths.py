@@ -264,3 +264,65 @@ def test_coincident_nodes_are_reported_in_insertion_order():
     issues = [i for i in check_model(copy.deepcopy(f)) if "坐标重合" in i]
     assert issues == ["节点 5 与节点 9 坐标重合；请合并为同一节点",
                       "节点 1 与节点 3 坐标重合；请合并为同一节点"]
+
+
+# --------------------------------------------------------------------------- 三维内力图
+
+def _simple_beam(load):
+    f = Frame()
+    f.sections["S"] = Section("S", 1e-2, 1e-4, 1e-4, 1e-5)
+    f.materials["M"] = Material("M", 2e11, 0.3)
+    f.nodes[1] = Node(1, 0, 0, 0)
+    f.nodes[2] = Node(2, 6, 0, 0)
+    f.members[1] = Member(1, 1, 2, "S", "M")
+    f.supports[1] = (1, 1, 1, 1, 0, 0)
+    f.supports[2] = (0, 1, 1, 0, 0, 0)
+    f.member_loads[1] = load
+    from frame3d import solve
+    return f, solve(f)
+
+
+def _tips(got):
+    points = got["ribbon"].points
+    return points[len(points) // 2:]
+
+
+def test_the_moment_diagram_is_drawn_on_the_tension_side():
+    """竖向荷载下简支梁下缘受拉：弯矩图画在梁的下方（-Z），峰值在跨中。"""
+    frame, solution = _simple_beam((0, 0, -1e4))
+    got = scene.force_diagram(frame, solution, None, "M")
+    tips = _tips(got)
+    assert tips[:, 2].max() <= 1e-12 and tips[:, 2].min() < 0.0
+    assert got["peak"]["value"] == pytest.approx(45e3)
+    assert got["peak"]["x"] == pytest.approx(3.0)
+    # 峰值画出去的长度就是模型尺寸的 DIAGRAM_SIZE_RATIO
+    assert abs(tips[:, 2].min()) == pytest.approx(
+        scene.DIAGRAM_SIZE_RATIO * scene.model_size(frame))
+
+
+def test_a_sideways_load_bends_the_diagram_toward_its_tension_side():
+    """水平 +Y 荷载下梁向 +Y 弯曲，+Y 侧受拉：My 图画向 +Y。"""
+    frame, solution = _simple_beam((0, 1e4, 0))
+    got = scene.force_diagram(frame, solution, None, "M")
+    tips = _tips(got)
+    assert tips[:, 1].min() >= -1e-12 and tips[:, 1].max() > 0.0
+
+
+def test_shear_changes_side_at_its_zero_without_twisting_the_ribbon():
+    """剪力跨中过零：两半分画在杆的两侧，过零处插了零点，四边形不打结。"""
+    frame, solution = _simple_beam((0, 0, -1e4))
+    got = scene.force_diagram(frame, solution, None, "Vy")
+    values = np.asarray(got["ribbon"]["value"])
+    assert values.min() < 0.0 < values.max()
+    tips = _tips(got)
+    assert tips[:, 2].min() < 0.0 < tips[:, 2].max()
+    x, v = scene._with_zero_crossings(np.array([0.0, 1.0, 2.0]),
+                                      np.array([2.0, -2.0, -1.0]))
+    assert list(x) == [0.0, 0.5, 1.0, 2.0] and list(v) == [2.0, 0.0, -2.0, -1.0]
+
+
+def test_a_member_with_constant_force_gets_a_rectangle():
+    """轴力、无跨中荷载时的剪力沿杆不变：画出来是等高的矩形，大小一眼可读。"""
+    s = solved_session()
+    got = scene.force_diagram(s.frame, s.solution, None, "N")
+    assert got["ribbon"].n_cells > 0 and got["peak"]["member"] is not None

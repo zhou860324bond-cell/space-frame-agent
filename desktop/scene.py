@@ -465,6 +465,115 @@ def contour_line(frame, solution, case: str | None, component: str,
     return line
 
 
+# 三维内力图的最大高度：峰值那一处画出去占模型尺寸的这个比例。
+DIAGRAM_SIZE_RATIO = 0.09
+
+# 分量 → (取值用的分量名, 画向哪个局部轴, 正负号)。
+#
+# 弯矩一律**画在受拉侧**（国内结构力学的惯例）。符号是算出来的，不是猜的：
+# 竖向荷载下的简支梁跨中 Mz = +45 kN·m 而下缘受拉（-y），所以 Mz 沿 -y 画；
+# 水平 +Y 荷载下跨中 My = -45 kN·m 而 -z 侧受拉，所以 My 沿 +z 画。
+# 剪力、轴力、扭矩没有"受拉侧"一说，沿对应局部轴的正向画。
+_DIAGRAM_AXES = {"Mz": ("Mz", 1, -1.0), "My": ("My", 2, 1.0),
+                 "Vy": ("Vy", 1, 1.0), "Vz": ("Vz", 2, 1.0),
+                 "N": ("N", 1, 1.0), "T": ("T", 1, 1.0)}
+
+
+def _diagram_axis(diagram, component: str) -> tuple[np.ndarray, int, float]:
+    """分量的有符号值、画向的局部轴、正负号。
+
+    合量（M、V）没有正负，画不出受拉侧——按这根杆上**占主导**的那个
+    弯曲平面画它的有符号分量。梁在自己的强轴平面内受弯时就是 Mz 图。
+    """
+    if component == "M":
+        component = ("Mz" if np.abs(diagram.Mz).max(initial=0.0)
+                     >= np.abs(diagram.My).max(initial=0.0) else "My")
+    elif component == "V":
+        component = ("Vy" if np.abs(diagram.Vy).max(initial=0.0)
+                     >= np.abs(diagram.Vz).max(initial=0.0) else "Vz")
+    name, axis, sign = _DIAGRAM_AXES[component]
+    return np.asarray(getattr(diagram, name), dtype=float), axis, sign
+
+
+def _with_zero_crossings(x: np.ndarray, v: np.ndarray):
+    """在变号处插入零点。不插的话，跨过零点的那一格四边形会拧成蝴蝶结。"""
+    xs, vs = [x[0]], [v[0]]
+    for i in range(len(x) - 1):
+        a, b = v[i], v[i + 1]
+        if a * b < 0.0:
+            t = a / (a - b)
+            xs.append(x[i] + t * (x[i + 1] - x[i]))
+            vs.append(0.0)
+        xs.append(x[i + 1])
+        vs.append(b)
+    return np.asarray(xs), np.asarray(vs)
+
+
+def force_diagram(frame, solution, case: str | None, component: str,
+                  value_scale: float = 1.0,
+                  size_ratio: float = DIAGRAM_SIZE_RATIO) -> dict:
+    """三维内力图：每根杆旁边画出该分量沿杆的分布形状。
+
+    SAP2000、ETABS、盈建科看杆系结果都靠这个，而不是给杆件上色。着色管
+    把剪力、轴力这类沿杆不变的量画成"一根杆一个颜色"，看不出大小；内力图
+    的**高度就是数值**，矩形、三角形、抛物线一眼可辨，正负画在杆的两侧。
+
+    返回::
+
+        ribbon   填充面（点标量 "value"，已乘 value_scale）
+        outline  外轮廓：图形顶边 + 两端竖线
+        peak     {"value", "member", "x", "point"}，point 在图形顶边上
+        scale    显示长度 / 数值
+
+    所有杆共用一个比例尺（峰值画到模型尺寸的 size_ratio），杆与杆之间
+    的高度才可以直接比较。
+    """
+    name = case or solution.primary
+    shapes = []
+    peak = {"value": 0.0, "member": None, "x": 0.0, "point": None}
+    for mid in sorted(frame.members):
+        member = frame.members[mid]
+        diagram = member_diagram(frame, solution, mid, name, stations=STATIONS)
+        values, axis, sign = _diagram_axis(diagram, component)
+        values = values * value_scale
+        pi, pj = member_endpoints(frame, member)
+        _, rot = local_axes(pi, pj, member.ref_vector)
+        x, v = _with_zero_crossings(np.asarray(diagram.x, dtype=float), values)
+        length = float(diagram.length) or 1.0
+        base = pi + (x / length)[:, None] * (pj - pi)
+        direction = sign * np.asarray(rot[axis], dtype=float)
+        shapes.append((mid, x, v, base, direction))
+        k = int(np.argmax(np.abs(v))) if len(v) else 0
+        if len(v) and abs(v[k]) > abs(peak["value"]):
+            peak.update(value=float(v[k]), member=mid, x=float(x[k]))
+    top = abs(peak["value"])
+    scale = size_ratio * model_size(frame) / top if top > 0.0 else 0.0
+
+    points, faces, scalars, outline = [], [], [], []
+    offset = 0
+    for mid, x, v, base, direction in shapes:
+        n = len(x)
+        tip = base + (scale * v)[:, None] * direction
+        points.extend((base, tip))
+        scalars.extend((v, v))
+        i = np.arange(n - 1)
+        quad = np.column_stack([np.full(n - 1, 4), offset + i, offset + i + 1,
+                                offset + n + i + 1, offset + n + i])
+        faces.append(quad.ravel())
+        outline.append(np.vstack([base[:1], tip, base[-1:]]))
+        if mid == peak["member"]:
+            k = int(np.argmin(np.abs(x - peak["x"])))
+            peak["point"] = tip[k]
+        offset += 2 * n
+
+    ribbon = pv.PolyData()
+    if points:
+        ribbon = pv.PolyData(np.vstack(points), np.concatenate(faces))
+        ribbon["value"] = np.concatenate(scalars)
+    return {"ribbon": ribbon, "outline": _polylines(outline),
+            "peak": peak, "scale": scale}
+
+
 def banded_tubes(line: pv.PolyData, component: str,
                  clim: tuple[float, float], levels: int,
                  radius: float) -> pv.PolyData:
