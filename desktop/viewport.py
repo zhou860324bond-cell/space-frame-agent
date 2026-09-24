@@ -35,6 +35,9 @@ from . import scene, theme
 # 逻辑照测，像素交给有 GL 的机器。
 CAN_RENDER = os.environ.get("QT_QPA_PLATFORM", "") != "offscreen"
 
+# 云图杆件的屏幕宽度（像素）。和缩放无关：远看不糊成一片，近看不臃肿。
+CONTOUR_LINE_PX = 7
+
 
 
 def _batched(method):
@@ -1108,15 +1111,19 @@ class Viewport(QWidget):
         continuous = levels == 0
         n = 0 if continuous else scene.contour_levels(levels)
         base = theme.palette_cmap(self.contour_palette, component)
-        radius = scene.CONTOUR_TUBE_RATIO * scene.model_size(frame)
+        # 杆件按**屏幕像素宽度**画成带光照的管（render_lines_as_tubes），
+        # 不再按模型尺寸生成三维管网格。按模型尺寸取半径时，为了打光看得出
+        # 是圆的，半径得取到普通显示的四五倍——一切到云图杆件就胖一大圈，
+        # 模型越大、镜头越近越臃肿（用户原话"管子咋这么粗"）。像素宽度
+        # 与缩放无关，Abaqus 画梁的云图也是这么做的；还省掉了管网格的生成。
         if continuous:
             # 标量挂在点上、映射前先插值：颜色沿杆连续过渡，不会被切成
-            # 一圈圈色环。每根杆是一整段，两端封口。
-            tubes = (line.tube(radius=radius, n_sides=24, capping=True)
-                     if line.n_points else line)
+            # 一圈圈色环。
+            tubes = line
             scalars, cmap, colors = component, base, 256
         else:
-            tubes = scene.banded_tubes(line, component, clim, n, radius=radius)
+            # 按色带边界切开的线段，颜色挂在单元上，边界干净没有插值
+            tubes = scene.banded_segments(line, component, clim, n)
             scalars = component + scene.BAND_SUFFIX
             cmap, colors = theme.banded(base, n), n
         # 打光与读数是一对矛盾：打了光，同一个数值在向光面和背光面是两个
@@ -1128,13 +1135,15 @@ class Viewport(QWidget):
         # 要严格照色标读数可以关掉（set_contour_shading），那时是纯平涂。
         #
         # 环境光别调得太高。原来取 0.66/0.34 想把色偏压到最小，结果是
-        # 明暗差被压没了，管子看上去还是一条扁色带——光照参数救不了太细的管，
-        # 真正起作用的是 scene.CONTOUR_TUBE_RATIO 那一次加粗。
+        # 明暗差被压没了，管子看上去还是一条扁色带。按世界尺寸建管时只能靠
+        # 加粗救（CONTOUR_TUBE_RATIO），代价是云图杆件胖一大圈；现在线管按
+        # 屏幕像素宽度着色，明暗由着色器按像素算，粗细与模型尺寸无关。
         shade = dict(lighting=True, ambient=0.42, diffuse=0.58,
                      specular=0.22, specular_power=30, smooth_shading=True)
         self.plotter.add_mesh(
             tubes, scalars=scalars, cmap=cmap, clim=clim, n_colors=colors,
             interpolate_before_map=True, show_scalar_bar=False,
+            render_lines_as_tubes=True, line_width=CONTOUR_LINE_PX,
             **(shade if self.contour_shading else {"lighting": False}))
         # 色标竖着放在右侧：横放时 VTK 把标题和刻度挤在同一条带上（实测重叠），
         # 而且十几级的刻度横向根本排不开。
@@ -1152,12 +1161,12 @@ class Viewport(QWidget):
             # 峰值所在的位置会消失在一片同色里。
             # 连续模式不画：那里超限的部分就是色标最顶端的颜色，渐变本身
             # 看得出哪儿最大，峰值另有极值标签；再压一层纯色反而像一块补丁。
-            over = scene.out_of_range_tubes(
-                line, component, clim,
-                radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame) * 1.02)
+            over = scene.out_of_range_segments(line, component, clim)
             if over.n_cells:
                 self.plotter.add_mesh(over, color=theme.HIGHLIGHT,
                                       lighting=False, show_scalar_bar=False,
+                                      render_lines_as_tubes=True,
+                                      line_width=CONTOUR_LINE_PX + 2,
                                       name="_contour_out_of_range")
         self._contour_last = dict(palette=self.contour_palette,
                                   shading=self.contour_shading, bands=n)

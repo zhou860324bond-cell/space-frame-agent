@@ -409,6 +409,15 @@ def cut_arrays(line: pv.PolyData, name: str, edges
             va[row] + mid * (vb[row] - va[row]))
 
 
+def out_of_range_segments(line: pv.PolyData, component: str,
+                          clim: tuple[float, float]) -> pv.PolyData:
+    """超出色标量程的那些段（线段，不做成管）。用法与理由见 out_of_range_tubes。"""
+    lo, hi = float(clim[0]), float(clim[1])
+    starts, ends, values = cut_arrays(line, component, (lo, hi))
+    outside = (values < lo) | (values > hi)
+    return _segments(starts[outside], ends[outside])
+
+
 def out_of_range_tubes(line: pv.PolyData, component: str,
                        clim: tuple[float, float], radius: float) -> pv.PolyData:
     """超出色标量程的那些段，单独做成一份网格。

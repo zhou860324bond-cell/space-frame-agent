@@ -596,16 +596,31 @@ def test_the_contour_is_drawn_from_banded_cell_colours(qt_app):
     assert contour["diffuse"] > contour["ambient"]
 
 
-def test_the_contour_tube_is_thick_enough_to_read_as_round(qt_app):
-    """云图管的粗细是**功能参数**，不是审美偏好。
+def test_the_contour_members_are_pixel_width_lit_lines_not_fat_tubes(qt_app):
+    """云图杆件的粗细按屏幕像素定，不按模型尺寸定。"""
+    # 按世界尺寸建管时只能靠加粗（CONTOUR_TUBE_RATIO 曾到模型显示的 4.5 倍），
+    # 一切到云图杆件就胖一大圈。现在按屏幕像素画成带光照的线管：粗细与
+    # 模型尺寸、镜头远近无关，这里守的是"别退回世界尺寸的粗管"。
+    window = solved(MainWindow(built()))
+    calls: list[dict] = []
+    window.viewport.plotter.add_mesh = lambda mesh=None, **kw: calls.append(
+        {"mesh": mesh, **kw})
+    import desktop.viewport as vp
 
-    太细时整屏视角下只有几个像素宽，明暗跨不过三四个像素，
-    再怎么调光照也读不出弧面——这条线守的就是那次加粗别被人调回去。
-    """
-    from desktop import scene
-
-    assert scene.CONTOUR_TUBE_RATIO >= 0.012
-    assert scene.CONTOUR_TUBE_RATIO > scene.TUBE_RATIO * 3
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        for levels in (0, 8):
+            calls.clear()
+            window.viewport.show_contour(window.session.frame,
+                                         window.session.solution, "D", "Mz",
+                                         levels=levels)
+            contour = calls[0]
+            assert contour["render_lines_as_tubes"] is True
+            assert contour["line_width"] == vp.CONTOUR_LINE_PX >= 5
+            assert contour["mesh"].n_lines and not contour["mesh"].n_faces_strict
+    finally:
+        vp.CAN_RENDER = was
 
 
 def test_the_continuous_contour_colours_points_and_skips_the_overflow_layer(qt_app):
