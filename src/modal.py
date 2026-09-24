@@ -31,14 +31,20 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.linalg import eigh
 from scipy.sparse import coo_matrix
+from scipy.sparse.linalg import eigsh
 
 from frame3d import (DOF_PER_NODE, Frame, _member_matrices, assemble,
                      constrained_dofs, member_endpoints,
-                     member_local_displacements, project_secondary_matrix)
+                     member_local_displacements, project_secondary_matrix,
+                     scatter_blocks)
 
 # 一致质量矩阵在扭转项上要用极惯性矩 / 面积，这里按 (Iy + Iz) / A 取，
 # 对常见截面就是极回转半径的平方
 _MIN_MODES = 1
+# 自由度超过这个数就改用稀疏 eigsh。稠密 eigh 求全部特征值，耗时按 n³、内存按 n²
+# 涨：实测 7 千自由度要半分钟，1.5 万自由度光矩阵就要 5 GB。门槛以下保留稠密解，
+# 小模型结果与历史逐位一致，也不用操心迭代法的收敛。
+DENSE_EIGEN_LIMIT = 2000
 
 
 @dataclass
@@ -120,30 +126,24 @@ def consistent_mass(L: float, rho: float, A: float, Ip_over_A: float) -> np.ndar
 
 def assemble_mass(model: Frame) -> coo_matrix:
     """整体一致质量矩阵。"""
-    n = model.num_dofs
-    rows: list[int] = []
-    cols: list[int] = []
-    vals: list[float] = []
+    all_dofs, blocks = [], []
     for m in model.members.values():
         L, R, T, B, _, _, cond = _member_matrices(model, m)
         mat, sec = model.materials[m.material], model.sections[m.section]
         ip_over_a = (sec.Iy + sec.Iz) / sec.A
         Me = consistent_mass(L, mat.density, sec.A, ip_over_a)
         Me = project_secondary_matrix(Me, cond)
-        Mg = B.T @ T.T @ Me @ T @ B
-        dofs = model.node_dofs(m.i) + model.node_dofs(m.j)
-        for a in range(12):
-            for b in range(12):
-                rows.append(dofs[a]); cols.append(dofs[b]); vals.append(Mg[a, b])
-    return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
+        all_dofs.append(model.node_dofs(m.i) + model.node_dofs(m.j))
+        blocks.append(B.T @ T.T @ Me @ T @ B)
+    return scatter_blocks(model.num_dofs, all_dofs, blocks)
 
 
 def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     """解 K φ = ω² M φ，返回前 num_modes 阶。
 
-    自由度不多（几百到几千），直接用稠密 `scipy.linalg.eigh` 的广义形式——
+    自由度不超过 `DENSE_EIGEN_LIMIT` 时用稠密 `scipy.linalg.eigh` 的广义形式——
     它对 (K, M) 都对称正定的情形是稳的，比稀疏迭代法少一堆收敛参数要调。
-    真到几万自由度再换 `eigsh` 不迟，那时这个函数的签名不用变。
+    更大的模型换稀疏 `eigsh` 只求前几阶，见 `_lowest_modes_sparse`。
     """
     if not model.members:
         raise ValueError("模型里没有杆件，无法做模态分析")
@@ -163,16 +163,20 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     if free.size == 0:
         raise ValueError("所有自由度都被约束了，没有可振动的自由度")
 
-    Kff = np.asarray(K[free][:, free].todense())
-    Mff = np.asarray(M[free][:, free].todense())
+    Kff = K[free][:, free]
+    Mff = M[free][:, free]
     # 对称化：装配时的浮点误差会让两边差 1e-16 量级，eigh 要求严格对称
     Kff = 0.5 * (Kff + Kff.T)
     Mff = 0.5 * (Mff + Mff.T)
 
-    if np.abs(Mff).max() <= 0.0:
+    if not Mff.nnz or np.abs(Mff.data).max() <= 0.0:
         raise ValueError("自由自由度上的质量为零，模态分析没有意义")
 
-    vals, vecs = eigh(Kff, Mff)
+    if free.size <= DENSE_EIGEN_LIMIT or num_modes >= free.size - 1:
+        Kff, Mff = Kff.toarray(), Mff.toarray()
+        vals, vecs = eigh(Kff, Mff)
+    else:
+        vals, vecs = _lowest_modes_sparse(Kff.tocsc(), Mff.tocsc(), num_modes)
     # 数值噪声会让最低几阶出现极小的负值，截到 0 而不是让 sqrt 变 nan
     vals = np.clip(vals, 0.0, None)
     keep = min(num_modes, vals.size)
@@ -219,6 +223,27 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
                        participation=factors, modal_mass=np.array(
                            [float(vecs[:, k] @ Mff @ vecs[:, k])
                             for k in range(keep)]))
+
+
+def _lowest_modes_sparse(Kff, Mff, num_modes: int):
+    """稀疏移频求逆，只求 K φ = ω² M φ 的最低 num_modes 阶。
+
+    移频点取一个很小的负数而不是 0：结构里若有机构，K 奇异，σ = 0 时分解直接
+    失败；K − σM 在 σ < 0 时仍正定，机构模态照样以 ω ≈ 0 的形式出来，与稠密
+    路径的行为一致。返回的振型按质量归一化（φᵀMφ = 1），同 `eigh(K, M)`。
+    """
+    diag_m = Mff.diagonal()
+    ratio = np.abs(Kff.diagonal()[diag_m > 0] / diag_m[diag_m > 0])
+    sigma = -1e-8 * float(np.median(ratio)) if ratio.size else -1e-8
+    try:
+        vals, vecs = eigsh(Kff, k=num_modes, M=Mff, sigma=sigma, which="LM")
+    except RuntimeError as exc:
+        raise np.linalg.LinAlgError(
+            "模态分析失败：K − σM 分解奇异，检查约束与质量分布") from exc
+    order = np.argsort(vals)
+    vals, vecs = vals[order], vecs[:, order]
+    norms = np.sqrt(np.einsum("ij,ij->j", vecs, Mff @ vecs))
+    return vals, vecs / norms
 
 
 def member_mode_displacement(model: Frame, shapes: np.ndarray, mode: int,

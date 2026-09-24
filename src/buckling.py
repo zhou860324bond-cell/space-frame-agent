@@ -32,9 +32,11 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.linalg import eigh
 from scipy.sparse import coo_matrix
+from scipy.sparse.linalg import eigsh
 
 from frame3d import (Frame, _member_matrices, assemble, constrained_dofs,
-                     project_secondary_matrix, solve)
+                     project_secondary_matrix, scatter_blocks, solve)
+from modal import DENSE_EIGEN_LIMIT
 
 
 @dataclass
@@ -94,10 +96,7 @@ def geometric_stiffness(L: float, N: float, Ip_over_A: float) -> np.ndarray:
 
 def assemble_geometric(model: Frame, axial: dict[int, float]) -> coo_matrix:
     """按给定的杆件轴力组装整体几何刚度矩阵。"""
-    n = model.num_dofs
-    rows: list[int] = []
-    cols: list[int] = []
-    vals: list[float] = []
+    all_dofs, blocks = [], []
     for mid, m in model.members.items():
         N = float(axial.get(mid, 0.0))
         if N == 0.0:
@@ -106,12 +105,9 @@ def assemble_geometric(model: Frame, axial: dict[int, float]) -> coo_matrix:
         sec = model.sections[m.section]
         kg = geometric_stiffness(L, N, (sec.Iy + sec.Iz) / sec.A)
         kg = project_secondary_matrix(kg, cond)
-        kg_g = B.T @ T.T @ kg @ T @ B
-        dofs = model.node_dofs(m.i) + model.node_dofs(m.j)
-        for a in range(12):
-            for b in range(12):
-                rows.append(dofs[a]); cols.append(dofs[b]); vals.append(kg_g[a, b])
-    return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
+        all_dofs.append(model.node_dofs(m.i) + model.node_dofs(m.j))
+        blocks.append(B.T @ T.T @ kg @ T @ B)
+    return scatter_blocks(model.num_dofs, all_dofs, blocks)
 
 
 def buckling(model: Frame, case: str | None = None,
@@ -144,13 +140,22 @@ def buckling(model: Frame, case: str | None = None,
     if free.size == 0:
         raise ValueError("所有自由度都被约束了，不存在屈曲模态")
 
-    Kff = np.asarray(K[free][:, free].todense())
-    Gff = np.asarray(Kg[free][:, free].todense())
+    Kff = K[free][:, free]
+    Gff = Kg[free][:, free]
     Kff = 0.5 * (Kff + Kff.T)
     Gff = 0.5 * (Gff + Gff.T)
 
     # K_g φ = μ K φ，λ = −1/μ。K 正定所以放右端，K_g 不定不能放
-    mu, vecs = eigh(Gff, Kff)
+    if free.size <= DENSE_EIGEN_LIMIT or num_modes >= free.size - 1:
+        mu, vecs = eigh(Gff.toarray(), Kff.toarray())
+    else:
+        # 最小的正 λ 对应最负的 μ，正好是谱的一端，普通广义模式（K 放右端、
+        # 内部用 splu 分解）收敛就快，不必移频。K 正定这一要求与稠密路径相同。
+        try:
+            mu, vecs = eigsh(Gff.tocsc(), k=num_modes, M=Kff.tocsc(), which="SA")
+        except RuntimeError as exc:
+            raise np.linalg.LinAlgError(
+                "屈曲分析失败：刚度矩阵奇异，约束不足或存在机构") from exc
     with np.errstate(divide="ignore"):
         lam = np.where(np.abs(mu) > 0, -1.0 / mu, np.inf)
 

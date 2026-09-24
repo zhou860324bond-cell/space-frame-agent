@@ -295,9 +295,59 @@ def _default_cases() -> dict[str, LoadCase]:
     return {DEFAULT_CASE: LoadCase(DEFAULT_CASE)}
 
 
+class _NodeTable(dict):
+    """节点表，顺带缓存"节点号 → 排序位次"。
+
+    自由度编号取决于排序后的节点号。每次 `node_dofs` 都重排一遍，装配里每杆
+    调两次，就成了 O(N² log N)——实测 1.5 万自由度时这一项比 SuperLU 分解还慢。
+    所以位次只算一次，任何增删改都作废缓存。改坐标不影响位次，但一律作废更不
+    容易漏：漏掉一处就是自由度错位，结果安静地错。
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._rank: dict[int, int] | None = None
+
+    def rank(self) -> dict[int, int]:
+        if self._rank is None:
+            self._rank = {nid: k for k, nid in enumerate(sorted(self))}
+        return self._rank
+
+    def _invalidate(self) -> None:
+        self._rank = None
+
+    def __setitem__(self, key, value):
+        self._invalidate(); super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        self._invalidate(); super().__delitem__(key)
+
+    def __ior__(self, other):
+        self._invalidate(); return super().__ior__(other)
+
+    def pop(self, *args):
+        self._invalidate(); return super().pop(*args)
+
+    def popitem(self):
+        self._invalidate(); return super().popitem()
+
+    def clear(self):
+        self._invalidate(); super().clear()
+
+    def update(self, *args, **kwargs):
+        self._invalidate(); super().update(*args, **kwargs)
+
+    def setdefault(self, key, default=None):
+        self._invalidate(); return super().setdefault(key, default)
+
+    def __reduce__(self):
+        # 拷贝与序列化只带内容，不带缓存
+        return type(self), (dict(self),)
+
+
 @dataclass
 class Frame:
-    nodes: dict[int, Node] = field(default_factory=dict)
+    nodes: dict[int, Node] = field(default_factory=_NodeTable)
     members: dict[int, Member] = field(default_factory=dict)
     sections: dict[str, Section] = field(default_factory=dict)
     materials: dict[str, Material] = field(default_factory=dict)
@@ -318,6 +368,12 @@ class Frame:
     amplitudes: dict[str, Amplitude] = field(default_factory=dict)
     # 单位制只影响自重的 g 与结果的显示换算，不影响刚度方程本身
     units: str = UNITS_SI
+
+    def __setattr__(self, name, value):
+        # 构造与 frame.nodes = {...} 都走这里，保证节点表始终带位次缓存
+        if name == "nodes" and not isinstance(value, _NodeTable):
+            value = _NodeTable(value)
+        super().__setattr__(name, value)
 
     @property
     def unit_system(self):
@@ -355,14 +411,15 @@ class Frame:
         return sorted(self.nodes)
 
     def index_of(self) -> dict[int, int]:
-        return {nid: k for k, nid in enumerate(self.order())}
+        # 给副本：调用方改了它也不会污染缓存
+        return dict(self.nodes.rank())
 
     @property
     def num_dofs(self) -> int:
         return DOF_PER_NODE * len(self.nodes)
 
     def node_dofs(self, nid: int) -> list[int]:
-        k = self.index_of()[nid]
+        k = self.nodes.rank()[nid]
         return list(range(DOF_PER_NODE * k, DOF_PER_NODE * (k + 1)))
 
 
@@ -687,16 +744,14 @@ def assemble(model: Frame, case_names: list[str] | None = None):
     if case_names is None:
         case_names = list(model.load_cases)
     n = model.num_dofs
-    rows, cols, vals = [], [], []
+    all_dofs, blocks = [], []
     F = np.zeros((n, len(case_names)))
 
     for m in model.members.values():
         L, R, T, B, _, k_star, cond = _member_matrices(model, m)
         ke = B.T @ T.T @ k_star @ T @ B
         dofs = model.node_dofs(m.i) + model.node_dofs(m.j)
-        for a in range(12):
-            for b in range(12):
-                rows.append(dofs[a]); cols.append(dofs[b]); vals.append(ke[a, b])
+        all_dofs.append(dofs); blocks.append(ke)
         for c, name in enumerate(case_names):
             p = equivalent_local_load(model, m, model.load_cases[name], L, R)
             if p.any():
@@ -708,14 +763,34 @@ def assemble(model: Frame, case_names: list[str] | None = None):
 
     # 弹性支座只往对角线上加一项，不动任何耦合项——弹簧是接地的，
     # 它连接的是"这个自由度"和"大地"，不是两个自由度。
+    rows, vals = [], []
     for nid, stiffness in model.springs.items():
         dofs = model.node_dofs(nid)
         for k, value in enumerate(stiffness):
             if value:
-                rows.append(dofs[k]); cols.append(dofs[k]); vals.append(float(value))
+                rows.append(dofs[k]); vals.append(float(value))
 
-    K = coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
+    K = scatter_blocks(n, all_dofs, blocks)
+    if rows:
+        K = (K + coo_matrix((vals, (rows, rows)), shape=(n, n))).tocsr()
     return K, F, case_names
+
+
+def scatter_blocks(n: int, all_dofs: list[list[int]],
+                   blocks: list[np.ndarray]) -> csr_matrix:
+    """把各杆 12×12 单元阵一次性散射进 n×n 整体稀疏阵，重复位置自动相加。
+
+    逐项 append 的双重循环每杆 144 次 Python 调用，杆一多就是装配的大头；
+    这里用 repeat/tile 一次生成行列号。ke[a, b] 按行主序展平后位于 a*12+b，
+    行号取 dofs[a]、列号取 dofs[b]，与原循环逐项一致。
+    """
+    if not blocks:
+        return csr_matrix((n, n))
+    dofs = np.asarray(all_dofs, dtype=np.int64)
+    rows = np.repeat(dofs, 12, axis=1).ravel()
+    cols = np.tile(dofs, (1, 12)).ravel()
+    vals = np.asarray(blocks, dtype=float).ravel()
+    return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
 
 
 def constrained_dofs(model: Frame) -> np.ndarray:
