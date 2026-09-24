@@ -424,8 +424,45 @@ class Viewport(QWidget):
         self._place_overlays()
         if self.mode_badge.isVisible():
             self._update_mode_badge()
-        if CAN_RENDER and self._inset_camera():
+        if CAN_RENDER:
+            self._inset_camera()
+            self._place_contour_overlays()
             self.plotter.render()
+
+    _contour_actors = False
+
+    def _place_contour_overlays(self) -> None:
+        """色标、色标标题、云图说明放进**没被抽屉盖住**的那一块。
+
+        原来是写死的视口比例坐标：底部结果抽屉一开，色标下半截就进了抽屉
+        底下；左上角那段说明又被模式提示压着。这里按抽屉遮挡重新摆，
+        抽屉开合时只挪这几个 2D 对象，不重画整张云图。
+        """
+        if not CAN_RENDER or not self._contour_actors:
+            return
+        width, height = max(1, self.width()), max(1, self.height())
+        left, right, bottom = self._insets
+        x_right = 1.0 - right / width
+        y_bottom = bottom / height + 0.04
+        # 色标高度随可用高度收缩，顶上给标题留位置
+        bar_height = max(0.18, min(0.58, 0.84 - y_bottom - 0.12))
+        try:
+            bar = self.plotter.scalar_bar
+        except (AttributeError, IndexError, KeyError, StopIteration):
+            bar = None
+        actors = getattr(self.plotter, "actors", None)
+        lookup = actors.get if isinstance(actors, dict) else (lambda _name: None)
+        # 只动真正的 VTK 2D actor；无头测试里的桩对象什么属性都"有"
+        if hasattr(bar, "SetHeight"):
+            bar.SetPosition(x_right - 0.075, y_bottom)
+            bar.SetHeight(bar_height)
+        title = lookup("_contour_bar_title")
+        if hasattr(title, "SetPosition"):
+            title.SetPosition(x_right - 0.19, y_bottom + bar_height + 0.015)
+        caption = lookup("_contour_definition")
+        if hasattr(caption, "SetPosition"):
+            # 模式提示占着左上角约 36 px，说明从它下面开始
+            caption.SetPosition(left / width + 0.01, 1.0 - 44.0 / height)
 
     def _inset_camera(self) -> bool:
         """让模型落在**没被抽屉盖住**的那一块里，而不是躲在抽屉后面。
@@ -484,6 +521,7 @@ class Viewport(QWidget):
         if not CAN_RENDER:
             return
         self.plotter.clear()
+        self._contour_actors = False
         # 按当前主题/自定义颜色恢复背景
         self._apply_current_background()
 
@@ -1065,12 +1103,22 @@ class Viewport(QWidget):
                                   sign_filter=sign_filter)
         clim = scene.contour_clim(line, component, percentile=percentile)
         clipped = scene.clim_is_clipped(line, component, clim)
-        n = scene.contour_levels(levels)
+        # levels == 0 表示连续着色：沿杆平滑渐变，看内力怎么走。
+        # 分级（levels > 0）按色标读区间数值时用。
+        continuous = levels == 0
+        n = 0 if continuous else scene.contour_levels(levels)
         base = theme.palette_cmap(self.contour_palette, component)
-        cmap = theme.banded(base, n)
-        tubes = scene.banded_tubes(
-            line, component, clim, n,
-            radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame))
+        radius = scene.CONTOUR_TUBE_RATIO * scene.model_size(frame)
+        if continuous:
+            # 标量挂在点上、映射前先插值：颜色沿杆连续过渡，不会被切成
+            # 一圈圈色环。每根杆是一整段，两端封口。
+            tubes = (line.tube(radius=radius, n_sides=24, capping=True)
+                     if line.n_points else line)
+            scalars, cmap, colors = component, base, 256
+        else:
+            tubes = scene.banded_tubes(line, component, clim, n, radius=radius)
+            scalars = component + scene.BAND_SUFFIX
+            cmap, colors = theme.banded(base, n), n
         # 打光与读数是一对矛盾：打了光，同一个数值在向光面和背光面是两个
         # 颜色，而看图的人正是拿杆件上的颜色去对色标读数的；完全不打光，
         # 圆管就是一条扁色带，看不出这是根三维杆件。
@@ -1085,8 +1133,8 @@ class Viewport(QWidget):
         shade = dict(lighting=True, ambient=0.42, diffuse=0.58,
                      specular=0.22, specular_power=30, smooth_shading=True)
         self.plotter.add_mesh(
-            tubes, scalars=component + scene.BAND_SUFFIX,
-            cmap=cmap, clim=clim, n_colors=n, show_scalar_bar=False,
+            tubes, scalars=scalars, cmap=cmap, clim=clim, n_colors=colors,
+            interpolate_before_map=True, show_scalar_bar=False,
             **(shade if self.contour_shading else {"lighting": False}))
         # 色标竖着放在右侧：横放时 VTK 把标题和刻度挤在同一条带上（实测重叠），
         # 而且十几级的刻度横向根本排不开。
@@ -1095,12 +1143,15 @@ class Viewport(QWidget):
         # 网格的映射器；等把"量程外"那层纯色网格加完再加色标，色标画的就是
         # 那层的默认查找表——一条 0…1 的彩虹，和图上任何东西都对不上。
         self.plotter.add_scalar_bar(
-            title="", n_labels=n + 1, n_colors=n, vertical=True, fmt="%.3g",
+            title="", n_labels=7 if continuous else n + 1, n_colors=colors,
+            vertical=True, fmt="%.3g",
             color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
             width=0.040, height=0.58, position_x=0.905, position_y=0.14)
-        if clipped:
+        if clipped and not continuous:
             # 超出量程的段单独画。分级之后饱和的那一级和正常的一级长得一样，
             # 峰值所在的位置会消失在一片同色里。
+            # 连续模式不画：那里超限的部分就是色标最顶端的颜色，渐变本身
+            # 看得出哪儿最大，峰值另有极值标签；再压一层纯色反而像一块补丁。
             over = scene.out_of_range_tubes(
                 line, component, clim,
                 radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame) * 1.02)
@@ -1115,21 +1166,26 @@ class Viewport(QWidget):
         # 中文字形（实测中文渲染成方块）。写成方块等于没披露。
         label = (scene.STRESS_LABEL_ASCII if component == scene.STRESS
                  else component)
-        bar_title = f"{label}  [{unit}]\n{n} bands"
+        bar_title = f"{label}  [{unit}]" + ("" if continuous else f"\n{n} bands")
         if clipped:
             bar_title += (f"\nclip p{scene.CONTOUR_PERCENTILE:.0f}"
-                          "\noff scale: orange")
+                          + ("\nabove: top color" if continuous
+                             else "\noff scale: orange"))
         self.plotter.add_text(
             bar_title, position=(0.795, 0.735), viewport=True,
             color=theme.VIEWPORT_INK, font_size=10, name="_contour_bar_title")
-        self.plotter.add_text(
+        caption = self.plotter.add_text(
             scene.contour_caption(
-                component, unit, clipped, sign_filter, n,
+                component, unit, clipped, sign_filter, n or None,
                 scale_max=max(abs(clim[0]), abs(clim[1])),
                 true_peak=float(np.abs(np.asarray(line[component])).max())
                 if line.n_points else None),
-            position="upper_left", color=theme.VIEWPORT_INK,
+            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
             font_size=9, name="_contour_definition")
+        if caption is not None:                     # 无头环境下 add_text 不给 actor
+            caption.GetTextProperty().SetVerticalJustificationToTop()
+        self._contour_actors = True
+        self._place_contour_overlays()
         if overlay_deformed:
             deformation_scale = scale or scene.auto_deformation_scale(
                 frame, solution, case)

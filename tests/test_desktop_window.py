@@ -608,6 +608,40 @@ def test_the_contour_tube_is_thick_enough_to_read_as_round(qt_app):
     assert scene.CONTOUR_TUBE_RATIO > scene.TUBE_RATIO * 3
 
 
+def test_the_continuous_contour_colours_points_and_skips_the_overflow_layer(qt_app):
+    """连续模式（levels=0）：标量挂在点上、映射前插值，颜色沿杆平滑过渡。
+
+    分级把合弯矩这类先降后升的量切成一圈圈色环，整张图像彩色条纹——
+    这是"云图好丑、一根杆一个颜色"的来源。连续模式下也不再压一层橙色的
+    量程外标记：那里本来就是色标顶端的颜色。
+    """
+    window = solved(MainWindow(built()))
+    calls: list[dict] = []
+    plotter = window.viewport.plotter
+    plotter.add_mesh = lambda mesh=None, **kw: calls.append({"mesh": mesh, **kw})
+    import desktop.viewport as vp
+
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        window.viewport.show_contour(window.session.frame, window.session.solution,
+                                     "D", "M", levels=0)
+    finally:
+        vp.CAN_RENDER = was
+    contour = calls[0]
+    assert contour["scalars"] == "M"
+    assert "M" in contour["mesh"].point_data
+    assert contour["interpolate_before_map"] is True
+    assert contour["n_colors"] == 256
+    assert not any(c.get("name") == "_contour_out_of_range" for c in calls)
+
+
+def test_the_result_panel_defaults_to_continuous_colouring(qt_app):
+    window = MainWindow(built())
+    assert window.results.levels.currentData() == 0
+    assert window.result_display_options["levels"] == 0
+
+
 def test_turning_off_contour_shading_gives_flat_colour(qt_app):
     """要精确对色标读数时可以关掉打光，这时必须是纯平涂。"""
     window = solved(MainWindow(built()))
@@ -628,15 +662,18 @@ def test_turning_off_contour_shading_gives_flat_colour(qt_app):
     assert "ambient" not in calls[0]
 
 
-def test_the_contour_palette_defaults_to_the_abaqus_rainbow(qt_app):
-    """云图默认用 Abaqus 式彩虹谱，并且能换回蓝—灰—红那套。
+def test_the_contour_palette_defaults_to_smooth_turbo(qt_app):
+    """云图默认用平滑彩虹（turbo），Abaqus 彩虹与蓝—灰—红仍可选。
 
-    换色系是**显示选项**，不该改动任何数值：这里只认色标本身变了没有。
+    经典彩虹中段有一大片刺眼的亮绿亮黄，连续着色时沿杆渐变会在那一段
+    突然"跳亮"；turbo 明度过渡均匀。换色系是**显示选项**，不该改动任何
+    数值：这里只认色标本身变了没有。
     """
     from desktop import theme
 
     window = solved(MainWindow(built()))
-    assert window.viewport.contour_palette == "rainbow"
+    assert window.viewport.contour_palette == "turbo"
+    assert theme.palette_cmap("turbo")(0.0) != theme.palette_cmap("rainbow")(0.0)
     rainbow = theme.palette_cmap("rainbow")
     diverging = theme.palette_cmap("diverging", "Mz")
     assert rainbow(0.0) != diverging(0.0)

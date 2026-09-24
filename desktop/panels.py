@@ -140,12 +140,17 @@ class ResultPanel(QWidget):
         controls.addWidget(self.range_mode)
         controls.addWidget(QLabel("分级"))
         self.levels = QComboBox(self)
+        # 默认连续：沿杆平滑渐变，一眼看出内力怎么沿杆走。分级把合弯矩这类
+        # 先降后升的量切成一圈圈色环，整张图像彩色条纹，读不出走势；
+        # 要按色标读区间数值时再切到分级。
+        self.levels.addItem("连续", 0)
         for n in (6, 8, 10, 12, 16, 20, 24):
             self.levels.addItem(f"{n} 级", n)
-        self.levels.setCurrentText("12 级")
+        self.levels.setCurrentIndex(0)
         self.levels.setToolTip(
-            "云图分成几级色块。连续渐变只看得出「这边比那边红」，"
-            "分级之后每一段颜色对应色标上一个可读的区间。")
+            "连续：沿杆平滑渐变，看内力走势。\n"
+            "N 级：切成 N 级色块，每一段颜色对应色标上一个可读的区间，"
+            "照图读数时用。")
         controls.addWidget(self.levels)
         controls.addWidget(QLabel("色系"))
         self.palette = QComboBox(self)

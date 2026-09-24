@@ -122,13 +122,29 @@ def rainbow_cmap(steps: int = 256):
         "viewport_rainbow", RAINBOW_ANCHORS, N=steps)
 
 
+def turbo_cmap(steps: int = 256):
+    """平滑彩虹（Google turbo）：也是蓝 → 青 → 绿 → 黄 → 红，但明度过渡
+    是按感知均匀设计的——没有经典彩虹中段那一大片刺眼的亮绿、亮黄，
+    连续着色时沿杆的渐变不会在某一段突然"跳亮"。
+
+    两头各裁掉一点：turbo 最低端接近黑，在深色视口上零内力的杆件会直接
+    消失；最高端是暗红，峰值反而不显眼。
+    """
+    import numpy as np
+    from matplotlib import colormaps
+    from matplotlib.colors import ListedColormap
+    return ListedColormap(colormaps["turbo"](np.linspace(0.12, 0.93, steps)),
+                          name="viewport_turbo")
+
+
 #: 云图可选色系。键是内部名，值是给界面看的中文名。
 CONTOUR_PALETTES = {
+    "turbo": "平滑彩虹（默认）",
     "rainbow": "彩虹（Abaqus 式）",
     "diverging": "蓝—灰—红（发散）",
     "sequential": "单蓝（顺序）",
 }
-DEFAULT_PALETTE = "rainbow"
+DEFAULT_PALETTE = "turbo"
 
 
 def palette_cmap(palette: str, component: str = ""):
@@ -138,6 +154,8 @@ def palette_cmap(palette: str, component: str = ""):
     中点代表零，而合量的零在量程端点上，用了会把"最小"画成中性灰。
     所以合量在选了发散时自动退回顺序色标。
     """
+    if palette == "turbo":
+        return turbo_cmap()
     if palette == "rainbow":
         return rainbow_cmap()
     if palette == "sequential":
