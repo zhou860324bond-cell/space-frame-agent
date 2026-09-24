@@ -474,6 +474,28 @@ def test_a_pick_of_the_wrong_kind_keeps_waiting(qt_app):
     assert w._pending_command is not None
 
 
+def test_running_another_command_abandons_a_waiting_pick(qt_app):
+    """点了「创建载荷」又改主意去做别的：之后点中杆件不能再弹出载荷对话框。"""
+    s = built()
+    w = MainWindow(s)
+    w.actions_by_name["create_load"].trigger()
+    assert w._pending_command is not None
+    w.actions_by_name["iso"].trigger()            # 改主意：换个视角
+    assert w._pending_command is None
+    popped = []
+    w.create_load = lambda: popped.append(True)
+    w._on_picked("member", s.model["members"][0]["id"])
+    qt_app.processEvents()
+    assert not popped
+
+
+def test_triggering_the_same_command_again_keeps_waiting(qt_app):
+    w = MainWindow(built())
+    w.actions_by_name["create_bc"].trigger()
+    w.actions_by_name["create_bc"].trigger()
+    assert w._pending_command is not None
+
+
 def test_escape_abandons_a_waiting_command(qt_app):
     w = MainWindow(built())
     w.create_bc()

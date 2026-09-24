@@ -346,6 +346,14 @@ def _figure(gutter: float = 0.15):
     fig = plt.figure(figsize=(10.4, 6.6), facecolor=T.SURFACE)
     ax = fig.add_subplot(111, projection="3d", facecolor=T.SURFACE)
     ax.set_position([gutter, 0.02, 0.98 - gutter, 0.90])
+    # **关掉自动定范围。** 范围最后一律由 _equalize 按节点坐标显式设定；
+    # 每加一组线/面 matplotlib 却都要先按数据重算一遍——而数据里解析为零的
+    # 坐标常常算成非规格化浮点数（实测 1.24e-311）。3D 轴拿它算边距，下界
+    # 变成 -1.8e308、再乘边距系数就溢出成 inf，抛 "Axis limits cannot be NaN
+    # or Inf"。这是 test_plot_results_covers_every_kind 在 safe_scale 修好之后
+    # 仍然偶发失败的第二条路径（约每 15 次一次）。那次自动计算本来就是多余的。
+    # 不用 add_collection3d(autolim=False)：那个参数 3.9 才有，项目声明支持 3.8。
+    ax.set_autoscale_on(False)
     return fig, ax
 
 

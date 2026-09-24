@@ -64,6 +64,9 @@ ZH_EN: dict[str, str] = {
     "节点实体": "Joint", "模型": "Model", "变形": "Deformed",
     "梁内力云图": "Contour", "内力分量": "Component",
     "清除结果": "Clear", "内力图": "Diagram", "单杆内力图": "Member Chart",
+    # 抽屉页签与两侧窄栏
+    "手绘草图": "Hand Sketch", "结果表": "Result Table", "截面优化": "Section Opt",
+    "过程": "Steps", "单杆": "Chart", "优化": "Optimize", "AI\n助手": "AI",
     "包络": "Envelope", "最大挠度": "Deflection", "报告": "Report",
     "强度验算": "Strength", "对称性": "Symmetry",
     "编号与存储": "Numbering", "前视": "Front", "侧视": "Side",
@@ -175,8 +178,8 @@ def retranslate(roots, actions=()) -> None:
     翻了反而让人对不上自己输入的东西。
     """
     from PySide6.QtWidgets import (QCheckBox, QComboBox, QDockWidget,
-                                   QGroupBox, QLabel, QPushButton, QTabWidget,
-                                   QToolButton)
+                                   QGroupBox, QLabel, QPushButton, QTabBar,
+                                   QTabWidget, QToolButton)
 
     for act in actions:
         act.setText(tr(_keyed(act, "text", act.text())))
@@ -195,6 +198,11 @@ def retranslate(roots, actions=()) -> None:
             for i in range(widget.count()):
                 widget.setTabText(
                     i, tr(_keyed(widget, f"tab{i}", widget.tabText(i))))
+        # 抽屉的页签是裸 QTabBar（不是 QTabWidget），要单独翻
+        for widget in _self(root, QTabBar):
+            for i in range(widget.count()):
+                widget.setTabText(
+                    i, tr(_keyed(widget, f"tab{i}", widget.tabText(i))))
         for widget in root.findChildren(QComboBox):
             if widget.property("i18nSelfManaged"):
                 continue
@@ -206,7 +214,7 @@ def retranslate(roots, actions=()) -> None:
                                (QPushButton, "text", "setText"),
                                (QGroupBox, "title", "setTitle"),
                                (QToolButton, "text", "setText")):
-            for widget in root.findChildren(cls):
+            for widget in root.findChildren(cls) + _self(root, cls):
                 # 自己会翻的控件在这里让开。流程条的步骤按钮文字是
                 # "步骤名 + 算出来的后缀（✓ / !3）"，整串缓存下来会把上一次
                 # 的语言和上一次的状态一起冻住——它在 _set_state 里现翻。

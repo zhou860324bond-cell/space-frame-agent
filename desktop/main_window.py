@@ -349,6 +349,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, cmd.label,
                                     f"「{cmd.label}」还没接上（缺 {cmd.handler}）。")
             return
+        # 点了别的命令就放弃之前"等你去点选"的那个：不然用户改主意去做别的，
+        # 之后为了别的目的点中一根杆，先前的「创建载荷」对话框会莫名其妙
+        # 弹出来。需要拾取的命令会在自己的处理函数里重新挂上。
+        self._pending_command = None
         try:
             handler(cmd) if _takes_command(handler) else handler()
         except Exception as e:  # noqa: BLE001  命令执行的界面边界：异常要变成对话框，不能把主窗口带走；类名与消息都展示了
@@ -1312,10 +1316,13 @@ class MainWindow(QMainWindow):
         if not i18n.set_language(want):
             return
         self.menu_button.setText(i18n.tr(f"{glyphs.MENU}  菜单"))
+        # 抽屉只翻页签与标题、窄栏只翻按钮——抽屉**里面**各面板的正文不翻，
+        # 理由同 i18n.retranslate：翻一半比不翻更难用。
+        drawers = self.drawers.drawers.values()
         i18n.retranslate(
             (self.ribbon, self.quickbar, self.workflow_bar, self.results,
-             self.chat_dock, self.results_dock, self.diagram_dock,
-             self.timeline_dock, self.tree_dock),
+             self.left_rail, self.right_rail,
+             *(d.tabs for d in drawers), *(d.title for d in drawers)),
             self.actions_by_name.values())
         # 流程条自己翻自己（步骤名后面还挂着算出来的 ✓ / !3），
         # 所以切完语言要让它按当前模型状态重画一次。

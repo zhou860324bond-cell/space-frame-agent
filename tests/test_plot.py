@@ -134,3 +134,42 @@ def test_every_drawing_scale_goes_through_the_guard():
         bare = re.findall(r"[\d.]+\s*\*\s*size\s*/\s*peak", text)
         assert not bare, f"{name} 里还有绕过 safe_scale 的裸除法：{bare}"
         assert "T.safe_scale(" in text, f"{name} 没有用 safe_scale"
+
+
+def test_3d_axes_never_autoscale_from_the_plotted_data(tmp_path, monkeypatch):
+    """坐标轴范围只由节点坐标决定，不由画进去的数据决定。
+
+    safe_scale 修好之后 test_plot_results_covers_every_kind 仍然约每 15 次
+    失败一次，第二条路径在这里：每加一组线/面，matplotlib 都先按数据重算
+    一遍范围，而解析为零的坐标常算成非规格化浮点数（抓到过 1.24e-311）。
+    3D 轴拿它算边距，下界成了 -1.8e308、再乘边距系数溢出成 inf。
+
+    偶发的东西复现不稳，这里钉机理：画布一建出来就关掉自动定范围；
+    同一个模型画不同的图，最终范围完全相同——只来自 _equalize。
+    """
+    import matplotlib.pyplot as plt
+    import plot3d
+
+    _fig, ax = plot3d._figure()
+    assert not (ax.get_autoscalex_on() or ax.get_autoscaley_on()
+                or ax.get_autoscalez_on())
+    plt.close(_fig)
+
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "S", "E": 2.06e11, "nu": 0.3}],
+        [{"name": "B", "A": 0.01, "Iy": 4e-5, "Iz": 3e-4, "J": 8e-7}])
+    s.generate_frame(spans=[6.0, 6.0], storeys=[3.6], bays=[6.0],
+                     column_section="B", beam_section="B", material="S",
+                     beam_load=2e4)
+    assert s.solve_model().ok
+    kept = []
+    monkeypatch.setattr(plt, "close", kept.append)    # 留住画完的图来读范围
+    for component in ("Mz", "Vy", "N"):
+        plot_diagram(s.frame, s.solution, component, path=tmp_path / f"{component}.png")
+    limits = {(a.get_xlim(), a.get_ylim(), a.get_zlim())
+              for fig in kept for a in fig.axes[:1]}
+    monkeypatch.undo()
+    for fig in kept:
+        plt.close(fig)
+    assert len(kept) == 3 and len(limits) == 1

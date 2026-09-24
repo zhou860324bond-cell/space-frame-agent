@@ -326,6 +326,13 @@ class Drawer(QFrame):
         top = max(_MIN_SIDE, int(area.width() * _MAX_SIDE_RATIO))
         return max(_MIN_SIDE, min(value, top))
 
+    def closeEvent(self, event):                  # noqa: N802  Qt 回调名
+        """Alt+F4 之类走的是 Qt 底层的关闭，绕过上面的 close()：窗是藏了，
+        抽屉却仍记着"开着"——窄栏按钮还亮着，主窗一挪它又冒出来。
+        统一收口到 close()。"""
+        event.ignore()
+        self.close()
+
     def _escape(self) -> None:
         self.close()
         self.host.window.activateWindow()

@@ -552,3 +552,42 @@ def test_no_test_accidentally_opens_a_modal_dialog():
         assert (".exec()" in source or "getOpenFileName" in source
                 or "getSaveFileName" in source), \
             f"{name} 被列为对话框，但 {cmd.handler} 里看不到模态调用"
+
+
+def test_switching_to_english_translates_drawer_tabs_and_rail_buttons(qt_app):
+    """抽屉页签、单页抽屉标题与两侧窄栏都要跟着切语言。
+
+    这些原来是停靠窗，语言切换按停靠窗翻标题；改成抽屉之后传进去的是
+    PanelHandle（不是控件），什么都翻不到——切到英文后一屏中英混排，
+    而且不报错，没人发现。
+    """
+    from desktop import i18n
+
+    w = MainWindow()
+    try:
+        w.actions_by_name["lang"].setChecked(True)
+        w.toggle_language()
+        tabs = [w.left_drawer.tabs.tabText(i) for i in range(w.left_drawer.tabs.count())]
+        assert tabs == ["Model Tree", "Property", "History"]
+        assert w.right_rail.buttons["chat"].text() == "AI"
+        assert w.left_rail.buttons["timeline"].text() == "Steps"
+        w.actions_by_name["lang"].setChecked(False)
+        w.toggle_language()
+        assert w.left_drawer.tabs.tabText(0) == "模型树"
+        assert w.right_rail.buttons["chat"].text() == "AI\n助手"
+    finally:
+        i18n.set_language("zh")
+
+
+def test_closing_a_drawer_window_by_the_system_keeps_its_state_honest(qt_app):
+    """Alt+F4 走 Qt 底层的关闭；抽屉的"开着"状态与窄栏按钮必须跟着变。"""
+    from PySide6.QtGui import QCloseEvent
+
+    w = MainWindow()
+    w.results_dock.show()
+    assert w.right_rail.buttons["results"].isChecked()
+    event = QCloseEvent()
+    w.bottom_drawer.closeEvent(event)
+    assert not event.isAccepted()
+    assert w.results_dock.isHidden()
+    assert not w.right_rail.buttons["results"].isChecked()
