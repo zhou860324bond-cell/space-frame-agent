@@ -1373,7 +1373,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "solve_with_abaqus",
-            "description": "用 Abaqus 求解同一个模型（可选后端，需要本机装有 Abaqus）。"
+            "description": "【实验性】用 Abaqus 求解同一个模型（可选后端，需要本机装有 Abaqus）。"
                            "默认的 solve_model 快几百倍且无依赖，"
                            "只在需要与商软对标、或用户明确要求时才用这个。"
                            "一次只算一个工况。",
@@ -1392,7 +1392,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "analyze_joint_solid",
-            "description": "对某个节点做局部实体子模型，观察杆件相交处的应力集中。"
+            "description": "【实验性】对某个节点做局部实体子模型，观察杆件相交处的应力集中。"
                            "整体仍用梁模型，只把相连杆件截成短臂拼成 C3D10 实体，"
                            "切割面传入梁模型的六分量截面力。"
                            "默认由自研 native-solid 有限元内核求解，Gmsh只负责网格；"
@@ -1432,7 +1432,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "compare_solvers",
-            "description": "同一个模型两个后端各算一遍，逐分量给出归一化偏差。"
+            "description": "【实验性】同一个模型两个后端各算一遍，逐分量给出归一化偏差。"
                            "用户问“结果可不可信”“和 Abaqus 差多少”时用这个，"
                            "不要自己去分别调两个求解器再口算差值。需要本机装有 Abaqus。",
             "parameters": {
@@ -1746,3 +1746,19 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+
+# 实验性工具：代码可用、有自动测试，但**不在正式主链路的承诺范围内**。
+#
+# 分级依据不是「做得好不好」，而是「有没有闭环证据」：
+# - Abaqus 两个工具依赖本机许可证，CI 上跑不到，只能靠本机冒烟；
+# - 节点实体子模型单元层有教科书解对照，但 Agent 评测集没有一道题碰它，
+#   模型在对话里会不会正确调用、会不会把奇异峰值当 Kt 报出去，没有数据。
+#
+# 描述前缀「【实验性】」是给大模型看的，这份集合是给测试看的——
+# `tests/test_tool_contracts.py` 核对两边一致，README 和能力矩阵也要标出来。
+# 某个工具有了评测题、跑出稳定成绩，再把它从这里拿掉。
+EXPERIMENTAL_TOOLS: frozenset[str] = frozenset({
+    "solve_with_abaqus",
+    "compare_solvers",
+    "analyze_joint_solid",
+})

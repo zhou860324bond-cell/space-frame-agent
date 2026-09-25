@@ -2,7 +2,7 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **2171 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
+当前回归基线为 **2195 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
 核心原则只有一条：
 **大模型只产结构，不产数值**——报告里每个数字都能溯源到某次工具调用。
 
@@ -67,7 +67,7 @@ python examples\agent_demo.py
 | `run_desktop.bat` | **桌面端**（PySide6 + PyVista，CAE 式界面） | 首次装依赖要 |
 | `run_gui.bat` | **网页端**（Streamlit，功能与桌面端等价） | 不用 |
 | `run_live.bat` | 拿真实大模型跑 5 道探针题 | 要，密钥放 `deepseek.key` |
-| `run_eval.bat` | 跑 14 题评测集，出成绩单 | 要 |
+| `run_eval.bat` | 跑 37 题评测集，出成绩单 | 要 |
 
 `deepseek.key` 里只写一行 API 密钥，已被 `.gitignore` 忽略。
 **别把密钥敲进命令行**——每贴一次终端日志就泄露一次。
@@ -83,11 +83,11 @@ src/model_io.py       版本化 Domain IR：JSON Schema、v0→v1 迁移与校�
 src/model_compiler.py 物理构件→分析单元编译、集中荷载自动剖分与双向映射
 src/result_db.py      统一结果层：Step / Frame / FieldOutput 与结果元数据
 src/generator.py      参数化生成器：参数 -> 节点与杆件拓扑
-src/agent.py          Agent 层：45 个工具、会话状态、对话循环、模型后端
+src/agent.py          Agent 层：会话状态、对话循环、模型后端（工具清单在 agent_tools.py）
 src/plot3d.py         三维绘图：变形图、轴力图
 
 tests/                回归基线见文首；主体离线且不需要密钥
-evalset/              14 题评测集 + 评分器 + 成绩单生成
+evalset/              37 题评测集 + 评分器 + 成绩单生成
 abaqus_bench/         与 Abaqus 对标：5 算例 × B33/B31
 examples/             示例模型、端到端脚本、离线演示、探针题
 ```
@@ -109,8 +109,15 @@ examples/             示例模型、端到端脚本、离线演示、探针题
 
 ## Agent 工具
 
-45 个工具的返回合同由 `tests/test_tool_contracts.py` 统一约束。下面只列正式演示
+全部工具的返回合同由 `tests/test_tool_contracts.py` 统一约束。下面只列正式演示
 主链路；其余工具覆盖编辑、集合、扫参、包络、模态、屈曲和 Abaqus 对比。
+
+**主链路与实验性。** 主链路是梁单元静力 / P-Δ / 轴向塑性 / 模态 / 屈曲加上 Agent
+的建模—校验—求解—查询—出图，每一项都有闭合解金标准或评测题。以下三个工具标为
+**实验性**，描述里带「【实验性】」前缀，名单在 `src/agent_tools.py` 的
+`EXPERIMENTAL_TOOLS`：`analyze_joint_solid`（节点局部实体，Agent 评测尚未覆盖）、
+`solve_with_abaqus` 与 `compare_solvers`（依赖本机 Abaqus 许可证，CI 跑不到）。
+图片识别建模同样是实验性，不进主链路。完整分级见能力矩阵。
 
 每次模型调用都会收到由当前 `Session` 确定性推导的工作流状态：`empty`、
 `draft`、`ready` 或 `solved`。状态中的校验错误和推荐工具会在每批工具执行后立即
@@ -126,7 +133,7 @@ examples/             示例模型、端到端脚本、离线演示、探针题
 | `preview_change` | 在模型副本上预演写操作，返回实体级差异与前后哈希 |
 | `apply_preview` | 只应用经后续用户消息确认且尚未失效的预演 |
 | `preview_analysis_mesh` | 只读预览自动剖分、分析节点/单元与物理构件映射 |
-| `analyze_joint_solid` | 选定圆管节点做 C3D10 局部实体分析；默认自研求解，Abaqus作为可选对标后端 |
+| `analyze_joint_solid` | **实验性**。选定圆管节点做 C3D10 局部实体分析；默认自研求解，Abaqus作为可选对标后端 |
 | `solve_model` | 先校验再求解，失败时直接附上奇异诊断 |
 | `query_results` | 最大位移、支座反力、杆端力（带坐标与符号约定） |
 | `plot_results` | 变形图 / 轴力图 |
@@ -200,8 +207,11 @@ Timoshenko 模型应改用 B31 对标。
 >   同样不留任何错误信息。代码里由 `abaqus_backend.solver_environment()` 统一
 >   处理，只在 AMD 上生效。
 
-**第四层 Agent 评测集。** 14 题六类，判定一律读会话状态不读回复文本。
-评分器本身有 14 个离线测试守着——一张没人查过的成绩单说明不了任何事。
+**第四层 Agent 评测集。** 37 题十类，判定一律读会话状态不读回复文本。
+评分器本身有 25 个离线测试守着——一张没人查过的成绩单说明不了任何事。
+最近一次三轮稳定性（2026-09-23，指纹 `8342c7b`）：37 / 37 / 36，99.1%；
+唯一不稳的 P02 是批量修改没先预演；现已改为代码强制，重跑 P01/P02 6/6，
+见《课程报告》5.4。
 
 ## 可复现运行（实验胶囊）
 

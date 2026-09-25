@@ -627,3 +627,28 @@ def test_every_declared_parameter_is_actually_accepted(tool_name):
     missing = declared - set(params)
     assert not missing, (
         f"{tool_name} 的 schema 声明了 {sorted(missing)}，但方法签名里没有")
+
+
+def test_experimental_tools_are_labelled_consistently():
+    """「实验性」要在三处说法一致：给模型看的描述、代码里的集合、给人看的文档。
+
+    只在文档里写，模型不知道；只在描述里写，改描述的人不知道这是有登记的分级。
+    """
+    from pathlib import Path
+    from agent_tools import EXPERIMENTAL_TOOLS
+
+    names = {t["function"]["name"] for t in TOOLS}
+    assert EXPERIMENTAL_TOOLS <= names, EXPERIMENTAL_TOOLS - names
+    for tool in TOOLS:
+        fn = tool["function"]
+        labelled = fn["description"].startswith("【实验性】")
+        assert labelled == (fn["name"] in EXPERIMENTAL_TOOLS), \
+            f"{fn['name']} 的描述前缀与 EXPERIMENTAL_TOOLS 不一致"
+
+    root = Path(__file__).resolve().parent.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    matrix = (root / "docs" / "BETA_0.1_CAPABILITY_MATRIX.md").read_text(encoding="utf-8")
+    for name in EXPERIMENTAL_TOOLS:
+        assert f"`{name}`" in readme and "实验性" in readme, f"README 没有标出实验性工具 {name}"
+        row = next((ln for ln in matrix.splitlines() if f"`{name}`" in ln), "")
+        assert "实验性" in row, f"能力矩阵里 {name} 那一行没有标实验性"
