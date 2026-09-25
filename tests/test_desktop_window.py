@@ -428,25 +428,100 @@ def test_the_camera_is_not_reset_on_every_redraw(qt_app):
     assert not w.viewport._first_render, "首帧之后就不该再自动摆相机了"
 
 
-def test_selection_dependent_buttons_are_disabled_until_something_is_picked(qt_app):
-    """必须先选中的按钮，没选中时要置灰。
+def test_selection_commands_are_always_clickable_and_say_what_to_pick(qt_app):
+    """要作用在某个对象上的命令**始终可点**，提示里写明要点什么。
 
-    原来它们永远可点，点了只在状态栏闪一句五秒后消失的提示——用户看到的是
-    "点了没反应"，这正是"很多功能都是摆设"那类抱怨的来源。前置条件应该看得见。
+    置灰比"点了没反应"好，但仍然要用户先猜对顺序；实测最常见的抱怨正是
+    "很多按钮点不了"。现在是命令在前、拾取在后，见下一条。
     """
     w = MainWindow()
     load = w.actions_by_name["create_load"]
     bc = w.actions_by_name["create_bc"]
-    assert not load.isEnabled() and not bc.isEnabled()
-    assert "请先" in load.toolTip()
-
-    w._on_picked("node", 1)
-    assert load.isEnabled() and bc.isEnabled(), "选中节点后两个都可用"
+    assert load.isEnabled() and bc.isEnabled()
+    assert "点选" in load.toolTip() and "节点或杆件" in load.toolTip()
 
     w._on_picked("member", 1)
-    assert load.isEnabled(), "杆件可以施加载荷"
-    assert not bc.isEnabled(), "边界条件只能加在节点上"
-    assert "节点" in bc.toolTip()
+    assert load.isEnabled() and bc.isEnabled()
+    assert "节点" in bc.toolTip() and "点选" in bc.toolTip(), "杆件不能加边界条件"
+
+
+def test_a_command_without_a_selection_waits_for_a_pick_then_runs(qt_app):
+    """没选中就点「创建载荷」：进入拾取、提示去点什么；点中后自动接着走。"""
+    s = built()
+    w = MainWindow(s)
+    member = s.model["members"][0]["id"]
+    calls = []
+    w.create_load()                              # 真实入口：没选中
+    assert w._pending_command is not None
+    assert w.pick_actions["member"].isChecked(), "荷载默认拾杆件"
+    assert "点选" in w.lbl_prompt.text()
+
+    w.create_load = lambda: calls.append(w._selected_id)   # 续上时调的是它
+    w._on_picked("member", member)
+    qt_app.processEvents()
+    assert calls == [member]
+    assert w._pending_command is None
+
+
+def test_a_pick_of_the_wrong_kind_keeps_waiting(qt_app):
+    """边界条件只能加在节点上：点中杆件不续上，继续等节点。"""
+    s = built()
+    w = MainWindow(s)
+    w.create_bc()
+    assert w.pick_actions["node"].isChecked()
+    w._on_picked("member", s.model["members"][0]["id"])
+    qt_app.processEvents()
+    assert w._pending_command is not None
+
+
+def test_running_another_command_abandons_a_waiting_pick(qt_app):
+    """点了「创建载荷」又改主意去做别的：之后点中杆件不能再弹出载荷对话框。"""
+    s = built()
+    w = MainWindow(s)
+    w.actions_by_name["create_load"].trigger()
+    assert w._pending_command is not None
+    w.actions_by_name["iso"].trigger()            # 改主意：换个视角
+    assert w._pending_command is None
+    popped = []
+    w.create_load = lambda: popped.append(True)
+    w._on_picked("member", s.model["members"][0]["id"])
+    qt_app.processEvents()
+    assert not popped
+
+
+def test_triggering_the_same_command_again_keeps_waiting(qt_app):
+    w = MainWindow(built())
+    w.actions_by_name["create_bc"].trigger()
+    w.actions_by_name["create_bc"].trigger()
+    assert w._pending_command is not None
+
+
+def test_escape_abandons_a_waiting_command(qt_app):
+    w = MainWindow(built())
+    w.create_bc()
+    w.cancel_interaction()
+    assert w._pending_command is None
+
+
+def test_solving_fills_the_result_summary_without_popping_it_open(qt_app):
+    """求解完先把结果画在模型上；总览表填好但不弹出，想看时点右侧「结果」。"""
+    w = MainWindow(built())
+    solved(w)
+    assert w.result.ok
+    assert w.results_dock.isHidden(), "求解完不该自动弹出一块抽屉挡住模型"
+    assert "求解完成" in w.results.caption.text()
+    assert w.results.table.rowCount() == len(w.result.payload["cases"])
+
+
+def test_picking_while_viewing_results_does_not_pop_the_property_drawer(qt_app):
+    """看结果时点选是在查数，再弹一个属性抽屉只会把模型又挤掉一块。"""
+    s = built()
+    w = MainWindow(s)
+    solved(w)
+    assert w.mode == "变形"
+    w.tree_dock.hide()
+    w._on_picked("member", s.model["members"][0]["id"])
+    assert w.props_dock.isHidden()
 
 
 def test_property_edit_keeps_the_object_selected_and_highlighted(qt_app):
@@ -543,16 +618,80 @@ def test_the_contour_is_drawn_from_banded_cell_colours(qt_app):
     assert contour["diffuse"] > contour["ambient"]
 
 
-def test_the_contour_tube_is_thick_enough_to_read_as_round(qt_app):
-    """云图管的粗细是**功能参数**，不是审美偏好。
+def test_the_contour_members_are_pixel_width_lit_lines_not_fat_tubes(qt_app):
+    """云图杆件的粗细按屏幕像素定，不按模型尺寸定。"""
+    # 按世界尺寸建管时只能靠加粗（CONTOUR_TUBE_RATIO 曾到模型显示的 4.5 倍），
+    # 一切到云图杆件就胖一大圈。现在按屏幕像素画成带光照的线管：粗细与
+    # 模型尺寸、镜头远近无关，这里守的是"别退回世界尺寸的粗管"。
+    window = solved(MainWindow(built()))
+    calls: list[dict] = []
+    window.viewport.plotter.add_mesh = lambda mesh=None, **kw: calls.append(
+        {"mesh": mesh, **kw})
+    import desktop.viewport as vp
 
-    太细时整屏视角下只有几个像素宽，明暗跨不过三四个像素，
-    再怎么调光照也读不出弧面——这条线守的就是那次加粗别被人调回去。
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        for levels in (0, 8):
+            calls.clear()
+            window.viewport.show_contour(window.session.frame,
+                                         window.session.solution, "D", "Mz",
+                                         levels=levels)
+            contour = calls[0]
+            assert contour["render_lines_as_tubes"] is True
+            assert contour["line_width"] == vp.CONTOUR_LINE_PX >= 5
+            assert contour["mesh"].n_lines and not contour["mesh"].n_faces_strict
+    finally:
+        vp.CAN_RENDER = was
+
+
+def test_the_continuous_contour_colours_points_and_skips_the_overflow_layer(qt_app):
+    """连续模式（levels=0）：标量挂在点上、映射前插值，颜色沿杆平滑过渡。
+
+    分级把合弯矩这类先降后升的量切成一圈圈色环，整张图像彩色条纹——
+    这是"云图好丑、一根杆一个颜色"的来源。连续模式下也不再压一层橙色的
+    量程外标记：那里本来就是色标顶端的颜色。
     """
-    from desktop import scene
+    window = solved(MainWindow(built()))
+    calls: list[dict] = []
+    plotter = window.viewport.plotter
+    plotter.add_mesh = lambda mesh=None, **kw: calls.append({"mesh": mesh, **kw})
+    import desktop.viewport as vp
 
-    assert scene.CONTOUR_TUBE_RATIO >= 0.012
-    assert scene.CONTOUR_TUBE_RATIO > scene.TUBE_RATIO * 3
+    was = vp.CAN_RENDER
+    vp.CAN_RENDER = True
+    try:
+        window.viewport.show_contour(window.session.frame, window.session.solution,
+                                     "D", "M", levels=0)
+    finally:
+        vp.CAN_RENDER = was
+    contour = calls[0]
+    assert contour["scalars"] == "M"
+    assert "M" in contour["mesh"].point_data
+    assert contour["interpolate_before_map"] is True
+    assert contour["n_colors"] == 256
+    assert not any(c.get("name") == "_contour_out_of_range" for c in calls)
+
+
+def test_the_result_panel_defaults_to_continuous_colouring(qt_app):
+    window = MainWindow(built())
+    assert window.results.levels.currentData() == 0
+    assert window.result_display_options["levels"] == 0
+
+
+def test_the_force_diagram_mode_draws_diagrams_and_keeps_the_picked_component(
+        qt_app):
+    """「内力图」是一个显示模式；在内力图里换分量不会被踢回云图。"""
+    window = solved(MainWindow(built()))
+    drawn = []
+    window.viewport.show_force_diagram = (
+        lambda frame, solution, case, component: drawn.append(component))
+    window.show_force_diagram()
+    assert window.mode == "内力图"
+    assert window.mode_actions["内力图"].isChecked()
+    assert drawn[-1] == window.component
+    window._set_component("Vz")
+    assert window.mode == "内力图" and drawn[-1] == "Vz"
 
 
 def test_turning_off_contour_shading_gives_flat_colour(qt_app):
@@ -575,15 +714,18 @@ def test_turning_off_contour_shading_gives_flat_colour(qt_app):
     assert "ambient" not in calls[0]
 
 
-def test_the_contour_palette_defaults_to_the_abaqus_rainbow(qt_app):
-    """云图默认用 Abaqus 式彩虹谱，并且能换回蓝—灰—红那套。
+def test_the_contour_palette_defaults_to_smooth_turbo(qt_app):
+    """云图默认用平滑彩虹（turbo），Abaqus 彩虹与蓝—灰—红仍可选。
 
-    换色系是**显示选项**，不该改动任何数值：这里只认色标本身变了没有。
+    经典彩虹中段有一大片刺眼的亮绿亮黄，连续着色时沿杆渐变会在那一段
+    突然"跳亮"；turbo 明度过渡均匀。换色系是**显示选项**，不该改动任何
+    数值：这里只认色标本身变了没有。
     """
     from desktop import theme
 
     window = solved(MainWindow(built()))
-    assert window.viewport.contour_palette == "rainbow"
+    assert window.viewport.contour_palette == "turbo"
+    assert theme.palette_cmap("turbo")(0.0) != theme.palette_cmap("rainbow")(0.0)
     rainbow = theme.palette_cmap("rainbow")
     diverging = theme.palette_cmap("diverging", "Mz")
     assert rainbow(0.0) != diverging(0.0)

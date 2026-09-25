@@ -434,7 +434,7 @@ TOOLS: list[dict[str, Any]] = [
             "description": "给节点或节点集合施加位移/转角边界条件。"
                            "边界条件属于 Initial 阶段，不属于荷载工况。",
             "parameters": {
-                "type": "object", "required": ["node_ids", "fix"],
+                "type": "object", "required": ["node_ids"],
                 "properties": {
                     "node_ids": {
                         "description": "节点编号列表或已定义的节点集合名",
@@ -445,9 +445,61 @@ TOOLS: list[dict[str, Any]] = [
                     },
                     "fix": {"type": "array", "minItems": 6, "maxItems": 6,
                             "items": {"type": "integer", "enum": [0, 1]},
-                            "description": "[ux,uy,uz,rx,ry,rz]，1 表示约束"},
+                            "description": "[ux,uy,uz,rx,ry,rz]，1 表示约束。给了 bc_type 就不必给它"},
+                    "bc_type": {"type": "string",
+                                "enum": ["ENCASTRE", "PINNED", "XSYMM", "YSYMM",
+                                         "ZSYMM", "XASYMM", "YASYMM", "ZASYMM",
+                                         "FREE"],
+                                "description":
+                                    "Abaqus 那套命名边界条件，给了它就不用填六个 0/1。"
+                                    "**对称面上该约束哪几个自由度没几个人记得住，"
+                                    "而填错了不会报错**——结构照样算得出来，只是算的不是你想要的那个。"
+                                    "ENCASTRE 完全固定、PINNED 三向铰接；"
+                                    "XSYMM/YSYMM/ZSYMM 是对称面（字母是**法向**），"
+                                    "XASYMM/… 是反对称面；FREE 解除约束。"
+                                    "用对称边界可以只建半个或四分之一结构——实测半跨门式刚架加 XSYMM 与整跨模型逐项完全一致。"},
+                    "spring": {"type": "array", "minItems": 6, "maxItems": 6,
+                               "items": {"type": "number", "minimum": 0},
+                               "description":
+                                   "弹性支座刚度 [kx,ky,kz,krx,kry,krz]，"
+                                   "0 表示该方向没有弹簧。平动单位 力/长度"
+                                   "（N-m-Pa 下是 N/m），转动单位 力·长度/弧度"
+                                   "（N·m/rad）。**同一方向不能既 fix=1 又给"
+                                   "弹簧**，刚性约束会让弹簧完全失效，"
+                                   "工具会当场拒绝。"},
                     "name": {"type": "string"},
                 },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_boundary_conditions",
+            "description":
+                "列出全部边界条件，相当于 Abaqus 的 BC Manager："
+                "谁、在哪些节点、约束了哪几个自由度、是不是某个标准类型。"
+                "\n边界条件是**最容易改错又最难看出来**的一类对象——多约束一个"
+                "自由度，结构照样算得出来，只是算的不是用户想要的那个结构。"
+                "用户问「现在有哪些边界条件」「支座怎么定的」时用这个。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_boundary_condition",
+            "description":
+                "按名字删掉一条边界条件。**这会让结构少掉约束**，"
+                "工具删完会立刻跑一次奇异诊断；返回里出现 warning 与 modes 时"
+                "必须转达——那意味着结构已经变成机构，再求解就会失败，"
+                "而那时的错误信息指向的是刚度矩阵，不是刚才删掉的那一条。",
+            "parameters": {
+                "type": "object", "required": ["name"],
+                "properties": {"name": {"type": "string",
+                                        "description": "边界条件名称，"
+                                                       "用 list_boundary_conditions 查"}},
                 "additionalProperties": False,
             },
         },
@@ -553,10 +605,33 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object", "required": ["member_id", "load"],
                 "properties": {
-                    "member_id": {"type": "integer"},
+                    "member_id": {
+                        "description":
+                            "杆件编号、编号列表，或已定义的**集合名**（可混写）。"
+                            "一句「给顶层所有梁加 5 kN/m」直接传集合名即可——"
+                            "以前要拆成几十次调用，而漏掉其中两根没有任何人会"
+                            "发现：工具报成功、校验通过、结果看着也正常。"
+                            "每根杆件各自一条命名荷载，可按名单独编辑。",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
                     "load": {"type": "array", "minItems": 3, "maxItems": 3,
                              "items": {"type": "number"},
                              "description": "全局 [wx,wy,wz]，N/m"},
+                    "reference": {"type": "string",
+                                  "enum": ["global", "local", "projected"],
+                                  "description":
+                                      "强度的参照系，默认 global（全局分量、沿杆长）。"
+                                      "**斜梁上这个选错，结果看着完全正常但是错的。**"
+                                      "projected：强度按每米**水平投影**给——斜屋面的"
+                                      "雪载、活载按规范就是这么给的；工具会乘 "
+                                      "水平投影/杆长 换算，总合力不变。"
+                                      "local：w 是杆件局部分量，风压垂直于杆轴时用它，"
+                                      "不必自己拆 sinθ/cosθ。"
+                                      "换算过程会原样写进返回值的 conversion 里。"},
                     "case_name": {"type": "string"},
                     "name": {"type": "string",
                              "description": "载荷名，例如 Roof-Line-1"},
@@ -570,19 +645,59 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "set_member_span_load",
             "description": "在杆件上创建或按名称替换非满跨荷载："
-                           "均布、梯形/三角形或杆中集中力；w1 全零表示删除。",
+                           "均布、梯形/三角形、杆中集中力或**部分跨均布**；"
+                           "w1 全零表示删除。"
+                           "partial 用 a、b 圈出受载区间 [a, b]，强度写在 w1 里——"
+                           "砌体墙、局部堆载、只压半跨的活载都是这个形状。"
+                           "以前只能拿几个集中力硬凑，凑出来的弯矩图在荷载区内"
+                           "是折线而不是抛物线。"
+                           "partial_trapezoid 在 [a,b] 内由 w1 线性变到 w2，"
+                           "双向板的三角形/梯形分配靠它拼（也可以直接用 "
+                           "apply_area_load，那个会替你算好）。"
+                           "moment 是**跨间集中力偶**：w1 是力矩矢量（N·m），"
+                           "a 是作用位置。预制构件的偏心支承、次梁传来的扭矩、"
+                           "牛腿偏心都是它。弯矩图会在 a 处**跳跃**一个 w1，"
+                           "那不是画错了。",
             "parameters": {
                 "type": "object", "required": ["member_id", "kind", "w1"],
                 "properties": {
-                    "member_id": {"type": "integer"},
+                    "member_id": {
+                        "description":
+                            "杆件编号、编号列表，或已定义的**集合名**（可混写）。"
+                            "一句「给顶层所有梁加 5 kN/m」直接传集合名即可——"
+                            "以前要拆成几十次调用，而漏掉其中两根没有任何人会"
+                            "发现：工具报成功、校验通过、结果看着也正常。"
+                            "每根杆件各自一条命名荷载，可按名单独编辑。",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
                     "kind": {"type": "string",
-                             "enum": ["uniform", "trapezoid", "point"]},
+                             "enum": ["uniform", "trapezoid", "point", "partial",
+                                      "partial_trapezoid", "moment"]},
                     "w1": {"type": "array", "minItems": 3, "maxItems": 3,
                            "items": {"type": "number"}},
                     "w2": {"type": "array", "minItems": 3, "maxItems": 3,
                            "items": {"type": "number"}},
                     "a": {"type": "number",
-                          "description": "距杆件 i 端位置，使用当前模型长度单位"},
+                          "description": "距杆件 i 端位置，使用当前模型长度单位。"
+                                         "point 是作用点；partial 是受载区间起点"},
+                    "b": {"type": "number",
+                          "description": "partial 专用：受载区间终点，"
+                                         "必须满足 0 ≤ a < b ≤ 杆长"},
+                    "reference": {"type": "string",
+                                  "enum": ["global", "local", "projected"],
+                                  "description":
+                                      "强度的参照系，默认 global（全局分量、沿杆长）。"
+                                      "**斜梁上这个选错，结果看着完全正常但是错的。**"
+                                      "projected：强度按每米**水平投影**给——斜屋面的"
+                                      "雪载、活载按规范就是这么给的；工具会乘 "
+                                      "水平投影/杆长 换算，总合力不变。"
+                                      "local：w 是杆件局部分量，风压垂直于杆轴时用它，"
+                                      "不必自己拆 sinθ/cosθ。"
+                                      "换算过程会原样写进返回值的 conversion 里。"},
                     "case_name": {"type": "string"},
                     "name": {"type": "string"},
                 },
@@ -630,6 +745,14 @@ TOOLS: list[dict[str, Any]] = [
                                     "description": "制造误差，当前长度单位；正=做长了"},
                     "delta_t": {"type": "number",
                                 "description": "温度变化 ℃；正=升温"},
+                    "gradient_t": {"type": "number",
+                                   "description":
+                                       "截面**上下温差**（℃，沿局部 y 即截面高度方向）。"
+                                       "与 delta_t 是两回事：delta_t 让杆整体伸缩、"
+                                       "产生轴力；gradient_t 让杆想要弯、产生弯矩，"
+                                       "κ=α·ΔT/h。日照下的屋面梁、蒸汽管道、"
+                                       "大体积混凝土内外温差都是这一类。"
+                                       "需要材料有 alpha、截面有 cy（按尺寸建的截面才有）。"},
                     "case_name": {"type": "string"},
                     "name": {"type": "string"},
                 },
@@ -676,7 +799,9 @@ TOOLS: list[dict[str, Any]] = [
                                                    "kind=trapezoid 时 w1 是 i 端强度、w2 是 j 端强度"
                                                    "（单位 N/m，三角形就把一端写 0）；"
                                                    "kind=point 时 w1 是集中力（单位 N）、"
-                                                   "a 是距 i 端的距离（单位 m，必须在 0~杆长之间）。"
+                                                   "a 是距 i 端的距离（单位 m，必须在 0~杆长之间）；"
+                                                   "kind=partial 时 w1 是强度（N/m），"
+                                                   "a、b 圈出受载区间，0 ≤ a < b ≤ 杆长。"
                                                    "满跨均布用上面的 member_loads 更省事。",
                                     "items": {
                                         "type": "object",
@@ -690,6 +815,8 @@ TOOLS: list[dict[str, Any]] = [
                                             "w2": {"type": "array", "minItems": 3, "maxItems": 3,
                                                    "items": {"type": "number"}},
                                             "a": {"type": "number"},
+                                            "b": {"type": "number",
+                                                  "description": "partial 的区间终点"},
                                             "note": {"type": "string",
                                                      "description": "备注，可留空"}}}},
                                 "settlements": {
@@ -760,6 +887,172 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object", "required": ["units"],
                 "properties": {"units": {"type": "string",
                                          "enum": ["N-m-Pa", "N-mm-MPa"]}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_live_patterns",
+            "description":
+                "生成活载的**最不利布置**工况：满布、隔跨（奇数跨/偶数跨）、相邻跨。"
+                "用户说「活载最不利布置」「隔跨布置」「棋盘布置」时用这个。"
+                "\n\n**连续梁与框架的跨中正弯矩不是满布时最大，而是隔跨布置时最大。**"
+                "实测三跨框架：跨中弯矩满布 28.7 kN·m、偶数跨布置 41.2 kN·m —— "
+                "只算满布会算小 43%，而且算小多少取决于跨数与刚度比，看不出来。"
+                "支座负弯矩则常由满布或相邻跨控制（实测相邻跨比满布大 6%）。"
+                "\n\n生成的是**工况**不是组合。接着把这些名字一起传给 "
+                "generate_combinations 的 live 参数，每种布置都会轮流当控制荷载。"
+                "\n跨的归类由几何推断（按沿主导水平轴的起止坐标），返回值里会原样"
+                "给出归组结果——**要核对**，混进了柱或另一方向的梁时归出来的跨会很怪。"
+                "\n这是规范里的简化做法；严格的「最不利荷载位置」要画影响线逐点找，"
+                "本工具不冒充那个，回答时要说明。",
+            "parameters": {
+                "type": "object",
+                "required": ["members", "load"],
+                "properties": {
+                    "members": {
+                        "description": "梁的编号、编号列表或集合名",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "load": {"type": "array", "minItems": 3, "maxItems": 3,
+                             "items": {"type": "number"},
+                             "description": "活载线荷载 [wx,wy,wz]，全局坐标，"
+                                            "向下写成 [0,0,-w]"},
+                    "patterns": {"type": "array",
+                                 "items": {"type": "string",
+                                           "enum": ["full", "odd", "even",
+                                                    "adjacent"]},
+                                 "description":
+                                     "默认 full/odd/even。adjacent 会生成 N−1 个"
+                                     "工况（N 是跨数），跨多时按需开"},
+                    "prefix": {"type": "string",
+                               "description": "工况名前缀，默认 LL"},
+                    "replace": {"type": "boolean",
+                                "description": "是否覆盖同名旧工况，默认是"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_combinations",
+            "description":
+                "按规范生成荷载组合并写入模型。用户说「按规范组合」「做荷载组合」"
+                "「1.3 恒 + 1.5 活」时用这个，不要手写系数字典——"
+                "**漏了一个组合完全看不出来**：包络只在给定的组合里取极值，"
+                "少一个就是少一个，而结果看着完全正常。"
+                "\n\n生成三类："
+                "\n基本组合（承载能力）—— 每个可变荷载**轮流**当控制荷载，取 γ_Q，"
+                "其余取 γ_Q·ψ_c。轮流这一步最容易漏：只算「活载控制」不算"
+                "「风控制」，风控制的那些杆件就永远查不出来。"
+                "\n恒载有利的基本组合 —— 有风荷载时另生成一组 γ_G=1.0。风吸把柱子"
+                "往上拔时恒载是有利的，用 1.3 反而不保守。软件判不了「哪根杆件上"
+                "恒载算有利」，所以两组都生成，交给包络逐点挑。"
+                "\n标准组合与准永久组合 —— 验挠度、长期变形用。"
+                "\n\n**ψ 系数随建筑类别变**：默认是一般民用建筑（住宅、办公）的"
+                "常见取值，商业、库房、机房不同。用错不会报错，只会让组合悄悄偏小——"
+                "回答时要把用了哪套系数说出来，并提醒核对。"
+                "\n组合一经写入，query_envelope 与 check_strength 自动以它们为对象。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dead": {"description": "永久荷载工况名或名字列表",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "live": {"description": "楼面/屋面活荷载工况",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "wind": {"description": "风荷载工况。有多个方向就都列上，"
+                                            "每个都会轮流当控制荷载",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "snow": {"description": "雪荷载工况",
+                             "oneOf": [{"type": "string"},
+                                       {"type": "array",
+                                        "items": {"type": "string"}}]},
+                    "crane": {"description": "吊车荷载工况",
+                              "oneOf": [{"type": "string"},
+                                        {"type": "array",
+                                         "items": {"type": "string"}}]},
+                    "standard": {"type": "string",
+                                 "enum": ["GB50068-2018", "GB50009-2012"],
+                                 "description":
+                                     "默认 GB50068-2018（γ_G=1.3、γ_Q=1.5）。"
+                                     "2012 版是 1.2/1.4，既有项目校核才用"},
+                    "include_serviceability": {"type": "boolean",
+                                               "description": "是否生成标准组合与"
+                                                              "准永久组合，默认是"},
+                    "psi_c": {"type": "object",
+                              "additionalProperties": {"type": "number"},
+                              "description":
+                                  "覆盖组合值系数，键取 live/wind/snow/crane。"
+                                  "建筑类别与默认值不符时**必须**覆盖"},
+                    "replace": {"type": "boolean",
+                                "description": "是否清掉同名的旧组合，默认是"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_area_load",
+            "description":
+                "把**面荷载**（力/面积，如楼面恒载 3.5 kN/m²）导成梁上的线荷载。"
+                "用户给的荷载是「每平方米多少」时用这个，不要自己去乘从属宽度——"
+                "那一步算错结果看着完全正常：量级对、图形也像那么回事，只是总重差一截。"
+                "\n\n三种导荷方式，取决于板的长宽比："
+                "\none_way —— 单向板，width 是**从属宽度**，梁上均布 q×width；"
+                "\ntwo_way_short —— 双向板**短边**梁，三角形，width 是板的短跨 Lx，"
+                "跨中峰值 q·Lx/2；"
+                "\ntwo_way_long —— 双向板**长边**梁，梯形，width 仍是短跨 Lx，"
+                "两端各升 Lx/2 后进入平台 q·Lx/2。"
+                "\n\n三角形与梯形是**精确生成**的（用 partial_trapezoid 拼），"
+                "不是等效均布——等效均布只保证跨中弯矩相等，支座附近的剪力是另一回事。"
+                "\n校核过：4×6 双向板的四边梁合计 96.000 kN，与板自身 q×4×6 分毫不差，"
+                "既没漏也没重复计。",
+            "parameters": {
+                "type": "object",
+                "required": ["members", "q", "width"],
+                "properties": {
+                    "members": {
+                        "description": "杆件编号、编号列表或集合名（可混写）",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "q": {"type": "number", "exclusiveMinimum": 0,
+                          "description": "面荷载强度，力/面积。N-m-Pa 下是 N/m²，"
+                                         "4 kN/m² 写成 4000"},
+                    "width": {"type": "number", "exclusiveMinimum": 0,
+                              "description": "one_way 下是从属宽度；"
+                                             "两种 two_way 下是板的**短跨** Lx"},
+                    "load_path": {"type": "string",
+                                  "enum": ["one_way", "two_way_short",
+                                           "two_way_long"],
+                                  "description": "导荷方式，默认 one_way"},
+                    "direction": {"type": "array", "minItems": 3, "maxItems": 3,
+                                  "items": {"type": "number"},
+                                  "description": "荷载方向，默认全局 −Z（重力）。"
+                                                 "只取方向，大小由 q 决定"},
+                    "case_name": {"type": "string"},
+                    "name": {"type": "string",
+                             "description": "荷载名前缀；每段生成 前缀-杆号-序号"},
+                },
+                "additionalProperties": False,
             },
         },
     },
@@ -841,10 +1134,235 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "solve_model",
-            "description": "求解当前模型。支持线性静力、P-Delta 二阶弹性、双线性轴向材料非线性。",
+            "name": "response_spectrum_analysis",
+            "description":
+                "振型分解反应谱法（地震作用）。用户说「算地震」「按抗规做」"
+                "「7 度设防」「水平地震作用」时用这个。"
+                "\n\n**返回的内力和位移没有符号。** SRSS 与 CQC 都是平方和开方，"
+                "出来的只有大小。地震往复，与重力组合时必须按 ± 各算一次——"
+                "直接当普通工况叠加进去，得到的只是两个方向里恰好同号的那一个。"
+                "返回里的 sign 字段要原样转达。"
+                "\n谱二选一：alpha_max + tg 走 GB 50011 设计谱（地震影响系数，"
+                "多遇地震 7 度 0.08、8 度 0.16），或 spectrum_points 给自定义"
+                "(周期, 加速度) 表。"
+                "\nmass_ratio 低于 0.9 时返回里会有 mass_ratio_warning，"
+                "要照做加大 num_modes——GB 50011 要求累计参与质量不小于 90%。",
+            "parameters": {
+                "type": "object", "properties": {
+                    "direction": {"type": "string", "enum": ["x", "y", "z"]},
+                    "num_modes": {"type": "integer", "minimum": 2},
+                    "alpha_max": {"type": "number", "exclusiveMinimum": 0,
+                                  "description": "地震影响系数最大值，"
+                                                 "如多遇地震 7 度 0.08"},
+                    "tg": {"type": "number", "exclusiveMinimum": 0,
+                           "description": "特征周期 s"},
+                    "spectrum_points": {
+                        "type": "array", "minItems": 2,
+                        "items": {"type": "array", "minItems": 2,
+                                  "maxItems": 2,
+                                  "items": {"type": "number"}},
+                        "description": "自定义谱 [[周期, 加速度 m/s²], ...]"},
+                    "combination": {"type": "string", "enum": ["CQC", "SRSS"],
+                                    "description": "频率接近的振型不独立，"
+                                                   "默认 CQC"},
+                    "damping": {"type": "number", "exclusiveMinimum": 0,
+                                "exclusiveMaximum": 1},
+                    "gravity": {"type": "number", "exclusiveMinimum": 0},
+                }, "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_member_connection",
+            "description":
+                "给杆端装半刚性连接（转动弹簧）。用户说「梁柱节点不是刚接」"
+                "「端板连接」「角钢连接」「节点有转动刚度」时用这个。"
+                "\n\n**真实的梁柱节点既不是铰也不是刚接。** 两头都按极限算，"
+                "弯矩分布差得很远：两跨连续梁实测，刚接支座弯矩 90 kN·m，"
+                "连接刚度取 3EI/L 时只剩 45 kN·m，差出来的那部分全跑到跨中去了"
+                "——而两种算法都不会报错。回答时要把这个差别说出来。"
+                "\n刚度优先用 connection_type 按**梁线刚度 EI/L 的倍数**给"
+                "（端板 20、平端板 8、顶底角钢 3、腹板角钢 1）；绝对刚度离开"
+                "截面和跨度就没有意义，同一个端板装在不同梁上相对刚度差几倍。"
+                "\n理想铰是 k=0 的极限，用杆端释放表达，不要在这里填 0；"
+                "刚接是 k=∞ 的极限，不装弹簧就是。",
+            "parameters": {
+                "type": "object", "required": ["member_ids"],
+                "properties": {
+                    "member_ids": {
+                        "description": "杆件编号、编号列表或集合名",
+                        "oneOf": [
+                            {"type": "integer"},
+                            {"type": "array", "items": {"type": "integer"}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "end": {"type": "string", "enum": ["i", "j", "both"],
+                            "description": "装在哪一端；默认 j"},
+                    "dof": {"type": "string",
+                            "enum": ["ux", "uy", "uz", "rx", "ry", "rz"],
+                            "description": "局部自由度；梁端弯矩通常是 rz"},
+                    "stiffness": {"type": "number", "exclusiveMinimum": 0,
+                                  "description": "绝对连接刚度，力·长度/弧度"},
+                    "connection_type": {
+                        "type": "string",
+                        "enum": ["端板", "平端板", "顶底角钢", "腹板角钢"],
+                        "description": "按 EI/L 的倍数给刚度，比绝对值可用"},
+                    "clear": {"type": "boolean",
+                              "description": "去掉该端连接弹簧，恢复刚接"},
+                }, "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_step",
+            "description":
+                "新增一个分析步（Abaqus 的 Step）。用户说「先满载再撤活载」"
+                "「拆掉这个支座看看」「分几个工况阶段算」时用这个。"
+                "\n\n**荷载与边界条件在步之间传播**：这一步只写新建或改写的东西，"
+                "上一步有而这里没提的会自动沿用。要让它消失必须显式写进 "
+                "deactivate_loads / deactivate_supports——**漏写不等于撤销**，"
+                "这是最容易向用户解释错的一点，回答时要讲明白。"
+                "\nloads 是 工况名 -> 幅值曲线名；supports 是 节点号 -> "
+                "{fix: [...], spring: [...]}，用来在这一步改写某个支座。"
+                "\n每一步都从未变形、无应力状态重解，不把上一步的状态带进来，"
+                "杆件也不能在步之间生灭——所以这表达的是「同一结构的几种配置」，"
+                "不是施工过程。用户问施工顺序时要说清楚这个区别。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string", "description": "分析步名；Initial 是保留名"},
+                "analysis": {"type": "string", "enum": ["linear", "pdelta"],
+                             "description": "材料非线性暂不支持分析步"},
+                "loads": {"type": "object",
+                          "additionalProperties": {"type": "string"},
+                          "description": "本步新建或改写的荷载：工况名 -> 幅值曲线名"},
+                "deactivate_loads": {"type": "array", "items": {"type": "string"},
+                                     "description": "本步起失活的工况名"},
+                "supports": {"type": "object",
+                             "additionalProperties": {"type": "object"},
+                             "description": "本步新建或改写的支座：节点号 -> {fix, spring}"},
+                "deactivate_supports": {"type": "array", "items": {"type": "integer"},
+                                        "description": "本步起拆掉的支座所在节点号"},
+                "increments": {"type": "integer", "minimum": 1},
+                "after": {"type": "string",
+                          "description": "插在这一步之后；留空则追加到末尾"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_steps",
+            "description":
+                "列出全部分析步，声明与**实际生效**分两栏。"
+                "\n传播是隐式的：某一步写着一行「失活活载」，生效的却是前面传下来"
+                "的一整套减掉活载。只看声明会把这件事看漏，所以回答用户"
+                "「第几步在算什么」时一律看 effective 那一栏，不要看 declared。",
+            "parameters": {"type": "object", "properties": {},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_step",
+            "description":
+                "删除一个分析步。**后面的步会跟着变**：删掉建立某个荷载的那一步，"
+                "后面的「失活」就失去对象，整串分析步可能结算不出来——"
+                "那种情况下工具会拒绝删除并保持模型原样，把错误原样转达给用户。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "solve_steps",
+            "description":
+                "按顺序求解模型里声明的全部分析步，每一步给一行结果。"
+                "有分析步时用这个，不要退回 solve_model 一步步手动算——"
+                "手动算会丢掉传播，而漏掉一个上一步的荷载看不出来。"
+                "\n会话一次只端得住一份结果供后处理（画图、验算、查内力）；"
+                "默认留最后一步，用 inspect 指定留哪一步。返回里的 limitation "
+                "要原样转达：每一步都从未变形、无应力状态重解，杆件不能在步之间"
+                "生灭，所以这不是施工过程分析。",
             "parameters": {"type": "object", "properties": {
-                "analysis": {"type": "string", "enum": ["linear", "pdelta", "material"]},
+                "inspect": {"type": "string",
+                            "description": "哪一步的结果留在会话里；留空取最后一步"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "define_amplitude",
+            "description":
+                "定义一条幅值曲线（Abaqus 的 Amplitude），给 solve_model(analysis=\"step\") 用。"
+                "曲线是 (伪时间, 系数) 表，线性插值，表外取端点值不外推。"
+                "伪时间是分析步内部进度 0→1，不是真实时间——本内核是静力分析。"
+                "\n内置 RAMP（0→1 斜坡）与 STEP（全程为 1）已够用大多数情形，"
+                "只有需要「前 30% 就加满再保持」这类非线性路径时才定义新的。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string", "description": "曲线名；不能叫 RAMP 或 STEP"},
+                "points": {"type": "array", "minItems": 2,
+                           "items": {"type": "array", "minItems": 2, "maxItems": 2,
+                                     "items": {"type": "number"}},
+                           "description": "[[伪时间, 系数], ...]，时间必须严格递增"},
+                "times": {"type": "array", "items": {"type": "number"},
+                          "description": "与 values 配对给，替代 points"},
+                "values": {"type": "array", "items": {"type": "number"}}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_amplitudes",
+            "description": "列出可用的幅值曲线，含内置的 RAMP 与 STEP 及其含义。"
+                           "用户问「有哪些加载方式」或要做推覆时先看这个。",
+            "parameters": {"type": "object", "properties": {},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_amplitude",
+            "description": "删除一条自定义幅值曲线。内置的 RAMP 与 STEP 删不掉。",
+            "parameters": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"}
+            }, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "solve_model",
+            "description":
+                "求解当前模型。支持线性静力、P-Delta 二阶弹性、双线性轴向材料非线性。"
+                "\n\n**报位移时用 max_deflection_mm，不要用 max_displacement_mm。**"
+                "后者只扫节点，而满跨均布、梯形荷载不触发杆件剖分，跨中根本没有节点"
+                "可查——实测 87 杆三层框架，节点值 4.30 mm、真实挠度 9.27 mm，差 2.16 "
+                "倍；简支梁上后者直接是 0.0。前者含单元内部，校核挠跨比用它。"
+                "\n返回里若有 note 或 warning，原样转达。note 常常是在解释「节点位移为零"
+                "是正常的」，漏掉它用户会以为荷载加错了。"
+                "\n\n**analysis=\"step\" 是非比例加载**：几个工况同时施加，"
+                "各按自己的幅值曲线随分析步变化。推覆分析要它——"
+                "{\"DL\":\"STEP\",\"WX\":\"RAMP\"} 表示重力全程加满、侧力线性上升。"
+                "**它不改变弹性分析的终点**（二阶弹性解与加载路径无关），"
+                "改变的是路径；别把它当成更准的算法。用户要能力曲线时看返回的 "
+                "analysis.convergence，每个增量带 max_displacement。",
+            "parameters": {"type": "object", "properties": {
+                "analysis": {"type": "string",
+                             "enum": ["linear", "pdelta", "material", "step"],
+                             "description": "step 是非比例加载的 P-Delta 分析步，需要配 amplitudes"},
+                "amplitudes": {"type": "object",
+                               "additionalProperties": {"type": "string"},
+                               "description": "analysis=step 时必填：工况名 -> 幅值曲线名，例如 {\"DL\": \"STEP\", \"WX\": \"RAMP\"}"},
                 "increments": {"type": "integer", "minimum": 1},
                 "max_iter": {"type": "integer", "minimum": 1},
                 "tolerance": {"type": "number", "exclusiveMinimum": 0}
@@ -855,7 +1373,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "solve_with_abaqus",
-            "description": "用 Abaqus 求解同一个模型（可选后端，需要本机装有 Abaqus）。"
+            "description": "【实验性】用 Abaqus 求解同一个模型（可选后端，需要本机装有 Abaqus）。"
                            "默认的 solve_model 快几百倍且无依赖，"
                            "只在需要与商软对标、或用户明确要求时才用这个。"
                            "一次只算一个工况。",
@@ -874,7 +1392,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "analyze_joint_solid",
-            "description": "对某个节点做局部实体子模型，观察杆件相交处的应力集中。"
+            "description": "【实验性】对某个节点做局部实体子模型，观察杆件相交处的应力集中。"
                            "整体仍用梁模型，只把相连杆件截成短臂拼成 C3D10 实体，"
                            "切割面传入梁模型的六分量截面力。"
                            "默认由自研 native-solid 有限元内核求解，Gmsh只负责网格；"
@@ -914,7 +1432,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "compare_solvers",
-            "description": "同一个模型两个后端各算一遍，逐分量给出归一化偏差。"
+            "description": "【实验性】同一个模型两个后端各算一遍，逐分量给出归一化偏差。"
                            "用户问“结果可不可信”“和 Abaqus 差多少”时用这个，"
                            "不要自己去分别调两个求解器再口算差值。需要本机装有 Abaqus。",
             "parameters": {
@@ -1068,7 +1586,16 @@ TOOLS: list[dict[str, Any]] = [
             "name": "modal_analysis",
             "description": "自振频率与振型。需要材料有 density。"
                            "用户问「自振周期」「基频」「动力特性」「共振」时用这个。"
-                           "结果是结构固有属性，与荷载无关——不要传工况。",
+                           "结果是结构固有属性，与荷载无关——不要传工况。"
+                           "\n返回里出现 mesh_warning 时**必须转达**：一致质量阵靠形函数"
+                           "装配，网格越粗频率报得越高。实测 8 m 简支梁一跨一个单元时"
+                           "基频偏高 11%，四个单元降到 0.026%。"
+                           "\n\n**参与质量比的分母是 participable_mass，不是 total_mass。**"
+                           "压在支座上的质量永远不参与振动，两者的差随网格变粗而变大"
+                           "——一根剖成 4 段的悬臂柱，按 total_mass 算把振型取满也只有"
+                           "84%。所以看 cumulative_mass_ratio_xyz，不要自己拿有效质量"
+                           "去除 total_mass；那样算出来的比值永远到不了 1，而"
+                           "「加大 num_modes」这条建议在那里是无效的。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1086,7 +1613,13 @@ TOOLS: list[dict[str, Any]] = [
                            "λ=3 表示把该工况的荷载放大 3 倍结构才失稳。"
                            "用户问「稳定」「屈曲」「临界荷载」「安全储备」时用这个。"
                            "**这是线性特征值屈曲，给的是上限**——真实结构有初始缺陷，"
-                           "实际承载力更低，回答时必须说明这一点。",
+                           "实际承载力更低，回答时必须说明这一点。"
+                           "\n\n**返回里出现 mesh_warning 时必须转达，它比上面那句更要命。**"
+                           "几何刚度阵靠形函数装配，网格越粗 λ 报得越高。实测单跨门式刚架"
+                           "每构件一个单元时 λ=1.66，收敛值 0.82——偏高 102%：前者在说"
+                           "「还有 66% 余量」，后者意味着它已经失稳。generate_frame 生成的"
+                           "恰好是每构件一个单元，所以这是最容易撞上的情形。"
+                           "\n失败时若有 likely_cause，先讲它，不要照搬「检查荷载方向」。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1128,7 +1661,16 @@ TOOLS: list[dict[str, Any]] = [
                 "逐杆给出：最不利截面的应力比 σ/[σ]（**拉压分别对各自的许用值**）、"
                 "受压杆的欧拉临界力 Pcr=π²EI/(μl)²、长细比 λ、回转半径。"
                 "需要材料定义了 allow_tension（许用拉应力）、截面定义了 cy/cz。"
-                "**这不是规范意义上的承载力验算**：只算正应力，没有剪应力与扭转；"
+                "同时给出**折算应力 √(σ²+3τ²)**（第四强度理论，也是 GB 50017 §6.1.5 "
+                "的式子）与材力四个强度理论的相当应力 σr1~σr4，以及 **GB 50017 稳定"
+                "系数 φ** 和 N/(φA)≤f 的规范校核。"
+                "\n\n**正应力与折算应力是两条独立结论，都要看。** 只看正应力会漏掉剪切"
+                "控制的构件：实测 L/h=2.5 的短深梁，正应力比 0.064「安全得很」，折算"
+                "应力却是它的 2.78 倍，控制点在中性轴——那里弯曲 σ=0 而 τ 最大。"
+                "\n**欧拉与规范法冲突时以规范法为准。** 欧拉在中小柔度段不适用，而实际"
+                "钢柱大多落在那里：实测 λ=24.9 的粗短柱，欧拉 N/Pcr=0.023、规范 "
+                "N/(φA)/f=0.822，差 35 倍且偏不安全。"
+                "\n能力边界：**仍不含扭转剪应力**，所以还不是完整的规范承载力验算；"
                 "回答时要把这一条说出来，也要把返回的 warnings 原样转达。",
             "parameters": {
                 "type": "object",
@@ -1140,6 +1682,12 @@ TOOLS: list[dict[str, Any]] = [
                     "slenderness_limit": {"type": "number", "exclusiveMinimum": 0,
                                           "description": "允许的最大长细比 [λ]，"
                                                          "如钢压杆常取 150；留空不查"},
+                    "buckling_curve": {"type": "string", "enum": ["a", "b", "c", "d"],
+                                       "description":
+                                           "GB 50017 截面类别，只影响稳定系数 φ。"
+                                           "默认 b（热轧工字钢、H 型钢绕强轴的常见归类）。"
+                                           "**不是可以忽略的细节**：λ=80 时 a 类 φ=0.783、"
+                                           "d 类 0.493，差 59%。拿不准就沿用默认并说明。"},
                 },
                 "additionalProperties": False,
             },
@@ -1198,3 +1746,19 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+
+# 实验性工具：代码可用、有自动测试，但**不在正式主链路的承诺范围内**。
+#
+# 分级依据不是「做得好不好」，而是「有没有闭环证据」：
+# - Abaqus 两个工具依赖本机许可证，CI 上跑不到，只能靠本机冒烟；
+# - 节点实体子模型单元层有教科书解对照，但 Agent 评测集没有一道题碰它，
+#   模型在对话里会不会正确调用、会不会把奇异峰值当 Kt 报出去，没有数据。
+#
+# 描述前缀「【实验性】」是给大模型看的，这份集合是给测试看的——
+# `tests/test_tool_contracts.py` 核对两边一致，README 和能力矩阵也要标出来。
+# 某个工具有了评测题、跑出稳定成绩，再把它从这里拿掉。
+EXPERIMENTAL_TOOLS: frozenset[str] = frozenset({
+    "solve_with_abaqus",
+    "compare_solvers",
+    "analyze_joint_solid",
+})

@@ -122,13 +122,29 @@ def rainbow_cmap(steps: int = 256):
         "viewport_rainbow", RAINBOW_ANCHORS, N=steps)
 
 
+def turbo_cmap(steps: int = 256):
+    """平滑彩虹（Google turbo）：也是蓝 → 青 → 绿 → 黄 → 红，但明度过渡
+    是按感知均匀设计的——没有经典彩虹中段那一大片刺眼的亮绿、亮黄，
+    连续着色时沿杆的渐变不会在某一段突然"跳亮"。
+
+    两头各裁掉一点：turbo 最低端接近黑，在深色视口上零内力的杆件会直接
+    消失；最高端是暗红，峰值反而不显眼。
+    """
+    import numpy as np
+    from matplotlib import colormaps
+    from matplotlib.colors import ListedColormap
+    return ListedColormap(colormaps["turbo"](np.linspace(0.12, 0.93, steps)),
+                          name="viewport_turbo")
+
+
 #: 云图可选色系。键是内部名，值是给界面看的中文名。
 CONTOUR_PALETTES = {
+    "turbo": "平滑彩虹（默认）",
     "rainbow": "彩虹（Abaqus 式）",
     "diverging": "蓝—灰—红（发散）",
     "sequential": "单蓝（顺序）",
 }
-DEFAULT_PALETTE = "rainbow"
+DEFAULT_PALETTE = "turbo"
 
 
 def palette_cmap(palette: str, component: str = ""):
@@ -138,6 +154,8 @@ def palette_cmap(palette: str, component: str = ""):
     中点代表零，而合量的零在量程端点上，用了会把"最小"画成中性灰。
     所以合量在选了发散时自动退回顺序色标。
     """
+    if palette == "turbo":
+        return turbo_cmap()
     if palette == "rainbow":
         return rainbow_cmap()
     if palette == "sequential":
@@ -603,23 +621,10 @@ QCheckBox, QRadioButton {{
     color: {INK};
     spacing: 6px;
 }}
-QCheckBox::indicator, QRadioButton::indicator {{
-    width: 15px;
-    height: 15px;
-    border: 1px solid {BORDER_LIGHT};
-    border-radius: {RADIUS_SM};
-    background: {PANEL};
-}}
-QRadioButton::indicator {{
-    border-radius: 8px;
-}}
-QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
-    border-color: {ACCENT};
-}}
-QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
-    background: {ACCENT_DIM};
-    border-color: {ACCENT};
-}}
+/* 勾选框与单选钮的指示器**有意不在这里写样式**。
+   样式表一旦给 ::indicator 加规则，Qt 就改走 QStyleSheetStyle 的绘制
+   通路，绕过 desktop/qt_style.py 的自绘——而样式表画不出对勾，也画
+   不出圆：选中态会退回一个纯色方块，单选钮和勾选框长得一模一样。 */
 """
 
 
@@ -698,3 +703,73 @@ QToolButton[ribbon="small"][role="primary"]:hover {{
 """
 
 STYLESHEET = STYLESHEET + RIBBON_QSS
+
+# 抽屉与两侧窄栏（desktop/drawers.py）
+
+DRAWER_QSS = f"""
+QFrame#sideRail {{
+    background: {PANEL};
+    border: none;
+}}
+QFrame#sideRail[side="left"] {{ border-right: 1px solid {BORDER}; }}
+QFrame#sideRail[side="right"] {{ border-left: 1px solid {BORDER}; }}
+QFrame#railSeparator {{ background: {BORDER}; border: none; margin: 2px 6px; }}
+QToolButton#railButton {{
+    color: {INK_MUTED};
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: {RADIUS_MD};
+    font-size: 8pt;
+    padding: 2px 0px;
+}}
+QToolButton#railButton:hover {{
+    background: {PANEL_HOVER};
+    color: {INK};
+}}
+QToolButton#railButton:checked {{
+    background: {SELECTION};
+    border-color: {ACCENT};
+    color: {ACCENT_DIM};
+    font-weight: 600;
+}}
+QToolButton#railButton[primary="true"] {{
+    background: {ACCENT};
+    color: #ffffff;
+    font-weight: 700;
+}}
+QToolButton#railButton[primary="true"]:hover {{ background: {ACCENT_HOVER}; }}
+QToolButton#railButton[primary="true"]:checked {{
+    background: {ACCENT_DIM};
+    border-color: {ACCENT_DIM};
+    color: #ffffff;
+}}
+QFrame#drawer {{
+    background: {PANEL_ALT};
+    border: 1px solid {BORDER};
+}}
+QLabel#drawerTitle {{ color: {INK}; font-weight: 600; padding: 4px 0px; }}
+QTabBar#drawerTabs::tab {{
+    padding: 5px 12px;
+    margin-right: 2px;
+    color: {INK_MUTED};
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+}}
+QTabBar#drawerTabs::tab:selected {{
+    color: {ACCENT_DIM};
+    border-bottom: 2px solid {ACCENT};
+    font-weight: 600;
+}}
+QTabBar#drawerTabs::tab:hover {{ color: {INK}; }}
+QToolButton#drawerClose {{
+    color: {INK_MUTED};
+    font-size: 12pt;
+    min-width: 26px;
+    min-height: 26px;
+    border-radius: {RADIUS_SM};
+}}
+QToolButton#drawerClose:hover {{ background: {PANEL_HOVER}; color: {INK}; }}
+"""
+
+STYLESHEET = STYLESHEET + DRAWER_QSS

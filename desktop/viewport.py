@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import os
 
 import numpy as np
@@ -33,6 +35,33 @@ from . import scene, theme
 # 逻辑照测，像素交给有 GL 的机器。
 CAN_RENDER = os.environ.get("QT_QPA_PLATFORM", "") != "offscreen"
 
+# 云图杆件的屏幕宽度（像素）。和缩放无关：远看不糊成一片，近看不臃肿。
+CONTOUR_LINE_PX = 7
+
+
+
+def _batched(method):
+    """一次重画只渲染一帧。
+
+    PyVista 每 `add_mesh` / `add_point_labels` 一次就同步渲染一次**整个
+    场景**。一次重画要加十几个图元，于是大模型上同一帧被画十几遍——卡顿
+    的一大半在这里。重画期间关掉渲染，结束时补一帧；可嵌套，最外层负责补。
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        depth = getattr(self, "_batch_depth", 0)
+        self._batch_depth = depth + 1
+        plotter = self.plotter
+        if depth == 0:
+            plotter.suppress_rendering = True
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._batch_depth = depth
+            if depth == 0:
+                plotter.suppress_rendering = False
+                plotter.render()
+    return wrapper
 
 class _NullCamera:
     def zoom(self, _factor) -> None:
@@ -385,20 +414,117 @@ class Viewport(QWidget):
 
     # --- 基础 ---
 
-    def resizeEvent(self, event):
-        """窗口大小变化时，更新坐标系指示器位置。"""
-        super().resizeEvent(event)
+    _insets = (0, 0, 0)
+    _inset_zoom = 1.0
+
+    def set_overlay_insets(self, left: int, right: int, bottom: int) -> None:
+        """抽屉盖住了视口的哪几条边。左上角的模式提示、左下角的坐标轴
+        指示器都挪进没被盖住的那一块，不然一开模型树它们就被压在底下。"""
+        insets = (int(left), int(right), int(bottom))
+        if insets == self._insets:
+            return
+        self._insets = insets
+        self._place_overlays()
+        if self.mode_badge.isVisible():
+            self._update_mode_badge()
+        if CAN_RENDER:
+            self._inset_camera()
+            self._place_contour_overlays()
+            self.plotter.render()
+
+    _contour_actors = False
+
+    def _place_contour_overlays(self) -> None:
+        """色标、色标标题、云图说明放进**没被抽屉盖住**的那一块。
+
+        原来是写死的视口比例坐标：底部结果抽屉一开，色标下半截就进了抽屉
+        底下；左上角那段说明又被模式提示压着。这里按抽屉遮挡重新摆，
+        抽屉开合时只挪这几个 2D 对象，不重画整张云图。
+        """
+        if not CAN_RENDER or not self._contour_actors:
+            return
+        width, height = max(1, self.width()), max(1, self.height())
+        left, right, bottom = self._insets
+        x_right = 1.0 - right / width
+        y_bottom = bottom / height + 0.04
+        # 色标高度随可用高度收缩，顶上给标题留位置
+        bar_height = max(0.18, min(0.58, 0.84 - y_bottom - 0.12))
+        try:
+            bar = self.plotter.scalar_bar
+        except (AttributeError, IndexError, KeyError, StopIteration):
+            bar = None
+        actors = getattr(self.plotter, "actors", None)
+        lookup = actors.get if isinstance(actors, dict) else (lambda _name: None)
+        # 只动真正的 VTK 2D actor；无头测试里的桩对象什么属性都"有"
+        if hasattr(bar, "SetHeight"):
+            bar.SetPosition(x_right - 0.075, y_bottom)
+            bar.SetHeight(bar_height)
+        title = lookup("_contour_bar_title")
+        if hasattr(title, "SetPosition"):
+            title.SetPosition(x_right - 0.19, y_bottom + bar_height + 0.015)
+        caption = lookup("_contour_definition")
+        if hasattr(caption, "SetPosition"):
+            # 模式提示占着左上角约 36 px，说明从它下面开始
+            caption.SetPosition(left / width + 0.01, 1.0 - 44.0 / height)
+
+    def _inset_camera(self) -> bool:
+        """让模型落在**没被抽屉盖住**的那一块里，而不是躲在抽屉后面。
+
+        抽屉叠在视口上（所以视口尺寸不变、不用重排），代价是盖住一部分画面。
+        底部结果抽屉一开，模型下半截就进了抽屉底下——这正是"看结果挤占视觉
+        空间"。所以抽屉开合时同步挪相机：
+
+        * `WindowCenter` 把投影中心平移到空闲区域的中心。它只动投影、不动
+          视角与焦点，拾取照样准，抽屉一收回去原样复位；
+        * 再按空闲区域与整个视口的边长比缩小一次，原来刚好铺满视口的模型
+          现在刚好铺满露出来的那一块。记下缩过多少，下次按比值补，不累积。
+
+        返回是否真的改了相机。
+        """
+        if not CAN_RENDER:
+            return False
+        width, height = max(1, self.width()), max(1, self.height())
+        left, right, bottom = self._insets
+        free_w = max(1, width - left - right)
+        free_h = max(1, height - bottom)
+        center_x = left + free_w / 2.0
+        center_y = free_h / 2.0                      # 从上沿量起
+        nx = (center_x - width / 2.0) / (width / 2.0)
+        ny = (height / 2.0 - center_y) / (height / 2.0)
+        camera = self.plotter.renderer.GetActiveCamera()
+        # VTK 在投影之后平移 -WindowCenter，所以要把焦点送到 (nx, ny) 就取负
+        before = camera.GetWindowCenter()
+        camera.SetWindowCenter(-nx, -ny)
+        target = min(free_w / width, free_h / height)
+        ratio = target / self._inset_zoom
+        changed = abs(before[0] + nx) > 1e-9 or abs(before[1] + ny) > 1e-9
+        if abs(ratio - 1.0) > 1e-9:
+            camera.Zoom(ratio)
+            self._inset_zoom = target
+            changed = True
+        return changed
+
+    def _place_overlays(self) -> None:
         if hasattr(self, 'axis_indicator'):
             self.axis_indicator.move(
-                10,
-                self.height() - self.axis_indicator.height() - 10
+                10 + self._insets[0],
+                self.height() - self.axis_indicator.height() - 10 - self._insets[2]
             )
             self.axis_indicator.raise_()
 
+    def resizeEvent(self, event):
+        """窗口大小变化时，更新坐标系指示器位置。"""
+        super().resizeEvent(event)
+        self._place_overlays()
+        if any(self._insets):
+            self._inset_camera()
+
+    @_batched
     def clear(self) -> None:
         if not CAN_RENDER:
             return
         self.plotter.clear()
+        self._contour_actors = False
         # 按当前主题/自定义颜色恢复背景
         self._apply_current_background()
 
@@ -466,6 +592,7 @@ class Viewport(QWidget):
                                       name="_problem_nodes", point_size=20,
                                       render_points_as_spheres=True)
 
+    @_batched
     def set_selection(self, kind: str | None, ident: int | None) -> None:
         self.selection = (kind, ident) if kind and ident is not None else None
         if self._frame is not None and CAN_RENDER:
@@ -475,6 +602,7 @@ class Viewport(QWidget):
             self._decorate(self._frame)
             self.plotter.render()
 
+    @_batched
     def set_problem_refs(self, refs: list[tuple[str, int]]) -> None:
         """同时标出一个诊断问题涉及的节点和杆件。"""
         self.problem_refs = [(kind, int(ident)) for kind, ident in refs
@@ -485,6 +613,7 @@ class Viewport(QWidget):
             self._decorate(self._frame)
             self.plotter.render()
 
+    @_batched
     def set_result_marker(self, point, label: str = "") -> None:
         """在结果极值或探针截面处放置可追溯标记。"""
         if not CAN_RENDER or self._frame is None:
@@ -510,6 +639,7 @@ class Viewport(QWidget):
                 always_visible=True, show_points=False)
         self.plotter.render()
 
+    @_batched
     def set_labels(self, on: bool) -> None:
         self.show_labels = bool(on)
         if self._frame is not None and CAN_RENDER:
@@ -603,7 +733,7 @@ class Viewport(QWidget):
         bits.append("Esc 退出")
         self.mode_badge.setText("　｜　".join(bits))
         self.mode_badge.adjustSize()
-        self.mode_badge.move(12, 12)
+        self.mode_badge.move(12 + self._insets[0], 12)
         self.mode_badge.setVisible(True)
         self.mode_badge.raise_()
 
@@ -725,6 +855,9 @@ class Viewport(QWidget):
             self.plotter.enable_parallel_projection()
         getattr(self.plotter, f"view_{name}", self.plotter.view_isometric)()
         self.plotter.camera.zoom(1.3)
+        # 标准视角会重置相机，之前为抽屉做的缩放随之作废，按当前遮挡重做
+        self._inset_zoom = 1.0
+        self._inset_camera()
 
     def reset_camera(self) -> None:
         if not CAN_RENDER:
@@ -804,6 +937,7 @@ class Viewport(QWidget):
         self.load_labels = on
         return True
 
+    @_batched
     def show_model(self, frame, case: str | None = None,
                    supports: bool = True, loads: bool = True) -> dict:
         """求解前的模型视图。"""
@@ -870,6 +1004,7 @@ class Viewport(QWidget):
         self.plotter.render()
         return info
 
+    @_batched
     def show_analysis_mesh(self, frame, preview: dict) -> None:
         """显示求解器实际消费的分析单元，同时保留物理构件轮廓。"""
         if not CAN_RENDER:
@@ -905,6 +1040,7 @@ class Viewport(QWidget):
         self._fit()
         self.plotter.render()
 
+    @_batched
     def show_deformed(self, frame, solution, case: str, scale: float,
                       overlay: bool = True, supports: bool = True) -> None:
         if not CAN_RENDER:
@@ -937,6 +1073,87 @@ class Viewport(QWidget):
         self._fit()
         self.plotter.render()
 
+    @_batched
+    def show_force_diagram(self, frame, solution, case: str, component: str,
+                           size_ratio: float = scene.DIAGRAM_SIZE_RATIO) -> dict:
+        """三维内力图：杆件画成细线，旁边画出该分量沿杆的分布形状。
+
+        结构软件（SAP2000、ETABS、盈建科）看杆系结果靠的是这个，不是给
+        杆件上色——着色管把剪力、轴力这类沿杆不变的量画成"一根杆一个颜色"，
+        看不出大小。这里图形的**高度就是数值**，弯矩画在受拉侧，
+        颜色只是辅助：负蓝、零灰、正红，全结构共用一个比例尺。
+        """
+        from units import of as unit_system
+        system = unit_system(frame)
+        if component in {"T", "My", "Mz", "M"}:
+            value_scale, unit = system.moment_scale, system.moment_unit
+        else:
+            value_scale, unit = system.force_scale, system.force_unit
+        got = scene.force_diagram(frame, solution, case, component,
+                                  value_scale=value_scale, size_ratio=size_ratio)
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return got
+        self.clear()
+        # 杆件退成细线作参照：主角是图形，杆件只交代"画在哪根杆旁边"
+        self.plotter.add_mesh(scene.member_polylines(frame), color=theme.MEMBER,
+                              render_lines_as_tubes=True, line_width=3,
+                              name="_diagram_members")
+        for mesh in scene.support_glyphs(frame).values():
+            self.plotter.add_mesh(mesh, color=theme.SUPPORT, smooth_shading=True,
+                                  ambient=0.28, diffuse=0.72)
+        peak = abs(got["peak"]["value"])
+        clim = (-peak, peak) if peak > 0 else (-1.0, 1.0)
+        ribbon = got["ribbon"]
+        if ribbon.n_points:
+            # 发散色标：正负画在杆的两侧，颜色也跟着分两头，零是中性灰。
+            # 不打光——这是一张"图"，不是三维物体，明暗只会干扰读色。
+            self.plotter.add_mesh(
+                ribbon, scalars="value", cmap=theme.diverging_cmap(), clim=clim,
+                opacity=0.82, lighting=False, show_scalar_bar=False,
+                interpolate_before_map=True, name="_diagram_fill")
+            self.plotter.add_scalar_bar(
+                title="", n_labels=7, n_colors=256, vertical=True, fmt="%.3g",
+                color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
+                width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+            self.plotter.add_mesh(got["outline"], color=theme.VIEWPORT_INK,
+                                  line_width=1.6, name="_diagram_outline")
+        shown = got["peak"]
+        label = component
+        if component == "M":
+            label = "M (dominant plane)"
+        elif component == "V":
+            label = "V (dominant plane)"
+        self.plotter.add_text(f"{label}  [{unit}]", position=(0.795, 0.735),
+                              viewport=True, color=theme.VIEWPORT_INK,
+                              font_size=10, name="_contour_bar_title")
+        bending = component in {"M", "Mz", "My"}
+        caption = self.plotter.add_text(
+            "BEAM INTERNAL-FORCE DIAGRAM\n"
+            + f"{label} [{unit}] - "
+            + ("drawn on the tension side" if bending
+               else "drawn toward + local axis")
+            + " - one scale for all members",
+            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
+            font_size=9, name="_contour_definition")
+        if caption is not None:
+            caption.GetTextProperty().SetVerticalJustificationToTop()
+        if shown["member"] is not None and shown["point"] is not None:
+            self.plotter.add_point_labels(
+                [shown["point"]],
+                [f"{shown['value']:+.3g} {unit} | M{shown['member']} "
+                 f"x={shown['x']:.3g}"],
+                name="_diagram_peak", font_size=9, text_color=theme.VIEWPORT_INK,
+                shape=None, always_visible=True, show_points=True,
+                point_color=theme.HIGHLIGHT, point_size=10)
+        self._contour_actors = True
+        self._place_contour_overlays()
+        self._decorate(frame)
+        self._fit()
+        return got
+
+    @_batched
     def show_contour(self, frame, solution, case: str, component: str,
                      scale: float = 0.0, title: str | None = None,
                      percentile: float | None = scene.CONTOUR_PERCENTILE,
@@ -969,12 +1186,26 @@ class Viewport(QWidget):
                                   sign_filter=sign_filter)
         clim = scene.contour_clim(line, component, percentile=percentile)
         clipped = scene.clim_is_clipped(line, component, clim)
-        n = scene.contour_levels(levels)
+        # levels == 0 表示连续着色：沿杆平滑渐变，看内力怎么走。
+        # 分级（levels > 0）按色标读区间数值时用。
+        continuous = levels == 0
+        n = 0 if continuous else scene.contour_levels(levels)
         base = theme.palette_cmap(self.contour_palette, component)
-        cmap = theme.banded(base, n)
-        tubes = scene.banded_tubes(
-            line, component, clim, n,
-            radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame))
+        # 杆件按**屏幕像素宽度**画成带光照的管（render_lines_as_tubes），
+        # 不再按模型尺寸生成三维管网格。按模型尺寸取半径时，为了打光看得出
+        # 是圆的，半径得取到普通显示的四五倍——一切到云图杆件就胖一大圈，
+        # 模型越大、镜头越近越臃肿（用户原话"管子咋这么粗"）。像素宽度
+        # 与缩放无关，Abaqus 画梁的云图也是这么做的；还省掉了管网格的生成。
+        if continuous:
+            # 标量挂在点上、映射前先插值：颜色沿杆连续过渡，不会被切成
+            # 一圈圈色环。
+            tubes = line
+            scalars, cmap, colors = component, base, 256
+        else:
+            # 按色带边界切开的线段，颜色挂在单元上，边界干净没有插值
+            tubes = scene.banded_segments(line, component, clim, n)
+            scalars = component + scene.BAND_SUFFIX
+            cmap, colors = theme.banded(base, n), n
         # 打光与读数是一对矛盾：打了光，同一个数值在向光面和背光面是两个
         # 颜色，而看图的人正是拿杆件上的颜色去对色标读数的；完全不打光，
         # 圆管就是一条扁色带，看不出这是根三维杆件。
@@ -984,13 +1215,15 @@ class Viewport(QWidget):
         # 要严格照色标读数可以关掉（set_contour_shading），那时是纯平涂。
         #
         # 环境光别调得太高。原来取 0.66/0.34 想把色偏压到最小，结果是
-        # 明暗差被压没了，管子看上去还是一条扁色带——光照参数救不了太细的管，
-        # 真正起作用的是 scene.CONTOUR_TUBE_RATIO 那一次加粗。
+        # 明暗差被压没了，管子看上去还是一条扁色带。按世界尺寸建管时只能靠
+        # 加粗救（CONTOUR_TUBE_RATIO），代价是云图杆件胖一大圈；现在线管按
+        # 屏幕像素宽度着色，明暗由着色器按像素算，粗细与模型尺寸无关。
         shade = dict(lighting=True, ambient=0.42, diffuse=0.58,
                      specular=0.22, specular_power=30, smooth_shading=True)
         self.plotter.add_mesh(
-            tubes, scalars=component + scene.BAND_SUFFIX,
-            cmap=cmap, clim=clim, n_colors=n, show_scalar_bar=False,
+            tubes, scalars=scalars, cmap=cmap, clim=clim, n_colors=colors,
+            interpolate_before_map=True, show_scalar_bar=False,
+            render_lines_as_tubes=True, line_width=CONTOUR_LINE_PX,
             **(shade if self.contour_shading else {"lighting": False}))
         # 色标竖着放在右侧：横放时 VTK 把标题和刻度挤在同一条带上（实测重叠），
         # 而且十几级的刻度横向根本排不开。
@@ -999,18 +1232,21 @@ class Viewport(QWidget):
         # 网格的映射器；等把"量程外"那层纯色网格加完再加色标，色标画的就是
         # 那层的默认查找表——一条 0…1 的彩虹，和图上任何东西都对不上。
         self.plotter.add_scalar_bar(
-            title="", n_labels=n + 1, n_colors=n, vertical=True, fmt="%.3g",
+            title="", n_labels=7 if continuous else n + 1, n_colors=colors,
+            vertical=True, fmt="%.3g",
             color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
             width=0.040, height=0.58, position_x=0.905, position_y=0.14)
-        if clipped:
+        if clipped and not continuous:
             # 超出量程的段单独画。分级之后饱和的那一级和正常的一级长得一样，
             # 峰值所在的位置会消失在一片同色里。
-            over = scene.out_of_range_tubes(
-                line, component, clim,
-                radius=scene.CONTOUR_TUBE_RATIO * scene.model_size(frame) * 1.02)
+            # 连续模式不画：那里超限的部分就是色标最顶端的颜色，渐变本身
+            # 看得出哪儿最大，峰值另有极值标签；再压一层纯色反而像一块补丁。
+            over = scene.out_of_range_segments(line, component, clim)
             if over.n_cells:
                 self.plotter.add_mesh(over, color=theme.HIGHLIGHT,
                                       lighting=False, show_scalar_bar=False,
+                                      render_lines_as_tubes=True,
+                                      line_width=CONTOUR_LINE_PX + 2,
                                       name="_contour_out_of_range")
         self._contour_last = dict(palette=self.contour_palette,
                                   shading=self.contour_shading, bands=n)
@@ -1019,21 +1255,26 @@ class Viewport(QWidget):
         # 中文字形（实测中文渲染成方块）。写成方块等于没披露。
         label = (scene.STRESS_LABEL_ASCII if component == scene.STRESS
                  else component)
-        bar_title = f"{label}  [{unit}]\n{n} bands"
+        bar_title = f"{label}  [{unit}]" + ("" if continuous else f"\n{n} bands")
         if clipped:
             bar_title += (f"\nclip p{scene.CONTOUR_PERCENTILE:.0f}"
-                          "\noff scale: orange")
+                          + ("\nabove: top color" if continuous
+                             else "\noff scale: orange"))
         self.plotter.add_text(
             bar_title, position=(0.795, 0.735), viewport=True,
             color=theme.VIEWPORT_INK, font_size=10, name="_contour_bar_title")
-        self.plotter.add_text(
+        caption = self.plotter.add_text(
             scene.contour_caption(
-                component, unit, clipped, sign_filter, n,
+                component, unit, clipped, sign_filter, n or None,
                 scale_max=max(abs(clim[0]), abs(clim[1])),
                 true_peak=float(np.abs(np.asarray(line[component])).max())
                 if line.n_points else None),
-            position="upper_left", color=theme.VIEWPORT_INK,
+            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
             font_size=9, name="_contour_definition")
+        if caption is not None:                     # 无头环境下 add_text 不给 actor
+            caption.GetTextProperty().SetVerticalJustificationToTop()
+        self._contour_actors = True
+        self._place_contour_overlays()
         if overlay_deformed:
             deformation_scale = scale or scene.auto_deformation_scale(
                 frame, solution, case)
@@ -1064,6 +1305,7 @@ class Viewport(QWidget):
         self.plotter.render()
         return clim
 
+    @_batched
     def show_mode(self, frame, shapes: np.ndarray, mode: int,
                   label: str = "") -> None:
         """振型 / 失稳模态。振型无量纲，按模型尺寸定一个好看的放大倍数。"""

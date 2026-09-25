@@ -172,3 +172,68 @@ def test_recognition_rejects_a_result_for_another_image():
     assert not state.complete_recognition(job, review_draft())
     assert state.phase({}) == MultimodalPhase.RECOGNITION_FAILED
     assert "image_hash" in state.last_error
+
+
+def test_migrated_draft_satisfies_the_work_plane_contract():
+    """对照：迁移出来的草稿本来就该符合契约，否则下面的负向测试没有意义。"""
+    assert validate_v2_draft(review_draft()) == []
+
+
+@pytest.mark.parametrize("patch, needle", [
+    ({"first_axis": "Y"}, "first_axis"),
+    ({"second_axis": "X"}, "second_axis"),
+    ({"offset_axis": "Z"}, "offset_axis"),
+])
+def test_axis_mapping_contradicting_the_plane_is_rejected(patch, needle):
+    """物化只认 work_plane["plane"]，自己重算轴映射。
+
+    草稿里声明的 axis_mapping 一个字都不读，所以一份"声明 Y/X/Z、标着
+    plane=XZ"的草稿曾经能一路放行，几何按 X/Z/Y 生成——用户在确认界面上
+    确认的是前者，落进模型的是后者。
+    """
+    draft = review_draft()
+    assert draft["work_plane"]["plane"] == "XZ"
+    draft["work_plane"]["axis_mapping"].update(patch)
+    errors = validate_v2_draft(draft)
+    assert any(needle in error for error in errors), errors
+
+
+@pytest.mark.parametrize("sign_key", ["image_right_sign", "image_up_sign"])
+@pytest.mark.parametrize("bad", [-1, 0, 1.0, True, "1"])
+def test_image_direction_signs_must_stay_integer_one(sign_key, bad):
+    """契约把两个 sign 固定为整数 1，image_to_model 里也没有这个参数。
+
+    放行 -1 等于对外宣称"图像方向可以翻转"，而转这个旋钮没有任何反应。
+    """
+    draft = review_draft()
+    draft["work_plane"]["axis_mapping"][sign_key] = bad
+    errors = validate_v2_draft(draft)
+    assert any(sign_key in error for error in errors), errors
+
+
+@pytest.mark.parametrize("mapping", [None, "随便", 3, [], {"first_axis": "X"}])
+def test_axis_mapping_must_be_the_complete_contract_object(mapping):
+    draft = review_draft()
+    draft["work_plane"]["axis_mapping"] = mapping
+    assert any("axis_mapping" in error for error in validate_v2_draft(draft))
+
+
+def test_missing_axis_mapping_is_rejected():
+    draft = review_draft()
+    draft["work_plane"].pop("axis_mapping")
+    assert any("axis_mapping" in error for error in validate_v2_draft(draft))
+
+
+@pytest.mark.parametrize("bad", [None, "abc", float("nan"), float("inf"),
+                                 True])
+def test_work_plane_offset_must_be_a_finite_number(bad):
+    """缺 offset 时，物化会把 KeyError 直接抛到调用方，而不是给一条校验消息。"""
+    draft = review_draft()
+    draft["work_plane"]["offset"] = bad
+    assert any("offset" in error for error in validate_v2_draft(draft))
+
+
+def test_missing_work_plane_offset_is_rejected():
+    draft = review_draft()
+    draft["work_plane"].pop("offset")
+    assert any("offset" in error for error in validate_v2_draft(draft))

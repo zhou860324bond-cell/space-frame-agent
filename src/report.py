@@ -335,12 +335,13 @@ def to_markdown(doc: dict[str, Any], path: Path | None = None) -> str:
         rows = [{"阶": r["order"], "频率 (Hz)": r["frequency_Hz"],
                  "周期 (s)": r["period_s"]} for r in doc["modal"]["modes"]]
         L.extend(_table(rows))
-        share = doc["modal"].get("effective_mass_ratio_xyz")
+        share = doc["modal"].get("cumulative_mass_ratio_xyz")
         if share:
             a(f"总质量 {doc['modal']['total_mass_kg']:.1f} kg；"
-              f"前 {len(rows)} 阶的有效质量比 X/Y/Z = "
+              f"前 {len(rows)} 阶的累计参与质量比 X/Y/Z = "
               f"{share[0]:.3f} / {share[1]:.3f} / {share[2]:.3f}。"
-              "该比值接近 1 才说明取的阶数够。")
+              "分母是**能参与振动的**质量，不是总质量——压在支座上的"
+              "那部分永远不参与。该比值不到 0.9 时按 GB 50011 要加大阶数。")
             a("")
 
     if doc.get("buckling"):
@@ -630,11 +631,14 @@ def to_docx(doc: dict[str, Any], path: Path) -> Path:
         heading("六、自振特性", 1)
         table([{"阶": r["order"], "频率 (Hz)": r["frequency_Hz"],
                 "周期 (s)": r["period_s"]} for r in doc["modal"]["modes"]])
-        share = doc["modal"].get("effective_mass_ratio_xyz")
+        share = doc["modal"].get("cumulative_mass_ratio_xyz")
         if share:
-            para(f"总质量 {doc['modal']['total_mass_kg']:.1f} kg；有效质量比 "
-                 f"X/Y/Z = {share[0]:.3f} / {share[1]:.3f} / {share[2]:.3f}。"
-                 "该比值接近 1 才说明取的阶数够。", size=9, grey=True)
+            para(f"总质量 {doc['modal']['total_mass_kg']:.1f} kg；"
+                 f"累计参与质量比 X/Y/Z = "
+                 f"{share[0]:.3f} / {share[1]:.3f} / {share[2]:.3f}。"
+                 "分母是能参与振动的质量，不是总质量——压在支座上的那部分"
+                 "永远不参与。不到 0.9 时按 GB 50011 要加大阶数。",
+                 size=9, grey=True)
 
     if doc.get("buckling"):
         b = doc["buckling"]

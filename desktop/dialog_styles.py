@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
-                               QVBoxLayout, QWidget)
+                               QSizePolicy, QVBoxLayout, QWidget)
 
 from . import theme
 
@@ -98,20 +98,82 @@ class FormRow(QHBoxLayout):
         self.addWidget(widget, 1)
 
 
+def emphasis(text: str) -> str:
+    """把 `**重点**` 变成真正的加粗，顺带堵住 Markdown 星号漏进界面。
+
+    这个项目的中文说明一律是 Markdown 风格写的——docstring、工具描述、
+    返回值里的 note 全是 `**这样**`。同一句话复制到界面上时，星号会**原样
+    显示**：用户看到的是「漏写不等于撤销」外面挂着四个星号。不会崩、不会
+    报错，只是难看且显得业余，所以没人会专门去测它。
+
+    `result_rows.py` 早就为此写过一行 `replace("**", "")`——那是把重点抹掉。
+    这里改成真的加粗：作者想强调的那一处，界面上也确实被强调。
+    """
+    from html import escape
+
+    parts = escape(str(text)).split("**")
+    # 偶数段是正文、奇数段是被星号夹住的内容；星号数量不成对时原样退回，
+    # 猜一个"大概是想加粗哪里"只会得到更奇怪的结果。
+    if len(parts) % 2 == 0:
+        return escape(str(text))
+    return "".join(p if i % 2 == 0 else f"<b>{p}</b>"
+                   for i, p in enumerate(parts))
+
+
 class HintLabel(QLabel):
-    """提示文字：小号、灰色、无背景。"""
+    """提示文字：小号、灰色、无背景。`**重点**` 会被渲染成加粗。
+
+    **自动换行的 QLabel 默认会被压扁。** 它的 sizeHint 是按"排成一行"算的，
+    布局照那个高度分配空间，于是折行之后最后一两行被切掉——切掉的往往正是
+    那句"选错不会报错"。实测规范组合少 9px、面荷载少 26px。
+
+    所以这里把 heightForWidth 接进尺寸策略，并在每次改变宽度后据实抬高
+    minimumHeight。提示文字是这个项目交付能力边界的主要位置，被切掉等于
+    没写。
+    """
 
     def __init__(self, text: str, parent=None):
-        super().__init__(text, parent)
+        super().__init__(emphasis(text), parent)
+        self.setTextFormat(Qt.TextFormat.RichText)
         self.setStyleSheet(
             f"color: {theme.INK_DIM}; font-size: 8pt; "
             f"padding: 2px 4px; background: transparent; border: none;")
         self.setWordWrap(True)
+        policy = self.sizePolicy()
+        policy.setHeightForWidth(True)
+        policy.setVerticalPolicy(QSizePolicy.Policy.MinimumExpanding)
+        self.setSizePolicy(policy)
+
+    def setText(self, text: str) -> None:      # noqa: N802 — Qt 的命名
+        super().setText(emphasis(text))
+        self._fit()
+
+    def resizeEvent(self, event):              # noqa: N802 — Qt 的命名
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self) -> None:
+        width = self.width()
+        if width > 0:
+            self.setMinimumHeight(self.heightForWidth(width))
 
 
 def style_dialog(dialog, min_width: int = 420, min_height: int = 300):
-    """给对话框应用统一、紧凑的专业样式。"""
-    dialog.setMinimumSize(min_width, min_height)
+    """给对话框应用统一、紧凑的专业样式，并定下**初始**大小。
+
+    ``min_height`` 是希望打开时有多高，**不是硬下限**。
+
+    原来这里是 ``setMinimumSize(min_width, min_height)``，而 Qt 的
+    setMinimumSize 会**盖掉布局算出来的最小高度**：内容放不下时不会撑开窗口，
+    而是把所有控件按比例压扁。边界条件对话框实测需要 694px、这里钉死 520px，
+    结果六行自由度被压成 8px 高（文字本身要 17px），勾选框和标签直接重叠。
+    一次压扁 26 个控件，而且不报任何错。
+
+    所以高度交给布局：只锁宽度，高度用 resize 给个初始值，Qt 在显示时会
+    自动撑到 minimumSizeHint。窗口仍然可以被用户拉大，只是拉不到放不下。
+    """
+    dialog.setMinimumWidth(min_width)
+    dialog.resize(min_width, min_height)
     dialog.setStyleSheet(f"""
         QDialog {{
             background: {theme.PANEL};

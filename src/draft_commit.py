@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from change_preview import model_digest
 from multimodal_contract import MODEL_COINCIDENCE_M, canonical_digest
+from units import of as unit_of
 from multimodal_workflow import (MultimodalControllerState, draft_digest,
                                  validate_v2_draft)
 
@@ -18,6 +19,34 @@ SIDECAR_FORMAT = "space-frame-multimodal-provenance/v1"
 
 class DraftCommitError(ValueError):
     pass
+
+
+def _aligned(model: Mapping[str, Any],
+             baseline: Mapping[str, Any]) -> dict[str, Any]:
+    """把草稿模型换算到基线的单位制。单位一致时原样返回。
+
+    **合并以前完全不看单位。** 识别管线产出的草稿固定是 N-m-Pa，而用户
+    可以把项目切到 N-mm-MPa（钢结构详图常用）。草稿里写 1.0 意思是 1 米，
+    直接并进毫米制模型就成了 1 毫米——**小 1000 倍**。12 米的框架旁边挂一根
+    1 毫米的杆，模型依然合法，能求解、出数、没有任何提示。
+
+    replace_empty 模式同样要换：它原先整个 `return deepcopy(model)`，
+    连 units 字段一起替换，等于悄悄把用户选的毫米制换回米制。
+
+    换算走 units.convert_model——那条路径有按 schema 逐字段点名的覆盖闸门，
+    比在这里另写一份坐标缩放可靠。
+    """
+    from units import SI, convert_model
+
+    source = str(model.get("units") or SI)
+    target = str(baseline.get("units") or SI)
+    if source == target:
+        return deepcopy(dict(model))
+    try:
+        return convert_model(dict(model), target)
+    except ValueError as exc:
+        raise DraftCommitError(
+            f"草稿是 {source}、当前模型是 {target}，换算失败：{exc}") from None
 
 
 def build_merge_plan(draft: Mapping[str, Any], baseline: Mapping[str, Any], *,
@@ -29,6 +58,12 @@ def build_merge_plan(draft: Mapping[str, Any], baseline: Mapping[str, Any], *,
     model = draft.get("model")
     if not isinstance(model, dict):
         raise DraftCommitError("草稿尚未物化为模型")
+    # 坐标要和基线比重合、比容差，先换到同一套单位再说
+    model = _aligned(model, baseline)
+    # 重合容差是**物理距离**，写死的 1e-6 只在米制下是 1 微米：
+    # 毫米制下同一个数变成 1 纳米，紧了 1000 倍，两个实际重合的节点
+    # 会被当成两个——用户得到一根没连上的杆，而模型照样合法。
+    coincidence = MODEL_COINCIDENCE_M / unit_of(baseline).length_to_m
     if any(item.get("severity") == "blocking" and item.get("status") == "open"
            for item in draft.get("issues", ())):
         raise DraftCommitError("仍有未解决的阻断问题")
@@ -48,14 +83,14 @@ def build_merge_plan(draft: Mapping[str, Any], baseline: Mapping[str, Any], *,
                            if int(item["id"]) == reuse[draft_id]), None)
             if target is None or math.dist(
                     point, (float(target["x"]), float(target["y"]),
-                            float(target["z"]))) > MODEL_COINCIDENCE_M:
+                            float(target["z"]))) > coincidence:
                 raise DraftCommitError(f"草稿节点 {draft_id} 的复用目标无效或不重合")
             node_actions.append({"draft_id": draft_id, "action": "reuse",
                                  "target_id": reuse[draft_id]})
             continue
         if not empty:
             if any(math.dist(point, (float(old["x"]), float(old["y"]),
-                                     float(old["z"]))) <= MODEL_COINCIDENCE_M
+                                     float(old["z"]))) <= coincidence
                    for old in existing_nodes):
                 raise DraftCommitError(
                     f"草稿节点 {draft_id} 与现有节点重合，需先明确复用或平移")
@@ -103,6 +138,7 @@ def materialize_candidate(draft: Mapping[str, Any],
     model = draft.get("model")
     if not isinstance(plan, dict) or not isinstance(model, dict):
         raise DraftCommitError("缺少 model 或 merge_plan")
+    model = _aligned(model, baseline)
     if plan.get("baseline_model_hash") != model_digest(dict(baseline)):
         raise DraftCommitError("提交基线已变化，请重新预演")
     mode = plan.get("mode")
@@ -183,7 +219,23 @@ def materialize_candidate(draft: Mapping[str, Any],
             result["member"] = member_map[int(result["member"])]
         return result
 
-    load_collections = ("nodal_loads", "member_loads", "member_spans", "settlements")
+    # **这五种都要走 mapped_load。** 不在这张表里的键会被当成工况元数据
+    # 原样拷贝过去——包括里面的 node / member 引用，而 add_only 模式下编号
+    # 是要重排的。member_strains 以前就漏在外面：草稿里写"杆件 1 升温 30 度"，
+    # 并进一个已有两根杆的模型后，那条初应变仍然指着**基线的**杆件 1，
+    # 而不是它自己那根（应当是 3）。模型照样合法，没有任何东西会发现。
+    load_collections = ("nodal_loads", "member_loads", "member_spans",
+                        "settlements", "member_strains")
+    # 工况里除了这几种集合，就只剩一个名字。多出来的键说明 schema 长了新
+    # 东西而这里没跟上——那正是上面那个 bug 的来路，所以直接拦住。
+    case_metadata = {"name"}
+    for source_case in model.get("load_cases") or []:
+        unknown = sorted(set(source_case) - set(load_collections) - case_metadata)
+        if unknown:
+            raise DraftCommitError(
+                f"荷载工况 {source_case.get('name')!r} 里有合并流程不认识的字段 "
+                f"{unknown}；它们会被原样拷贝、其中的编号不会重映射。"
+                "先在 load_collections 里给它们加上处理，再提交。")
     for collection in load_collections:
         existing_names = {str(item.get("name", ""))
                           for item in candidate.get(collection) or []}

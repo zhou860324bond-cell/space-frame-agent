@@ -101,7 +101,7 @@ def test_result_panel_controls_are_wired_to_contour_options(qt_app):
     window.results.levels.setCurrentText("8 级")
     options = window.result_display_options
     assert options == {"percentile": None, "sign": "positive", "levels": 8,
-                       "palette": "rainbow", "shading": True,
+                       "palette": "turbo", "shading": True,
                        "overlay_deformed": True, "show_extrema": True}
 
 

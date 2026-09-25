@@ -76,3 +76,20 @@ def _close_windows():
             widget.close()
             widget.deleteLater()
     app.processEvents()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _capsules_stay_out_of_the_repo(tmp_path_factory):
+    """整场测试的实验胶囊写进临时目录，不写进仓库。
+
+    每次 solve_model 成功都会自动存一个胶囊，默认目录是相对路径
+    `capsules/`——在仓库根目录跑 pytest，胶囊就全落在仓库里。一次全量
+    回归上千次求解，攒到清理时已经有近两万个文件、150 MB，真正手动求解
+    存下的那几十个淹在里面找不到。
+    """
+    import capsule
+
+    original = capsule.DEFAULT_CAPSULE_DIR
+    capsule.DEFAULT_CAPSULE_DIR = tmp_path_factory.mktemp("capsules")
+    yield
+    capsule.DEFAULT_CAPSULE_DIR = original

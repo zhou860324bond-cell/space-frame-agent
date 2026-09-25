@@ -29,13 +29,116 @@ import silent_failures as _silent
 
 class SolvingMixin:
     """求解：自研内核、Abaqus 对标、实体子模型。见模块 docstring。"""
+    def solve_steps(self, inspect: str | None = None) -> ToolResult:
+        """按顺序求解模型里声明的全部分析步。
+
+        荷载与边界条件在步之间**传播**：某一步建的东西自动沿用到后面每一步，
+        直到被改写或显式失活。所以"满载 → 撤活载 → 拆支座"这样三步，只需要
+        在第一步写全荷载，后两步各写一行变化。
+
+        **每一步都从未变形、无应力的状态重解。** 线弹性下这不是问题——撤掉
+        支座之后的平衡态就是重解出来的那个。但它表达不了施工过程：后装的杆件
+        不会躲开先前的变形，塑性残余也不会留到下一步。杆件同样不能在步之间
+        生灭。返回里带着这两条，转达时不要省掉。
+
+        ``inspect`` 指定哪一步的结果留在会话里供后处理（画图、验算、查内力）；
+        默认是最后一步。求解本身每一步都做，只是会话一次只能端着一份结果。
+        """
+        import steps as step_module
+
+        declared = step_module.from_payload(self.model)
+        if not declared:
+            return ToolResult(False, {
+                "error": "模型里没有分析步",
+                "hint": "用 add_step 建一个；只想算一次的话直接用 solve_model"})
+        try:
+            effective = step_module.resolve(declared, self.model)
+        except ValueError as exc:
+            return ToolResult(False, {"error": str(exc),
+                                      "hint": "分析步没有执行，模型保持不变"})
+
+        names = [e.name for e in effective]
+        target = inspect if inspect is not None else names[-1]
+        if target not in names:
+            return ToolResult(False, {
+                "error": f"没有名为 {target!r} 的分析步", "steps": names})
+
+        original = self.model
+        summary = []
+        try:
+            for eff in effective:
+                self.model = step_module.payload_for(eff, original)
+                if eff.analysis == "pdelta":
+                    outcome = self.solve_model(
+                        analysis="step", amplitudes=dict(eff.loads),
+                        increments=eff.increments)
+                    case_key = "STEP"
+                else:
+                    # 线性步：各工况按幅值曲线在 t=1 处的系数叠加成一个组合。
+                    # 线性叠加在这里是精确的，所以不必走增量求解。
+                    factors = self._amplitude_factors(eff.loads, original)
+                    self.model = dict(self.model)
+                    self.model["combos"] = [{"name": eff.name,
+                                             "factors": factors}]
+                    outcome = self.solve_model(analysis="linear")
+                    case_key = eff.name
+                if not outcome.ok:
+                    return ToolResult(False, {
+                        "error": f"分析步 {eff.name!r} 求解失败",
+                        "detail": outcome.payload,
+                        "completed": [s["step"] for s in summary]})
+                entry = outcome.payload.get("cases", {}).get(case_key, {})
+                summary.append({
+                    "step": eff.name, "analysis": eff.analysis,
+                    "loads": dict(eff.loads),
+                    "supports": sorted(eff.supports),
+                    "changes": list(eff.changes),
+                    "max_deflection_mm": entry.get("max_deflection_mm"),
+                    "max_displacement_mm": entry.get("max_displacement_mm"),
+                    "equilibrium_ok": entry.get("equilibrium_ok")})
+                if eff.name == target:
+                    kept = (self.solution, self.result_db,
+                            self.frame, self.compilation)
+        finally:
+            self.model = original
+
+        self.solution, self.result_db, self.frame, self.compilation = kept
+        return ToolResult(True, {
+            "steps": summary, "count": len(summary), "inspecting": target,
+            "note": f"会话里留的是分析步 {target!r} 的结果，后处理都按它来；"
+                    "换一步看结果用 solve_steps(inspect=\"步名\")",
+            "limitation": "每一步都从未变形、无应力状态重解，不把上一步的状态"
+                          "带进来；杆件也不能在步之间生灭。所以这表达的是"
+                          "「同一结构的几种配置」，不是施工过程。"})
+
+    @staticmethod
+    def _amplitude_factors(loads: dict, payload: dict) -> dict:
+        """线性步里各工况的叠加系数：幅值曲线在伪时间 1.0 处的值。
+
+        **不是一律取 1.0。** 自定义曲线完全可以收在 0.5——那种情况下取 1.0
+        会把荷载放大一倍，而结果看着完全正常。
+        """
+        from frame3d import BUILTIN_AMPLITUDES, Amplitude
+
+        defined = payload.get("amplitudes") or {}
+        out = {}
+        for case, amp in loads.items():
+            if amp in defined:
+                curve = Amplitude(amp, tuple((float(t), float(v))
+                                             for t, v in defined[amp]))
+            else:
+                curve = Amplitude(amp, BUILTIN_AMPLITUDES[amp])
+            out[case] = curve.at(1.0)
+        return out
+
     def solve_model(self, analysis: str = "linear", increments: int = 10,
-                    max_iter: int = 40, tolerance: float = 1e-7) -> ToolResult:
-        errors = validate_payload(self.model)
+                    max_iter: int = 40, tolerance: float = 1e-7,
+                    amplitudes: dict | None = None) -> ToolResult:
+        errors = self.validation_errors()
         if errors:
             return ToolResult(False, {"errors": errors,
                                       "hint": "先按上面的清单修正模型，再重新求解"})
-        self.compilation = compile_model(self.model)
+        self.compilation = compile_model(self.model, validated=True)
         self.frame = self.compilation.analysis_model
         self.result_db = None
         try:
@@ -51,6 +154,19 @@ class SolvingMixin:
                 self.solution = solve_material_nonlinear(
                     self.frame, increments=increments, max_iter=max_iter,
                     tolerance=tolerance)
+            elif analysis == "step":
+                from nonlinear import solve_step
+                if not amplitudes:
+                    self.solution = None
+                    return ToolResult(False, {
+                        "error": "分析类型 step 需要 amplitudes："
+                                 "把工况名映射到幅值曲线名",
+                        "example": {"DL": "STEP", "WX": "RAMP"},
+                        "hint": "内置 RAMP（0→1 斜坡）与 STEP（全程为 1）；"
+                                "自定义曲线用 define_amplitude"})
+                self.solution = solve_step(
+                    self.frame, dict(amplitudes), increments=increments,
+                    max_iter=max_iter, tolerance=tolerance)
             else:
                 self.solution = None
                 return ToolResult(False, {"error": f"未知分析类型 {analysis!r}"})
@@ -73,21 +189,55 @@ class SolvingMixin:
         span = self._reference_length()
         U = self.units
         results = {}
+        view = self.result_db.solution_view(self.frame)
         for name, res in self.solution.all_results().items():
             node, mag = self._max_displacement(res)
-            eq = check_equilibrium(self.frame, self.solution, name)
+            # 二阶分析的平衡只在变形后位形上成立。拿未变形几何去查，残差
+            # 恰好是 P·Δ——那是二阶效应本身，不是误差。一根 1600 kN 轴压、
+            # 顶点侧移 54 mm 的柱子会报 5.4% 的"不平衡"而模型完全正确，
+            # 用户看到的是一次假警报。
+            kind = str(self.solution.analysis.get("type", ""))
+            second_order = kind.startswith(("pdelta", "material_nonlinear"))
+            # 变形后位形下残差由几何刚度自身的近似定界，落在 1e-4 量级；
+            # 线性静力用的 1e-8 会把每一次正确的二阶求解都判成不平衡。
+            eq = check_equilibrium(self.frame, self.solution, name,
+                                   rtol=1e-3 if second_order else 1e-8,
+                                   deformed=second_order)
             entry = {"max_displacement_mm": round(mag * U.disp_scale, 6),
                      "at_node": node,
                      "equilibrium_ok": eq["ok"],
                      "equilibrium_residual": float(f"{eq['relative']:.3e}")}
+            if second_order:
+                entry["equilibrium_frame"] = "变形后位形"
+            # 节点位移**不是**最大位移。满跨均布下挠度全在单元内部，
+            # 节点那一栏可能只有真值的一半，简支梁更是直接报 0。
+            # 详见 _intra_member_deflection 的注释。
+            defl, defl_at = self._intra_member_deflection(view, name, entry)
+            governing = max(mag, defl)
             if mag <= 1e-12 and self._applied_load_magnitude(name) > 0.0:
+                axis = self._out_of_plane_load_axis(name)
+                if axis is not None:
+                    entry["warning"] = (
+                        f"有荷载但节点位移为零：模型的节点都在一个平面内，而这个"
+                        f"工况的荷载几乎全部沿平面法向 {axis}，也就是面外。"
+                        "平面刚架（bays 留空）的面外自由度是被自动约束的，"
+                        "面外荷载传不到节点上。检查荷载方向。"
+                        + (f"（max_deflection_mm 里那 {entry['max_deflection_mm']} mm "
+                           "是杆件在面外被两端夹住硬弯出来的，不代表结构真能这样受力。）"
+                           if defl > 1e-12 else ""))
+                elif defl > 1e-12:
+                    entry["note"] = (
+                        "节点位移为零是正常的，不是荷载加错了：这个工况的节点"
+                        "全被约束住，响应发生在单元内部。真实最大挠度看 "
+                        f"max_deflection_mm（{entry['max_deflection_mm']} mm，"
+                        f"在{defl_at}），校核挠跨比用它。")
+                else:
+                    entry["warning"] = (
+                        "有荷载但位移为零，且单元内部也没有挠度。常见原因：荷载"
+                        "全部作用在被约束死的方向上。检查荷载方向。")
+            elif span > 0 and governing > span / 200.0:
                 entry["warning"] = (
-                    "有荷载但位移为零。常见原因：荷载全部作用在被约束死的方向上——"
-                    "例如给平面刚架（bays 留空）加了面外荷载，"
-                    "平面刚架的面外自由度是被自动约束的。检查荷载方向。")
-            elif span > 0 and mag > span / 200.0:
-                entry["warning"] = (
-                    f"最大位移达到最短杆件长度的 1/{max(1, int(span / mag))}，量级异常。"
+                    f"最大位移达到最短杆件长度的 1/{max(1, int(span / governing))}，量级异常。"
                     "常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、"
                     "单位没换算成 N-m-Pa、或截面惯性矩填小了。")
             results[name] = entry
@@ -148,6 +298,105 @@ class SolvingMixin:
                 "next": [f.get("suggestion") for f in blocking if f.get("suggestion")],
             }
         return ToolResult(not blocking, payload)
+
+    def _intra_member_deflection(self, view, name: str,
+                                 entry: dict[str, Any]) -> tuple[float, str]:
+        """把**含单元内部**的最大挠度写进 entry，返回 (挠度, 位置描述)。
+
+        为什么 solve_model 的头条必须带上这个数：`_max_displacement` 只扫节点，
+        而满跨均布、梯形这类荷载不会触发 model_compiler 的剖分（它只在集中力
+        位置和显式内节点处切分），于是跨中根本没有节点可查。后果实测：
+
+        * 简支梁 6 m、20 kN/m —— 节点位移 0.0 mm，真实跨中挠度 16.38 mm；
+        * 87 杆三层框架、各梁 20 kN/m —— 头条报 4.30 mm，真实 9.27 mm，差 2.16 倍。
+
+        两个数都不是错的，错的是只报前一个还管它叫"最大位移"。内力早就做了
+        单元内解析恢复（internal_forces.member_deflection 的 docstring 专门
+        写了这件事），位移这一路当时没接上来。
+
+        算不出来时**显式说算不出来**，不静默省略——省略会让人以为单元内没有
+        挠度，那正是这个函数要消灭的误读。代价实测 47 ms（求解本身 223 ms），
+        stations 取 21 到 201 耗时几乎不变，瓶颈在逐单元开销，所以不必省测点。
+        """
+        try:
+            from internal_forces import max_deflection
+            best = max_deflection(self.frame, view, name, stations=101,
+                                  mapping=self.compilation.mapping)
+        except Exception as exc:  # noqa: BLE001 — 异常没被吞掉：它的文本
+            # 进了 max_deflection_note，随结果一起返回给用户。挠度是求解的
+            # 附加信息，算不出来不该把整次求解拖垮（见模块 docstring 末段）。
+            entry["max_deflection_mm"] = None
+            entry["max_deflection_note"] = f"单元内挠度算不出来：{exc}"
+            return 0.0, ""
+        if best is None or best.get("member") is None:
+            entry["max_deflection_mm"] = None
+            entry["max_deflection_note"] = "模型里没有杆件，无从谈单元内挠度"
+            return 0.0, ""
+        value = float(best["value"])
+        U = self.units
+        entry["max_deflection_mm"] = round(value * U.disp_scale, 6)
+        entry["at_member"] = best["member"]
+        entry["at_x_m"] = round(float(best["x"]) * U.length_to_m, 4)
+        where = f"杆件 {best['member']} 距 i 端 {entry['at_x_m']} m 处"
+        return value, where
+
+    def _out_of_plane_load_axis(self, name: str) -> str | None:
+        """模型是真正的平面结构、且该工况荷载几乎全垂直于这个平面时，
+        返回法向的名字（"X"/"Y"/"Z" 或坐标串）；否则返回 None。
+
+        **为什么不能沿用"节点位移为零"做判据。** 两件完全不同的事都会让节点
+        位移为零：
+
+        * 简支梁加满跨均布——正常，节点本来就全被约束，响应在单元内部；
+        * 平面刚架加面外荷载——建模错误，面外自由度是被自动约束的。
+
+        原来的实现把两者都当成后者，于是对着一根正常的简支梁喊"检查荷载
+        方向"。反过来只看单元内挠度又会把后者放过去——面外荷载在杆件内部是
+        **真的**会产生弯曲的（实测 My = wL²/12、挠度 14.7 mm），它不是零。
+
+        能分开两者的是几何：平面刚架的节点张成一个二维平面，面外方向唯一；
+        简支梁的节点共线，压根没有唯一的"面外"，那种模型不该报这条。
+        所以这里先做共面性判断，再看荷载方向。
+        """
+        pts = np.array([[n.x, n.y, n.z] for n in self.frame.nodes.values()],
+                       dtype=float)
+        if len(pts) < 3:
+            return None
+        centered = pts - pts.mean(axis=0)
+        _, sv, vt = np.linalg.svd(centered, full_matrices=True)
+        if sv[0] <= 0:
+            return None
+        # sv[2]≈0 ⇒ 共面；sv[1] 太小 ⇒ 共线，没有唯一法向，不适用这条检查
+        if sv[2] / sv[0] > 1e-9 or sv[1] / sv[0] < 1e-6:
+            return None
+        normal = vt[2] / np.linalg.norm(vt[2])
+
+        vectors: list[np.ndarray] = []
+        load_case = self.frame.load_cases.get(name)
+        if load_case is None:                      # 组合不单独判，交给各工况
+            return None
+        for load in load_case.nodal_loads.values():
+            vectors.append(np.asarray(load, dtype=float)[:3])
+        for w in load_case.member_loads.values():
+            vectors.append(np.asarray(w, dtype=float)[:3])
+        for loads in (load_case.member_spans or {}).values():
+            for item in loads:
+                vectors.append(np.asarray(item.w1, dtype=float))
+                vectors.append(np.asarray(item.w2, dtype=float))
+        seen = False
+        for vec in vectors:
+            norm = float(np.linalg.norm(vec))
+            if norm <= 0:
+                continue
+            seen = True
+            if abs(float(np.dot(vec / norm, normal))) < 0.99:
+                return None                        # 有一项在面内，就不是纯面外
+        if not seen:
+            return None
+        for axis, label in enumerate("XYZ"):
+            if abs(normal[axis]) > 0.999:
+                return label
+        return "(" + ", ".join(f"{v:.3f}" for v in normal) + ")"
 
     def solve_with_abaqus(self, case: str | None = None,
                           element: str = "B33") -> ToolResult:

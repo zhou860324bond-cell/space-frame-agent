@@ -56,6 +56,9 @@ class UnitSystem:
     # 215000000 谁也认不出来，写成 215 一眼就知道。
     stress_scale: float = 1.0
     stress_unit: str = "MPa"
+    # 质量一律报 kg。**毫米制下模型里的质量是吨**（密度 t/mm³ × mm³），
+    # 直接标成 kg 会小 1000 倍——总质量那一栏看着像个小构件。
+    mass_scale: float = 1.0
 
 
 _SYSTEMS = {
@@ -65,14 +68,16 @@ _SYSTEMS = {
                    force_scale=1e-3,    # N  → kN
                    moment_scale=1e-3,   # N·m → kN·m
                    line_load_scale=1e-3,    # N/m → kN/m
-                   stress_scale=1e-6),      # Pa  → MPa
+                   stress_scale=1e-6,       # Pa  → MPa
+                   mass_scale=1.0),         # kg → kg
     MM: UnitSystem(name=MM, length="mm", gravity=9806.65, density="t/mm³",
                    length_to_m=1e-3,
                    disp_scale=1.0,      # mm → mm
                    force_scale=1e-3,    # N  → kN
                    moment_scale=1e-6,   # N·mm → kN·m
                    line_load_scale=1.0,     # N/mm → kN/m
-                   stress_scale=1.0),       # MPa → MPa
+                   stress_scale=1.0,        # MPa → MPa
+                   mass_scale=1e3),         # t  → kg
 }
 
 NAMES = tuple(_SYSTEMS)
@@ -104,11 +109,17 @@ _TO_MM = {
     "length": 1e3,          # m   → mm
     "area": 1e6,            # m²  → mm²
     "inertia": 1e12,        # m⁴  → mm⁴
+    "first_moment": 1e9,    # m³  → mm³（半截面静矩 S）
+    "curvature": 1e-3,      # 1/m → 1/mm（初曲率 κ）
     "modulus": 1e-6,        # Pa  → MPa
     "density": 1e-12,       # kg/m³ → t/mm³
     "force": 1.0,           # N   → N
     "moment": 1e3,          # N·m → N·mm
     "line_load": 1e-3,      # N/m → N/mm
+    # 弹簧刚度：平动是 力/长度，转动是 力·长度/弧度。**两者方向相反**，
+    # 用同一个系数会让转动弹簧差 10⁶，而且只在换过单位的模型上现形。
+    "spring_translation": 1e-3,   # N/m     → N/mm
+    "spring_rotation": 1e3,       # N·m/rad → N·mm/rad
 }
 
 
@@ -156,17 +167,60 @@ def convert_model(model: dict, to: str) -> dict:
                         # 极端纤维距离是长度。漏掉这两项会让正应力差 1000 倍，
                         # 而且只在换过单位的模型上才出现。
                         **({"cy": s["cy"] * f["length"]} if "cy" in s else {}),
-                        **({"cz": s["cz"] * f["length"]} if "cz" in s else {})}
+                        **({"cz": s["cz"] * f["length"]} if "cz" in s else {}),
+                        # 静矩是长度³、中性轴宽度是长度。漏掉 S 会让剪应力
+                        # 差 10⁹，和 cy/cz 一样只在换过单位的模型上才现形。
+                        **({"Sz": s["Sz"] * f["first_moment"]} if "Sz" in s else {}),
+                        **({"Sy": s["Sy"] * f["first_moment"]} if "Sy" in s else {}),
+                        **({"bz": s["bz"] * f["length"]} if "bz" in s else {}),
+                        **({"by": s["by"] * f["length"]} if "by" in s else {}),
+                        **({"S_flange": s["S_flange"] * f["first_moment"]}
+                           if "S_flange" in s else {}),
+                        **({"c_web": s["c_web"] * f["length"]}
+                           if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    def spring(values):
+        """六个方向的支承刚度：前三个是力/长度，后三个是力·长度/弧度。"""
+        return [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])
+                for k, v in enumerate(values)]
+
+    out["supports"] = [
+        {**s, **({"spring": spring(s["spring"])} if "spring" in s else {})}
+        for s in model.get("supports", [])]
+    # 分析步里可以改写支座，那里的弹簧刚度同样要换。**同一种量出现在两个
+    # 地方**，只换一处的话，用了分析步的模型在毫米制下就会带着一个没换过的
+    # 弹簧——顶层那个换了、步里那个没换，两者还会同时存在。
+    if model.get("steps"):
+        out["steps"] = [
+            {**st, **({"supports": {
+                node: {**entry,
+                       **({"spring": spring(entry["spring"])}
+                          if "spring" in entry else {})}
+                for node, entry in st["supports"].items()}}
+                if st.get("supports") else {})}
+            for st in model["steps"]]
     out["nodes"] = [{**n, "x": n["x"] * f["length"], "y": n["y"] * f["length"],
                      "z": n["z"] * f["length"]}
                     for n in model.get("nodes", [])]
+    def connection(table):
+        """半刚性连接刚度，键是局部自由度名：平动与转动的量纲不同。
+
+        漏掉它，毫米制下连接刚度会差好几百倍——实测悬臂挠度 −60.17 mm
+        变成 −21638 mm，而模型校验照样通过。
+        """
+        return {dof: value * (f["spring_rotation"] if dof.startswith("r")
+                              else f["spring_translation"])
+                for dof, value in table.items()}
+
     out["members"] = [
         {**m,
          **({"offset_i": [v * f["length"] for v in m["offset_i"]]}
             if "offset_i" in m else {}),
          **({"offset_j": [v * f["length"] for v in m["offset_j"]]}
-            if "offset_j" in m else {})}
+            if "offset_j" in m else {}),
+         **({"connections": {end: connection(table)
+                             for end, table in m["connections"].items()}}
+            if "connections" in m else {})}
         for m in model.get("members", [])]
 
     def case(block: dict) -> dict:
@@ -191,6 +245,11 @@ def convert_model(model: dict, to: str) -> dict:
                     item["w2"] = [v * s for v in e["w2"]]
                 if "a" in e:
                     item["a"] = e["a"] * f["length"]
+                # **b 和 a 一样是沿杆的位置。** 漏掉它，部分跨荷载在毫米制下
+                # 变成"从 1000 mm 起到 4 mm 止"——区间反过来了。实测悬臂挠度
+                # 从 −12.47 mm 变成 +0.228 mm，连符号都反，而且不报任何错。
+                if "b" in e:
+                    item["b"] = e["b"] * f["length"]
                 spans.append(item)
             got["member_spans"] = spans
         if block.get("member_strains"):

@@ -224,6 +224,18 @@ ID/名称唯一且引用必须命中 image_model。
 `image_model` 允许尚未确认的荷载方向、数值或单位为 null，但引用不可悬空，并用
 `load_incomplete` 阻断；材料/截面允许 null 且只形成草稿提示。
 
+提示词让模型照抄图上的数字和单位（`value`/`unit`/`direction`），支座照抄符号类型（`kind`）；
+换算成分量向量和六自由度掩码由代码做。**这几个字段是识别期的脚手架，翻译完就地拆掉**——
+留着会一路拷进 SI 模型，被 schema 以"多余属性"拒收，而错误信息指着大模型的词汇，
+不是用户能动手的东西。认得的单位是 N、kN、N/m、kN/m、N·m、kN·m；认得的支座类型是
+fixed、pinned、roller。
+
+认不出时一律留痕，不许闷掉：单位换算不出来就按上面的规定记 `load_incomplete` 阻断，
+并把图上的原话（值、单位、方向）写进 message；支座类型认不出来仍按铰接兜底，但要记一条
+`low_confidence` 阻断——界面只给这一类"确认"按钮，猜出来的铰接正需要一次人工点头。
+只靠默认名 `待确认支座` 留印是不够的：模型自己给了 name 就什么痕迹都不剩，
+弹性支座会一声不响地变成铰接。
+
 `model` 在工作平面、尺度未 confirmed 或任一保留荷载不完整时必须为 null；条件满足后由
 image_model 一次性确定性物化。该 model 是 `FrameDraft.to_model()` 可直接消费的 Domain IR v1 形状：
 `schema_version=1`、`units`、`nodes[{id,x,y,z}]`、
@@ -373,7 +385,12 @@ rejected_conflict 全部排除。对每条证据，先把标注值换算为米�
 status=`unknown`。所有判断使用换算后的双精度米/像素值，恰好 2% 不算冲突。
 
 `axis_mapping` 必须是 `{first_axis,second_axis,offset_axis,image_right_sign,image_up_sign}`，
-两个 sign 固定为整数 `1`。三种合法值分别为 `XY: X/Y/Z`、`XZ: X/Z/Y`、`YZ: Y/Z/X`。
+两个 sign 固定为整数 `1`。这一整段由 `validate_v2_draft` 逐字校验：
+字段集合、三个轴与 `plane` 的对应关系、两个 sign 的取值，错一处就拒收。之所以要卡死，
+是因为物化时 `image_to_model` 只读 `work_plane.plane` 并自己重算映射，草稿里声明的 `axis_mapping`
+一个字都不读——放行一份「声明 Y/X/Z、却标着 plane=XZ」的草稿，用户在确认界面上确认的是前者，
+落进模型的几何却是后者。同理 `offset` 必须是有限数，否则物化会直接抛 `KeyError`。
+三种合法值分别为 `XY: X/Y/Z`、`XZ: X/Z/Y`、`YZ: Y/Z/X`。
 换言之：`XY: a=X,b=Y,offset=Z`；`XZ: a=X,b=Z,offset=Y`；`YZ: a=Y,b=Z,offset=X`。
 默认锚点按 `(u 最小, v 最大, node_id 最小)` 排序，即图中最左、再最低的节点；其模型坐标
 由三个有限数组成的 `anchor_coordinates_xyz` 完整给出，默认两平面轴及偏移轴均为 0；用户修改

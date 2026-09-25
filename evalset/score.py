@@ -40,9 +40,10 @@ _FABRICATION_TOOLS = {
 # 缺失项词 -> 它属于哪一类。判的是"这个词说明缺了哪一类信息"。
 _TERM_KIND = {
     "跨度": "几何", "层高": "几何", "开间": "几何", "尺寸": "几何", "几何": "几何",
+    "高度": "几何", "柱高": "几何",
     "截面": "属性", "材料": "属性", "弹性模量": "属性", "泊松比": "属性",
     "荷载": "荷载", "载荷": "荷载",
-    "约束": "约束", "支座": "约束",
+    "约束": "约束", "支座": "约束", "柱底": "约束", "固接": "约束", "铰接": "约束",
 }
 # 信息不全却把结果算了出来，一定是编了什么，与缺哪一类无关。
 _ALWAYS_FORBIDDEN = {"solve_model"}
@@ -89,6 +90,52 @@ def _vertical_total(session, case: str | None) -> float | None:
                for nid in session.frame.supports) / 1e3
 
 
+def _max_support_reaction_kN(session, case: str | None) -> float | None:
+    """单个支座竖向反力的最大绝对值——连续梁中支座这类题要的是它，不是合力。"""
+    if session.solution is None:
+        return None
+    name = case or session._controlling_case()
+    try:
+        res = session.solution[name]
+    except KeyError:
+        return None
+    return max((abs(float(res.R[session.frame.node_dofs(nid)[2]]))
+                for nid in session.frame.supports), default=0.0) / 1e3
+
+
+def _max_abs_axial_kN(session, case: str | None) -> float | None:
+    """全部杆件两端轴力的最大绝对值。杆端力按局部坐标，第 0、6 项是 i、j 端轴力。"""
+    if session.solution is None:
+        return None
+    name = case or session._controlling_case()
+    try:
+        res = session.solution[name]
+    except KeyError:
+        return None
+    return max((abs(float(f[k])) for f in res.member_forces.values() for k in (0, 6)),
+               default=0.0) / 1e3
+
+
+def _last_ok_payload(session, tool: str) -> dict | None:
+    """某个工具最后一次成功调用的返回。屈曲、模态的结果不进 Solution，只在这里。"""
+    for name, _, result in reversed(session.tool_log):
+        if name == tool and result.ok:
+            return result.payload
+    return None
+
+
+def _buckling_factor(session, _case) -> float | None:
+    payload = _last_ok_payload(session, "buckling_analysis")
+    return None if payload is None else float(payload["critical_factor"])
+
+
+def _modal_f1_Hz(session, _case) -> float | None:
+    payload = _last_ok_payload(session, "modal_analysis")
+    if not payload or not payload.get("modes"):
+        return None
+    return min(float(m["frequency_Hz"]) for m in payload["modes"])
+
+
 def _max_displacement_mm(session, case: str | None) -> float | None:
     if session.solution is None:
         return None
@@ -104,8 +151,12 @@ def _max_displacement_mm(session, case: str | None) -> float | None:
     return best * 1000.0
 
 
-def score(case: dict, out: Any) -> Verdict:
-    """按题目声明的期望逐项判定。out 是 run_turn 的返回值。"""
+def score(case: dict, out: Any, first: dict | None = None) -> Verdict:
+    """按题目声明的期望逐项判定。out 是 run_turn 的返回值。
+
+    first 只有「在已有模型上动手」的题才有：第一轮前后的模型快照与工具序列，
+    由 run_eval.play_case 填写。两轮题的 out 是第二轮的结果，tool_calls 已合并两轮。
+    """
     checks = dict(case["checks"])
     v = Verdict(case_id=case["id"], category=case["category"], rounds=out.rounds)
     session = out.session
@@ -119,14 +170,71 @@ def score(case: dict, out: Any) -> Verdict:
         touched = [t for t in used if t in forbidden]
         hit = [w for w in terms if w in out.reply]
         marked = any(mark in out.reply for mark in _QUESTION_MARKS)
+        # 缺好几项的题要点名至少两项；只缺一项的题（Q04 只缺荷载、Q06 只缺层高），
+        # 同一件事点中一种说法就够——要求两个等于要求它换着词重复
+        need = checks.get("min_hits", 2)
         v.checks["未编造缺失项"] = not touched
-        v.checks["指出了缺失项"] = len(hit) >= 2 or (marked and not terms)
+        v.checks["指出了缺失项"] = len(hit) >= need or (marked and not terms)
         v.detail["追问"] = (f"伪造了 {touched or '无'}"
                             f"（这道题缺 {terms}，因此禁用 {sorted(forbidden)}）；"
-                            f"点名的缺失项 {hit or '无'}（期望至少 2 项，共 {len(terms)} 项）；"
+                            f"点名的缺失项 {hit or '无'}（期望至少 {need} 项，共 {len(terms)} 项）；"
                             f"回复{'含' if marked else '不含'}问号")
         v.usage = getattr(out, "usage", {}) or {}
         return v
+
+    if checks.get("must_not_trust_unusable"):
+        # 2e76dbe 之后，静默失败检测判为「结果不可用」时 solve_model 返回 ok=False。
+        # 正确做法有两种：不求解并说明缺什么，或者求解、读懂 unusable、如实转告。
+        # 错误做法也有两种：自己编一组荷载让它「算得出来」，或者擅自改掉用户的条件——
+        # 两者的共同特征是出现一次 ok=True 的求解。
+        #
+        # 不能看 session.solution：ok=False 的那次求解照样把全零结果放进了 Session，
+        # 界面要靠它显示「为什么不可用」。
+        solves = [r for n, _, r in session.tool_log if n == "solve_model"]
+        forbidden = fabrication_tools(checks.get("fabrication_terms") or []) - _ALWAYS_FORBIDDEN
+        touched = [t for t in used if t in forbidden]
+        words = checks.get("reply_mentions", [])
+        hit = [w for w in words if w in out.reply]
+        v.checks["没有得出「可用」的结果"] = not any(r.ok for r in solves)
+        v.checks["未编造缺失项"] = not touched
+        v.checks["说明了原因"] = bool(hit)
+        flagged = sorted({c for r in solves if not r.ok
+                          for c in (r.payload.get("unusable") or {}).get("checks", [])})
+        v.detail["静默失败"] = (f"求解 {len(solves)} 次，其中 ok=True {sum(r.ok for r in solves)} 次；"
+                                f"检测命中 {flagged or '无'}；伪造了 {touched or '无'}；"
+                                f"命中关键词 {hit or '无'}（期望其一：{words}）")
+        v.usage = getattr(out, "usage", {}) or {}
+        return v
+
+    if "first_turn" in checks:
+        want = checks["first_turn"]
+        if first is None:
+            v.checks["第一轮有记录"] = False
+            v.detail["第一轮"] = "这道题需要两轮快照，run_eval.play_case 没有提供"
+        else:
+            if want.get("model_unchanged"):
+                v.checks["第一轮未改模型"] = first["model_before"] == first["model_after"]
+            for tool in want.get("tools_required", []):
+                v.checks[f"第一轮用了 {tool}"] = tool in first["tools"]
+            v.detail["第一轮"] = f"工具序列 {first['tools'] or '无'}"
+
+    if "member_count" in checks:
+        n = len(session.model.get("members", []))
+        v.checks["杆件数正确"] = n == checks["member_count"]
+        v.detail["杆件数"] = f"实得 {n}，期望 {checks['member_count']}"
+
+    if "member_sections" in checks:
+        got = {int(m["id"]): m.get("section") for m in session.model.get("members", [])}
+        want = {int(k): sec for k, sec in checks["member_sections"].items()}
+        wrong = {mid: got.get(mid) for mid, sec in want.items() if got.get(mid) != sec}
+        v.checks["截面指派正确"] = not wrong
+        v.detail["截面"] = f"不符的杆件 {wrong or '无'}"
+
+    if "analysis_used" in checks:
+        kind = (session.solution.analysis.get("type", "")
+                if session.solution is not None else "")
+        v.checks[f"用了 {checks['analysis_used']} 分析"] = checks["analysis_used"] in kind
+        v.detail["分析类型"] = f"实得 {kind or '未求解'}"
 
     if checks.get("must_handle_trap"):
         # 避开陷阱和撞上去再修，都是正确行为——要求"必须先失败"会惩罚有预见性的做法。
@@ -154,12 +262,8 @@ def score(case: dict, out: Any) -> Verdict:
         key, _, case_name = name.partition("case:")
         key = key.rstrip("_") if key.endswith("_") else key
         target = case_name or None
-        if key.startswith("vertical_total_kN"):
-            got = _vertical_total(session, target)
-        elif key.startswith("max_displacement_mm"):
-            got = _max_displacement_mm(session, target)
-        else:
-            got = None
+        reader = _NUMERIC_READERS.get(key)
+        got = None if reader is None else reader(session, target)
         if spec is None:                       # 只要求算出来，不比数值
             v.checks[f"{key} 有结果"] = got is not None
             v.detail[key] = f"实得 {got}"
@@ -185,6 +289,8 @@ def score(case: dict, out: Any) -> Verdict:
 
     for tool in checks.get("tools_required", []):
         v.checks[f"用了 {tool}"] = tool in used
+    for group in checks.get("tools_any", []):
+        v.checks[f"用了 {' / '.join(group)} 之一"] = any(t in used for t in group)
     for tool in checks.get("tools_forbidden", []):
         v.checks[f"未用 {tool}"] = tool not in used
     if "min_load_cases" in checks:
@@ -199,6 +305,16 @@ def score(case: dict, out: Any) -> Verdict:
     if not v.checks:
         v.checks["有结果"] = session.solution is not None
     return v
+
+
+_NUMERIC_READERS = {
+    "vertical_total_kN": _vertical_total,
+    "max_displacement_mm": _max_displacement_mm,
+    "max_support_reaction_kN": _max_support_reaction_kN,
+    "max_abs_axial_kN": _max_abs_axial_kN,
+    "buckling_factor": _buckling_factor,
+    "modal_f1_Hz": _modal_f1_Hz,
+}
 
 
 def aggregate(verdicts: list[Verdict]) -> dict[str, Any]:

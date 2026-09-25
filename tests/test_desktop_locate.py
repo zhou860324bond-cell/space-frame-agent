@@ -229,7 +229,10 @@ def test_modal_reads_the_real_payload(solved_session):
     title, cols, rows, _ = result_rows.to_rows("modal", r.payload)
     assert len(rows) == 3
     assert all(isinstance(row[1], float) for row in rows), "频率要保持数值"
-    assert "有效质量比" in title, "取的阶数够不够，靠它判断"
+    assert "累计参与质量比" in title, "取的阶数够不够，靠它判断"
+    # 分母也要摆出来。只给比值的话，"上不去"是阶数不够还是质量压在支座上，
+    # 用户分不出来——后者加多少阶都没用。
+    assert "可参与" in title, "可参与质量是参与比的分母，必须一起给"
 
 
 def test_deflection_reads_the_real_payload(solved_session):

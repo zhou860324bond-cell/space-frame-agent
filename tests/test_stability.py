@@ -107,3 +107,20 @@ def test_fingerprint_changes_when_a_source_file_changes(tmp_path, monkeypatch):
     finally:
         target.write_bytes(original)
     assert code_fingerprint()["源码摘要"] == before
+
+
+def test_fingerprint_covers_modules_whose_text_reaches_the_model():
+    """silent_failures.py 的提示原样进工具回包——改它等于改提示词，指纹必须变。
+
+    旧的手写名单漏了它：2026-09-23 修 zero_internal_force 提示前后，指纹一模一样。
+    """
+    import run_repeat
+    before = code_fingerprint()["源码摘要"]
+    target = run_repeat.ROOT / "src" / "silent_failures.py"
+    original = target.read_bytes()
+    try:
+        target.write_bytes(original + b"\n# fingerprint probe\n")
+        assert code_fingerprint()["源码摘要"] != before
+    finally:
+        target.write_bytes(original)
+    assert code_fingerprint()["源码摘要"] == before

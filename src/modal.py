@@ -31,14 +31,20 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.linalg import eigh
 from scipy.sparse import coo_matrix
+from scipy.sparse.linalg import eigsh
 
 from frame3d import (DOF_PER_NODE, Frame, _member_matrices, assemble,
                      constrained_dofs, member_endpoints,
-                     member_local_displacements, project_secondary_matrix)
+                     member_local_displacements, project_secondary_matrix,
+                     scatter_blocks)
 
 # 一致质量矩阵在扭转项上要用极惯性矩 / 面积，这里按 (Iy + Iz) / A 取，
 # 对常见截面就是极回转半径的平方
 _MIN_MODES = 1
+# 自由度超过这个数就改用稀疏 eigsh。稠密 eigh 求全部特征值，耗时按 n³、内存按 n²
+# 涨：实测 7 千自由度要半分钟，1.5 万自由度光矩阵就要 5 GB。门槛以下保留稠密解，
+# 小模型结果与历史逐位一致，也不用操心迭代法的收敛。
+DENSE_EIGEN_LIMIT = 2000
 
 
 @dataclass
@@ -47,12 +53,34 @@ class ModalResult:
     frequencies: np.ndarray          # (n_modes,) Hz
     omega: np.ndarray                # (n_modes,) rad/s
     shapes: np.ndarray               # (n_dofs, n_modes) 全自由度，支座行为 0
-    total_mass: float
+    total_mass: float                # Σ ρAL，结构的全部质量
     effective_mass: np.ndarray       # (n_modes, 3) 三个平动方向的有效质量
+    #: (3,) 各方向**能参与振动**的质量 rᵀM_ff r。压在支座上的那部分不在内，
+    #: 所以它总是小于 total_mass——判"阶数取够没有"要拿它当分母。
+    participable_mass: np.ndarray = None      # type: ignore[assignment]
+    #: (n_modes, 3) 参与系数 Γ = φᵀMr / φᵀMφ。反应谱用它把谱位移放大成振型贡献。
+    participation: np.ndarray = None          # type: ignore[assignment]
+    #: (n_modes,) 广义模态质量 φᵀMφ。振型的归一化方式不同它就不同，
+    #: 所以任何用到振型幅值的公式都得带上它，不能默认为 1。
+    modal_mass: np.ndarray = None             # type: ignore[assignment]
 
     @property
     def periods(self) -> np.ndarray:
         return 1.0 / self.frequencies
+
+    @property
+    def mass_ratio(self) -> np.ndarray:
+        """(n_modes, 3) 各阶的参与质量比，分母是**能参与的**质量。
+
+        拿 total_mass 当分母是错的：支座上那部分永远参与不了，比值上不去
+        100%，而用户会以为阶数不够。
+        """
+        return self.effective_mass / self.participable_mass
+
+    @property
+    def cumulative_ratio(self) -> np.ndarray:
+        """(n_modes, 3) 累计参与质量比。规范看的是这个。"""
+        return np.cumsum(self.mass_ratio, axis=0)
 
 
 def consistent_mass(L: float, rho: float, A: float, Ip_over_A: float) -> np.ndarray:
@@ -98,30 +126,24 @@ def consistent_mass(L: float, rho: float, A: float, Ip_over_A: float) -> np.ndar
 
 def assemble_mass(model: Frame) -> coo_matrix:
     """整体一致质量矩阵。"""
-    n = model.num_dofs
-    rows: list[int] = []
-    cols: list[int] = []
-    vals: list[float] = []
+    all_dofs, blocks = [], []
     for m in model.members.values():
         L, R, T, B, _, _, cond = _member_matrices(model, m)
         mat, sec = model.materials[m.material], model.sections[m.section]
         ip_over_a = (sec.Iy + sec.Iz) / sec.A
         Me = consistent_mass(L, mat.density, sec.A, ip_over_a)
         Me = project_secondary_matrix(Me, cond)
-        Mg = B.T @ T.T @ Me @ T @ B
-        dofs = model.node_dofs(m.i) + model.node_dofs(m.j)
-        for a in range(12):
-            for b in range(12):
-                rows.append(dofs[a]); cols.append(dofs[b]); vals.append(Mg[a, b])
-    return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
+        all_dofs.append(model.node_dofs(m.i) + model.node_dofs(m.j))
+        blocks.append(B.T @ T.T @ Me @ T @ B)
+    return scatter_blocks(model.num_dofs, all_dofs, blocks)
 
 
 def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     """解 K φ = ω² M φ，返回前 num_modes 阶。
 
-    自由度不多（几百到几千），直接用稠密 `scipy.linalg.eigh` 的广义形式——
+    自由度不超过 `DENSE_EIGEN_LIMIT` 时用稠密 `scipy.linalg.eigh` 的广义形式——
     它对 (K, M) 都对称正定的情形是稳的，比稀疏迭代法少一堆收敛参数要调。
-    真到几万自由度再换 `eigsh` 不迟，那时这个函数的签名不用变。
+    更大的模型换稀疏 `eigsh` 只求前几阶，见 `_lowest_modes_sparse`。
     """
     if not model.members:
         raise ValueError("模型里没有杆件，无法做模态分析")
@@ -141,16 +163,20 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     if free.size == 0:
         raise ValueError("所有自由度都被约束了，没有可振动的自由度")
 
-    Kff = np.asarray(K[free][:, free].todense())
-    Mff = np.asarray(M[free][:, free].todense())
+    Kff = K[free][:, free]
+    Mff = M[free][:, free]
     # 对称化：装配时的浮点误差会让两边差 1e-16 量级，eigh 要求严格对称
     Kff = 0.5 * (Kff + Kff.T)
     Mff = 0.5 * (Mff + Mff.T)
 
-    if np.abs(Mff).max() <= 0.0:
+    if not Mff.nnz or np.abs(Mff.data).max() <= 0.0:
         raise ValueError("自由自由度上的质量为零，模态分析没有意义")
 
-    vals, vecs = eigh(Kff, Mff)
+    if free.size <= DENSE_EIGEN_LIMIT or num_modes >= free.size - 1:
+        Kff, Mff = Kff.toarray(), Mff.toarray()
+        vals, vecs = eigh(Kff, Mff)
+    else:
+        vals, vecs = _lowest_modes_sparse(Kff.tocsc(), Mff.tocsc(), num_modes)
     # 数值噪声会让最低几阶出现极小的负值，截到 0 而不是让 sqrt 变 nan
     vals = np.clip(vals, 0.0, None)
     keep = min(num_modes, vals.size)
@@ -165,20 +191,59 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
                                              - member_endpoints(model, m)[0]))
                       for m in model.members.values()))
 
-    # 有效质量：振型对刚体平动的参与程度。三个方向加起来应接近总质量，
-    # 差得远就说明取的阶数不够——这是判断"算够没算够"的标准做法
+    # 有效质量：振型对刚体平动的参与程度。取够阶数时它们的和有一个**精确**
+    # 的归宿，而那个归宿不是 Σ ρAL。
+    #
+    # 完备性关系给出 Σ_全部振型 (φᵀMr)²/(φᵀMφ) = rᵀ M_ff r，右边只含**自由**
+    # 自由度。直接压在支座上的那部分质量不在里面——它永远不会参与振动。
+    #
+    # **这不是小数。** 一根剖成 4 段的悬臂柱，rᵀM_ff r 只有 Σ ρAL 的 84%：
+    # 拿 Σ ρAL 当分母的话，把全部 24 阶取满也只报得出 84%，而用户照
+    # GB 50011「参与质量 ≥90%」去判，会以为阶数不够，然后不断加阶数——
+    # 加到天荒地老也过不去，因为差的那 16% 在支座上。网格越粗越明显。
     eff = np.zeros((keep, 3))
+    factors = np.zeros((keep, 3))
+    participable = np.zeros(3)
     for d in range(3):
         r = np.zeros(n)
         r[d::DOF_PER_NODE] = 1.0
         rf = r[free]
+        participable[d] = float(rf @ Mff @ rf)
         for k in range(keep):
             phi = vecs[:, k]
             m_k = float(phi @ Mff @ phi)
             if m_k > 0:
-                eff[k, d] = float(phi @ Mff @ rf) ** 2 / m_k
+                # 参与系数 Γ = φᵀMr / φᵀMφ；有效质量是 Γ²·φᵀMφ。
+                # 两个都给：反应谱要 Γ 来放大振型，判"算够没算够"要有效质量。
+                factors[k, d] = float(phi @ Mff @ rf) / m_k
+                eff[k, d] = factors[k, d] ** 2 * m_k
     return ModalResult(frequencies=omega / (2.0 * np.pi), omega=omega,
-                       shapes=shapes, total_mass=total, effective_mass=eff)
+                       shapes=shapes, total_mass=total, effective_mass=eff,
+                       participable_mass=participable,
+                       participation=factors, modal_mass=np.array(
+                           [float(vecs[:, k] @ Mff @ vecs[:, k])
+                            for k in range(keep)]))
+
+
+def _lowest_modes_sparse(Kff, Mff, num_modes: int):
+    """稀疏移频求逆，只求 K φ = ω² M φ 的最低 num_modes 阶。
+
+    移频点取一个很小的负数而不是 0：结构里若有机构，K 奇异，σ = 0 时分解直接
+    失败；K − σM 在 σ < 0 时仍正定，机构模态照样以 ω ≈ 0 的形式出来，与稠密
+    路径的行为一致。返回的振型按质量归一化（φᵀMφ = 1），同 `eigh(K, M)`。
+    """
+    diag_m = Mff.diagonal()
+    ratio = np.abs(Kff.diagonal()[diag_m > 0] / diag_m[diag_m > 0])
+    sigma = -1e-8 * float(np.median(ratio)) if ratio.size else -1e-8
+    try:
+        vals, vecs = eigsh(Kff, k=num_modes, M=Mff, sigma=sigma, which="LM")
+    except RuntimeError as exc:
+        raise np.linalg.LinAlgError(
+            "模态分析失败：K − σM 分解奇异，检查约束与质量分布") from exc
+    order = np.argsort(vals)
+    vals, vecs = vals[order], vecs[:, order]
+    norms = np.sqrt(np.einsum("ij,ij->j", vecs, Mff @ vecs))
+    return vals, vecs / norms
 
 
 def member_mode_displacement(model: Frame, shapes: np.ndarray, mode: int,

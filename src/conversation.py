@@ -383,7 +383,7 @@ class Conversation:
         而不是等它把报告都写完。
         """
         started = time.perf_counter()
-        self.session.receive_user_confirmation(user_text)
+        self.session.begin_user_turn(user_text)
         local = self._try_local_fast_path(user_text, started, on_tool)
         if local is not None:
             return local

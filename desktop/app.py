@@ -103,9 +103,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # 字体必须先规范化，再创建功能区、PyVistaQt 和 Matplotlib 控件；否则
     # 它们可能已经复制走 pointSize == -1 的系统字体。
-    from desktop import theme
+    from desktop import qt_style, theme
     from desktop.main_window import MainWindow
 
+    # 样式表管颜色边框，画不了形状——勾选框的"勾"、单选钮的圆、数字框的
+    # 箭头都得自绘。**必须在 setStyleSheet 之前装**：QProxyStyle 换掉之后
+    # Qt 会重新解析样式表，顺序反了的话样式表只作用在旧 style 上。
+    qt_style.install(app)
     app.setStyleSheet(theme.STYLESHEET)
 
     window = MainWindow()

@@ -13,10 +13,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # 检查 Qt 之前先钉死绑定，理由见 app.py
@@ -289,6 +291,28 @@ def _force_utf8_stdout() -> None:
             pass                     # 被重定向成不支持 reconfigure 的对象，算了
 
 
+@contextlib.contextmanager
+def _scratch_capsules():
+    """自检期间的求解不留胶囊。
+
+    每次 solve_model 成功都会往 `capsules/` 存一份存档。自检算的是固定的
+    样例，存下来只会把用户自己的存档淹掉——所以指到一个用完即删的临时目录。
+    依赖没装齐时 capsule 导入不了，那就什么也不做，让后面的检查去报错。
+    """
+    try:
+        import capsule
+    except Exception:                             # noqa: BLE001
+        yield
+        return
+    original = capsule.DEFAULT_CAPSULE_DIR
+    with tempfile.TemporaryDirectory(prefix="framelab-doctor-") as scratch:
+        capsule.DEFAULT_CAPSULE_DIR = Path(scratch)
+        try:
+            yield
+        finally:
+            capsule.DEFAULT_CAPSULE_DIR = original
+
+
 def report() -> int:
     """逐项检查并打印。全通过返回 0，否则返回 1。"""
     _force_utf8_stdout()
@@ -297,17 +321,18 @@ def report() -> int:
     print(f"  {sys.executable}")
     print()
     failed = []
-    for label, check in CHECKS:
-        try:
-            ok, note = check()
-        except Exception as exc:                  # noqa: BLE001
-            ok, note = False, f"检查本身出错：{type(exc).__name__}: {exc}"
-        print(f"  [{'OK' if ok else '!!'}] {label:<8} {note}")
-        if not ok:
-            failed.append(label)
-            if label in FATAL:
-                print("       （这一项挂了后面必然跟着挂，先解决它）")
-                break
+    with _scratch_capsules():
+        for label, check in CHECKS:
+            try:
+                ok, note = check()
+            except Exception as exc:              # noqa: BLE001
+                ok, note = False, f"检查本身出错：{type(exc).__name__}: {exc}"
+            print(f"  [{'OK' if ok else '!!'}] {label:<8} {note}")
+            if not ok:
+                failed.append(label)
+                if label in FATAL:
+                    print("       （这一项挂了后面必然跟着挂，先解决它）")
+                    break
     print()
     if failed:
         print("没通过：" + "、".join(failed))

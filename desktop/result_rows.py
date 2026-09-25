@@ -63,7 +63,8 @@ _TRANSLATE = {
     "member_length_over_deflection": "「杆长/挠度」",
     "span_over_deflection": "「跨度/挠度」",
     "max_displacement": "「最大节点位移」",
-    "effective_mass_ratio_xyz": "「有效质量比」",
+    "cumulative_mass_ratio_xyz": "「累计参与质量比」",
+    "participable_mass_kg": "「可参与质量」",
     "most_compressed_member": "「最大受压杆件」",
     "num_modes": "阶数",
     "传 member": "指定杆件",
@@ -198,11 +199,17 @@ def modal(payload: dict) -> Rows:
     cols = ["阶次", "频率 (Hz)", "周期 (s)"]
     rows = [[m.get("order", i + 1), _r(m.get("frequency_Hz"), 4),
              _r(m.get("period_s"), 5)] for i, m in enumerate(modes)]
-    ratio = payload.get("effective_mass_ratio_xyz") or []
+    # 参与质量比的分母是**能参与振动的**质量，不是总质量：压在支座上的
+    # 那部分永远不参与。两个数都摆出来，用户才分得清"比值上不去"是阶数
+    # 不够还是质量在支座上——后者加多少阶都没用。
+    ratio = payload.get("cumulative_mass_ratio_xyz") or []
+    participable = payload.get("participable_mass_kg") or []
     title = (f"自振特性，共 {len(rows)} 阶　"
              f"总质量 {_r(payload.get('total_mass_kg'), 1)} kg")
+    if participable:
+        title += f"（可参与 {_r(participable[0], 1)} kg）"
     if ratio:
-        title += ("　有效质量比 X/Y/Z："
+        title += ("　累计参与质量比 X/Y/Z："
                   + " / ".join(f"{_r(v, 3)}" for v in ratio))
     return title + _note(payload), cols, rows, [None] * len(rows)
 
@@ -258,16 +265,36 @@ def strength(payload: dict) -> Rows:
     把它标成"不合格"会让人以为结构有问题，标成"合格"则是拿一个虚高的临界力
     盖章。所以「结论」这一列原样用内核给的三态，标题里也分开点名。
     """
-    cols = ["杆件", "截面", "应力比 σ/[σ]", "控制", "轴力 (kN)",
-            "Pcr (kN)", "N/Pcr", "长细比 λ", "μ", "μ 来源", "结论"]
+    # 正应力与折算应力**并排**放，因为只看前者会漏掉剪切控制的构件：
+    # 实测 L/h=2.5 的短深梁，正应力比 0.064「安全得很」，折算应力是它的
+    # 2.78 倍。同理规范应力比紧挨着 N/Pcr——欧拉在中小柔度段不适用，
+    # 实测 λ=24.9 的粗短柱两者差 35 倍，分开看会选错那个更宽松的。
+    # 只留**比值**与判读必需的诊断列。折算应力的 MPa 值、Pcr 的 kN 值都能由
+    # 比值推回去，摆出来只会把表挤宽；而"类别"必须留着——a/b/c/d 能让 φ
+    # 差 59%，不显示用户就不知道这个数是按哪条曲线算出来的。
+    cols = ["杆件", "截面", "应力比 σ/[σ]", "控制", "折算比", "控制点",
+            "轴力 (kN)", "N/Pcr", "长细比 λ", "φ", "类别", "N/(φA)/f",
+            "μ 来源", "结论"]
     rows, loc = [], []
+    detail: list[str] = []
     for r in payload.get("members") or []:
+        # 格子里放短结论。内核给的 verdict 带着一整句解释（"通过（稳定按
+        # GB 50017 b 类，φ=0.954…）"），那对 agent 转达是好事，塞进表格
+        # 单元格则必然被截断——完整的那句挪到摘要里。
+        full = str(r.get("verdict") or "")
+        brief = full.split("（", 1)[0] or full
+        if full != brief:
+            detail.append(f"杆件 {r.get('member')}：{full}")
         rows.append([r.get("member"), r.get("section"),
                      _r(r.get("stress_ratio"), 4), r.get("governs"),
-                     _r(r.get("axial_kN")), _r(r.get("P_cr_kN")),
+                     _r(r.get("combined_ratio"), 4),
+                     r.get("combined_point", ""),
+                     _r(r.get("axial_kN")),
                      _r(r.get("buckling_ratio"), 4),
-                     _r(r.get("slenderness"), 1), _r(r.get("mu"), 3),
-                     r.get("mu_source", ""), r.get("verdict")])
+                     _r(r.get("slenderness"), 1),
+                     _r(r.get("phi"), 4), r.get("buckling_curve", ""),
+                     _r(r.get("code_stability_ratio"), 4),
+                     r.get("mu_source", ""), brief])
         mid = r.get("member")
         loc.append(("member", int(mid)) if isinstance(mid, int) else None)
 
@@ -277,18 +304,30 @@ def strength(payload: dict) -> Rows:
     if worst:
         bits.append(f"最大应力比 {_r(worst.get('ratio'), 4)}"
                     f"（杆件 {worst.get('member')}，{worst.get('governs', '')}）")
+    wc = payload.get("worst_combined") or {}
+    if wc:
+        # 折算应力单独报一次。它和上面那个应力比常常不在同一根杆上——
+        # 弯曲控制的和剪切控制的本来就是两根。
+        bits.append(f"最大折算应力比 {_r(wc.get('ratio'), 4)}"
+                    f"（杆件 {wc.get('member')}，控制点 {wc.get('point', '')}）")
     failed = payload.get("failed_members") or []
     unclear = payload.get("inconclusive_members") or []
     bits.append("全部通过" if not failed else
                 "超限：" + "、".join(str(v) for v in failed))
     if unclear:
-        bits.append("欧拉公式不适用（既非通过也非超限）："
+        bits.append("连规范法也判不了（材料缺屈服应力）："
                     + "、".join(str(v) for v in unclear))
     title = "　".join(bits)
     for w in payload.get("warnings") or []:
         cleaned = clean(w, limit=200)
         if cleaned:
             title += "\n" + cleaned
+    # 被截短的结论在这里补全。只列前三条——同一个模型里它们往往一模一样，
+    # 全列出来会攒出一屏只差编号的重复句子。
+    for line in detail[:3]:
+        title += "\n" + clean(line, limit=200)
+    if len(detail) > 3:
+        title += f"\n（另有 {len(detail) - 3} 根杆件的结论同类，表中从略）"
     limitation = clean(payload.get("limitation"), limit=200)
     if limitation:
         title += "\n" + limitation
@@ -369,7 +408,52 @@ def generic(payload: dict) -> Rows:
     return "结果", ["项", "值"], rows, [None] * len(rows)
 
 
-HANDLERS = {"envelope": envelope, "buckling": buckling, "modal": modal,
+def solve_summary(payload: dict) -> Rows:
+    """求解总览：每个工况/组合一行——最大节点位移、单元内最大挠度、平衡。
+
+    求解完成后自动填进结果页，**但不自动弹出**：结果先画在模型上，表是
+    "想看数字时点一下右侧「结果」"的事。这张表回答的是求完之后第一个问题
+    ——"每个工况大概多大、有没有哪个不对劲"，而不是逐节点逐杆的明细。
+    """
+    cases = payload.get("cases") or {}
+    cols = ["工况/组合", "最大节点位移 (mm)", "所在节点", "单元内最大挠度 (mm)",
+            "平衡", "提示"]
+    rows, loc = [], []
+    for name, entry in cases.items():
+        entry = entry or {}
+        node = entry.get("at_node")
+        note = entry.get("warning") or entry.get("note") or ""
+        rows.append([name, _r(entry.get("max_displacement_mm"), 4),
+                     node if node is not None else "",
+                     _r(entry.get("max_deflection_mm"), 4),
+                     "通过" if entry.get("equilibrium_ok") else "未通过",
+                     clean(note, 120)])
+        loc.append(("node", int(node)) if node is not None else None)
+    title = f"求解完成，共 {len(rows)} 个工况/组合。点一行在视口中定位最大位移节点。"
+    silent = payload.get("silent_failures") or {}
+    findings = silent.get("findings") or []
+    bad = [f for f in findings if f.get("status") != "pass"]
+    if findings:
+        title += (f"\n静默失败检测 {len(findings) - len(bad)}/{len(findings)} 通过"
+                  + (f"：{'、'.join(str(f.get('name')) for f in bad[:4])} 需要关注"
+                     if bad else ""))
+    return title, cols, rows, loc
+
+
+def _solve_marks(payload: dict) -> list[str | None]:
+    out: list[str | None] = []
+    for entry in (payload.get("cases") or {}).values():
+        entry = entry or {}
+        if not entry.get("equilibrium_ok"):
+            out.append(FAIL)
+        elif entry.get("warning"):
+            out.append(UNCLEAR)
+        else:
+            out.append(None)
+    return out
+
+
+HANDLERS = {"solve": solve_summary, "envelope": envelope, "buckling": buckling, "modal": modal,
             "deflection": deflection, "solid_joint": solid_joint,
             "strength": strength, "symmetry": symmetry, "numbering": numbering}
 
@@ -398,7 +482,8 @@ def _symmetry_marks(payload: dict) -> list[str | None]:
     return out
 
 
-_MARKERS = {"strength": _strength_marks, "symmetry": _symmetry_marks}
+_MARKERS = {"strength": _strength_marks, "symmetry": _symmetry_marks,
+            "solve": _solve_marks}
 
 
 def row_marks(kind: str, payload: dict) -> list[str | None]:

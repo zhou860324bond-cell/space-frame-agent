@@ -234,17 +234,29 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
         "evidence_ids": []})
     for key in ("entities", "dimensions", "intersections", "issues"):
         payload.setdefault(key, [])
-    payload["issues"] = [_as_issue(item, index)
-                         for index, item in enumerate(payload["issues"], 1)]
+
+    # 规整 image_model 时顺手收集"这一项是猜的/没换算出来"，和模型自己报的
+    # issues 合在一起编号——猜测必须走确认环节，不能只留在代码里。
+    guessed: list[dict] = []
     image_model = payload.get("image_model")
     if isinstance(image_model, dict):
         if isinstance(image_model.get("supports"), list):
-            image_model["supports"] = [_as_support(item)
-                                       for item in image_model["supports"]
-                                       if isinstance(item, dict)]
+            supports = []
+            for item in image_model["supports"]:
+                if not isinstance(item, dict):
+                    continue
+                support, problem = _as_support(item)
+                supports.append(support)
+                if problem:
+                    guessed.append(problem)
+            image_model["supports"] = supports
         for case in image_model.get("load_cases") or []:
             if isinstance(case, dict):
-                _convert_case_loads(case)
+                guessed.extend(_convert_case_loads(case))
+
+    payload["issues"] = [
+        _as_issue(item, index)
+        for index, item in enumerate(list(payload["issues"]) + guessed, 1)]
     return payload
 
 
@@ -252,9 +264,12 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
 _UNIT_FACTORS = {"n": 1.0, "kn": 1e3, "n/m": 1.0, "kn/m": 1e3,
                  "n·m": 1.0, "n.m": 1.0, "nm": 1.0,
                  "kn·m": 1e3, "kn.m": 1e3, "knm": 1e3}
+# 报错时给人看的写法。_UNIT_FACTORS 的键是归一化后的（小写、去空格、
+# 认几种点号写法），直接抖出去会让人以为要写 "knm" 才认。
+_UNIT_DISPLAY = "N、kN、N/m、kN/m、N·m、kN·m"
 
 
-def _convert_case_loads(case: dict) -> None:
+def _convert_case_loads(case: dict) -> list[dict]:
     """把 value + unit + direction 换算成求解器要的分量向量。
 
     **让模型照抄图上的数字和单位，换算交给代码。** 图上写 "18 kN/m"，
@@ -263,6 +278,15 @@ def _convert_case_loads(case: dict) -> None:
     那是算术，不是观察，正好踩中"大模型只产结构，不产数值"这条线。
 
     已经给了 load / w 向量的条目不动，模型偶尔会两种都给。
+
+    **换算完必须把 value/unit/direction 拆掉。** 契约里 image_model 的荷载
+    用的是现有载荷合同（`w` / `load`），这三个字段只是识别期的脚手架；留着
+    它们会一路 deepcopy 进 SI 模型，最后被 schema 以"多余属性"拒收——
+    错误信息指着大模型的词汇，而不是用户能动手的东西。
+
+    认不出单位时不闷掉：按契约记一条 `load_incomplete` 阻断问题，把图上的
+    原话（值、单位、方向）带上让人来判。闷掉的后果是整条荷载凭空消失，
+    而模型照样算得出一个像模像样的结果。
     """
     def factor(unit: Any) -> float | None:
         return _UNIT_FACTORS.get(str(unit or "").strip().lower().replace(" ", ""))
@@ -282,16 +306,33 @@ def _convert_case_loads(case: dict) -> None:
                 out[index] = float(value) * scale * float(component)
         return out
 
-    for item in case.get("nodal_loads") or []:
-        if isinstance(item, dict) and not isinstance(item.get("load"), (list, tuple)):
-            got = vector(item, 6)
-            if got is not None:
-                item["load"] = got
-    for item in case.get("member_loads") or []:
-        if isinstance(item, dict) and not isinstance(item.get("w"), (list, tuple)):
-            got = vector(item, 3)
-            if got is not None:
-                item["w"] = got
+    problems: list[dict] = []
+
+    def convert(items: Any, key: str, size: int, ref: str, label: str) -> None:
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            if not isinstance(item.get(key), (list, tuple)):
+                got = vector(item, size)
+                if got is None:
+                    problems.append({
+                        "category": "load_incomplete", "severity": "blocking",
+                        "entity_refs": [f"{ref}:{item.get(ref)}"],
+                        "message": (
+                            f"{label} {item.get(ref)} 上这条荷载没能换算："
+                            f"值 {item.get('value')!r}、单位 {item.get('unit')!r}、"
+                            f"方向 {item.get('direction')!r}。认得的单位是 "
+                            f"{_UNIT_DISPLAY}。"
+                            "请确认图上写的是什么，或直接给出分量向量。"),
+                    })
+                else:
+                    item[key] = got
+            for scaffold in ("value", "unit", "direction"):
+                item.pop(scaffold, None)
+
+    convert(case.get("nodal_loads"), "load", 6, "node", "节点")
+    convert(case.get("member_loads"), "w", 3, "member", "杆件")
+    return problems
 
 
 # 支座类型 → 六自由度约束掩码。让模型判"这是铰接"，让代码写掩码：
@@ -303,24 +344,41 @@ _SUPPORT_MASKS = {
 }
 
 
-def _as_support(item: dict) -> dict:
-    """把识别出的支座补成项目的规范形状。
+def _as_support(item: dict) -> tuple[dict, dict | None]:
+    """把识别出的支座补成项目的规范形状，并说明哪一个是猜的。
 
     模型按提示词给的是 {"node": 1, "kind": "pinned"}——对视觉模型来说，
     判断"三角形=铰接"远比直接吐出 [1,1,1,0,0,0] 可靠。但项目里所有消费方
     （模型树、求解器、校验）读的都是 fix 掩码，缺了它 model_tree 会
     KeyError: 'fix' 并把整棵树的重建带崩。缺什么补什么，在这里补掉。
+
+    翻译完要把 kind 拆掉：契约里 supports 是 {name,node,fix[6]}，schema 会
+    以"多余属性"拒收 kind，和荷载那三个脚手架字段是同一回事。
+
+    认不出类型时仍按铰接兜底，但**痕迹不能只是一个默认名**：原来靠
+    `setdefault("name", "待确认支座")` 留印，模型自己给了 name 就什么都不剩，
+    弹性支座会一声不响地变成铰接。改成记一条问题，由确认环节兜住。
     """
     got = dict(item)
-    if not isinstance(got.get("fix"), (list, tuple)) or len(got.get("fix") or []) != 6:
-        kind = str(got.get("kind") or "").strip().lower()
-        got["fix"] = list(_SUPPORT_MASKS.get(kind, _SUPPORT_MASKS["pinned"]))
-        if kind not in _SUPPORT_MASKS:
-            # 认不出类型时按铰接保守处理，并留下痕迹让人来确认
-            got.setdefault("name", "待确认支座")
-    else:
+    if isinstance(got.get("fix"), (list, tuple)) and len(got["fix"]) == 6:
         got["fix"] = [int(bool(v)) for v in got["fix"]]
-    return got
+        got.pop("kind", None)
+        return got, None
+    raw = got.pop("kind", None)
+    kind = str(raw or "").strip().lower()
+    got["fix"] = list(_SUPPORT_MASKS.get(kind, _SUPPORT_MASKS["pinned"]))
+    if kind in _SUPPORT_MASKS:
+        return got, None
+    got.setdefault("name", "待确认支座")
+    # 归到 low_confidence 是因为界面只给这一类"确认"按钮——
+    # 猜出来的铰接正需要一次人工点头，而不是一条只能干瞪眼的阻断。
+    return got, {
+        "category": "low_confidence", "severity": "blocking",
+        "entity_refs": [f"node:{got.get('node')}"],
+        "message": (f"节点 {got.get('node')} 的支座类型 {raw!r} 认不出来，"
+                    f"先按铰接（平动全约束、转动全释放）处理。认得的是 "
+                    f"{'、'.join(sorted(_SUPPORT_MASKS))}——请确认或改掉。"),
+    }
 
 
 def _as_issue(item: Any, index: int) -> dict:

@@ -25,6 +25,106 @@ from session_base import ToolResult
 
 class ChecksMixin:
     """校核：模态、屈曲、强度、对称性、编号、支座诊断。见模块 docstring。"""
+    def _elements_per_span(self, frame=None) -> tuple[int, int]:
+        """(最少单元数, 那一跨里的一个代表杆号)。算不出来时返回 (0, 0)。
+
+        数的是**每跨**几个单元，不是"每根构件几个单元"——这两个不一样，
+        而按后者判会造出假警告：用户把一根 8 m 梁手工拆成 4 根构件时，
+        每根仍只有 1 个单元，但那一跨实际有 4 个，结果误差 0.05%，
+        这时候还喊"网格太粗"就是喊狼来了。
+
+        "跨"的定义：沿着**共线、无支座、且只连两根杆**的中间节点把杆件串起来，
+        串不下去的地方（拐角、汇交、支座）就是跨的端点。这正好对应形函数
+        需要细分的那个尺度——决定一致质量阵/几何刚度阵精度的是两个约束点
+        之间放了几个单元。
+
+        模态与屈曲都靠形函数装配，两者都从上方逼近精确解；静力内力是解析
+        恢复的、与网格无关，所以这条只管这两项。
+        """
+        frame = frame if frame is not None else getattr(self, "frame", None)
+        if frame is None or not getattr(frame, "members", None):
+            return 0, 0
+        incident: dict[int, list[int]] = {}
+        axis: dict[int, np.ndarray] = {}
+        for mid, m in frame.members.items():
+            ni, nj = frame.nodes[m.i], frame.nodes[m.j]
+            vec = np.array([nj.x - ni.x, nj.y - ni.y, nj.z - ni.z], dtype=float)
+            norm = float(np.linalg.norm(vec))
+            if norm <= 0:
+                continue
+            axis[mid] = vec / norm
+            incident.setdefault(int(m.i), []).append(mid)
+            incident.setdefault(int(m.j), []).append(mid)
+
+        def continues_through(node_id: int) -> tuple[int, int] | None:
+            """这个节点是不是"跨内部"的点；是就返回它连的两根杆。"""
+            here = incident.get(node_id, [])
+            if len(here) != 2 or node_id in getattr(frame, "supports", {}):
+                return None
+            a, b = here
+            if abs(float(np.dot(axis[a], axis[b]))) < 0.999:
+                return None                       # 拐了弯，不是同一跨
+            return a, b
+
+        seen: set[int] = set()
+        smallest = (0, 0)
+        for mid in sorted(axis):
+            if mid in seen:
+                continue
+            chain = {mid}
+            # 从这根杆往两头走，能穿过去就继续
+            frontier = [(int(frame.members[mid].i), mid),
+                        (int(frame.members[mid].j), mid)]
+            while frontier:
+                node_id, came_from = frontier.pop()
+                pair = continues_through(node_id)
+                if pair is None:
+                    continue
+                nxt = pair[0] if pair[1] == came_from else pair[1]
+                if nxt in chain:
+                    continue
+                chain.add(nxt)
+                other = frame.members[nxt]
+                far = other.j if int(other.i) == node_id else other.i
+                frontier.append((int(far), nxt))
+            seen |= chain
+            if smallest[0] == 0 or len(chain) < smallest[0]:
+                smallest = (len(chain), min(chain))
+        return smallest
+
+    # 实测（逐级加密到收敛，再回看粗网格的偏差）：
+    #
+    #   单跨门式刚架，每构件 1 个单元 —— λ=1.66，收敛值 0.82，**偏高 102%**。
+    #   λ=1.66 是在说「还有 66% 余量」，而真相是 λ<1、它已经失稳了。
+    #   两个单元就收敛到 0.8229，再加密不变。
+    #
+    #   8 m 梁，1 个单元 —— 屈曲简支 +21.6%、悬臂 +0.75%、两端固接解不出来；
+    #                      模态简支 +11.0%、悬臂 +0.47%。
+    #
+    # 偏差方向永远是**偏高**（形函数比真实振型硬），也就是偏不安全那一侧。
+    # generate_frame 生成的恰好是每构件一个单元，所以这条会在最常见的
+    # 模型上触发——那不是误报，那正是它要拦的情形。
+    COARSE_MESH_ELEMENTS = 4
+
+    def _coarse_mesh_note(self, what: str, frame=None) -> dict[str, Any] | None:
+        """网格太粗时给一条带**实测数字**的提醒，够密就不啰嗦。"""
+        count, mid = self._elements_per_span(frame)
+        if not count or count >= self.COARSE_MESH_ELEMENTS:
+            return None
+        return {
+            "elements_in_span": count,
+            "member_in_that_span": mid,
+            "direction": "偏高",
+            "message": (
+                f"构件 {mid} 所在的那一跨只有 {count} 个单元。{what}靠形函数装配，"
+                "**从上方**逼近精确解——网格越粗报得越高，也就是偏不安全那一侧。"
+                "实测单跨门式刚架每构件一个单元时 λ=1.66，而收敛值是 0.82，"
+                "偏高 102%：前者在说「还有 66% 余量」，后者意味着它已经失稳。"
+                "两个单元就收敛。8 m 梁一个单元则是屈曲 +21.6%、模态 +11.0%（简支）。"
+                "要稳妥，每跨至少 4 个单元。"),
+            "how_to_fix": "在那一跨里加中间节点，让它至少有 4 个单元，再重算。",
+        }
+
     def modal_analysis(self, num_modes: int = 6) -> ToolResult:
         """自振频率与振型。结构固有属性，与荷载无关。"""
         errors = validate_payload(self.model)
@@ -32,23 +132,124 @@ class ChecksMixin:
             return ToolResult(False, {"errors": errors})
         try:
             from modal import modal
-            r = modal(from_dict(self.model), int(num_modes))
+            physical = from_dict(self.model)
+            r = modal(physical, int(num_modes))
         except ImportError as exc:
             return ToolResult(False, {"error": f"模态模块不可用：{exc}"})
         except (ValueError, np.linalg.LinAlgError) as exc:
             return ToolResult(False, {"error": str(exc)})
-        share = r.effective_mass.sum(axis=0) / r.total_mass if r.total_mass else None
-        return ToolResult(True, {
+        # 参与质量比的分母是**能参与振动的**质量 rᵀM_ff r，不是 Σ ρAL。
+        # 压在支座上的那部分永远不参与：拿 Σ ρAL 当分母，一根剖成 4 段的
+        # 悬臂柱把振型取满也只报得出 84%，而"加大 num_modes"这条建议在那里
+        # 是无效的——差的那 16% 不在振型里，在支座上。网格越粗越明显。
+        cumulative = r.cumulative_ratio[-1]
+        # 质量一律报 kg。**毫米制下模型里的质量是吨**（密度 t/mm³），
+        # 直接标 _kg 会小 1000 倍，总质量那栏看着像个小构件。
+        mass = physical.unit_system.mass_scale
+        payload = {
+            # 参与系数 Γ 有意**不报**：它随振型归一化方式和单位制而变
+            # （量纲是 √质量），单看一个数没有意义。反应谱内部要用它，
+            # 但摆给用户只会被当成可比的量。mass_ratio 才是无量纲的判据。
             "modes": [{"order": k + 1,
                        "frequency_Hz": round(float(f), 6),
-                       "period_s": round(float(1.0 / f), 6) if f > 0 else None}
+                       "period_s": round(float(1.0 / f), 6) if f > 0 else None,
+                       "mass_ratio_xyz": [round(float(v), 4)
+                                          for v in r.mass_ratio[k]]}
                       for k, f in enumerate(r.frequencies)],
-            "total_mass_kg": round(r.total_mass, 6),
-            "effective_mass_ratio_xyz": (None if share is None else
-                                         [round(float(v), 4) for v in share]),
+            "total_mass_kg": round(r.total_mass * mass, 6),
+            "participable_mass_kg": [round(float(v) * mass, 6)
+                                     for v in r.participable_mass],
+            "cumulative_mass_ratio_xyz": [round(float(v), 4)
+                                          for v in cumulative],
             "note": "一致质量矩阵，频率略高于精确解；每跨四个单元时误差 0.2% 以内。"
-                    "有效质量比接近 1 才说明取的阶数够——差得远就加大 num_modes。",
-        })
+                    "**参与质量比的分母是 participable_mass（能参与振动的质量），"
+                    "不是 total_mass**——压在支座上的质量永远不参与，"
+                    "两者的差随网格变粗而变大。",
+        }
+        short = {axis: float(cumulative[k])
+                 for k, axis in enumerate("XYZ") if cumulative[k] < 0.9}
+        if short:
+            payload["mass_ratio_warning"] = (
+                "这些方向的累计参与质量比不到 90%（GB 50011 的门槛）："
+                + "、".join(f"{axis} {value:.1%}" for axis, value in short.items())
+                + "。加大 num_modes 再算。**判据只对要做地震分析的方向适用**"
+                  "——竖向柱在轴向的前几阶本来就接近 0，那不是缺陷。")
+        if _coarse := self._coarse_mesh_note("一致质量阵", physical):
+            payload["mesh_warning"] = _coarse
+        return ToolResult(True, payload)
+
+    def response_spectrum_analysis(
+            self, direction: str = "x", num_modes: int = 12,
+            alpha_max: float | None = None, tg: float = 0.35,
+            spectrum_points: list | None = None,
+            combination: str = "CQC", damping: float = 0.05,
+            gravity: float | None = None) -> ToolResult:
+        """振型分解反应谱法（地震作用）。
+
+        谱二选一：``alpha_max`` + ``tg`` 走 GB 50011 的设计谱（地震影响系数，
+        内部乘 g 变成加速度），或者 ``spectrum_points`` 直接给 (周期, 加速度)
+        表。
+
+        **返回的内力和位移没有符号。** SRSS 与 CQC 都是平方和开方，出来的
+        只有大小。地震往复，把它当普通工况直接叠加到重力上，得到的只是两个
+        方向里恰好同号的那一个——必须按 ±  分别组合。
+        """
+        errors = validate_payload(self.model)
+        if errors:
+            return ToolResult(False, {"errors": errors})
+        if alpha_max is None and not spectrum_points:
+            return ToolResult(False, {
+                "error": "要么给 alpha_max（走 GB 50011 设计谱），"
+                         "要么给 spectrum_points（自定义谱表）",
+                "example": {"alpha_max": 0.08, "tg": 0.35}})
+        try:
+            from spectrum import (gb50011_spectrum, response_spectrum,
+                                  table_spectrum)
+            physical = from_dict(self.model)
+            if spectrum_points:
+                curve = table_spectrum(spectrum_points)
+            else:
+                # **g 跟着单位制走。** 硬编码 9.81 在毫米制下小 1000 倍，
+                # 而地震作用整体跟着小 1000 倍——数看着"很安全"，
+                # 而且不会报任何错。units.py 开头那段说的就是这件事。
+                weight = (float(gravity) if gravity is not None
+                          else physical.unit_system.gravity)
+                alpha = gb50011_spectrum(float(alpha_max), float(tg),
+                                         damping=float(damping))
+
+                def curve(period, _alpha=alpha, _g=weight):
+                    return _alpha(period) * _g
+            result = response_spectrum(
+                physical, curve, direction=str(direction),
+                num_modes=int(num_modes), combination=str(combination),
+                damping=float(damping))
+        except ImportError as exc:
+            return ToolResult(False, {"error": f"反应谱模块不可用：{exc}"})
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+
+        payload = {
+            "direction": str(direction), "combination": str(combination),
+            "base_shear_kN": round(result.base_shear / 1e3, 4),
+            "mass_ratio": round(float(result.mass_ratio), 4),
+            "modes": [{"order": k + 1,
+                       "period_s": round(float(t), 6),
+                       # 谱加速度折成 m/s²：模型是毫米制时它本来是
+                       # mm/s²，不折算的话同一条谱在两套单位下报出两个数。
+                       "spectral_acceleration_m_s2": round(
+                           float(a) * physical.unit_system.length_to_m, 6),
+                       "base_shear_kN": round(float(v) / 1e3, 4)}
+                      for k, (t, a, v) in enumerate(zip(
+                          result.periods, result.spectral_acceleration,
+                          result.modal_base_shear, strict=True))],
+            "sign": "**这些量没有符号。** 地震往复，与重力组合时要按 ± 各算一次；"
+                    "直接当普通工况叠加，得到的只是两个方向里恰好同号的那一个。",
+        }
+        if result.mass_ratio < 0.9:
+            payload["mass_ratio_warning"] = (
+                f"取用的 {num_modes} 阶只覆盖 {result.mass_ratio:.1%} 的参与质量，"
+                "GB 50011 要求不小于 90%。加大 num_modes 再算。")
+        return ToolResult(True, payload)
 
     def buckling_analysis(self, case: str | None = None,
                           num_modes: int = 4) -> ToolResult:
@@ -68,7 +269,20 @@ class ChecksMixin:
         except ImportError as exc:
             return ToolResult(False, {"error": f"屈曲模块不可用：{exc}"})
         except (ValueError, np.linalg.LinAlgError) as exc:
-            return ToolResult(False, {"error": str(exc)})
+            # 网格太粗时这里报的是"没有找到正的临界荷载因子，检查荷载方向与
+            # 约束"——把人指向荷载和约束，而真实原因常常是**一个单元根本没有
+            # 可屈曲的自由度**（两端固接单单元实测就是这样）。照那句话去查
+            # 荷载方向永远查不出问题，所以粗网格时要把这一条摆在前面。
+            payload: dict[str, Any] = {"error": str(exc)}
+            coarse = self._coarse_mesh_note("屈曲的几何刚度阵")
+            if coarse is not None:
+                payload["likely_cause"] = (
+                    f"构件 {coarse['member_in_that_span']} 所在的那一跨只有 "
+                    f"{coarse['elements_in_span']} 个单元。单元太少时跨内"
+                    "没有可屈曲的自由度，解不出正的临界因子——这比荷载方向或"
+                    "约束更可能是原因。先把构件拆细再试。")
+                payload["mesh"] = coarse
+            return ToolResult(False, payload)
         U = self.units
         worst = min(r.axial, key=lambda m: r.axial[m])
         return ToolResult(True, {
@@ -77,6 +291,8 @@ class ChecksMixin:
             "factors": [round(float(v), 6) for v in r.factors],
             "most_compressed_member": worst,
             "its_axial_kN": round(r.axial[worst] * U.force_scale, 6),
+            **({"mesh_warning": _coarse} if (_coarse := self._coarse_mesh_note(
+                "屈曲的几何刚度阵")) else {}),
             "note": "λ 是该工况荷载的临界放大倍数：λ=3 表示放大三倍才失稳。"
                     "这是**线性特征值屈曲**，假定失稳前保持线弹性、变形小、"
                     "轴力不随变形改变。真实结构有初始缺陷与残余应力，"
@@ -85,7 +301,8 @@ class ChecksMixin:
 
     def check_strength(self, members: list[int] | None = None,
                        cases: list[str] | None = None,
-                       slenderness_limit: float | None = None) -> ToolResult:
+                       slenderness_limit: float | None = None,
+                       buckling_curve: str = "b") -> ToolResult:
         """强度验算 + 逐杆稳定校核（讲义 §3-9 三）。
 
         按**物理构件**验算：传编译映射进去，剖分过的杆件才会按整根算 Pcr。
@@ -112,7 +329,8 @@ class ChecksMixin:
                 members=[int(m) for m in members] if members else None,
                 cases=[str(c) for c in cases] if cases else None,
                 slenderness_limit=(None if slenderness_limit is None
-                                   else float(slenderness_limit)))
+                                   else float(slenderness_limit)),
+                buckling_curve=str(buckling_curve))
         except StrengthUnavailable as exc:
             return ToolResult(False, {
                 "error": str(exc),
@@ -136,6 +354,23 @@ class ChecksMixin:
                 "at_x_m": round(r["strength"]["x"] * U.length_to_m, 3),
                 "verdict": r["verdict"],
             }
+            c = r["combined"]
+            g = c["gb50017"]
+            row.update({
+                # 折算应力与上面的 stress_ratio 是**两条独立结论**：
+                # 前者把 σ 与 τ 合起来判，后者按拉压分别比许用值。
+                # 短深梁上两者能差两倍多（实测 L/h=2.5 时 2.78 倍），
+                # 只看正应力会把一根剪切控制的梁判成"安全得很"。
+                "combined_stress_MPa": round(g["sigma_r"] * U.stress_scale, 3),
+                "combined_ratio": round(g["ratio"], 4),
+                "combined_point": g["point"],
+                "combined_at_x_m": round(g["x"] * U.length_to_m, 3),
+                "equivalent_stress_MPa": {
+                    f"σr{t}": round(v["sigma_r"] * U.stress_scale, 3)
+                    for t, v in c["theories"].items()},
+            })
+            if not c["has_shear"]:
+                row["combined_note"] = c["note"]
             b = r["buckling"]
             if b is not None:
                 row.update({
@@ -147,6 +382,17 @@ class ChecksMixin:
                     "mu": round(b["axes"][b["critical_axis"]]["mu"], 3),
                     "mu_source": b["axes"][b["critical_axis"]]["mu_source"],
                 })
+                cc = b["code_check"]
+                if cc is not None:
+                    # 规范法与欧拉并列给出。欧拉在中小柔度段弃权，而实际
+                    # 钢柱大多落在那里——实测 λ=24.9 的粗短柱，欧拉
+                    # N/Pcr=0.023、规范 0.822，差 35 倍且偏不安全。
+                    row.update({
+                        "phi": round(cc["phi"], 4),
+                        "buckling_curve": cc["curve"],
+                        "code_stability_ratio": round(cc["ratio"], 4),
+                        "code_stability_ok": cc["ok"],
+                    })
             rows.append(row)
 
         warnings: list[str] = []
@@ -167,17 +413,25 @@ class ChecksMixin:
                 "ratio": round(got["worst_strength"]["ratio"], 4),
                 "case": got["worst_strength"]["case"],
                 "governs": got["worst_strength"]["governs"]},
+            "worst_combined": got["worst_combined"] and {
+                "member": got["worst_combined"]["member"],
+                "ratio": round(got["worst_combined"]["ratio"], 4),
+                "point": got["worst_combined"]["point"],
+                "basis": got["worst_combined"]["basis"]},
             "worst_buckling": got["worst_buckling"] and {
                 "member": got["worst_buckling"]["member"],
                 "ratio": round(got["worst_buckling"]["ratio"], 4),
                 "slenderness": round(got["worst_buckling"]["slenderness"], 1)},
             "notes": got["notes"],
             "warnings": warnings,
-            "reading": "failed_members 是**真的超限**；inconclusive_members 是"
-                       "「欧拉公式在这根杆上不适用（λ<λp，中小柔度）」，"
-                       "既不是通过也不是不通过，转达时不要说成不安全。",
-            "limitation": "只算正应力（轴力 + 双向弯曲的极端纤维应力），"
-                          "**不含剪应力与扭转**，因此不是规范意义上的构件承载力验算。"
+            "reading": "failed_members 是**真的超限**。inconclusive_members 现在只在"
+                       "**连规范法也给不出结论**时才有内容（缺屈服应力）——"
+                       "欧拉公式不适用的中小柔度段已由 GB 50017 的 φ 系数法覆盖，"
+                       "不再弃权。",
+            "limitation": "正应力校核按拉压分别比许用值；折算应力 √(σ²+3τ²) "
+                          "另算一条，在极端纤维、中性轴、腹板边缘三处取最不利。"
+                          "**仍不含扭转剪应力**（截面契约里没有扭转常数之外的壁厚分布），"
+                          "所以还不是完整的规范承载力验算。"
                           "逐杆欧拉校核回答「这一根会不会先屈」，"
                           "特征值屈曲分析回答「整体什么时候失稳」，"
                           "两者不能互相替代。",

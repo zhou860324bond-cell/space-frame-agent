@@ -6,6 +6,8 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QPushButton, QVBoxLayout, QWidget)
 
+from . import glyphs
+
 
 _PRIORITY = {
     "work_plane_unconfirmed": 0, "scale_unknown": 1, "scale_conflict": 2,
@@ -94,7 +96,7 @@ class IssuePanel(QWidget):
         self.btn_next_low.setEnabled(low_count > 0)
         self.list.clear()
         for issue in issues:
-            marker = "⛔" if issue.get("severity") == "blocking" else "⚠"
+            marker = (glyphs.BLOCK if issue.get("severity") == "blocking" else glyphs.WARN)
             badge = ""
             if issue.get("category") == "low_confidence":
                 values = [entity_confidence.get(str(ref))

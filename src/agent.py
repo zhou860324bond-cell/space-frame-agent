@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -154,6 +155,14 @@ from session_query import QueryMixin
 from session_checks import ChecksMixin
 
 
+# 批量修改闸门看这几类实体：它们有稳定 ID，改了就是改了「用户已经认过的结构」。
+# 荷载、工况不在里面——set_load_cases 本来就是整体重写，把它也拦住，
+# 每次调荷载都要确认一遍，闸门就成了噪声。
+_GUARDED_COLLECTIONS = {"nodes": "id", "members": "id", "supports": "node"}
+# 一轮里改到第几个已有实体就要预演。1 个是「改这根杆」，2 个起才算批量。
+BATCH_EDIT_THRESHOLD = 2
+
+
 @dataclass
 class Session(ModelingMixin, LoadsMixin, SolvingMixin,
               QueryMixin, ChecksMixin):
@@ -172,6 +181,14 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
     pending_change: dict[str, Any] | None = field(default=None, repr=False)
     authorized_preview_id: str | None = field(default=None, repr=False)
     _applying_preview: bool = field(default=False, repr=False)
+    # preview_frame 的缓存：(模型指纹, Frame 或校验失败的错误文字)。
+    _preview_cache: tuple | None = field(default=None, repr=False, compare=False)
+    # validation_errors 的缓存：(模型指纹, 错误清单)。
+    _validation_cache: tuple | None = field(default=None, repr=False, compare=False)
+    # 批量修改闸门的记账：本轮用户消息开始时已存在的实体，以及本轮已经改动过的。
+    # None 表示不在对话轮次里（界面直接调方法、离线脚本直接 dispatch），不设闸。
+    _turn_baseline: dict[str, set] | None = field(default=None, repr=False)
+    _turn_touched: set = field(default_factory=set, repr=False)
 
     # --- 撤销 / 重做 ---
     #
@@ -219,6 +236,45 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         self.result_db = None
         self.pending_change = None
         self.authorized_preview_id = None
+
+    def begin_user_turn(self, user_text: str) -> bool:
+        """一条新的用户消息到达：记下此刻已有哪些实体，再看它是不是确认口令。
+
+        批量修改闸门只保护**这条消息之前就存在**的节点、杆件与支座——本轮刚建出来的
+        东西随便改，否则「先生成几何、再指派截面」这条正常建模路径也会被拦。
+        """
+        self._turn_baseline = {
+            key: {item.get(ident) for item in self.model.get(key) or []
+                  if isinstance(item, dict)}
+            for key, ident in _GUARDED_COLLECTIONS.items()}
+        self._turn_touched = set()
+        return self.receive_user_confirmation(user_text)
+
+    def _existing_entities_touched(self, name: str,
+                                   arguments: dict[str, Any]) -> set | None:
+        """在副本上试跑写工具，返回它会改动或删除的「本轮之前已有」的实体。
+
+        与 preview_change 同一套做法：副本上跑、diff 前后模型。试跑失败返回 None，
+        交给真实调用去报它自己的错误。
+        """
+        from copy import deepcopy
+        from change_preview import diff_models
+
+        sandbox = Session(model=deepcopy(self.model))
+        try:
+            attempted = getattr(sandbox, name)(**deepcopy(arguments))
+        except TypeError:
+            return None
+        if not attempted.ok:
+            return None
+        delta = diff_models(self.model, sandbox.model)
+        touched = set()
+        for key in _GUARDED_COLLECTIONS:
+            col = delta["collections"].get(key) or {}
+            for ident in list(col.get("changed", [])) + list(col.get("removed", [])):
+                if ident in self._turn_baseline.get(key, set()):
+                    touched.add((key, ident))
+        return touched
 
     def receive_user_confirmation(self, user_text: str) -> bool:
         """只接受一条新的、明确的用户消息；工具调用本身不能走这条路。"""
@@ -654,10 +710,45 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         """
         if self.frame is not None:
             return self.frame
-        errors = validate_payload(self.model)
+        # **按内容缓存。** 界面每次重画、每点选一个对象都要调这里，而整份
+        # 模型的 jsonschema 校验加装配，1300 根杆时要 0.4 s——点一下卡半秒。
+        # 模型字典在各处被就地修改，没有可靠的"改过了"标记，所以用内容指纹：
+        # 序列化一遍只要几毫秒，比校验便宜两个数量级，而且不可能漏判。
+        key = self._model_key()
+        cached = self._preview_cache
+        if cached is not None and cached[0] == key:
+            if isinstance(cached[1], str):
+                raise ValueError(cached[1])
+            return cached[1]
+        errors = self.validation_errors()
         if errors:
-            raise ValueError("模型不合法：" + "；".join(errors[:3]))
-        return compile_model(self.model).analysis_model
+            message = "模型不合法：" + "；".join(errors[:3])
+            self._preview_cache = (key, message)
+            raise ValueError(message)
+        frame = compile_model(self.model, validated=True).analysis_model
+        self._preview_cache = (key, frame)
+        return frame
+
+    def _model_key(self) -> bytes:
+        """模型内容的指纹。模型字典在各处被就地修改，没有"改过了"的标记，
+        内容指纹是唯一不会漏判的缓存键。"""
+        return hashlib.blake2b(
+            json.dumps(self.model, sort_keys=True, default=str).encode(),
+            digest_size=16).digest()
+
+    def validation_errors(self) -> list[str]:
+        """`validate_payload(self.model)`，模型没变就不重算。
+
+        界面每次刷新都要问一句"现在能不能求解"（流程条、树、状态栏），
+        每问一次就是一遍 jsonschema 加全模型检查。返回副本，调用方改了
+        也不会污染缓存。
+        """
+        key = self._model_key()
+        cached = self._validation_cache
+        if cached is None or cached[0] != key:
+            cached = (key, list(validate_payload(self.model)))
+            self._validation_cache = cached
+        return list(cached[1])
 
     def _invalidate(self) -> None:
         self.frame = None
@@ -666,7 +757,17 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         self.result_db = None
 
     def _applied_load_magnitude(self, case: str) -> float:
-        """该工况施加的荷载总量级，用来分辨"没有荷载"和"荷载被约束吃掉了"。"""
+        """该工况施加的荷载总量级，用来分辨"没有荷载"和"荷载被约束吃掉了"。
+
+        **member_spans 必须算进来。** 漏掉它的后果不是数字偏小，而是整条
+        警告失灵：只用梯形/跨中集中力加载的模型，这里会算出 0，于是
+        solve_model 里"有荷载但位移为零"那一支永远进不去——反力 60 kN、
+        位移 0、一句提示都没有。silent_failures._total_applied_load 早就
+        因为同一个原因修过（见那个函数的 docstring），当时没传播到这里。
+
+        量的是**荷载强度的绝对值之和**，不是合力：自平衡的荷载（比如反对称
+        梯形）合力为零，但它确实是一份荷载，不该被当成"没加载"。
+        """
         load_case = self.frame.load_cases.get(case)
         if load_case is None:                      # 组合：按系数合成后再看
             factors = self.frame.combos.get(case, {})
@@ -679,6 +780,10 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
             total += float(np.abs(np.asarray(load, dtype=float)).sum())
         for w in load_case.member_loads.values():
             total += float(np.abs(np.asarray(w, dtype=float)).sum())
+        for loads in (load_case.member_spans or {}).values():
+            for item in loads:
+                total += float(np.abs(np.asarray(item.w1, dtype=float)).sum())
+                total += float(np.abs(np.asarray(item.w2, dtype=float)).sum())
         return total
 
     def _reference_length(self) -> float:
@@ -738,6 +843,36 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
             })
             self.tool_log.append((name, arguments, result))
             return result
+
+        # 批量修改闸门。原先只有删除由代码强制预演，批量修改只靠工具描述里一句
+        # 「先调用 preview_change」——评测 P02（批量换柱截面）三轮里有一轮没守，
+        # 直接改了模型。所以这里按**效果**而不是按工具名判：在副本上试跑，
+        # 看它会动多少个本轮之前就存在的节点 / 杆件 / 支座。
+        #
+        # 按本轮**累计**计数，不按单次调用：否则把一次 assign_properties 拆成
+        # 三次 edit_member 就绕过去了。代价是第二次才拦，第一次那一处已经改了——
+        # 拦截回包里点名已改的实体，让模型如实告诉用户。
+        touched: set | None = None
+        if (name in MUTATING and not self._applying_preview
+                and self._turn_baseline is not None
+                and any(self._turn_baseline.values())
+                and isinstance(arguments, dict)):
+            touched = self._existing_entities_touched(name, arguments)
+            if touched and len(self._turn_touched | touched) >= BATCH_EDIT_THRESHOLD:
+                already = sorted(f"{k[:-1]} {i}" for k, i in self._turn_touched)
+                result = ToolResult(False, {
+                    "error": (f"{name} 会批量修改已有模型实体（本轮累计 "
+                              f"{len(self._turn_touched | touched)} 个），"
+                              "请先 preview_change 并等待用户确认"),
+                    "confirmation_required": True,
+                    "required_tool": "preview_change",
+                    "would_modify": sorted(f"{k[:-1]} {i}" for k, i in touched),
+                    "already_modified_this_turn": already,
+                    "hint": ("能用一次工具完成的批量修改（如 assign_properties）就整体预演一次；"
+                             "本轮已经改掉的实体要如实告诉用户"),
+                })
+                self.tool_log.append((name, arguments, result))
+                return result
         handler: Callable[..., ToolResult] | None = getattr(self, name, None)
         if handler is None or name.startswith("_"):
             return ToolResult(False, {"error": f"没有名为 {name!r} 的工具"})
@@ -745,6 +880,8 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
             result = handler(**arguments)
         except TypeError as exc:
             result = ToolResult(False, {"error": f"参数不对：{exc}"})
+        if touched and result.ok:
+            self._turn_touched |= touched
         self.tool_log.append((name, arguments, result))
         return result
 
@@ -842,7 +979,7 @@ def run_turn(user_text: str, provider: Provider, session: Session | None = None,
     from workflow import refresh_workflow_message, workflow_message
 
     session = session or Session()
-    session.receive_user_confirmation(user_text)
+    session.begin_user_turn(user_text)
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT},
                             workflow_message(session),
                             {"role": "user", "content": user_text}]

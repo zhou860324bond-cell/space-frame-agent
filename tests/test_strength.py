@@ -140,7 +140,12 @@ def test_an_explicit_mu_wins_over_the_inferred_one_and_is_labelled():
 
 
 def test_a_stocky_column_is_flagged_as_outside_the_euler_range():
-    """λ < λp 时欧拉 σcr 已超过屈服应力，不能拿它判「稳定够」。"""
+    """λ < λp 时欧拉 σcr 已超过屈服应力，**欧拉这一路**不能拿来判「稳定够」。
+
+    这条原先还断言整根构件"判不了"。现在不是了：规范法的 φ 覆盖全柔度
+    范围，中小柔度那一段由它给出结论。欧拉仍然不适用——这一点没变，
+    变的是"不适用"不再等于"没有结论"。
+    """
     frame = _bar(-10e3, yield_stress=235e6)
     # 粗短：把回转半径放大到与杆长同量级，λ 掉到十几
     frame.sections["S"] = Section("S", A=AREA, Iy=1.0e-3, Iz=1.0e-3, J=2e-3,
@@ -149,12 +154,71 @@ def test_a_stocky_column_is_flagged_as_outside_the_euler_range():
     got = row["buckling"]
     assert got["lambda_p"] == pytest.approx(math.pi * math.sqrt(E / 235e6))
     assert got["euler_applicable"] is False
-    # 三种结局要分清楚：通过、超限、**判不了**。这一档是判不了。
     assert got["status"] == BUCKLING_NA
-    assert not got["conclusive"], "欧拉公式不适用时不能给出结论"
-    assert not row["conclusive"] and row["ok"], "判不了不等于超限"
-    assert got["ratio"] < 1.0, "本例的 Pcr 很大，正是「照着算就会误判通过」"
+    assert not got["conclusive"], "欧拉公式不适用时它自己不能给出结论"
+    assert got["ratio"] < 1.0, "本例的 Pcr 很大，正是「照着欧拉算就会误判通过」"
     assert any("不适用" in w for w in got["warnings"])
+    # 规范法接手，整根构件因此有了结论
+    assert got["code_check"] is not None
+    assert row["conclusive"], "规范法给了结论，就不该再算判不了"
+    assert "GB 50017" in row["verdict"]
+
+
+def test_the_code_method_answers_where_euler_gives_up():
+    """**这条是 φ 系数法存在的理由。**
+
+    实际钢柱大多落在中小柔度区，而欧拉恰好在那一段弃权。实测一根
+    λ=24.9 的粗短柱：欧拉 N/Pcr=0.023，看着安全到离谱；
+    规范法 N/(φA)/f=0.822。差 35 倍，方向偏不安全。
+    """
+    frame = _bar(-10e3, yield_stress=235e6)
+    frame.sections["S"] = Section("S", A=AREA, Iy=1.0e-3, Iz=1.0e-3, J=2e-3,
+                                  cy=0.05, cz=0.05)
+    got = check_member(frame, solve(frame), 1)["buckling"]
+    code = got["code_check"]
+    assert 0.0 < code["phi"] <= 1.0
+    assert code["ratio"] > got["ratio"], (
+        "欧拉在这一段偏高，规范法必须给出更不利的结论")
+
+
+def test_the_section_curve_changes_the_answer_and_is_not_a_detail():
+    """a/b/c/d 类反映初弯曲与残余应力，同一个 λ 下差别很大。
+
+    λ=80 时 a 类 φ=0.783、d 类 0.493 —— 差 59%。默认取 b 类是个
+    工程判断，不是可以忽略的细节，所以这里把差异钉死。
+    """
+    from strength import stability_factor
+
+    phis = [stability_factor(80.0, 235e6, 206e9, c) for c in "abcd"]
+    assert phis == sorted(phis, reverse=True), "a 类必须最高、d 类最低"
+    assert phis[0] / phis[-1] > 1.5
+
+
+def test_phi_matches_the_code_table_and_stays_below_euler():
+    """φ 对规范表值，并且**永远低于**欧拉值。
+
+    低于欧拉是物理要求：欧拉不计初弯曲与残余应力，真实柱只会更弱。
+    若某处 φ 超过 π²E/(λ²fy)，说明公式的分段或系数写错了。
+    """
+    from strength import stability_factor
+
+    fy, modulus = 235e6, 206e9
+    # 规范表给到三位小数，逐点吻合
+    for lam, ref in ((40, 0.899), (60, 0.807), (80, 0.688),
+                     (100, 0.555), (120, 0.437), (150, 0.308)):
+        assert stability_factor(lam, fy, modulus, "b") == pytest.approx(
+            ref, abs=1e-3)
+    assert stability_factor(0.0, fy, modulus, "b") == 1.0
+    for lam in (50, 100, 150, 200, 300):
+        euler = math.pi ** 2 * modulus / (lam ** 2 * fy)
+        assert stability_factor(lam, fy, modulus, "b") < euler
+
+
+def test_an_unknown_section_curve_is_rejected():
+    from strength import stability_factor
+
+    with pytest.raises(ValueError, match="a"):
+        stability_factor(80.0, 235e6, 206e9, "x")
 
 
 def test_without_a_yield_stress_the_applicability_is_unknown_not_assumed():
@@ -269,3 +333,98 @@ def test_allowable_stresses_follow_the_unit_system():
             == pytest.approx(r_si["members"][0]["strength"]["ratio"], rel=1e-12))
     assert (r_mm["members"][0]["buckling"]["ratio"]
             == pytest.approx(r_si["members"][0]["buckling"]["ratio"], rel=1e-12))
+
+
+# --------------------------------------------- 折算应力（强度理论）
+
+def _hn_beam(span: float, w: float):
+    """工字梁简支受均布。改跨度就能在弯曲控制与剪切控制之间切换。"""
+    import sections as sec
+    from agent import Session
+
+    hn = sec.i_section("HN400", 0.400, 0.200, 0.008, 0.013)
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0,
+          "yield_stress": 355e6, "allow_tension": 305e6}], [hn])
+    s.set_model({**s.model,
+                 "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                           {"id": 2, "x": span, "y": 0, "z": 0}],
+                 "members": [{"id": 1, "i": 1, "j": 2,
+                              "material": "Q355", "section": "HN400"}],
+                 "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                              {"node": 2, "fix": [0, 1, 1, 1, 0, 0]}]})
+    s.set_member_load(1, [0, 0, -w])
+    s.solve_model()
+    return s, hn
+
+
+def test_a_slender_beam_is_governed_by_the_extreme_fibre():
+    """细长梁上折算应力等于正应力：那里 τ=0，四个理论必然重合。
+
+    这一条是**下界校验**——新加的折算应力不该凭空抬高一根本来就由弯曲
+    控制的梁。若这里 σr4 > σ，说明 σ 与 τ 被凑到了截面上并不存在的同一点。
+    """
+    from strength import combined_stress_check
+
+    span, w = 6.0, 30e3
+    s, hn = _hn_beam(span, w)
+    c = combined_stress_check(s.frame, s.solution, 1,
+                              mapping=s.compilation.mapping, stations=101)
+    sigma = w * span ** 2 / 8 * hn["cy"] / hn["Iz"]
+    assert c["theories"]["4"]["point"] == "极端纤维"
+    assert c["theories"]["4"]["sigma_r"] == pytest.approx(sigma, rel=1e-3)
+    # τ=0 处四条理论同值
+    values = [c["theories"][t]["sigma_r"] for t in "1234"]
+    assert max(values) == pytest.approx(min(values), rel=1e-9)
+
+
+def test_a_short_deep_beam_is_governed_by_shear_and_normal_stress_misses_it():
+    """**这条是这个功能存在的理由。**
+
+    L/h = 2.5 的短深梁：只看正应力是 19.6 MPa、应力比 0.064，看着安全得很；
+    真实折算应力 54.6 MPa，差 2.78 倍。荷载再大一点就直接翻转结论。
+    控制点在中性轴——那里弯曲 σ=0 而 τ 最大，正应力校核永远看不到。
+    """
+    from strength import combined_stress_check
+
+    span, w = 1.0, 180e3
+    s, hn = _hn_beam(span, w)
+    c = combined_stress_check(s.frame, s.solution, 1,
+                              mapping=s.compilation.mapping, stations=101)
+    sigma = w * span ** 2 / 8 * hn["cy"] / hn["Iz"]
+    assert c["theories"]["4"]["point"] == "中性轴"
+    assert c["theories"]["4"]["sigma_r"] > 2.5 * sigma
+
+
+def test_pure_shear_orders_the_four_theories_the_textbook_way():
+    """纯剪下 σr1 < σr2 < σr4 < σr3，比值 1 : 1+ν : √3 : 2。
+
+    顺序反了说明某一条套错了公式。这是四条理论差别最大的状态，
+    第三理论比第四保守 15.5%——那 15.5% 正是选哪条理论的实际后果。
+    """
+    from strength import combined_stress_check
+
+    s, _ = _hn_beam(1.0, 180e3)
+    c = combined_stress_check(s.frame, s.solution, 1,
+                              mapping=s.compilation.mapping, stations=101)
+    r = {t: c["theories"][t]["sigma_r"] for t in "1234"}
+    assert r["1"] < r["2"] < r["4"] < r["3"]
+    tau = r["1"]                                   # 纯剪时 σ1 = τ
+    assert r["2"] == pytest.approx(1.3 * tau, rel=1e-3)      # ν=0.3
+    assert r["4"] == pytest.approx(math.sqrt(3.0) * tau, rel=1e-3)
+    assert r["3"] == pytest.approx(2.0 * tau, rel=1e-3)
+
+
+def test_the_tool_reports_both_conclusions_side_by_side():
+    """正应力与折算应力是两条独立结论，工具层要同时给出。
+
+    只留一条都不行：正应力那条按拉压分别比许用值（铸铁、木材必须），
+    折算应力那条才看得见剪切控制。
+    """
+    s, _ = _hn_beam(1.0, 180e3)
+    row = s.check_strength().payload["members"][0]
+    assert row["stress_ratio"] < row["combined_ratio"], (
+        "短深梁上折算应力必须比纯正应力更不利")
+    assert row["combined_point"] == "中性轴"
+    assert set(row["equivalent_stress_MPa"]) == {"σr1", "σr2", "σr3", "σr4"}

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox,
                                QVBoxLayout, QWidget)
 
 from . import theme
+from . import glyphs
 
 
 # 截面类型对应的参数名
@@ -267,7 +268,7 @@ class SectionOptPanel(QWidget):
         self.lbl_feasible.setText(str(result.feasible_count))
         self.lbl_pareto.setText(str(len(result.pareto)))
         self.lbl_time.setText(f"{result.duration_ms:.0f}ms")
-        self.lbl_status.setText("✅ 优化完成")
+        self.lbl_status.setText(f"{glyphs.TICK} 优化完成")
         self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
 
         # 填充表格：Pareto 前沿 + 最优解
@@ -282,10 +283,11 @@ class SectionOptPanel(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(f"{w:.4g}" if w else "—"))
             d = pt.objectives.get("max_displacement")
             self.table.setItem(row, 2, QTableWidgetItem(f"{d:.4g}" if d else "—"))
-            self.table.setItem(row, 3, QTableWidgetItem("✓" if pt.feasible else "✗"))
+            self.table.setItem(row, 3, QTableWidgetItem(
+                glyphs.TICK if pt.feasible else glyphs.CROSS))
         self.table.resizeColumnsToContents()
 
     def _on_failed(self, exc_type, msg):
         self.btn_run.setEnabled(True)
-        self.lbl_status.setText(f"❌ 优化失败：{exc_type}: {msg}")
+        self.lbl_status.setText(f"{glyphs.CROSS} 优化失败：{exc_type}: {msg}")
         self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")

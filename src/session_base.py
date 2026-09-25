@@ -32,6 +32,37 @@ class ToolResult:
         return json.dumps({"ok": self.ok, **self.payload}, ensure_ascii=False)
 
 
+def _name_unnamed_supports(model: dict) -> None:
+    """给没有名字的支座补上 BC-n。
+
+    **参数化生成器建的支座不带名字**，而边界条件管理器是按名字删的：
+    列表里显示成"(未命名-节点1)"这种合成标签，照着它删会报"没有名为
+    '(未命名-节点1)' 的边界条件"——**列得出来，一个也删不掉**。
+    用 generate_frame 建的模型全都这样，而那是最常用的一条路径。
+
+    名字按**约束掩码**分组给：同一组约束（比如六个固接柱脚）共用一个
+    BC-n，这与 Abaqus 的 BC 概念一致，也与 list_boundary_conditions 的
+    分组口径一致；逐个节点各给一个名字的话，删一条只删掉一个柱脚，
+    而用户在管理器里看到的是一整条。
+    """
+    supports = model.get("supports") or []
+    if not supports or all(item.get("name") for item in supports):
+        return
+    used = {str(item["name"]) for item in supports if item.get("name")}
+    index = 1
+    assigned: dict[tuple, str] = {}
+    for item in supports:
+        if item.get("name"):
+            continue
+        key = (tuple(item.get("fix") or ()), tuple(item.get("spring") or ()))
+        if key not in assigned:
+            while f"BC-{index}" in used:
+                index += 1
+            assigned[key] = f"BC-{index}"
+            used.add(assigned[key])
+        item["name"] = assigned[key]
+
+
 def _records(fn: Callable) -> Callable:
     """把这个工具的调用记进构建历史。
 
@@ -50,6 +81,7 @@ def _records(fn: Callable) -> Callable:
         # 的建模操作之后都写成当前版本，历史快照和保存文件便不再是无版本数据。
         if result.ok and self.model:
             self.model.setdefault("schema_version", CURRENT_SCHEMA_VERSION)
+            _name_unnamed_supports(self.model)
         bound = signature.bind(self, *args, **kwargs)
         bound.apply_defaults()
         recorded = dict(bound.arguments)

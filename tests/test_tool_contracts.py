@@ -97,8 +97,11 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
                       "单根杆件的内力，**必须带单位**"),
     "query_envelope": (("component", "unit", "peak", "governing_case"),
                        "包络峰值与控制组合，**必须带单位**"),
-    "modal_analysis": (("modes", "total_mass_kg", "effective_mass_ratio_xyz"),
-                       "各阶频率周期，有效质量比用于判断阶数够不够"),
+    "modal_analysis": (("modes", "total_mass_kg", "participable_mass_kg",
+                        "cumulative_mass_ratio_xyz"),
+                       "各阶频率周期与参与质量比。**可参与质量必须一起给**："
+                       "参与比的分母是它不是总质量，只给比值的话用户没法判断"
+                       "「上不去」是阶数不够还是质量压在支座上"),
     "buckling_analysis": (("factors", "critical_factor",
                            "most_compressed_member"),
                           "屈曲因子与最大受压杆件"),
@@ -113,6 +116,41 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "analyze_joint_solid": (("node_id", "case"),
                             "节点局部实体：dry_run 只出规格；native 自研求解，"
                             "Abaqus 是可选对标后端"),
+    "list_boundary_conditions": (("count", "boundary_conditions"),
+                                 "BC Manager：谁、在哪些节点、约束了什么"),
+    "delete_boundary_condition": (("deleted", "entries", "remaining"),
+                                  "删边界条件会让结构少约束，所以要报剩下多少"),
+    "generate_live_patterns": (("spans", "span_count", "cases", "count"),
+                               "活载布置：归出几跨、每个工况压哪些梁，都要给出来"),
+    "response_spectrum_analysis": (("direction", "combination", "base_shear_kN",
+                                    "mass_ratio", "modes", "sign"),
+                                   "反应谱：基底剪力与逐阶贡献；"
+                                   "**「结果没有符号」这句必须给**——"
+                                   "少了它用户会把它当普通工况直接叠加"),
+    "set_member_connection": (("members", "end", "dof", "stiffness", "note"),
+                              "半刚性连接：实际用了多大刚度要给出来——"
+                              "按 EI/L 倍数给的时候用户并不知道绝对值是多少"),
+    "add_step": (("added", "count", "steps", "note"),
+                 "加分析步：要把**结算后实际生效**的荷载与支座给出来，"
+                 "只回显声明会把传播这件事藏起来"),
+    "list_steps": (("declared", "effective", "count"),
+                   "分析步清单：声明与生效必须分两栏，"
+                   "只给声明看不出某一步实际在算什么"),
+    "delete_step": (("deleted", "count", "steps"),
+                    "删分析步：删完之后剩下的步各自生效什么，要重新给一遍"),
+    "solve_steps": (("steps", "count", "inspecting", "limitation"),
+                    "分析步求解：逐步一行；**留在会话里的是哪一步要说明**，"
+                    "「每步都从零重解」这条限制也是契约的一部分"),
+    "define_amplitude": (("amplitude", "points", "sampled", "note"),
+                         "幅值曲线：定义了什么形状、几个采样点上是多少，都要回给用户核对"),
+    "list_amplitudes": (("builtin", "defined", "count"),
+                        "幅值曲线清单：内置两条的含义必须一起给，否则用户不知道 STEP 和 RAMP 的区别"),
+    "delete_amplitude": (("deleted", "points"),
+                         "删曲线：删掉的是哪条、原来什么形状，要能复原"),
+    "generate_combinations": (("standard", "count", "combos", "gamma", "psi_c"),
+                              "规范组合：用了哪套系数、生成了哪些组合，都要说清楚"),
+    "apply_area_load": (("case", "load_path", "count", "entries", "detail"),
+                        "面荷载导线荷载：每根梁生成几段、怎么分的都要说清楚"),
     "check_strength": (("members", "ok", "failed_members",
                         "inconclusive_members", "limitation"),
                        "强度验算：逐杆一行；**「判不了」与「不合格」必须分开给**，"
@@ -517,3 +555,100 @@ def test_a_set_survives_an_unrelated_change():
     s.set_load_cases(cases=[{"name": "D", "member_loads":
                              [{"member": 4, "w": [0, 0, -20e3]}]}])
     assert s.model["sets"]["全部柱"]["members"] == before
+
+
+# --------------------------------------------- 描述与能力同步
+
+#: 安全相关的返回字段，**工具描述里必须点名**。
+#:
+#: 这条闸补的是一个真实发生过的缺口：payload 里已经有正确数据，而工具描述
+#: 没提，于是 agent 拿到了也不会用，甚至照旧转达一句已经不成立的限制。
+#: 三处实测后果：
+#:
+#:   solve_model        agent 继续引用 max_displacement_mm，而它漏报单元内
+#:                      挠度 2.16 倍（87 杆框架 4.30 vs 9.27 mm）
+#:   buckling_analysis  λ 被网格抬高 102%（门式刚架 1.66 vs 收敛 0.82）而不提
+#:   check_strength     描述说"只算正应力"——在折算应力接进来之后这句话是假的
+#:
+#: 键写在这里就必须在描述里出现。改了能力不改描述，这里会红。
+DESCRIPTION_MUST_MENTION = {
+    "solve_model": ("max_deflection_mm",),
+    "modal_analysis": ("mesh_warning",),
+    "buckling_analysis": ("mesh_warning", "likely_cause"),
+    "check_strength": ("折算应力", "φ"),
+}
+
+
+@pytest.mark.parametrize("tool_name", sorted(DESCRIPTION_MUST_MENTION))
+def test_the_description_tells_the_agent_what_to_look_at(tool_name):
+    """工具描述必须点名那些**不提就会被忽略**的返回字段。
+
+    agent 只看得到描述。payload 里放了再正确的数，描述不提就等于没放——
+    这不是文档洁癖，是三次实测出来的错数。
+    """
+    fn = {t["function"]["name"]: t["function"] for t in TOOLS}[tool_name]
+    text = fn["description"]
+    missing = [k for k in DESCRIPTION_MUST_MENTION[tool_name] if k not in text]
+    assert not missing, (
+        f"{tool_name} 的描述没提到 {missing}——agent 看不到的东西等于不存在")
+
+
+def test_no_tool_still_claims_a_limitation_it_has_outgrown():
+    """能力补上了，描述里那句旧限制就必须跟着删。
+
+    check_strength 曾长期写着"只算正应力，没有剪应力与扭转"。折算应力接进来
+    之后这句话变成假的，而 agent 会**原样转达给用户**——比没有说明更糟。
+    """
+    fn = {t["function"]["name"]: t["function"] for t in TOOLS}["check_strength"]
+    text = fn["description"]
+    assert "只算正应力" not in text, "折算应力已经接进来了，这句限制是假的"
+    # 但真正还存在的限制必须留着，不许借着更新描述把边界一起抹掉
+    assert "扭转" in text, "仍不含扭转剪应力，这一条不能删"
+
+
+@pytest.mark.parametrize("tool_name", sorted({
+    t["function"]["name"] for t in TOOLS}))
+def test_every_declared_parameter_is_actually_accepted(tool_name):
+    """schema 声明的参数，Session 方法必须真的接得住。
+
+    声明了却接不住，agent 传过来就是 TypeError；而这种错只在模型**恰好**
+    用到那个参数时才现形，平时测不出来。`**kwargs` 视为全接受。
+    """
+    import inspect
+
+    fn = {t["function"]["name"]: t["function"] for t in TOOLS}[tool_name]
+    method = getattr(Session, tool_name, None)
+    if method is None:
+        pytest.skip(f"{tool_name} 不是 Session 方法")
+    params = inspect.signature(method).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return                                  # **kwargs 全收
+    declared = set(fn["parameters"].get("properties") or {})
+    missing = declared - set(params)
+    assert not missing, (
+        f"{tool_name} 的 schema 声明了 {sorted(missing)}，但方法签名里没有")
+
+
+def test_experimental_tools_are_labelled_consistently():
+    """「实验性」要在三处说法一致：给模型看的描述、代码里的集合、给人看的文档。
+
+    只在文档里写，模型不知道；只在描述里写，改描述的人不知道这是有登记的分级。
+    """
+    from pathlib import Path
+    from agent_tools import EXPERIMENTAL_TOOLS
+
+    names = {t["function"]["name"] for t in TOOLS}
+    assert EXPERIMENTAL_TOOLS <= names, EXPERIMENTAL_TOOLS - names
+    for tool in TOOLS:
+        fn = tool["function"]
+        labelled = fn["description"].startswith("【实验性】")
+        assert labelled == (fn["name"] in EXPERIMENTAL_TOOLS), \
+            f"{fn['name']} 的描述前缀与 EXPERIMENTAL_TOOLS 不一致"
+
+    root = Path(__file__).resolve().parent.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    matrix = (root / "docs" / "BETA_0.1_CAPABILITY_MATRIX.md").read_text(encoding="utf-8")
+    for name in EXPERIMENTAL_TOOLS:
+        assert f"`{name}`" in readme and "实验性" in readme, f"README 没有标出实验性工具 {name}"
+        row = next((ln for ln in matrix.splitlines() if f"`{name}`" in ln), "")
+        assert "实验性" in row, f"能力矩阵里 {name} 那一行没有标实验性"

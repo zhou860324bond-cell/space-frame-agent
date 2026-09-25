@@ -73,7 +73,9 @@ def inspect_workflow(session) -> WorkflowStatus:
              "add_nodes", "define_materials_and_sections"), pending,
         )
 
-    errors = tuple(str(item)[:240] for item in validate_payload(model)[:5])
+    check = getattr(session, "validation_errors", None)
+    found = check() if callable(check) else validate_payload(model)
+    errors = tuple(str(item)[:240] for item in found[:5])
     if errors:
         return WorkflowStatus(
             WorkflowPhase.DRAFT, counts, errors,

@@ -39,7 +39,8 @@ import numpy as np
 
 from frame3d import Frame
 from internal_forces import member_diagram, physical_member_diagram
-from stress import extreme_normal_stress
+from stress import (StressUnavailable, equivalent_stress,
+                    extreme_normal_stress)
 
 # 讲义里的四种经典杆端约束 → 计算长度系数
 MU_PINNED_PINNED = 1.0      # 两端铰支
@@ -106,11 +107,134 @@ def _member_view(frame: Frame, mapping, member_id: int):
     return first, first.releases_i, last.releases_j, ids
 
 
+# GB 50017 §6.1.5：折算应力允许取 β·f，β=1.1。
+# 理由是那一点处于局部高应力区、塑性重分布余地大，不是"放宽要求"。
+GB_BETA = 1.1
+
+#: 折算应力要在**三个特征点**上分别算，因为 σ 与 τ 的极值根本不在同一处：
+#:   极端纤维   σ 最大、τ = 0
+#:   中性轴     弯曲 σ = 0（只剩 N/A）、τ 最大
+#:   腹板边缘   两者同时都大 —— 控制点往往在这里，GB 50017 §6.1.5 验的就是它
+#: 只取 σmax 和 τmax 硬凑成 √(σmax²+3τmax²) 是错的：那个组合在截面上
+#: 并不存在，结果虚高，而且高多少说不清。
+POINT_FIBRE = "极端纤维"
+POINT_NEUTRAL = "中性轴"
+POINT_WEB = "腹板边缘"
+
+
+def _station_points(section, d):
+    """逐测点给出三个特征点上的 (σ, τ)，返回 [(名称, σ数组, τ数组), ...]。
+
+    缺剪切几何时只返回极端纤维那一项并把 τ 记为零——那等价于原来的纯正应力
+    校核，结论不会因为"少算了 τ"而偏不安全地放松，但会在返回值里标明。
+    """
+    from stress import shear_stress
+
+    low, high = extreme_normal_stress(section, d.N, d.My, d.Mz)
+    # 极端纤维取拉压两侧里绝对值大的那个：相当应力与符号无关的只有
+    # σr3/σr4，σr1/σr2 是认符号的，所以两侧都要留着给上层挑。
+    points = [(POINT_FIBRE, high, np.zeros_like(high)),
+              (POINT_FIBRE, low, np.zeros_like(low))]
+    try:
+        tau_y, tau_z = shear_stress(section, d.Vy, d.Vz)
+    except StressUnavailable:
+        return points, False
+
+    # 两个方向的剪应力是截面上同一个剪应力矢量的两个分量，合成用平方和
+    # 开方，不是直接相加——相加会虚高最多 41%。
+    tau = np.hypot(tau_y, tau_z)
+    sigma_axial = d.N / section.A
+    points.append((POINT_NEUTRAL, sigma_axial, tau))
+
+    if section.S_flange is not None and section.c_web is not None:
+        # 腹板边缘：z = 0，所以 My 在这一点不产生正应力；
+        # 中性轴以外只剩翼缘，静矩取 S_flange。
+        bend = np.abs(d.Mz) * section.c_web / section.Iz
+        tau_web = np.abs(d.Vy) * section.S_flange / (section.Iz * section.bz)
+        points.append((POINT_WEB, sigma_axial + bend, tau_web))
+        points.append((POINT_WEB, sigma_axial - bend, tau_web))
+    return points, True
+
+
+def combined_stress_check(frame: Frame, solution, member_id: int, *,
+                          mapping=None, cases: Iterable[str] | None = None,
+                          stations: int = 21) -> dict[str, Any]:
+    """一根构件的强度理论校核：材力四理论 + GB 50017 折算应力。
+
+    与既有的正应力校核**并列**，不是替换。两者回答的不是同一个问题：
+
+    * 正应力校核按拉、压分别比许用值——铸铁、砌体、木材抗拉抗压差好几倍，
+      必须分开，这是相当应力做不到的（σr3/σr4 都是非负的，丢掉了符号）。
+    * 相当应力把 σ 与 τ 合起来判，回答"这一点会不会屈服"。只有正应力时
+      腹板受剪那一段完全查不出来。
+
+    所以两条都留着，构件要两条都过才算通过。
+    """
+    member, _, _, _ = _member_view(frame, mapping, member_id)
+    section = frame.sections[member.section]
+    material = frame.materials[member.material]
+    ft, _fc, _src = _allowables(material)
+    names = list(cases) if cases is not None else list(solution.all_results())
+
+    best: dict[str, Any] = {}
+    has_shear = True
+    for name in names:
+        if mapping is None:
+            d = member_diagram(frame, solution, member_id, name, stations)
+        else:
+            d = physical_member_diagram(frame, solution, mapping,
+                                        member_id, name, stations)
+        points, got_shear = _station_points(section, d)
+        has_shear = has_shear and got_shear
+        for theory in ("1", "2", "3", "4"):
+            for label, sigma, tau in points:
+                sr = equivalent_stress(sigma, tau, theory, nu=material.nu)
+                k = int(np.argmax(sr))
+                value = float(sr[k])
+                prev = best.get(theory)
+                if prev is None or value > prev["sigma_r"]:
+                    best[theory] = {
+                        "sigma_r": value, "ratio": value / ft,
+                        "case": name, "x": float(d.x[k]), "point": label,
+                        "sigma": float(np.asarray(sigma)[k]),
+                        "tau": float(np.asarray(tau)[k]),
+                    }
+
+    gb = dict(best["4"])
+    gb["limit"] = GB_BETA * ft
+    gb["ratio"] = gb["sigma_r"] / gb["limit"]
+    gb["ok"] = gb["ratio"] <= 1.0
+    gb["basis"] = (f"GB 50017 §6.1.5 折算应力 √(σ²+3τ²) ≤ β·f，"
+                   f"β={GB_BETA}，f 取材料的 allow_tension。")
+    for theory in best:
+        best[theory]["ok"] = best[theory]["ratio"] <= 1.0
+
+    return {
+        "member": member_id,
+        "theories": best,
+        "gb50017": gb,
+        "has_shear": has_shear,
+        "limit_used": ft,
+        "note": ("截面缺少静矩/中性轴宽度，τ 按零处理——这一栏此时等价于纯正"
+                 "应力校核，不能当作计入剪切的结论。"
+                 if not has_shear else
+                 "σ 与 τ 在极端纤维、中性轴、腹板边缘三处分别取值后合成；"
+                 "不是拿 σmax 与 τmax 硬凑，那个组合在截面上并不存在。"),
+    }
+
+
 def check_member(frame: Frame, solution, member_id: int, *,
                  mapping=None, cases: Iterable[str] | None = None,
                  stations: int = 21,
-                 slenderness_limit: float | None = None) -> dict[str, Any]:
-    """一根（物理）构件的强度与稳定验算。"""
+                 slenderness_limit: float | None = None,
+                 buckling_curve: str = "b") -> dict[str, Any]:
+    """一根（物理）构件的强度与稳定验算。
+
+    ``buckling_curve`` 是 GB 50017 的截面类别 a/b/c/d，只影响规范法的 φ。
+    默认 b 类——热轧工字钢、H 型钢绕强轴的常见归类。**同一个 λ 下
+    a 类比 d 类高出一大截**（λ=80 时 0.783 对 0.493），所以这个默认值
+    不是可以随便忽略的细节，判不准时应当显式指定。
+    """
     member, rel_i, rel_j, _ = _member_view(frame, mapping, member_id)
     section = frame.sections[member.section]
     material = frame.materials[member.material]
@@ -165,29 +289,124 @@ def check_member(frame: Frame, solution, member_id: int, *,
                   "tension_case": axial_max_case,
                   "compression_case": axial_min_case},
     }
+    out["combined"] = combined_stress_check(
+        frame, solution, member_id, mapping=mapping, cases=names,
+        stations=stations)
     out["buckling"] = _euler(frame, member, section, material, length,
                              rel_i, rel_j, axial_min, axial_min_case,
-                             slenderness_limit)
+                             slenderness_limit, buckling_curve)
     b = out["buckling"]
     failed = []
     if not out["strength"]["ok"]:
         failed.append("强度超限")
+    # 折算应力单独成一条结论。它查得出正应力查不出的东西——腹板受剪那一段
+    # 正应力可能很小，而 √(σ²+3τ²) 已经超了。两条都过才算通过。
+    if not out["combined"]["gb50017"]["ok"]:
+        failed.append("折算应力超限")
     if b is not None and not b["ok"]:
         failed.append(b["status"] if b["status"] == BUCKLING_SLENDER
                       else "稳定超限")
     out["ok"] = not failed
-    out["conclusive"] = b is None or b["conclusive"]
+    # **规范法给了结论就不再算"判不了"。** 欧拉在 λ<λp 那一段只能弃权，
+    # 而实际钢柱大多恰好落在那里——那一档原本意味着最常见的情形没有结论。
+    # 实测一根 λ=24.9 的粗短柱：欧拉 N/Pcr=0.023（看着安全到离谱），
+    # 规范法 N/(φA)/f=0.822。差 35 倍，而且是偏不安全的方向。
+    code = b["code_check"] if b is not None else None
+    out["conclusive"] = b is None or b["conclusive"] or code is not None
     reason = {BUCKLING_NA: "λ<λp，欧拉公式不适用",
               BUCKLING_UNKNOWN: "未给屈服应力"}.get(
                   b["status"] if b is not None else None, "")
-    out["verdict"] = ("、".join(failed) if failed else
-                      ("通过" if out["conclusive"] else
-                       f"强度通过 · 稳定判不了（{reason}）"))
+    if failed:
+        out["verdict"] = "、".join(failed)
+    elif out["conclusive"] and code is not None and b["status"] == BUCKLING_NA:
+        # 欧拉弃权但规范法通过：说清楚结论是谁给的，别让人以为欧拉说了算
+        out["verdict"] = (f"通过（稳定按 GB 50017 {code['curve']} 类，"
+                          f"φ={code['phi']:.3f}，应力比 {code['ratio']:.3f}；"
+                          "欧拉公式在此柔度段不适用）")
+    elif out["conclusive"]:
+        out["verdict"] = "通过"
+    else:
+        out["verdict"] = f"强度通过 · 稳定判不了（{reason}）"
     return out
 
 
+# ------------------------------------------- GB 50017 轴心受压稳定系数 φ
+
+#: GB 50017-2017 附录 D 的 Perry 型拟合系数，按截面类别分。
+#: c、d 两类在 λn=1.05 处换一组系数，所以值是 (界限, 低段, 高段)。
+_PHI_COEFFS = {
+    "a": (None, (0.41, 0.986, 0.152), None),
+    "b": (None, (0.65, 0.965, 0.300), None),
+    "c": (1.05, (0.73, 0.906, 0.595), (0.73, 1.216, 0.302)),
+    "d": (1.05, (1.35, 0.868, 0.915), (1.35, 1.375, 0.432)),
+}
+BUCKLING_CURVES = tuple(_PHI_COEFFS)
+
+
+def stability_factor(slenderness: float, yield_stress: float, modulus: float,
+                     curve: str = "b") -> float:
+    """GB 50017-2017 附录 D 的轴心受压构件稳定系数 φ。
+
+    **这一条补的是欧拉公式的盲区。** λ<λp 时欧拉给出的 σcr 已经超过屈服
+    应力，没有物理意义，所以 _euler 在那一段只能弃权——而实际钢柱大多
+    恰好落在中小柔度区，弃权等于最常见的情形没有结论。
+
+    φ 覆盖全柔度范围：λ→0 时 φ→1（强度控制），λ→∞ 时 φ→π²E/(λ²fy)
+    （退回欧拉）。中间那段由 Perry-Robertson 型公式给出，系数按截面类别
+    a/b/c/d 取——类别反映初弯曲与残余应力的严重程度，同一个 λ 下
+    a 类比 d 类高出一大截。
+
+    正则化长细比 λn = (λ/π)·√(fy/E)，λn=0.215 是低柔度段的分界。
+
+    校核过：b 类 Q235 在 λ=40/60/80/100/120/150/200 处与规范表值
+    逐点吻合（见 tests/test_strength.py）。
+    """
+    curve = str(curve).lower()
+    if curve not in _PHI_COEFFS:
+        raise ValueError(f"截面类别只能取 {BUCKLING_CURVES}，收到 {curve!r}")
+    if yield_stress <= 0 or modulus <= 0:
+        raise ValueError("算 φ 需要正的屈服应力与弹性模量")
+    lam = float(slenderness)
+    if lam <= 0.0:
+        return 1.0
+    lam_n = lam / math.pi * math.sqrt(float(yield_stress) / float(modulus))
+
+    split, low, high = _PHI_COEFFS[curve]
+    a1, a2, a3 = low if (split is None or lam_n <= split) else high
+    if lam_n <= 0.215:
+        return 1.0 - a1 * lam_n ** 2
+    # φ = [ (α2+α3·λn+λn²) − √((α2+α3·λn+λn²)² − 4λn²) ] / (2λn²)
+    t = a2 + a3 * lam_n + lam_n ** 2
+    root = math.sqrt(max(t ** 2 - 4.0 * lam_n ** 2, 0.0))
+    return (t - root) / (2.0 * lam_n ** 2)
+
+
+def code_stability_check(P: float, area: float, slenderness: float,
+                         material, curve: str = "b") -> dict[str, Any] | None:
+    """N/(φ·A) ≤ f。缺屈服应力或许用值时返回 None，不猜。"""
+    ft, _fc, _src = _allowables(material)
+    if not material.yield_stress:
+        return None
+    phi = stability_factor(slenderness, float(material.yield_stress),
+                           float(material.E), curve)
+    sigma = P / (phi * area)
+    return {
+        "phi": phi,
+        "curve": curve,
+        "slenderness": slenderness,
+        "sigma": sigma,
+        "limit": ft,
+        "ratio": sigma / ft,
+        "ok": sigma <= ft,
+        "basis": (f"GB 50017 附录 D，{curve} 类截面：N/(φ·A) ≤ f，"
+                  f"φ={phi:.4f}，f 取材料的 allow_tension。"
+                  "**覆盖全柔度范围**，欧拉公式弃权的中小柔度段由它给出结论。"),
+    }
+
+
 def _euler(frame, member, section, material, length, rel_i, rel_j,
-           axial_min, case, slenderness_limit) -> dict[str, Any] | None:
+           axial_min, case, slenderness_limit,
+           curve: str = "b") -> dict[str, Any] | None:
     """受压杆的欧拉校核。不受压就返回 None——没有压力就没有屈曲。"""
     if axial_min >= 0.0:
         return None
@@ -228,6 +447,9 @@ def _euler(frame, member, section, material, length, rel_i, rel_j,
         valid = slenderness >= lambda_p
 
     ratio = P / P_cr
+    # 规范校核与欧拉并列。欧拉在 λ<λp 时只能弃权，而实际钢柱大多恰好落在
+    # 那一段——弃权等于最常见的情形没有结论。φ 覆盖全柔度范围。
+    code = code_stability_check(P, A, slenderness, material, curve)
     warnings: list[str] = []
     if any(axes[t]["mu_source"] != "用户给定" for t in axes):
         warnings.append(
@@ -243,6 +465,17 @@ def _euler(frame, member, section, material, length, rel_i, rel_j,
         status = BUCKLING_FAIL
     elif valid is False:
         status = BUCKLING_NA
+        if code is not None:
+            # 应力换算走单位制，**不要硬编码 /1e6**：那只对 SI 成立。
+            # 毫米制下模型里的应力本来就是 MPa，再除一次会把 150 MPa
+            # 报成 0.0 MPa——数看着"很安全"，而结论恰恰相反。
+            units = frame.unit_system
+            warnings.append(
+                f"欧拉公式在这根杆上不适用，但规范法给出了结论："
+                f"φ={code['phi']:.4f}（{curve} 类截面），"
+                f"N/(φA)={code['sigma'] * units.stress_scale:.1f}"
+                f" {units.stress_unit}，"
+                f"应力比 {code['ratio']:.3f} —— 以这一条为准。")
         # 措辞里**不放本杆的 λ 和 N/Pcr**：那两个数每根都不同，会让汇总层
         # 攒出十几条只差小数点的"同一句话"。逐杆的数在表里，警告只说结论。
         warnings.append(
@@ -257,6 +490,14 @@ def _euler(frame, member, section, material, length, rel_i, rel_j,
             "补上 yield_stress 才能确认这个 Pcr 有没有物理意义。")
     else:
         status = BUCKLING_OK
+    if code is not None and not code["ok"] and status != BUCKLING_FAIL:
+        # 规范法说超限而欧拉说没事：以规范为准。欧拉只在大柔度段可信，
+        # 而它偏高的那一段恰恰是初弯曲与残余应力影响最大的地方。
+        status = BUCKLING_FAIL
+        warnings.append(
+            f"欧拉判定未超限，但规范法 N/(φA) 超了（应力比 "
+            f"{code['ratio']:.3f}）。欧拉不计初弯曲与残余应力，"
+            "这一段它偏高——以规范结论为准。")
     if valid is False and ratio > 1.0:
         # 既超限又不适用：超限的结论仍然成立（真值只会比欧拉值更低）
         warnings.append("λ 小于 λp，实际临界力比欧拉值更低，超限的结论只会更严重。")
@@ -273,14 +514,18 @@ def _euler(frame, member, section, material, length, rel_i, rel_j,
             "case": case, "P": P, "P_cr": P_cr, "ratio": ratio,
             "sigma_cr": sigma_cr, "critical_axis": critical,
             "slenderness": slenderness, "lambda_p": lambda_p,
-            "euler_applicable": valid, "axes": axes, "warnings": warnings}
+            "euler_applicable": valid, "axes": axes,
+            # 规范法的结论单独放一格。它和欧拉不是同一套判据，
+            # 合并成一个数会让"以哪一条为准"这件事消失。
+            "code_check": code, "warnings": warnings}
 
 
 def check_strength(frame: Frame, solution, *, mapping=None,
                    members: Iterable[int] | None = None,
                    cases: Iterable[str] | None = None,
                    stations: int = 21,
-                   slenderness_limit: float | None = None) -> dict[str, Any]:
+                   slenderness_limit: float | None = None,
+                   buckling_curve: str = "b") -> dict[str, Any]:
     """全结构强度 + 稳定验算。
 
     ``members`` 留空表示全部。传了 ``mapping`` 就按物理构件整根验算，
@@ -296,10 +541,13 @@ def check_strength(frame: Frame, solution, *, mapping=None,
 
     rows = [check_member(frame, solution, mid, mapping=mapping, cases=cases,
                          stations=stations,
-                         slenderness_limit=slenderness_limit)
+                         slenderness_limit=slenderness_limit,
+                         buckling_curve=buckling_curve)
             for mid in targets]
 
     strength_worst = max(rows, key=lambda r: r["strength"]["ratio"], default=None)
+    combined_worst = max(rows, key=lambda r: r["combined"]["gb50017"]["ratio"],
+                         default=None)
     compressed = [r for r in rows if r["buckling"] is not None]
     buckling_worst = max(compressed, key=lambda r: r["buckling"]["ratio"],
                          default=None)
@@ -323,6 +571,9 @@ def check_strength(frame: Frame, solution, *, mapping=None,
         "worst_strength": (None if strength_worst is None else
                            {"member": strength_worst["member"],
                             **strength_worst["strength"]}),
+        "worst_combined": (None if combined_worst is None else
+                           {"member": combined_worst["member"],
+                            **combined_worst["combined"]["gb50017"]}),
         "worst_buckling": (None if buckling_worst is None else
                            {"member": buckling_worst["member"],
                             **{k: v for k, v in buckling_worst["buckling"].items()

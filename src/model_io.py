@@ -12,8 +12,9 @@ from typing import Any
 
 import numpy as np
 
-from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Frame, LoadCase, Material,
-                     Member, Node, Section, check_model, member_endpoints)
+from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Frame, LoadCase,
+                     Material, Member, Node, Section, check_model,
+                     member_endpoints)
 from span_loads import KINDS as SPAN_KINDS
 from span_loads import SpanLoad
 
@@ -26,6 +27,15 @@ _RELEASE_LIST = {
     "maxItems": 6,
     "uniqueItems": True,
     "items": {"type": "string", "enum": list(LOCAL_DOF_NAMES)},
+}
+
+#: 半刚性连接刚度表：自由度名 → 正的连接刚度。零在这里没有意义——
+#: "刚度为零"该用 releases 明确写成理想铰，两种写法给同一个结果却读起来
+#: 像两回事，所以 schema 层就拒绝。
+_CONNECTION_MAP = {
+    "type": "object",
+    "propertyNames": {"enum": list(LOCAL_DOF_NAMES)},
+    "additionalProperties": {"type": "number", "exclusiveMinimum": 0},
 }
 _NODAL_LOADS = {
     "type": "array",
@@ -45,6 +55,9 @@ _MEMBER_SPANS = {
             "member": {"type": "integer"},
             "kind": {"type": "string", "enum": list(SPAN_KINDS)},
             "w1": _VEC3,
+            # partial 的终点。kind 的取值由 span_loads.KINDS 自动带进来，
+            # 这里只需补这个字段。
+            "b": {"type": "number", "minimum": 0},
             "w2": _VEC3,
             "a": {"type": "number", "minimum": 0},
             # 自由备注，求解器不读。自重生成的荷载靠它标记，
@@ -72,7 +85,10 @@ _MEMBER_STRAINS = {
         "properties": {"name": {"type": "string", "minLength": 1},
                        "member": {"type": "integer"},
                        "lack_of_fit": {"type": "number"},
-                       "delta_t": {"type": "number"}},
+                       "delta_t": {"type": "number"},
+                       # 截面上下温差（沿局部 y，即截面高度方向）。
+                       # 它产生的是**曲率**不是轴向应变，两者不能混。
+                       "gradient_t": {"type": "number"}},
     },
 }
 _MEMBER_LOADS = {
@@ -149,6 +165,15 @@ MODEL_SCHEMA: dict[str, Any] = {
                                # 极端纤维距离；缺省时正应力不可算，明确拒绝。
                                "cy": {"type": "number", "exclusiveMinimum": 0},
                                "cz": {"type": "number", "exclusiveMinimum": 0},
+                               # 剪应力 τ=V·S/(I·b) 用的半截面静矩与中性轴宽度。
+                               # Sz/bz 配 Iz 与 Vy，Sy/by 配 Iy 与 Vz。
+                               "Sz": {"type": "number", "exclusiveMinimum": 0},
+                               "bz": {"type": "number", "exclusiveMinimum": 0},
+                               "Sy": {"type": "number", "exclusiveMinimum": 0},
+                               "by": {"type": "number", "exclusiveMinimum": 0},
+                               # 腹板边缘：折算应力的控制点常在这里
+                               "S_flange": {"type": "number", "exclusiveMinimum": 0},
+                               "c_web": {"type": "number", "exclusiveMinimum": 0},
                                "circular": {"type": "boolean"}},
             },
         },
@@ -180,6 +205,13 @@ MODEL_SCHEMA: dict[str, Any] = {
                         "type": "object", "additionalProperties": False,
                         "properties": {"i": _RELEASE_LIST, "j": _RELEASE_LIST},
                     },
+                    # 半刚性连接刚度：自由度名 → 刚度。理想铰（releases）是
+                    # 它 k=0 的极限，刚接是 k=∞ 的极限；同一自由度不能两边都写。
+                    "connections": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {"i": _CONNECTION_MAP,
+                                       "j": _CONNECTION_MAP},
+                    },
                 },
             },
         },
@@ -193,7 +225,11 @@ MODEL_SCHEMA: dict[str, Any] = {
                 "properties": {"name": {"type": "string", "minLength": 1},
                                "node": {"type": "integer"},
                                "fix": {"type": "array", "minItems": 6, "maxItems": 6,
-                                       "items": {"type": "integer", "enum": [0, 1]}}},
+                                       "items": {"type": "integer", "enum": [0, 1]}},
+                               # 弹性支座刚度。平动是 力/长度，转动是
+                               # 力·长度/弧度；0 表示该方向没有弹簧。
+                               "spring": {"type": "array", "minItems": 6, "maxItems": 6,
+                                          "items": {"type": "number", "minimum": 0}}},
             },
         },
         # 单工况模型直接写这几项，等价于名为 "default" 的工况
@@ -213,6 +249,52 @@ MODEL_SCHEMA: dict[str, Any] = {
                                "member_spans": _MEMBER_SPANS,
                                "settlements": _SETTLEMENTS,
                                "member_strains": _MEMBER_STRAINS},
+            },
+        },
+        # 分析步。荷载与边界条件在步之间**传播**：某一步建的东西自动沿用
+        # 到后面每一步，直到被改写或显式失活。语义与结算见 src/steps.py。
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object", "required": ["name"],
+                "additionalProperties": False,
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "analysis": {"type": "string",
+                                 "enum": ["linear", "pdelta"]},
+                    "loads": {"type": "object",
+                              "additionalProperties": {"type": "string"}},
+                    "deactivate_loads": {"type": "array",
+                                         "items": {"type": "string"}},
+                    "supports": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object", "additionalProperties": False,
+                            "properties": {
+                                "name": {"type": "string", "minLength": 1},
+                                "fix": {"type": "array",
+                                        "minItems": 6, "maxItems": 6,
+                                        "items": {"type": "integer",
+                                                  "enum": [0, 1]}},
+                                "spring": {"type": "array",
+                                           "minItems": 6, "maxItems": 6,
+                                           "items": {"type": "number",
+                                                     "minimum": 0}}},
+                        },
+                    },
+                    "deactivate_supports": {"type": "array",
+                                            "items": {"type": "integer"}},
+                    "increments": {"type": "integer", "minimum": 1},
+                },
+            },
+        },
+        "amplitudes": {
+            "description": "幅值曲线：名字 -> [[伪时间, 系数], ...]",
+            "type": "object",
+            "additionalProperties": {
+                "type": "array", "minItems": 2,
+                "items": {"type": "array", "minItems": 2, "maxItems": 2,
+                          "items": {"type": "number"}},
             },
         },
         "combos": {
@@ -285,6 +367,21 @@ def _fill_case(frame: Frame, case: LoadCase, data: dict[str, Any]) -> LoadCase:
             strain += frame.materials[member.material].alpha * float(e["delta_t"])
         case.member_strains[member.id] = (
             case.member_strains.get(member.id, 0.0) + strain)
+        if e.get("gradient_t"):
+            # κ = α·ΔT / h，h 是截面在局部 y 方向的高度（= 2·cy）。
+            # 缺 cy 就拒绝——和正应力、剪应力一样，算不出就明说算不出，
+            # 不拿一个来路不明的截面高度顶上。
+            section = frame.sections[member.section]
+            if section.cy is None:
+                raise ValueError(
+                    f"杆件 {member.id} 的截面 {section.name!r} 没有极端纤维距离 "
+                    "cy，算不出温度梯度引起的曲率 κ=α·ΔT/h。"
+                    "请用 sections.py 的 builder 按尺寸定义截面，或直接给出 cy。")
+            alpha = frame.materials[member.material].alpha
+            kappa = alpha * float(e["gradient_t"]) / (2.0 * section.cy)
+            previous = case.member_curvatures.get(member.id, (0.0, 0.0))
+            case.member_curvatures[member.id] = (previous[0],
+                                                 previous[1] + kappa)
     return case
 
 
@@ -306,33 +403,60 @@ def from_dict(data: dict[str, Any]) -> Frame:
             float(s["Az"]) if s.get("Az") is not None else None,
             float(s["cy"]) if s.get("cy") is not None else None,
             float(s["cz"]) if s.get("cz") is not None else None,
-            bool(s.get("circular", False)))
+            bool(s.get("circular", False)),
+            float(s["Sz"]) if s.get("Sz") is not None else None,
+            float(s["bz"]) if s.get("bz") is not None else None,
+            float(s["Sy"]) if s.get("Sy") is not None else None,
+            float(s["by"]) if s.get("by") is not None else None,
+            float(s["S_flange"]) if s.get("S_flange") is not None else None,
+            float(s["c_web"]) if s.get("c_web") is not None else None)
     for n in data["nodes"]:
         f.nodes[int(n["id"])] = Node(int(n["id"]), float(n["x"]), float(n["y"]), float(n["z"]))
     for m in data["members"]:
         rel = m.get("releases") or {}
+        springs = m.get("connections") or {}
+        # **一律用关键字。** 这里原本是位置传参，而 Member 的字段是会加的：
+        # 在 releases_j 后面插一个新字段，offset_i 就会被静默塞进那个新字段，
+        # 模型照样读得进来，只是刚域偏移变成了连接刚度。
         f.members[int(m["id"])] = Member(
-            int(m["id"]), int(m["i"]), int(m["j"]), m["section"], m["material"],
-            tuple(m["ref_vector"]) if m.get("ref_vector") else None,
-            tuple(rel.get("i", ())), tuple(rel.get("j", ())),
-            tuple(float(v) for v in m.get("offset_i", (0.0, 0.0, 0.0))),
-            tuple(float(v) for v in m.get("offset_j", (0.0, 0.0, 0.0))),
-            float(m["mu_y"]) if m.get("mu_y") is not None else None,
-            float(m["mu_z"]) if m.get("mu_z") is not None else None,
+            id=int(m["id"]), i=int(m["i"]), j=int(m["j"]),
+            section=m["section"], material=m["material"],
+            ref_vector=tuple(m["ref_vector"]) if m.get("ref_vector") else None,
+            releases_i=tuple(rel.get("i", ())),
+            releases_j=tuple(rel.get("j", ())),
+            springs_i={str(k): float(v)
+                       for k, v in (springs.get("i") or {}).items()},
+            springs_j={str(k): float(v)
+                       for k, v in (springs.get("j") or {}).items()},
+            offset_i=tuple(float(v) for v in m.get("offset_i", (0.0, 0.0, 0.0))),
+            offset_j=tuple(float(v) for v in m.get("offset_j", (0.0, 0.0, 0.0))),
+            mu_y=float(m["mu_y"]) if m.get("mu_y") is not None else None,
+            mu_z=float(m["mu_z"]) if m.get("mu_z") is not None else None,
         )
     for s in data["supports"]:
         f.supports[int(s["node"])] = tuple(int(v) for v in s["fix"])
+        if s.get("spring"):
+            f.springs[int(s["node"])] = tuple(float(v) for v in s["spring"])
 
     _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):
         _fill_case(f, f.case(str(c["name"])), c)
-    # 只写了多工况时，别留一个空的 default 干扰结果表
-    if data.get("load_cases") and not any(
+    # 只写了多工况时，别留一个空的 default 干扰结果表。
+    #
+    # **但用户自己起名叫 default 的那条不能删。** 它和自动建出来的空壳是同
+    # 一个对象，一并 pop 掉的话整条工况连同荷载一起消失，而模型照样读得进来
+    # ——接下来是"求解时没有任何荷载"，指向的却不是真正的原因。
+    named_default = any(str(c.get("name")) == DEFAULT_CASE
+                        for c in data.get("load_cases") or [])
+    if data.get("load_cases") and not named_default and not any(
             data.get(k) for k in ("nodal_loads", "member_loads",
                                   "member_spans", "settlements",
                                   "member_strains")):
         f.load_cases.pop(DEFAULT_CASE, None)
 
+    for name, table in (data.get("amplitudes") or {}).items():
+        f.amplitudes[str(name)] = Amplitude(
+            str(name), tuple((float(t), float(v)) for t, v in table))
     for c in data.get("combos", []):
         f.combos[str(c["name"])] = {str(k): float(v) for k, v in c["factors"].items()}
     return f
@@ -377,6 +501,20 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
             errors.append(f"[语义] {label}重复：{duplicate}")
 
     walk(data)
+    for s in data.get("supports") or []:
+        spring = s.get("spring")
+        if not spring:
+            continue
+        clash = [k for k, (fix, value) in enumerate(zip(s.get("fix") or [0] * 6,
+                                                        spring, strict=False))
+                 if fix and value]
+        if clash:
+            # 刚性约束会把自由度整个划掉，弹簧那一项永远不会被用到。
+            # 静默忽略最糟：用户以为自己建了个弹性支座，算出来的却是刚接。
+            errors.append(
+                f"[语义] 节点 {s.get('node')} 的方向 {clash} 既写了 fix=1 又给了"
+                "弹簧刚度。刚性约束会让弹簧完全失效，两者只能取一个："
+                "要刚接就把 spring 那一项设为 0，要弹性支承就把 fix 那一项设为 0。")
     unique(data.get("materials") or [], "name", "材料名")
     unique(data.get("sections") or [], "name", "截面名")
     unique(data.get("nodes") or [], "id", "节点编号")

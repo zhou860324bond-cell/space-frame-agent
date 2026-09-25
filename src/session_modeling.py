@@ -26,6 +26,58 @@ import bent as _bent
 import changes as _changes
 
 
+#: Abaqus 的命名边界条件类型 → 六个自由度的约束掩码（ux uy uz rx ry rz）。
+#:
+#: **为什么要有名字。** 让人去填六个 0/1 是这一步最容易出错的地方：
+#: "对称面上该约束哪几个"没有几个人记得住，而填错了不会报错——结构照样
+#: 算得出来，只是算的不是你想要的那个结构。Abaqus 用名字解决这件事，
+#: 这里照搬同一套名字，迁移过来的人不用重新记。
+#:
+#: 对称面的法向决定约束哪些：**法向的平动**被约束（不能穿过对称面），
+#: **面内两个轴的转动**被约束（转了就不对称了）。反对称正好相反：
+#: 面内两个平动被约束，法向转动被约束。
+BC_TYPES: dict[str, tuple[int, int, int, int, int, int]] = {
+    "ENCASTRE": (1, 1, 1, 1, 1, 1),     # 完全固定
+    "PINNED": (1, 1, 1, 0, 0, 0),       # 三向铰接
+    "XSYMM": (1, 0, 0, 0, 1, 1),        # 对称面法向 X：U1=UR2=UR3=0
+    "YSYMM": (0, 1, 0, 1, 0, 1),        # 法向 Y：U2=UR1=UR3=0
+    "ZSYMM": (0, 0, 1, 1, 1, 0),        # 法向 Z：U3=UR1=UR2=0
+    "XASYMM": (0, 1, 1, 1, 0, 0),       # 反对称，法向 X：U2=U3=UR1=0
+    "YASYMM": (1, 0, 1, 0, 1, 0),
+    "ZASYMM": (1, 1, 0, 0, 0, 1),
+    "FREE": (0, 0, 0, 0, 0, 0),         # 解除约束
+}
+
+#: 给人看的一句话说明，列在 BC 管理器里
+BC_TYPE_NOTES = {
+    "ENCASTRE": "完全固定：六个自由度全约束",
+    "PINNED": "铰接：三个平动约束，转动自由",
+    "XSYMM": "对称面法向 X：不能穿过对称面，也不能绕面内两轴转",
+    "YSYMM": "对称面法向 Y",
+    "ZSYMM": "对称面法向 Z",
+    "XASYMM": "反对称面法向 X：面内两个平动与法向转动被约束",
+    "YASYMM": "反对称面法向 Y",
+    "ZASYMM": "反对称面法向 Z",
+    "FREE": "自由：解除该节点的全部约束",
+}
+
+
+def _next_bc_name(existing: list[dict]) -> str:
+    """下一个没被占用的 BC-n。
+
+    **默认名以前是常量 "BC-1"。** 于是不指定名字连建四个支座，四个都叫
+    BC-1——而 delete_boundary_condition 是按名字匹配的，删「一条」会把四条
+    一起删掉。删完模型没有支座了，那一步倒是会被校验挡住；但只要还剩别的
+    支座，它就悄悄删多了，而"少了几个约束"从结果里看不出来，只会表现为
+    位移偏大。Abaqus 的 BC 名是自动递增的，这里照做。
+    """
+    used = {str(item.get("name") or "") for item in existing}
+    index = 1
+    while f"BC-{index}" in used:
+        index += 1
+    return f"BC-{index}"
+
+
 class ModelingMixin:
     """建模：几何生成与图元增删改。见模块 docstring。"""
     # --- 工具实现 ---
@@ -827,9 +879,351 @@ class ModelingMixin:
                                  "warnings": errors})
 
     @_records
-    def set_supports(self, node_ids, fix: list[int],
-                     name: str = "BC-1") -> ToolResult:
-        """给节点或节点集合统一施加位移边界；边界属于 Initial 阶段。"""
+    def add_step(self, name: str, analysis: str = "linear",
+                 loads: dict | None = None,
+                 deactivate_loads: list | None = None,
+                 supports: dict | None = None,
+                 deactivate_supports: list | None = None,
+                 increments: int = 10,
+                 after: str | None = None) -> ToolResult:
+        """新增一个分析步（Abaqus 的 Step），追加到末尾或插在某一步之后。
+
+        **荷载与边界条件在步之间传播。** 这一步只写新建或改写的东西，上一步
+        有而这里没提的会自动沿用——要让它消失必须显式写进 deactivate。这是
+        Abaqus 的语义，也是最容易被误解的一点：漏写不等于撤销。
+
+        ``loads`` 是 工况名 -> 幅值曲线名，例如 {"DL": "STEP", "WX": "RAMP"}。
+        ``supports`` 是 节点号 -> {"fix": [...], "spring": [...]}，用来在这一步
+        改写某个支座（比如把固接换成铰接）。
+
+        analysis 目前支持 linear 与 pdelta。材料非线性没放进来是因为一个分析步
+        里常有几个工况同时生效，而材料非线性不能事后叠加，缺一个合成工况的
+        增量入口；硬放进来只能偷偷按单工况各算各的，那是错的答案。
+        """
+        import steps as step_module
+
+        try:
+            step = step_module.Step(
+                name=str(name), analysis=str(analysis),
+                loads={str(k): str(v) for k, v in (loads or {}).items()},
+                deactivate_loads=tuple(str(c) for c in (deactivate_loads or ())),
+                supports={int(k): dict(v) for k, v in (supports or {}).items()},
+                deactivate_supports=tuple(int(n) for n in
+                                          (deactivate_supports or ())),
+                increments=int(increments))
+        except (ValueError, TypeError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+
+        existing = step_module.from_payload(self.model)
+        names = [s.name for s in existing]
+        if step.name in names:
+            return ToolResult(False, {
+                "error": f"已经有名为 {step.name!r} 的分析步", "steps": names})
+        if after is None:
+            existing.append(step)
+        elif after in names:
+            existing.insert(names.index(after) + 1, step)
+        else:
+            return ToolResult(False, {
+                "error": f"没有名为 {after!r} 的分析步，插不进去", "steps": names})
+
+        return self._write_steps(existing, {"added": step.name})
+
+    def list_steps(self) -> ToolResult:
+        """列出全部分析步，并给出每一步**实际生效**的荷载与边界条件。
+
+        传播是隐式的：第三步写着一行「失活活载」，实际生效的却是第一步那几个
+        荷载减掉活载。光看声明看不出这件事，所以这里把结算结果一并给出——
+        声明与生效分两栏，哪一步到底在算什么一眼可见。
+        """
+        import steps as step_module
+
+        declared = step_module.from_payload(self.model)
+        if not declared:
+            return ToolResult(True, {"steps": [], "count": 0,
+                                     "note": "模型里还没有分析步"})
+        payload = {"declared": step_module.to_payload(declared),
+                   "count": len(declared)}
+        try:
+            payload["effective"] = [
+                {"step": e.name, "analysis": e.analysis,
+                 "increments": e.increments, "loads": dict(e.loads),
+                 "supports": sorted(e.supports), "changes": list(e.changes)}
+                for e in step_module.resolve(declared, self.model)]
+        except ValueError as exc:
+            payload["resolve_error"] = str(exc)
+            payload["hint"] = "这串分析步结算不出来，求解会直接报同样的错"
+        return ToolResult(True, payload)
+
+    @_records
+    def delete_step(self, name: str) -> ToolResult:
+        """删除一个分析步。
+
+        **后面的步会跟着变**：传播是按顺序结算的，删掉中间一步，它建立的荷载
+        或支座改写就不再存在，后面某一步的「失活」可能因此失去对象而报错。
+        返回里会把删除后的结算结果一并给出，好核对这件事。
+        """
+        import steps as step_module
+
+        existing = step_module.from_payload(self.model)
+        names = [s.name for s in existing]
+        if str(name) not in names:
+            return ToolResult(False, {
+                "error": f"没有名为 {name!r} 的分析步", "steps": names})
+        keep = [s for s in existing if s.name != str(name)]
+        return self._write_steps(keep, {"deleted": str(name)})
+
+    def _write_steps(self, steps: list, extra: dict) -> ToolResult:
+        """把分析步写回模型，写之前先结算一遍——结算不过就不写。"""
+        from copy import deepcopy
+
+        import steps as step_module
+
+        candidate = deepcopy(self.model)
+        candidate["steps"] = step_module.to_payload(steps)
+        before = set(validate_payload(self.model))
+        errors = [e for e in validate_payload(candidate) if e not in before]
+        if errors:
+            return ToolResult(False, {"errors": errors,
+                                      "hint": "分析步未写入，原模型保持不变"})
+        try:
+            effective = step_module.resolve(steps, candidate)
+        except ValueError as exc:
+            return ToolResult(False, {
+                "error": str(exc),
+                "hint": "这串分析步结算不出来，没有写入；先把它改成立得住的顺序"})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            **extra, "count": len(steps),
+            "steps": [{"step": e.name, "analysis": e.analysis,
+                       "loads": dict(e.loads), "supports": sorted(e.supports),
+                       "changes": list(e.changes)} for e in effective],
+            "note": "loads 与 supports 是**结算后实际生效**的，含从前面步传播"
+                    "过来的部分，不只是这一步声明的"})
+
+    #: 常见节点形式的连接刚度，按**梁线刚度 EI/L 的倍数**给。
+    #:
+    #: 绝对刚度没法预设——同一个端板连接装在 H400 上和装在 H200 上，
+    #: 相对刚度差好几倍。规范和文献里的分类也都是按 EI/L 归一的
+    #: （EC3 把 k ≥ 25EI/L 算刚接、k ≤ 0.5EI/L 算铰接，有侧移框架门槛更高）。
+    CONNECTION_TYPES = {
+        "刚接": (None, "完全刚性。用 bc/releases 表达，不必设弹簧"),
+        "端板": (20.0, "外伸端板、加劲：能传约 80% 的梁端弯矩，接近刚接"),
+        "平端板": (8.0, "平齐端板：半刚性的典型值"),
+        "顶底角钢": (3.0, "顶底角钢带双腹板角钢：明显半刚性"),
+        "腹板角钢": (1.0, "双腹板角钢：偏柔，接近铰接但不是铰"),
+        "铰接": (None, "理想铰。用 releases 表达，那是 k=0 的极限"),
+    }
+
+    @_records
+    def set_member_connection(self, member_ids, end: str = "j",
+                              dof: str = "rz",
+                              stiffness: float | None = None,
+                              connection_type: str | None = None,
+                              clear: bool = False) -> ToolResult:
+        """给杆端装半刚性连接（转动弹簧）。
+
+        **真实的梁柱节点既不是铰也不是刚接。** 两头都按极限算，弯矩分布差
+        得很远：两跨连续梁上，刚接支座弯矩 90 kN·m，连接刚度取 3EI/L 时只剩
+        53 kN·m，差出来的那部分全跑到跨中去了——而两种算法都不会报错。
+
+        刚度可以直接给绝对值（力·长度/弧度），也可以用 ``connection_type``
+        按**梁线刚度 EI/L 的倍数**给。后者更可用：绝对刚度离开截面和跨度
+        就没有意义，同一个端板装在不同梁上相对刚度差几倍。
+
+        ``end`` 取 "i"/"j"/"both"，``dof`` 是局部自由度名（梁端弯矩通常是
+        "rz"）。``clear=True`` 去掉该端的连接弹簧，恢复刚接。
+        """
+        from copy import deepcopy
+
+        try:
+            ids = self._expand_members(member_ids)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+        if not ids:
+            return ToolResult(False, {"error": "没有选中任何杆件"})
+        if end not in ("i", "j", "both"):
+            return ToolResult(False, {"error": 'end 只能是 "i"、"j" 或 "both"'})
+        if dof not in LOCAL_DOF_NAMES:
+            return ToolResult(False, {
+                "error": f"dof 只能取自 {list(LOCAL_DOF_NAMES)}"})
+
+        ends = ("i", "j") if end == "both" else (end,)
+        candidate = deepcopy(self.model)
+        index = {int(m["id"]): m for m in candidate["members"]}
+        missing = [i for i in ids if i not in index]
+        if missing:
+            return ToolResult(False, {"error": f"没有杆件 {missing}"})
+
+        applied = {}
+        for member_id in ids:
+            entry = index[member_id]
+            table = entry.setdefault("connections", {})
+            if clear:
+                for side in ends:
+                    (table.get(side) or {}).pop(dof, None)
+                    if not table.get(side):
+                        table.pop(side, None)
+                if not table:
+                    entry.pop("connections", None)
+                applied[member_id] = None
+                continue
+            value = stiffness
+            if value is None:
+                if connection_type is None:
+                    return ToolResult(False, {
+                        "error": "要么给 stiffness，要么给 connection_type",
+                        "connection_types": {
+                            k: v[1] for k, v in self.CONNECTION_TYPES.items()}})
+                spec = self.CONNECTION_TYPES.get(str(connection_type))
+                if spec is None:
+                    return ToolResult(False, {
+                        "error": f"不认识的节点形式 {connection_type!r}",
+                        "connection_types": {
+                            k: v[1] for k, v in self.CONNECTION_TYPES.items()}})
+                ratio, note = spec
+                if ratio is None:
+                    return ToolResult(False, {
+                        "error": f"{connection_type} 不是半刚性连接：{note}"})
+                value = ratio * self._beam_line_stiffness(entry, candidate)
+            value = float(value)
+            if value <= 0:
+                return ToolResult(False, {
+                    "error": "连接刚度必须是正数；理想铰请用杆端释放表达"})
+            for side in ends:
+                table.setdefault(side, {})[dof] = value
+            applied[member_id] = value
+
+        errors = validate_payload(candidate)
+        if errors:
+            return ToolResult(False, {"errors": errors,
+                                      "hint": "连接未写入，原模型保持不变"})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {
+            "members": ids, "end": end, "dof": dof,
+            "stiffness": applied, "cleared": bool(clear),
+            "note": "连接刚度的单位是 力·长度/弧度。理想铰是 k=0 的极限、"
+                    "刚接是 k=∞ 的极限，半刚性落在中间——"
+                    "两头都按极限算，弯矩分布差得很远。"})
+
+    def _beam_line_stiffness(self, entry: dict, payload: dict) -> float:
+        """梁线刚度 EI/L，用来把"几倍 EI/L"换算成绝对刚度。
+
+        I 取绕局部 z 的惯性矩（梁端弯矩通常绕它），L 取杆件两端的直线距离。
+        """
+        import math
+
+        sections = {s["name"]: s for s in payload["sections"]}
+        materials = {m["name"]: m for m in payload["materials"]}
+        nodes = {int(n["id"]): n for n in payload["nodes"]}
+        section = sections[entry["section"]]
+        modulus = float(materials[entry["material"]]["E"])
+        start, finish = nodes[int(entry["i"])], nodes[int(entry["j"])]
+        length = math.dist((start["x"], start["y"], start["z"]),
+                           (finish["x"], finish["y"], finish["z"]))
+        return modulus * float(section["Iz"]) / length
+
+    # 只读的清单工具不记建模历史：它不改模型，记进去只会让时间轴上多出
+    # 一堆"什么也没做"的条目，把真正的建模步骤淹掉。
+    def list_boundary_conditions(self) -> ToolResult:
+        """列出全部边界条件——相当于 Abaqus 的 BC Manager。
+
+        以前只能去读模型 JSON。边界条件是**最容易改错又最难看出来**的一类
+        对象：多约束一个自由度，结构照样算得出来，只是算的不是你想要的那个。
+        所以要能一眼看全：谁、在哪些节点、约束了什么、是不是某个标准类型。
+        """
+        rows: list[dict[str, Any]] = []
+        by_name: dict[str, dict[str, Any]] = {}
+        for entry in self.model.get("supports") or []:
+            name = str(entry.get("name") or f"(未命名-节点{entry['node']})")
+            mask = tuple(int(v) for v in entry.get("fix") or (0,) * 6)
+            spring = entry.get("spring")
+            key = (name, mask, tuple(spring) if spring else None)
+            bucket = by_name.get(str(key))
+            if bucket is None:
+                matched = next((k for k, v in BC_TYPES.items() if v == mask), None)
+                bucket = {
+                    "name": name, "nodes": [], "fix": list(mask),
+                    "type": matched or "自定义",
+                    "means": BC_TYPE_NOTES.get(matched or "",
+                                               "自定义掩码，不对应标准类型"),
+                    **({"spring": list(spring)} if spring else {}),
+                }
+                by_name[str(key)] = bucket
+                rows.append(bucket)
+            bucket["nodes"].append(int(entry["node"]))
+        for row in rows:
+            row["nodes"] = sorted(row["nodes"])
+            row["count"] = len(row["nodes"])
+        free = [row["name"] for row in rows if not any(row["fix"])
+                and not row.get("spring")]
+        return ToolResult(True, {
+            "count": len(rows), "boundary_conditions": rows,
+            "restrained_dofs": sum(sum(r["fix"]) * r["count"] for r in rows),
+            **({"warning": f"边界条件 {free} 什么都没约束——写了名字但六个自由度"
+                           "全是 0，多半是想删没删干净"} if free else {}),
+            "note": "type 是按掩码反查出来的标准类型名；对不上任何一种就标"
+                    "「自定义」。Initial 阶段的约束在这里；分析步里的给定位移"
+                    "属于荷载工况，用 query_results 或看模型的 settlements。",
+        })
+
+    @_records
+    def delete_boundary_condition(self, name: str) -> ToolResult:
+        """按名字删掉一条边界条件。
+
+        这个操作**会让结构少掉约束**，所以删完立刻跑一次奇异诊断：约束不够
+        的话求解会在很后面才失败，而那时错误信息指向的是刚度矩阵，
+        不是"你刚才删掉的那条"。
+        """
+        from copy import deepcopy
+
+        target = str(name).strip()
+        supports = list(self.model.get("supports") or [])
+        keep = [s for s in supports if str(s.get("name")) != target]
+        if len(keep) == len(supports):
+            return ToolResult(False, {
+                "error": f"没有名为 {target!r} 的边界条件",
+                "available": sorted({str(s.get("name")) for s in supports})})
+        candidate = deepcopy(self.model)
+        candidate["supports"] = keep
+        # **只拦这次删除引入的错误。** 拿整个模型去校验的话，"还没定义材料"
+        # 这种本来就存在的问题会把删除挡住——而几何刚建好、属性还没指派，
+        # 正是最可能想删掉一条支座重来的时候。实测 generate_frame 之后
+        # 一条也删不掉，报的却是 "materials is a required property"。
+        before = set(validate_payload(self.model))
+        errors = [e for e in validate_payload(candidate) if e not in before]
+        if errors:
+            return ToolResult(False, {
+                "errors": errors,
+                "hint": f"删掉 {target!r} 之后模型不合法，原模型保持不变"})
+        self.model = candidate
+        self._invalidate()
+        removed = len(supports) - len(keep)
+        payload: dict[str, Any] = {"deleted": target, "entries": removed,
+                                   "remaining": len(keep)}
+        diagnosis = self.diagnose_supports()
+        if diagnosis.ok and diagnosis.payload.get("modes"):
+            payload["warning"] = ("删掉之后结构出现了刚体位移模态——约束已经不够，"
+                                  "现在求解会失败。")
+            payload["modes"] = diagnosis.payload["modes"]
+        return ToolResult(True, payload)
+
+    def set_supports(self, node_ids, fix: list[int] | None = None,
+                     name: str | None = None,
+                     spring: list[float] | None = None,
+                     bc_type: str | None = None) -> ToolResult:
+        """给节点或节点集合统一施加位移边界；边界属于 Initial 阶段。
+
+        ``spring`` 给出六个方向的**支承刚度**（平动 力/长度，转动
+        力·长度/弧度），0 表示该方向没有弹簧。桩基、弹性地基、橡胶支座、
+        相邻结构的约束刚度都是这个形状——以前只能在"完全固定"和"完全自由"
+        之间二选一。
+
+        同一方向不能既 fix=1 又给弹簧：刚性约束会把自由度整个划掉，
+        弹簧永远用不上，而用户以为它在起作用。这里当场拒绝。
+        """
         from copy import deepcopy
 
         try:
@@ -838,9 +1232,47 @@ class ModelingMixin:
             return ToolResult(False, {"error": str(exc)})
         if not ids:
             return ToolResult(False, {"error": "至少选择一个节点"})
+        if bc_type is not None:
+            key = str(bc_type).upper()
+            if key not in BC_TYPES:
+                return ToolResult(False, {
+                    "error": f"bc_type 只能取 {sorted(BC_TYPES)}",
+                    "hint": "对称面用 XSYMM/YSYMM/ZSYMM，法向取对称面的法线方向"})
+            if fix is not None and list(fix) != list(BC_TYPES[key]):
+                # 两个都给且不一致时不能默默挑一个——那正是"算的不是你想要
+                # 的那个结构"的来源
+                return ToolResult(False, {
+                    "error": f"同时给了 bc_type={key} 和 fix={list(fix)}，"
+                             "而两者不一致，无法判断你要哪个",
+                    "bc_type_means": list(BC_TYPES[key])})
+            fix = list(BC_TYPES[key])
+        if fix is None:
+            return ToolResult(False, {
+                "error": "要么给 fix（六个 0/1），要么给 bc_type",
+                "bc_types": sorted(BC_TYPES)})
         if len(fix) != 6 or any(value not in (0, 1) for value in fix):
             return ToolResult(False, {
                 "error": "fix 必须是六个 0 或 1，顺序 ux uy uz rx ry rz"})
+        stiffness: list[float] | None = None
+        if spring is not None:
+            try:
+                stiffness = [float(v) for v in spring]
+            except (TypeError, ValueError):
+                return ToolResult(False, {"error": "spring 必须是六个数字"})
+            if len(stiffness) != 6 or not all(np.isfinite(v) and v >= 0
+                                              for v in stiffness):
+                return ToolResult(False, {
+                    "error": "spring 必须是六个非负有限数，顺序 ux uy uz rx ry rz"})
+            clash = [k for k, (f, v) in enumerate(zip(fix, stiffness,
+                                                      strict=True)) if f and v]
+            if clash:
+                return ToolResult(False, {
+                    "error": f"方向 {clash} 既写了 fix=1 又给了弹簧刚度。"
+                             "刚性约束会让弹簧完全失效，两者只能取一个。",
+                    "hint": "要刚接就把 spring 那一项设为 0，"
+                            "要弹性支承就把 fix 那一项设为 0。"})
+            if not any(stiffness):
+                stiffness = None
         known = {int(node["id"]) for node in self.model.get("nodes") or []}
         missing = sorted(set(ids) - known)
         if missing:
@@ -850,10 +1282,11 @@ class ModelingMixin:
         selected = set(ids)
         supports = [support for support in candidate.get("supports") or []
                     if int(support["node"]) not in selected]
-        if any(fix):
-            bc_name = str(name or "BC-1").strip() or "BC-1"
+        bc_name = str(name).strip() if name else _next_bc_name(supports)
+        if any(fix) or stiffness:
             supports.extend({"name": bc_name, "node": node,
-                             "fix": [int(v) for v in fix]}
+                             "fix": [int(v) for v in fix],
+                             **({"spring": list(stiffness)} if stiffness else {})}
                             for node in ids)
         candidate["supports"] = sorted(supports, key=lambda item: int(item["node"]))
         if candidate.get("supports") == self.model.get("supports", []):
@@ -863,7 +1296,7 @@ class ModelingMixin:
         self.model = candidate
         self._invalidate()
         return ToolResult(True, {
-            "nodes": ids, "fix": list(fix), "name": str(name or "BC-1"),
+            "nodes": ids, "fix": list(fix), "name": bc_name,
             "step": "Initial", "analysis_ready": not errors,
             "warnings": errors, "summary": describe(self.model),
         })

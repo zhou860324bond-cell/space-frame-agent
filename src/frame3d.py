@@ -55,6 +55,24 @@ class Section:
     cy: float | None = None
     cz: float | None = None
     circular: bool = False
+    # 剪应力 τ = V·S/(I·b) 需要的两样几何：半截面静矩 S 与中性轴处宽度 b。
+    # 命名直接对应那条公式：Sz/bz 配 Iz 与 Vy（强轴受剪），Sy/by 配 Iy 与 Vz。
+    #
+    # **builder 本来就算得出来，以前只是丢掉了**：i_section 拿到了 h/b/tw/tf，
+    # 却只输出 A/Iy/Iz/J/cy/cz。少这两项，折算应力 √(σ²+3τ²) 就无从谈起，
+    # 强度验算只能停在正应力那一层。
+    # 与 cy/cz 一样：留空时剪应力被明确拒绝，不估算。
+    Sz: float | None = None
+    bz: float | None = None
+    Sy: float | None = None
+    by: float | None = None
+    # 腹板与翼缘交界处的几何。折算应力 √(σ²+3τ²) 的控制点往往**不在**极端
+    # 纤维也不在中性轴，而在这里：极端纤维 τ=0、中性轴弯曲 σ=0，只有交界处
+    # 两者同时都大。GB 50017 §6.1.5 要验的就是这一点。
+    # 只有明确区分腹板与翼缘的截面（工字形）才有这两项；矩形、圆一律留空，
+    # 此时折算应力只在极端纤维与中性轴两处取值。
+    S_flange: float | None = None     # 单个翼缘对中性轴的静矩
+    c_web: float | None = None        # 中性轴到腹板边缘的距离
 
 
 @dataclass(frozen=True)
@@ -104,6 +122,15 @@ class Member:
     ref_vector: tuple[float, float, float] | None = None
     releases_i: tuple[str, ...] = ()
     releases_j: tuple[str, ...] = ()
+    #: 半刚性连接：该端局部自由度名 → 连接刚度（转动是 力·长度/弧度）。
+    #:
+    #: **理想铰与刚接都是它的极限**，真实的梁柱节点落在中间：腹板角钢连接
+    #: 大约能传 20% 的梁线刚度，端板连接能传 80%——两头都按极限算，
+    #: 得到的弯矩分布差得很远，而两种算法都不会报错。
+    #:
+    #: 与 releases 互斥：同一个自由度既释放又给刚度是自相矛盾的，会被拒绝。
+    springs_i: dict[str, float] = field(default_factory=dict)
+    springs_j: dict[str, float] = field(default_factory=dict)
     # 节点到可变形梁端的刚域偏移，使用全局坐标。零值保持旧模型行为。
     offset_i: tuple[float, float, float] = (0.0, 0.0, 0.0)
     offset_j: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -113,6 +140,43 @@ class Member:
     mu_z: float | None = None
 
     def released_indices(self) -> tuple[int, ...]:
+        """要凝聚掉的局部自由度：理想释放的，加上装了连接弹簧的。
+
+        两类都要先当作未知量消掉，区别只在凝聚时 K_rr 上加不加 k_s。
+        """
+        idx: set[int] = set()
+        for name in self.releases_i:
+            idx.add(_dof_index(name, self.id))
+        for name in self.releases_j:
+            idx.add(6 + _dof_index(name, self.id))
+        idx |= set(self.spring_indices())
+        return tuple(sorted(idx))
+
+    def spring_indices(self) -> dict[int, float]:
+        """半刚性连接刚度，键是局部自由度序号（0–11）。
+
+        刚度非正就当成没装弹簧——0 会被误解成"刚度为零即铰接"，而那该用
+        releases 明确表达；这里拒绝，免得两种写法给出同一个结果却读起来
+        像不同的意思。
+        """
+        out: dict[int, float] = {}
+        for offset, table in ((0, self.springs_i), (6, self.springs_j)):
+            for name, value in (table or {}).items():
+                stiffness = float(value)
+                if stiffness <= 0.0:
+                    raise ValueError(
+                        f"杆件 {self.id} 的连接刚度 {name}={value} 不是正数；"
+                        "要表达理想铰请用 releases，那是 k=0 的极限")
+                out[offset + _dof_index(name, self.id)] = stiffness
+        overlap = out.keys() & set(self._released_only())
+        if overlap:
+            names = [LOCAL_DOF_NAMES[i % 6] for i in sorted(overlap)]
+            raise ValueError(
+                f"杆件 {self.id} 的自由度 {names} 既释放又给了连接刚度；"
+                "这两件事自相矛盾，请二选一")
+        return out
+
+    def _released_only(self) -> tuple[int, ...]:
         idx: set[int] = set()
         for name in self.releases_i:
             idx.add(_dof_index(name, self.id))
@@ -129,6 +193,60 @@ def _dof_index(name: str, member_id: int) -> int:
             f"杆件 {member_id} 的释放自由度 {name!r} 无效，"
             f"应取自 {LOCAL_DOF_NAMES}"
         ) from None
+
+
+@dataclass(frozen=True)
+class Amplitude:
+    """幅值曲线：一张 (时间, 系数) 表，供非线性分析按伪时间取用。
+
+    **它解决的是非比例加载。** solve_pdelta 按 load_factor = step/increments
+    把所有荷载一起放大，于是"重力加满之后再推侧力"这种最常见的工况表达
+    不了。弹性分析的终点不受影响（同一个方程的根），但加载**路径**受：
+    轴力恒定时切线刚度恒定，推覆曲线才是直线。路径相关的材料非线性里，
+    终点本身也会变。详见 nonlinear.solve_step。
+
+    表按伪时间线性插值；时间超出表的范围时取两端的值（不外推）。
+    Abaqus 的 TABULAR amplitude 就是这个语义。
+    """
+    name: str
+    points: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        if len(self.points) < 2:
+            raise ValueError(f"幅值曲线 {self.name!r} 至少要两个点")
+        times = [t for t, _ in self.points]
+        if any(b <= a for a, b in zip(times, times[1:], strict=False)):
+            # 时间不递增的话插值结果取决于实现细节，而那不该是用户要猜的东西
+            raise ValueError(
+                f"幅值曲线 {self.name!r} 的时间必须严格递增，收到 {times}")
+
+    def at(self, time: float) -> float:
+        """按伪时间取系数。超出范围时取端点值——**不外推**。
+
+        外推会让"表只写到 t=1 而增量走到 1.0000001"这种浮点边界情形
+        突然给出一个表外的系数，那种错很难查。
+        """
+        t = float(time)
+        points = self.points
+        if t <= points[0][0]:
+            return float(points[0][1])
+        if t >= points[-1][0]:
+            return float(points[-1][1])
+        for (t0, v0), (t1, v1) in zip(points, points[1:], strict=False):
+            if t0 <= t <= t1:
+                span = t1 - t0
+                return float(v0 + (v1 - v0) * (t - t0) / span)
+        return float(points[-1][1])
+
+
+#: 内置的两条常用曲线。用户不必为最常见的两种情形去写表。
+BUILTIN_AMPLITUDES = {
+    #: 线性斜坡 0 → 1，等价于原先写死的 step/increments
+    "RAMP": ((0.0, 0.0), (1.0, 1.0)),
+    #: 全程恒为 1：荷载在分析一开始就是全值，不参与放大。
+    #: 重力配它、侧力配 RAMP，就是标准的推覆加载。
+    "STEP": ((0.0, 1.0), (1.0, 1.0)),
+}
 
 
 @dataclass
@@ -152,6 +270,15 @@ class LoadCase:
     # 存应变而不是存 Δl 或 ΔT：应变沿杆是常量，杆件被自动剖分时各段直接继承，
     # 不需要按段长重新分配。
     member_strains: dict[int, float] = field(default_factory=dict)
+    #: 初曲率 κ₀（1/长度），按杆件，(绕局部 y, 绕局部 z)。
+    #:
+    #: **均匀温度与温度梯度是两回事**：均匀 ΔT 让杆整体伸缩，给的是轴向
+    #: 应变；上下温差让杆想要弯，给的是曲率 κ = α·ΔT/h。前者已经由
+    #: member_strains 承担，后者单独一格——把梯度折算成某种"等效轴向应变"
+    #: 是错的，它产生的是弯矩不是轴力。
+    #:
+    #: 与 member_strains 同理，曲率沿杆是常量，剖分后各段直接继承。
+    member_curvatures: dict[int, tuple[float, float]] = field(default_factory=dict)
 
 
 def span_loads_of(case: LoadCase, member_id: int) -> list[SpanLoad]:
@@ -168,17 +295,85 @@ def _default_cases() -> dict[str, LoadCase]:
     return {DEFAULT_CASE: LoadCase(DEFAULT_CASE)}
 
 
+class _NodeTable(dict):
+    """节点表，顺带缓存"节点号 → 排序位次"。
+
+    自由度编号取决于排序后的节点号。每次 `node_dofs` 都重排一遍，装配里每杆
+    调两次，就成了 O(N² log N)——实测 1.5 万自由度时这一项比 SuperLU 分解还慢。
+    所以位次只算一次，任何增删改都作废缓存。改坐标不影响位次，但一律作废更不
+    容易漏：漏掉一处就是自由度错位，结果安静地错。
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._rank: dict[int, int] | None = None
+
+    def rank(self) -> dict[int, int]:
+        if self._rank is None:
+            self._rank = {nid: k for k, nid in enumerate(sorted(self))}
+        return self._rank
+
+    def _invalidate(self) -> None:
+        self._rank = None
+
+    def __setitem__(self, key, value):
+        self._invalidate(); super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        self._invalidate(); super().__delitem__(key)
+
+    def __ior__(self, other):
+        self._invalidate(); return super().__ior__(other)
+
+    def pop(self, *args):
+        self._invalidate(); return super().pop(*args)
+
+    def popitem(self):
+        self._invalidate(); return super().popitem()
+
+    def clear(self):
+        self._invalidate(); super().clear()
+
+    def update(self, *args, **kwargs):
+        self._invalidate(); super().update(*args, **kwargs)
+
+    def setdefault(self, key, default=None):
+        self._invalidate(); return super().setdefault(key, default)
+
+    def __reduce__(self):
+        # 拷贝与序列化只带内容，不带缓存
+        return type(self), (dict(self),)
+
+
 @dataclass
 class Frame:
-    nodes: dict[int, Node] = field(default_factory=dict)
+    nodes: dict[int, Node] = field(default_factory=_NodeTable)
     members: dict[int, Member] = field(default_factory=dict)
     sections: dict[str, Section] = field(default_factory=dict)
     materials: dict[str, Material] = field(default_factory=dict)
     supports: dict[int, tuple[int, int, int, int, int, int]] = field(default_factory=dict)
+    #: 弹性支座：节点 → 六个方向的支承刚度。0 表示该方向没有弹簧。
+    #:
+    #: 与 supports 的区别是**本质的**：supports 把自由度划掉（位移强制为给定
+    #: 值），springs 则把自由度留在方程里、只往对角线上加一项刚度。所以同一个
+    #: 方向不能既 fix 又给弹簧——那样弹簧会被静默忽略，而用户以为它在起作用。
+    #:
+    #: 单位：平动是 力/长度，转动是 力·长度/弧度。两者换算方向相反，
+    #: units.convert_model 里分开处理。
+    springs: dict[int, tuple[float, float, float, float, float, float]] = field(
+        default_factory=dict)
     load_cases: dict[str, LoadCase] = field(default_factory=_default_cases)
     combos: dict[str, dict[str, float]] = field(default_factory=dict)
+    #: 幅值曲线，供非线性分析做非比例加载。线性静力用不到。
+    amplitudes: dict[str, Amplitude] = field(default_factory=dict)
     # 单位制只影响自重的 g 与结果的显示换算，不影响刚度方程本身
     units: str = UNITS_SI
+
+    def __setattr__(self, name, value):
+        # 构造与 frame.nodes = {...} 都走这里，保证节点表始终带位次缓存
+        if name == "nodes" and not isinstance(value, _NodeTable):
+            value = _NodeTable(value)
+        super().__setattr__(name, value)
 
     @property
     def unit_system(self):
@@ -216,14 +411,15 @@ class Frame:
         return sorted(self.nodes)
 
     def index_of(self) -> dict[int, int]:
-        return {nid: k for k, nid in enumerate(self.order())}
+        # 给副本：调用方改了它也不会污染缓存
+        return dict(self.nodes.rank())
 
     @property
     def num_dofs(self) -> int:
         return DOF_PER_NODE * len(self.nodes)
 
     def node_dofs(self, nid: int) -> list[int]:
-        k = self.index_of()[nid]
+        k = self.nodes.rank()[nid]
         return list(range(DOF_PER_NODE * k, DOF_PER_NODE * (k + 1)))
 
 
@@ -346,35 +542,72 @@ class _Condensation:
     released: tuple[int, ...]
     inv_rr: np.ndarray
     k_rk: np.ndarray
+    #: 带转动弹簧（半刚性连接）的自由度。非空时凝聚不把这些行列清零——
+    #: 节点那一侧的转角仍然是未知量，弹簧两端各转各的。
+    sprung: tuple[int, ...] = ()
+    #: 完整的 K[r,:]（含 released 自身那几列），半刚性回算位移要用。
+    k_rows: np.ndarray | None = None
 
 
-def _condense(k: np.ndarray, released: tuple[int, ...], member_id: int):
-    """按 f_released = 0 做静力凝聚，返回 (凝聚后刚度, 凝聚信息)。
+def _condense(k: np.ndarray, released: tuple[int, ...], member_id: int,
+              springs: dict[int, float] | None = None):
+    """静力凝聚，返回 (凝聚后刚度, 凝聚信息)。
 
-    释放端不传力，故 k* = k_KK - k_KR k_RR^-1 k_RK，等效荷载同理缩并。
-    两端同时释放轴向或扭转会让 k_RR 奇异——那在力学上就是一根散架的杆，直接报错。
+    **释放与半刚性连接是同一个公式的两端。** 在杆端自由度上串一个转动弹簧
+    k_s，把"杆端转角"这个多出来的未知量消掉，得到
+
+        K* = K − K[:,r] (K_rr + k_s)⁻¹ K[r,:]
+
+    k_s = 0 就是理想铰（该行该列全变成零，退化成经典的释放凝聚）；
+    k_s → ∞ 时修正项趋于零，回到刚接。半刚性连接落在两者之间，不需要
+    另写一套单元——**两套各自维护的单元刚度迟早会漂移**，而漂移了不会报错，
+    只是两条路径给出的内力不一样。
+
+    ``springs`` 是 {局部自由度序号: 转动刚度}，其自由度同时进 ``released``：
+    先把它们当作待凝聚的未知量，再由 k_s 决定凝聚得多彻底。
+
+    两端同时释放轴向或扭转会让 k_RR 奇异——那在力学上就是一根散架的杆，
+    直接报错。有弹簧时 k_RR + k_s 不再奇异，所以只对纯释放的那些查。
     """
     if not released:
         return k, None
+    stiffness = dict(springs or {})
     kept = tuple(i for i in range(12) if i not in released)
-    k_rr = k[np.ix_(released, released)]
-    if np.linalg.cond(k_rr) > _RELEASE_COND_LIMIT:
-        names = [(LOCAL_DOF_NAMES[i] if i < 6 else LOCAL_DOF_NAMES[i - 6]) for i in released]
-        raise ValueError(
-            f"杆件 {member_id} 的释放组合 {names} 使单元成为机构"
-            "（例如两端同时释放轴向或扭转），无法静力凝聚"
-        )
+    k_rr = k[np.ix_(released, released)].copy()
+    free = tuple(i for i in released if not stiffness.get(i))
+    if free:
+        block = k[np.ix_(free, free)]
+        if np.linalg.cond(block) > _RELEASE_COND_LIMIT:
+            names = [(LOCAL_DOF_NAMES[i] if i < 6 else LOCAL_DOF_NAMES[i - 6])
+                     for i in free]
+            raise ValueError(
+                f"杆件 {member_id} 的释放组合 {names} 使单元成为机构"
+                "（例如两端同时释放轴向或扭转），无法静力凝聚"
+            )
+    for position, index in enumerate(released):
+        k_rr[position, position] += stiffness.get(index, 0.0)
     inv_rr = np.linalg.inv(k_rr)
     k_kr = k[np.ix_(kept, released)]
     k_rk = k[np.ix_(released, kept)]
-    star = np.zeros((12, 12))
-    star[np.ix_(kept, kept)] = k[np.ix_(kept, kept)] - k_kr @ inv_rr @ k_rk
-    return star, _Condensation(kept, released, inv_rr, k_rk)
+    if not stiffness:
+        # 纯释放：被释放的行列整体为零，与旧实现逐位相同
+        star = np.zeros((12, 12))
+        star[np.ix_(kept, kept)] = k[np.ix_(kept, kept)] - k_kr @ inv_rr @ k_rk
+        return star, _Condensation(kept, released, inv_rr, k_rk)
+    rows = k[released, :]
+    star = k - k[:, released] @ inv_rr @ rows
+    return star, _Condensation(kept, released, inv_rr, k_rk,
+                               tuple(released), rows)
 
 
 def _condense_load(p: np.ndarray, cond: _Condensation | None) -> np.ndarray:
     if cond is None:
         return p
+    if cond.sprung:
+        # 半刚性：杆端荷载经弹簧传到节点，比例由 (K_rr + k_s)⁻¹ 决定。
+        # 铰接是它 k_s=0 的特例，刚接是 k_s→∞ 时修正项消失。
+        released = list(cond.released)
+        return p - cond.k_rows.T @ cond.inv_rr @ p[released]
     star = np.zeros(12)
     k_kr = cond.k_rk.T
     star[list(cond.kept)] = p[list(cond.kept)] - k_kr @ cond.inv_rr @ p[list(cond.released)]
@@ -386,6 +619,12 @@ def _released_projection(cond: _Condensation | None) -> np.ndarray:
     P = np.eye(12)
     if cond is None:
         return P
+    if cond.sprung:
+        # 半刚性：杆端转角 = 节点转角 + 弹簧变形，后者是 −(K_rr+k_s)⁻¹K[r,:]·d。
+        # 节点那一侧的转角不被抹掉——弹簧两端各转各的，这正是半刚性的含义。
+        rows = np.zeros((12, 12))
+        rows[list(cond.released), :] = -cond.inv_rr @ cond.k_rows
+        return P + rows
     P[list(cond.released), :] = 0.0
     P[np.ix_(cond.released, cond.kept)] = -cond.inv_rr @ cond.k_rk
     return P
@@ -445,7 +684,8 @@ def _member_matrices(model: Frame, m: Member):
     L, R = local_axes(pi, pj, m.ref_vector)
     mat, sec = model.materials[m.material], model.sections[m.section]
     k_local = local_stiffness(L, mat.E, mat.G, sec)
-    k_star, cond = _condense(k_local, m.released_indices(), m.id)
+    k_star, cond = _condense(k_local, m.released_indices(), m.id,
+                             m.spring_indices())
     return L, R, transformation(R), rigid_offset_transform(m), k_local, k_star, cond
 
 
@@ -460,15 +700,39 @@ def equivalent_local_load(model: "Frame", member: "Member", case: LoadCase,
     初应变的等效节点力由 ``f₀ = ∫Bᵀ E ε₀ dV = EA·ε₀·[−1 … +1]`` 得到：
     升温（ε₀>0）把两端往外推，所以自由杆自由伸长、轴力为零；两端固定时
     位移为零，回算得到 ``N = −EA·ε₀``，即受压。这与讲义 §3-9 五、六一致。
+
+    初曲率同理，只是换成弯曲那一套形函数：
+
+        f₀ = ∫ (B_b)ᵀ E I κ₀ dx，  B_b = [N₁'' N₂'' N₃'' N₄'']
+        ∫₀ᴸ N'' dx = [N']₀ᴸ  ⇒  (0, −1, 0, +1)
+
+    所以只在两端的**转动**自由度上出力，平动那两项为零——这正是"纯弯曲
+    不产生剪力"的代数表述。静定杆因此自由弯曲、内力为零；两端固定时
+    端弯矩为 EI·κ₀，沿杆是常量。
     """
     p = np.zeros(12)
     for item in span_loads_of(case, member.id):
         p += fixed_end(item, L, rot)
     strain = float(case.member_strains.get(member.id, 0.0))
+    material = model.materials[member.material]
+    section = model.sections[member.section]
     if strain:
-        axial = model.materials[member.material].E * model.sections[member.section].A * strain
+        axial = material.E * section.A * strain
         p[0] -= axial
         p[6] += axial
+    curvature = case.member_curvatures.get(member.id)
+    if curvature:
+        ky, kz = (float(v) for v in curvature)
+        if kz:
+            moment = material.E * section.Iz * kz
+            p[5] -= moment
+            p[11] += moment
+        if ky:
+            # 局部 y 平面的弯矩项与局部 z 平面反号，来源与 fixed_end 里
+            # 那两行一致（r × F）；改一处必须同时改另一处。
+            moment = material.E * section.Iy * ky
+            p[4] += moment
+            p[10] -= moment
     return p
 
 
@@ -480,16 +744,14 @@ def assemble(model: Frame, case_names: list[str] | None = None):
     if case_names is None:
         case_names = list(model.load_cases)
     n = model.num_dofs
-    rows, cols, vals = [], [], []
+    all_dofs, blocks = [], []
     F = np.zeros((n, len(case_names)))
 
     for m in model.members.values():
         L, R, T, B, _, k_star, cond = _member_matrices(model, m)
         ke = B.T @ T.T @ k_star @ T @ B
         dofs = model.node_dofs(m.i) + model.node_dofs(m.j)
-        for a in range(12):
-            for b in range(12):
-                rows.append(dofs[a]); cols.append(dofs[b]); vals.append(ke[a, b])
+        all_dofs.append(dofs); blocks.append(ke)
         for c, name in enumerate(case_names):
             p = equivalent_local_load(model, m, model.load_cases[name], L, R)
             if p.any():
@@ -499,8 +761,36 @@ def assemble(model: Frame, case_names: list[str] | None = None):
         for nid, load in model.load_cases[name].nodal_loads.items():
             F[model.node_dofs(nid), c] += np.asarray(load, dtype=float)
 
-    K = coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
+    # 弹性支座只往对角线上加一项，不动任何耦合项——弹簧是接地的，
+    # 它连接的是"这个自由度"和"大地"，不是两个自由度。
+    rows, vals = [], []
+    for nid, stiffness in model.springs.items():
+        dofs = model.node_dofs(nid)
+        for k, value in enumerate(stiffness):
+            if value:
+                rows.append(dofs[k]); vals.append(float(value))
+
+    K = scatter_blocks(n, all_dofs, blocks)
+    if rows:
+        K = (K + coo_matrix((vals, (rows, rows)), shape=(n, n))).tocsr()
     return K, F, case_names
+
+
+def scatter_blocks(n: int, all_dofs: list[list[int]],
+                   blocks: list[np.ndarray]) -> csr_matrix:
+    """把各杆 12×12 单元阵一次性散射进 n×n 整体稀疏阵，重复位置自动相加。
+
+    逐项 append 的双重循环每杆 144 次 Python 调用，杆一多就是装配的大头；
+    这里用 repeat/tile 一次生成行列号。ke[a, b] 按行主序展平后位于 a*12+b，
+    行号取 dofs[a]、列号取 dofs[b]，与原循环逐项一致。
+    """
+    if not blocks:
+        return csr_matrix((n, n))
+    dofs = np.asarray(all_dofs, dtype=np.int64)
+    rows = np.repeat(dofs, 12, axis=1).ravel()
+    cols = np.tile(dofs, (1, 12)).ravel()
+    vals = np.asarray(blocks, dtype=float).ravel()
+    return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
 
 
 def constrained_dofs(model: Frame) -> np.ndarray:
@@ -509,6 +799,26 @@ def constrained_dofs(model: Frame) -> np.ndarray:
         dofs = model.node_dofs(nid)
         fixed += [dofs[k] for k, flag in enumerate(mask) if flag]
     return np.array(sorted(set(fixed)), dtype=int)
+
+
+def _recover_end_rotations(u_local: np.ndarray, p: np.ndarray,
+                           cond: _Condensation) -> np.ndarray:
+    """把节点侧位移还原成**杆端**位移。
+
+    纯释放与半刚性是两个不同的式子，混用不会报错，只会让内力差几十个百分点：
+
+    * 理想铰：节点那一侧的转角没有意义（凝聚已把它的刚度清零），杆端转角
+      整个由凝聚关系给出；
+    * 半刚性：杆端转角 = **节点转角 + 弹簧变形**。少掉前一项，等于默认
+      节点不转——实测两跨连续梁上端弯矩差了 63%。
+    """
+    out = np.array(u_local, dtype=float)
+    rel = list(cond.released)
+    if cond.sprung:
+        out[rel] = out[rel] + cond.inv_rr @ (p[rel] - cond.k_rows @ u_local)
+        return out
+    out[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ u_local[list(cond.kept)])
+    return out
 
 
 def _member_forces(model: Frame, U: np.ndarray, case: LoadCase) -> dict[int, np.ndarray]:
@@ -520,8 +830,7 @@ def _member_forces(model: Frame, U: np.ndarray, case: LoadCase) -> dict[int, np.
         u_local = T @ B @ U[dofs]
         p = equivalent_local_load(model, m, case, L, R)
         if cond is not None:
-            kept, rel = list(cond.kept), list(cond.released)
-            u_local[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ u_local[kept])
+            u_local = _recover_end_rotations(u_local, p, cond)
         # 内力回算必须把固端力减回来，否则跨中弯矩全错
         out[m.id] = k_local @ u_local - p
     return out
@@ -541,8 +850,9 @@ def member_local_displacements(model: Frame, member: Member,
     p = (np.zeros(12) if case is None
          else equivalent_local_load(model, member, case, L, R))
     if cond is not None:
-        kept, rel = list(cond.kept), list(cond.released)
-        q[rel] = cond.inv_rr @ (p[rel] - cond.k_rk @ q[kept])
+        # 与内力回算共用同一个还原式。**两处各写一份迟早会漂移**，
+        # 而漂移了不会报错：画出来的变形图和算出来的内力各说各话。
+        q = _recover_end_rotations(q, p, cond)
     return q
 
 
@@ -627,6 +937,15 @@ def solve(model: Frame, cases: list[str] | None = None,
         Uc = U[:, c]
         Rc = np.zeros(n)
         Rc[fixed] = (K @ Uc - F[:, c])[fixed]
+        # 弹簧支承的自由度是**自由**的，K@U−F 在那里恒为零，取不到反力。
+        # 弹簧对结构的作用力是 −k·u，方向与固定支座的反力一致：
+        # 向下压 P 时 u=−P/k，−k·u=+P，向上托住。
+        # 漏掉这一段的后果不是数字偏小，而是 check_equilibrium 直接失衡。
+        for nid, stiffness in model.springs.items():
+            dofs = model.node_dofs(nid)
+            for k, value in enumerate(stiffness):
+                if value:
+                    Rc[dofs[k]] += -float(value) * Uc[dofs[k]]
         results[name] = CaseResult(
             name=name, U=Uc, R=Rc,
             member_forces=_member_forces(model, Uc, model.load_cases[name]),
@@ -685,7 +1004,14 @@ def self_weight_loads(model: Frame, factor: float = 1.0,
 
 
 def combined_case(model: Frame, factors: dict[str, float]) -> LoadCase:
-    """把若干工况按系数合成一个等效工况，用于组合的平衡校核。"""
+    """把若干工况按系数合成一个等效工况。
+
+    用于组合的平衡校核，以及非线性分析步里的非比例加载。
+
+    **必须覆盖 LoadCase 的每一个荷载字段。** 漏掉一个不会报错，只会让那
+    一类荷载从合成工况里消失——初应变一度就是这样漏着的。
+    tests/test_advanced_beam.py 里的字段闸门看着这件事。
+    """
     merged = LoadCase("__combined__")
     for name, f in factors.items():
         case = model.load_cases[name]
@@ -698,6 +1024,13 @@ def combined_case(model: Frame, factors: dict[str, float]) -> LoadCase:
         for mid, items in case.member_spans.items():
             merged.member_spans.setdefault(mid, []).extend(
                 item.scaled(f) for item in items)
+        for mid, strain in case.member_strains.items():
+            merged.member_strains[mid] = (merged.member_strains.get(mid, 0.0)
+                                          + f * float(strain))
+        for mid, kappa in case.member_curvatures.items():
+            base = np.asarray(merged.member_curvatures.get(mid, (0.0, 0.0)))
+            merged.member_curvatures[mid] = tuple(
+                base + f * np.asarray(kappa, dtype=float))
         for nid, given in case.settlements.items():
             base = np.asarray(merged.settlements.get(nid, (0.0,) * 6))
             merged.settlements[nid] = tuple(base + f * np.asarray(given, dtype=float))
@@ -705,8 +1038,15 @@ def combined_case(model: Frame, factors: dict[str, float]) -> LoadCase:
 
 
 def check_equilibrium(model: Frame, sol: Solution, case: str | None = None,
-                      rtol: float = 1e-8) -> dict:
-    """整体静力平衡：支座反力合力 + 外荷载合力 = 0。"""
+                      rtol: float = 1e-8, deformed: bool = False) -> dict:
+    """整体静力平衡：支座反力合力 + 外荷载合力 = 0。
+
+    ``deformed=True`` 时力臂取变形后的节点位置。**二阶分析必须这样查。**
+    P-Δ 的平衡本来就只在变形后位形上成立，拿未变形几何去查，残差恰好等于
+    P·Δ——那不是误差，是二阶效应本身。一根 1600 kN 轴压、顶点侧移 54 mm 的
+    柱子会报出 5.4% 的"不平衡"，而模型完全正确；用户看到的是一次假警报。
+    一阶分析两者等价，所以默认仍是未变形几何。
+    """
     name = case or sol.primary
     if name in model.combos:
         load_case = combined_case(model, model.combos[name])
@@ -714,16 +1054,27 @@ def check_equilibrium(model: Frame, sol: Solution, case: str | None = None,
         load_case = model.load_cases[name]
     result = sol[name]
 
+    def arm(nid: int) -> np.ndarray:
+        """力臂。二阶分析取变形后的位置。"""
+        base = np.asarray(model.nodes[nid].xyz, dtype=float)
+        if not deformed:
+            return base
+        return base + result.U[model.node_dofs(nid)[:3]]
+
     applied = np.zeros(6)
     for nid, load in load_case.nodal_loads.items():
         p = np.asarray(load, dtype=float)
-        r = model.nodes[nid].xyz
+        r = arm(nid)
         applied[:3] += p[:3]
         applied[3:] += p[3:] + np.cross(r, p[:3])
     for mid in sorted(set(load_case.member_loads) | set(load_case.member_spans)):
         m = model.members[mid]
         pi, pj = member_endpoints(model, m)
         L = float(np.linalg.norm(pj - pi))
+        if deformed:
+            # 杆长仍取原长：杆间荷载的合力大小由原长定义，变的是力臂。
+            pi = pi + result.U[model.node_dofs(m.i)[:3]]
+            pj = pj + result.U[model.node_dofs(m.j)[:3]]
         for item in span_loads_of(load_case, mid):
             force, moment = moment_about_origin(item, L, pi, pj)
             applied[:3] += force
@@ -733,7 +1084,7 @@ def check_equilibrium(model: Frame, sol: Solution, case: str | None = None,
     for nid in model.supports:
         d = model.node_dofs(nid)
         p = result.R[d]
-        r = model.nodes[nid].xyz
+        r = arm(nid)
         reac[:3] += p[:3]
         reac[3:] += p[3:] + np.cross(r, p[:3])
 
@@ -790,9 +1141,16 @@ def check_model(model: Frame) -> list[str]:
 
     # 当前内核没有 tie/MPC。两个坐标重合但编号不同的节点在图上像一个节点，
     # 在刚度矩阵里却完全断开，是最危险的“看起来正确”。严格模型中直接拒绝。
+    # 用 KD 树找近邻对而不是两两比较：五百个节点两两比就是十几万次向量
+    # 运算，界面每刷新一次流程条都要校验一遍，实测占掉一秒多。报告的
+    # 顺序仍按节点插入次序，与原来的双重循环逐条一致。
     node_list = list(model.nodes.values())
-    for index, a in enumerate(node_list):
-        for b in node_list[index + 1:]:
+    if len(node_list) > 1:
+        from scipy.spatial import cKDTree
+
+        coords = np.array([(n.x, n.y, n.z) for n in node_list], dtype=float)
+        for ia, ib in sorted(cKDTree(coords).query_pairs(r=1e-9)):
+            a, b = node_list[ia], node_list[ib]
             if float(np.linalg.norm(a.xyz - b.xyz)) < 1e-9:
                 issues.append(f"节点 {a.id} 与节点 {b.id} 坐标重合；请合并为同一节点")
 

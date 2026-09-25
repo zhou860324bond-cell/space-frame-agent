@@ -121,10 +121,24 @@ def _case_has_action(model: Frame, case: str) -> bool:
     支座沉降与初应变（温度）不产生净外力，但它们是实实在在的作用，会产生
     反力与内力。拿 _total_applied_load 去判断"有没有作用"会把这两类工况
     误判成空求解——这正是 no_applied_load 第一版踩的坑。
+
+    **纯力偶是第三类**，而且是最容易忘的一类：集中力偶的合力恒为零，
+    只有力矩。一个只加了力偶的工况求解完全正常（实测平衡残差 2.9e-16、
+    跨内挠度 0.81 mm），却会被判成"没有荷载"并把结果整个拦下来。
+    节点荷载的后三项同理——只给弯矩不给力时合力也是零。
     """
     lc = model.case(case)
     if float(np.linalg.norm(_total_applied_load(model, case))) > 1e-10:
         return True
+    if any(float(np.abs(np.asarray(load[3:], dtype=float)).sum()) > 1e-10
+           for load in lc.nodal_loads.values()):
+        return True                        # 只有节点弯矩
+    from span_loads import MOMENT
+
+    if any(item.kind == MOMENT and float(np.abs(
+               np.asarray(item.w1, dtype=float)).sum()) > 1e-10
+           for loads in (lc.member_spans or {}).values() for item in loads):
+        return True                        # 只有跨间力偶
     return bool(lc.settlements or lc.member_strains)
 
 
@@ -226,6 +240,34 @@ def check_zero_reaction_with_load(model: Frame, sol: Solution) -> dict[str, Any]
 # 检测项 3: 有载荷但内力为零
 # ---------------------------------------------------------------------------
 
+_DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
+
+
+def _loads_sitting_on_supports(model: Frame, case: str) -> dict[int, list[str]] | None:
+    """这个工况的荷载是否**全部**落在支座被约束的方向上。
+
+    是则返回 {节点: [被约束且受荷的方向]}，否则 None。只看节点荷载：
+    有杆件荷载的工况，荷载必然先进杆件，不会是这种情形。
+
+    这是 zero_internal_force 最常见、也最容易被误诊的一种成因——荷载直接
+    进了支座反力，杆件一点力都不受。它既不是机构（刚度矩阵好好的），也不是
+    荷载加在了孤立节点上，原先的提示把两种错因都报了，偏偏没报这一种。
+    """
+    lc = model.load_cases.get(case)
+    if lc is None or lc.member_loads or lc.member_spans or not lc.nodal_loads:
+        return None
+    hits: dict[int, list[str]] = {}
+    for nid, load in lc.nodal_loads.items():
+        fix = model.supports.get(nid, (0,) * 6)
+        for k, value in enumerate(load):
+            if abs(float(value)) < 1e-12:
+                continue
+            if not fix[k]:
+                return None                 # 有一个分量作用在自由方向，就不是这种情形
+            hits.setdefault(nid, []).append(_DOF_NAMES[k])
+    return hits or None
+
+
 def check_zero_internal_force(model: Frame, sol: Solution) -> dict[str, Any]:
     """有外载荷但所有杆件内力为零 — 载荷没有传递到杆件，可能是机构或载荷作用点错误。"""
     bad_cases = []
@@ -237,9 +279,31 @@ def check_zero_internal_force(model: Frame, sol: Solution) -> dict[str, Any]:
         for f in result.member_forces.values():
             max_force = max(max_force, float(np.abs(f).max()))
         if max_force < 1e-10:
-            bad_cases.append({"case": name, "applied_load_N": float(np.linalg.norm(applied))})
+            entry = {"case": name, "applied_load_N": float(np.linalg.norm(applied))}
+            on_supports = _loads_sitting_on_supports(model, name)
+            if on_supports:
+                entry["loads_on_restrained_dofs"] = {
+                    str(nid): dofs for nid, dofs in on_supports.items()}
+            bad_cases.append(entry)
 
     if bad_cases:
+        on_support = [b for b in bad_cases if "loads_on_restrained_dofs" in b]
+        hints = []
+        if on_support:
+            where = "；".join(
+                f"工况 {b['case']}：" + "、".join(
+                    f"节点 {nid} 的 {'/'.join(dofs)}"
+                    for nid, dofs in b["loads_on_restrained_dofs"].items())
+                for b in on_support)
+            hints.append(
+                f"荷载全部加在支座被约束的方向上（{where}），由支座反力直接承担，"
+                "不经过任何杆件——结果里只有反力有意义，位移与内力为零是真实的。"
+                "若本意是让结构受力，把荷载改到非支座节点或杆件上；"
+                "不要擅自改动用户指定的荷载位置，先向用户说明。")
+        if len(on_support) < len(bad_cases):
+            hints.append(
+                "结构可能是机构（可刚体运动），或载荷作用在自由节点上未与杆件连接。"
+                "检查节点是否都被至少一根杆件连接、载荷节点 ID 是否正确。")
         return _finding(
             "zero_internal_force",
             "有载荷但内力为零",
@@ -248,8 +312,7 @@ def check_zero_internal_force(model: Frame, sol: Solution) -> dict[str, Any]:
             f"{len(bad_cases)} 个工况有外载荷但所有杆件内力为零："
             + ", ".join(b["case"] for b in bad_cases),
             {"cases": bad_cases},
-            "结构可能是机构（可刚体运动），或载荷作用在自由节点上未与杆件连接。"
-            "检查节点是否都被至少一根杆件连接、载荷节点 ID 是否正确。",
+            "".join(hints),
         )
     return _finding(
         "zero_internal_force", "有载荷但内力为零", SEVERITY_CRITICAL, STATUS_PASS,
@@ -325,6 +388,22 @@ def check_near_singular_stiffness(model: Frame, sol: Solution) -> dict[str, Any]
     K = full[free][:, free]
     n = K.shape[0]
 
+    # **先做对称 Jacobi 缩放，再算条件数。**
+    #
+    # 原始 K 的条件数跟着单位制走：同一个结构存成 N-mm-MPa，长度的数值大 1000
+    # 倍，转动与平动那两批对角元的量级差得更开，条件数能大好几个数量级。而
+    # 这里的阈值（1e8 / 1e12）是按 SI 定的——于是一个完全正常的模型换到毫米制
+    # 就被报成"接近奇异"。实测同一榀框架：SI 下 6.5e3，毫米制下 7.1e8，
+    # 刚好越过警告线。
+    #
+    # D = diag(1/√Kᵢᵢ) 之后条件数量的才是**真正的**病态（机构、零刚度杆、
+    # 刚度跨数量级），与单位制无关。求解器早就是这么做的（frame3d.solve 里
+    # 的 K_scaled），这里只是跟上同一套。
+    diagonal = np.asarray(K.diagonal(), dtype=float)
+    safe = np.where(np.abs(diagonal) > 0, np.abs(diagonal), 1.0)
+    scale = sp.diags(1.0 / np.sqrt(safe))
+    K = (scale @ K @ scale).tocsr()
+
     # 小矩阵转稠密算精确条件数；大矩阵用范数估计
     if n <= 2000:
         K_dense = K.toarray()
@@ -334,9 +413,15 @@ def check_near_singular_stiffness(model: Frame, sol: Solution) -> dict[str, Any]
             cond = float("inf")
     else:
         # 大矩阵：用 1-范数和无穷范数的乘积估计（上界）
+        # ‖K⁻¹‖₁ 用 LU 分解作用在向量上来估，**不显式求逆**：显式逆是一个
+        # 稠密的 n×n，1.5 万自由度时要 4 s 以上，而 onenormest 本来只需要
+        # 几次"乘以 K⁻¹"。K 对称，转置作用与原作用相同。
         try:
-            from scipy.sparse.linalg import onenormest
-            cond = float(onenormest(K) * onenormest(sp.linalg.inv(K.tocsc())))
+            from scipy.sparse.linalg import LinearOperator, onenormest, splu
+            lu = splu(K.tocsc())
+            inverse = LinearOperator((n, n), matvec=lu.solve, rmatvec=lu.solve,
+                                     dtype=float)
+            cond = float(onenormest(K) * onenormest(inverse))
         except Exception:  # noqa: BLE001  条件数估不出来就记 -1.0，下游 `if cond < 0` 会出一条 finding
             cond = -1.0  # 无法估计
 
@@ -458,6 +543,14 @@ def check_load_magnitude_anomaly(model: Frame, sol: Solution) -> dict[str, Any]:
     # 取典型材料的弹性模量
     typical_E = max(m.E for m in model.materials.values())
     dim = _structure_dimension(model)
+    areas = sorted(s.A for s in model.sections.values() if s.A > 0)
+    if not areas:
+        return _finding("load_magnitude_anomaly", "载荷量级异常",
+                        SEVERITY_INFO, STATUS_PASS,
+                        "无有效截面面积，跳过载荷量级检查")
+    typical_area = float(areas[len(areas) // 2])
+    stress_scale = model.unit_system.stress_scale
+    stress_unit = model.unit_system.stress_unit
 
     anomalies = []
     for name in sol.all_results():
@@ -465,21 +558,31 @@ def check_load_magnitude_anomaly(model: Frame, sol: Solution) -> dict[str, Any]:
         applied_mag = float(np.linalg.norm(applied))
         if applied_mag < 1e-10:
             continue
-        # 典型应力量级 = 载荷 / 典型截面积（假设 0.01 m²）
-        typical_area = 0.01  # m²，约 10cm x 10cm
+        # 典型应力量级 = 载荷 / 典型截面积。
+        #
+        # **用模型里真实的截面积，不要写死一个数。** 原来这里是
+        # `typical_area = 0.01  # m²`——毫米制下截面积是几千 mm²，拿 0.01 去
+        # 除，估算应力凭空大 10⁶ 倍，于是一个**专门用来抓单位错误**的检查
+        # 自己被单位骗了：完全正常的模型换到毫米制就报"载荷过大，可能把 kN
+        # 当成了 N"。模型里本来就有面积，没有理由去猜。
+        #
+        # 取中位数而不是最小值：一根细缀条不该把整个模型判成异常。
         stress_estimate = applied_mag / typical_area
         # 如果估算应力超过材料屈服强度的 100 倍（钢约 235MPa，取 10GPa 为阈值）
         # 或者应力极小（< 1Pa），都可能是单位问题
         if stress_estimate > typical_E * 0.1:  # 应力 > 0.1 E，物理上不可能
             anomalies.append({
                 "case": name, "applied_load_N": applied_mag,
-                "estimated_stress_Pa": stress_estimate,
+                "estimated_stress": round(stress_estimate * stress_scale, 3),
+                "stress_unit": stress_unit,
                 "issue": "载荷过大，估算应力超过 0.1E，可能单位是 kN 但当作 N 使用",
             })
-        elif stress_estimate < 1e-3:  # 应力 < 0.001 Pa
+        # "太小"的门槛也要跟着单位走：0.001 Pa 与 0.001 MPa 差 10⁶。
+        elif stress_estimate * stress_scale < 1e-9:
             anomalies.append({
                 "case": name, "applied_load_N": applied_mag,
-                "estimated_stress_Pa": stress_estimate,
+                "estimated_stress": round(stress_estimate * stress_scale, 6),
+                "stress_unit": stress_unit,
                 "issue": "载荷过小，可能单位是 N 但实际应该是 kN",
             })
 
@@ -491,7 +594,11 @@ def check_load_magnitude_anomaly(model: Frame, sol: Solution) -> dict[str, Any]:
             STATUS_WARN,
             f"{len(anomalies)} 个工况载荷量级与材料不匹配："
             + "; ".join(f"{a['case']}: {a['issue']}" for a in anomalies),
-            {"anomalies": anomalies, "typical_E_Pa": typical_E, "structure_dimension_m": dim},
+            {"anomalies": anomalies,
+             "typical_E": round(typical_E * stress_scale, 3),
+             "stress_unit": stress_unit,
+             "typical_area": typical_area,
+             "structure_dimension_m": dim},
             "检查载荷单位是否与材料单位一致。如果材料 E 用 Pa（N/m²），"
             "载荷应该用 N、尺寸用 m；如果载荷用 kN，材料 E 应该用 kPa（kN/m²）。",
         )

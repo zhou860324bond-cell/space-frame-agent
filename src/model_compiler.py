@@ -15,7 +15,9 @@ import numpy as np
 
 from frame3d import Frame, LoadCase, Member, Node, member_endpoints
 from model_io import from_dict, migrate_payload, validate_payload
-from span_loads import POINT, TRAPEZOID, UNIFORM, SpanLoad
+from span_loads import (KINDS, MOMENT, PARTIAL, POINT, RAMP, TRAPEZOID,
+                        UNIFORM,
+                        SpanLoad)
 
 _SPLIT_REL_TOL = 1e-9
 _SPLIT_ABS_TOL = 1e-9
@@ -54,9 +56,14 @@ class CompiledModel:
     diagnostics: tuple[str, ...] = ()
 
 
-def compile_model(payload: dict[str, Any]) -> CompiledModel:
-    """校验并编译 Domain IR，集中力位置和显式内节点成为分析切分点。"""
-    errors = validate_payload(payload)
+def compile_model(payload: dict[str, Any], *,
+                  validated: bool = False) -> CompiledModel:
+    """校验并编译 Domain IR，集中力位置和显式内节点成为分析切分点。
+
+    ``validated=True`` 表示调用方刚校验过同一份 payload（Session 按内容
+    指纹缓存了结果），这里不再重复一遍 jsonschema。
+    """
+    errors = [] if validated else validate_payload(payload)
     if errors:
         raise CompilationError(errors)
 
@@ -78,6 +85,13 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
     generated_nodes: dict[int, tuple[int, float]] = {}
     diagnostics: list[str] = []
 
+    # 全部节点坐标一次取成数组。下面"哪些节点正好落在这根杆中间"原来是
+    # 每根杆遍历全部节点的 Python 双重循环——一千多根杆、五百多个节点就是
+    # 七十万次迭代，编译一次两秒。判据与原来逐条相同，只是按杆向量化。
+    all_node_ids = np.fromiter(physical.nodes, dtype=np.int64, count=len(physical.nodes))
+    node_xyz = np.array([(n.x, n.y, n.z) for n in physical.nodes.values()],
+                        dtype=float).reshape(-1, 3)
+
     for physical_id in sorted(physical.members):
         member = physical.members[physical_id]
         pi, pj = member_endpoints(physical, member)
@@ -87,20 +101,21 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
             float(load.a)
             for case in physical.load_cases.values()
             for load in case.member_spans.get(physical_id, ())
-            if load.kind == POINT
+            if load.kind in (POINT, MOMENT)
         ]
         direction = pj - pi
         explicit_points: list[tuple[float, int]] = []
-        for node_id, node in physical.nodes.items():
-            if node_id in (member.i, member.j):
-                continue
-            offset = node.xyz - pi
-            position = float(np.dot(offset, direction) / length)
-            if position <= tolerance or length - position <= tolerance:
-                continue
-            projection = pi + (position / length) * direction
-            if float(np.linalg.norm(node.xyz - projection)) <= tolerance:
-                explicit_points.append((position, node_id))
+        if len(all_node_ids):
+            positions = (node_xyz - pi) @ direction / length
+            inside = ((positions > tolerance) & (length - positions > tolerance)
+                      & (all_node_ids != member.i) & (all_node_ids != member.j))
+            if inside.any():
+                projections = pi + (positions[inside] / length)[:, None] * direction
+                gaps = np.linalg.norm(node_xyz[inside] - projections, axis=1)
+                for position, node_id in zip(positions[inside][gaps <= tolerance],
+                                             all_node_ids[inside][gaps <= tolerance],
+                                             strict=True):
+                    explicit_points.append((float(position), int(node_id)))
 
         split_points: list[tuple[float, int | None]] = []
         for position, node_id in sorted(explicit_points):
@@ -146,16 +161,25 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
             element_to_physical[element_id] = physical_id
 
         for index, element_id in enumerate(element_ids):
+            last = index == len(element_ids) - 1
+            # **一律用关键字传。** Member 的字段是会加的，位置传参下新增一个
+            # 字段就会把后面的实参整体挪位——offset 被当成连接刚度之类，
+            # 模型照样编译得出来，只是算的不是那个结构。
             frame.members[element_id] = Member(
-                element_id, node_ids[index], node_ids[index + 1],
-                member.section, member.material, member.ref_vector,
-                member.releases_i if index == 0 else (),
-                member.releases_j if index == len(element_ids) - 1 else (),
-                member.offset_i if index == 0 else (0.0, 0.0, 0.0),
-                member.offset_j if index == len(element_ids) - 1 else (0.0, 0.0, 0.0),
+                id=element_id, i=node_ids[index], j=node_ids[index + 1],
+                section=member.section, material=member.material,
+                ref_vector=member.ref_vector,
+                releases_i=member.releases_i if index == 0 else (),
+                releases_j=member.releases_j if last else (),
+                # 连接弹簧与释放同理：它们是**整根构件两端**的节点构造，
+                # 剖分出来的中间段之间是连续的，不能每段都来一个。
+                springs_i=member.springs_i if index == 0 else {},
+                springs_j=member.springs_j if last else {},
+                offset_i=member.offset_i if index == 0 else (0.0, 0.0, 0.0),
+                offset_j=member.offset_j if last else (0.0, 0.0, 0.0),
                 # μ 是**整根构件**的属性，各段原样带上。稳定校核按物理构件整
                 # 根算（见 strength.py），这里带上只是让单元自己也说得清楚。
-                member.mu_y, member.mu_z,
+                mu_y=member.mu_y, mu_z=member.mu_z,
             )
 
         boundaries = [0.0, *interior, length]
@@ -172,9 +196,14 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                 for element_id in element_ids:
                     analysis_case.member_strains[element_id] = (
                         physical_case.member_strains[physical_id])
+            # 曲率与应变同理：沿杆是常量，剖分后各段直接继承，不按长度分配。
+            if physical_id in physical_case.member_curvatures:
+                for element_id in element_ids:
+                    analysis_case.member_curvatures[element_id] = (
+                        physical_case.member_curvatures[physical_id])
 
             for load in physical_case.member_spans.get(physical_id, ()):
-                if load.kind == POINT:
+                if load.kind in (POINT, MOMENT):
                     position = float(load.a)
                     if position <= tolerance:
                         node_id = member.i
@@ -184,9 +213,16 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                         nearest = min(range(len(interior)),
                                       key=lambda item: abs(interior[item] - position))
                         node_id = internal_node_ids[nearest]
+                    # 集中力进平动三项，集中力偶进转动三项。
+                    # **力偶作用在节点上就是个节点弯矩**——上面的剖分已经
+                    # 在作用位置造出了节点，所以这条转换是精确的，不需要
+                    # 把力偶带进单元的固端力公式。
+                    offset = 0 if load.kind == POINT else 3
                     previous = analysis_case.nodal_loads.get(node_id, (0.0,) * 6)
                     analysis_case.nodal_loads[node_id] = tuple(
-                        float(previous[index]) + (float(load.w1[index]) if index < 3 else 0.0)
+                        float(previous[index])
+                        + (float(load.w1[index - offset])
+                           if offset <= index < offset + 3 else 0.0)
                         for index in range(6))
                     continue
 
@@ -203,6 +239,52 @@ def compile_model(payload: dict[str, Any]) -> CompiledModel:
                         w2 = start + change * (boundaries[index + 1] / length)
                         analysis_case.member_spans.setdefault(element_id, []).append(
                             SpanLoad(TRAPEZOID, tuple(w1), tuple(w2)))
+                    continue
+
+                if load.kind == PARTIAL:
+                    # 逐段求 [a, b] 与该单元的重叠，落到单元的局部坐标上。
+                    # 没剖分时只有一段，等价于原样搬过去。
+                    for index, element_id in enumerate(element_ids):
+                        lo, hi = boundaries[index], boundaries[index + 1]
+                        start = max(float(load.a), lo)
+                        end = min(float(load.b), hi)
+                        if end - start <= tolerance:
+                            continue                # 这一段不在受载区间内
+                        analysis_case.member_spans.setdefault(element_id, []).append(
+                            SpanLoad(PARTIAL, tuple(load.w1),
+                                     a=start - lo, b=end - lo))
+                    continue
+
+                if load.kind == RAMP:
+                    # 与 partial 同样按重叠区间切，但强度要按位置线性插值到
+                    # 各段的两端——直接沿用整段的 w1/w2 会把斜率算错。
+                    start = np.asarray(load.w1, dtype=float)
+                    change = np.asarray(load.w2, dtype=float) - start
+                    whole = float(load.b - load.a)
+                    for index, element_id in enumerate(element_ids):
+                        lo, hi = boundaries[index], boundaries[index + 1]
+                        head = max(float(load.a), lo)
+                        tail = min(float(load.b), hi)
+                        if tail - head <= tolerance or whole <= 0.0:
+                            continue
+                        w_head = start + change * ((head - load.a) / whole)
+                        w_tail = start + change * ((tail - load.a) / whole)
+                        analysis_case.member_spans.setdefault(element_id, []).append(
+                            SpanLoad(RAMP, tuple(w_head), tuple(w_tail),
+                                     a=head - lo, b=tail - lo))
+                    continue
+
+                # **不认识的类型必须炸，不能默默丢掉。**
+                # 原先这里是个没有 else 的 if 链：POINT/UNIFORM/TRAPEZOID 各自
+                # continue，其余一概掉出循环消失。加 partial 时实测后果是
+                # 反力全零、平衡残差 0.0、一句话都不报——荷载凭空蒸发而所有
+                # 自检都说"没问题"。往 span_loads.KINDS 里加类型的人不会想到
+                # 还要改这里，所以让它在这里当场失败。
+                raise CompilationError([
+                    f"杆件 {physical_id} 上的杆间荷载类型 {load.kind!r} 编译器"
+                    f"还不认识。已知类型：{list(KINDS)}。"
+                    "新增类型必须同时在 model_compiler 里写明它怎么分配到"
+                    "剖分后的单元上——漏掉这一步荷载会被静默丢弃。"])
 
         if len(element_ids) > 1:
             reasons = []
