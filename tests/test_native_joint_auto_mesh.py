@@ -66,3 +66,28 @@ def test_a_joint_too_big_even_after_coarsening_points_to_abaqus(monkeypatch):
         native_joint._fit_default_mesh(None, 20.0, 8.0,
                                        max_elements=80000, max_dof=180000)
     assert len(calls) == native_joint._DEFAULT_MESH_RETRIES + 1
+
+
+def test_three_levels_run_coarse_to_fine_and_all_fit(monkeypatch):
+    """收敛判断：最细档是规模内能划到的最细，另外两档各放粗 1.5、2.25 倍。"""
+    calls = []
+    monkeypatch.setattr(native_joint, "generate_joint_mesh", _fake_mesher(calls))
+    plan, options, note = native_joint._default_plan(
+        None, 8.0, 3, max_elements=80000, max_dof=180000)
+    sizes = [size for size, _prepared in plan]
+    assert sizes == sorted(sizes, reverse=True), "由粗到细"
+    assert sizes[0] == pytest.approx(2.25 * sizes[-1])
+    assert sizes[1] == pytest.approx(1.5 * sizes[-1])
+    assert plan[-1][1] is not None, "最细档直接用放粗时已经划好的网格，不重划"
+    assert plan[0][1] is None and plan[1][1] is None
+    assert options == {"Mesh.SecondOrderLinear": 1} and note
+
+
+def test_one_level_is_the_quick_default(monkeypatch):
+    calls = []
+    monkeypatch.setattr(native_joint, "generate_joint_mesh",
+                        _fake_mesher(calls, elements_at_reference=20000))
+    plan, options, note = native_joint._default_plan(
+        None, 8.0, 1, max_elements=80000, max_dof=180000)
+    assert [size for size, _p in plan] == [20.0]
+    assert options is None and note is None

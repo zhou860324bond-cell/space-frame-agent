@@ -770,6 +770,45 @@ def test_an_automatic_utilization_refresh_never_pops_a_modal_dialog(
     assert "无法显示应力比" in w.statusBar().currentMessage()
 
 
+def test_joint_solid_asks_for_the_level_count_and_shows_progress(qt_app, monkeypatch):
+    """节点实体是分钟级作业：开算前说清快速/收敛判断的区别，算的时候一直
+    显示走到哪一档了——不能只有一句"计算中"。"""
+    from agent import ToolResult
+
+    s = built()
+    w = solved(MainWindow(s))
+    seen = {}
+
+    def fake(node_id, case=None, levels=1, progress=None, **_kw):
+        seen["levels"] = levels
+        progress("第 2/3 档：求解 12345 个自由度…")
+        return ToolResult(False, {"error": "测试用：不真算"})
+
+    monkeypatch.setattr(w.session, "analyze_joint_solid", fake)
+    shown = []
+    original = w.statusBar().showMessage
+    monkeypatch.setattr(w.statusBar(), "showMessage",
+                        lambda text, *a: (shown.append(text), original(text, *a)))
+    monkeypatch.setattr(w, "_ask_joint_levels", lambda _node: 3)
+    w._on_picked("node", 1)
+    w.run_solid_joint()
+    assert w.runner.wait(30000)
+    qt_app.processEvents()
+    assert seen["levels"] == 3
+    assert any("第 2/3 档" in text for text in shown)
+
+
+def test_cancelling_the_joint_solid_choice_runs_nothing(qt_app, monkeypatch):
+    s = built()
+    w = solved(MainWindow(s))
+    ran = []
+    monkeypatch.setattr(w.session, "analyze_joint_solid", lambda **kw: ran.append(kw))
+    monkeypatch.setattr(w, "_ask_joint_levels", lambda _node: None)
+    w._on_picked("node", 1)
+    w.run_solid_joint()
+    assert not w.runner.busy and not ran
+
+
 def test_turning_off_contour_shading_gives_flat_colour(qt_app):
     """要精确对色标读数时可以关掉打光，这时必须是纯平涂。"""
     window = solved(MainWindow(built()))

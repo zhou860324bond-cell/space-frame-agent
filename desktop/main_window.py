@@ -2952,10 +2952,41 @@ class MainWindow(QMainWindow):
             return
         node_id = int(self._selected_id)
         case = self.case
-        title = f"节点 {node_id} 局部实体"
+        levels = self._ask_joint_levels(node_id)
+        if levels is None:
+            return
+        title = f"节点 {node_id} 局部实体（{'收敛判断 3 档' if levels > 1 else '快速 1 档'}）"
         self._analyse(
             "solid_joint", title,
-            lambda: self.session.analyze_joint_solid(node_id=node_id, case=case))
+            lambda report: self.session.analyze_joint_solid(
+                node_id=node_id, case=case, levels=levels,
+                progress=lambda text: report(text, None, True)),
+            with_progress=True)
+
+    def _ask_joint_levels(self, node_id: int) -> int | None:
+        """先说清两种算法的代价与区别，再开算。
+
+        节点实体是分钟级作业（实测 6 杆 D219×8 节点单档约 4 分钟），而且
+        单档网格判不了热点应力是否收敛，正式的应力集中系数 Kt 只有多档才给。
+        不问一句就开算，用户等了几分钟才发现拿不到想要的那个数。
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle("节点实体")
+        box.setText(f"对节点 {node_id} 做局部实体分析，选择算法：")
+        box.setInformativeText(
+            "快速（1 档）：几分钟，看应力分布与峰值；不给正式 Kt。\n"
+            "收敛判断（3 档）：约 3 倍时间，热点应力收敛时给出正式 Kt。")
+        quick = box.addButton("快速（1 档）", QMessageBox.ButtonRole.AcceptRole)
+        full = box.addButton("收敛判断（3 档）", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(quick)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is quick:
+            return 1
+        if clicked is full:
+            return 3
+        return None
 
     # --- 校核 ---
 
@@ -2977,7 +3008,7 @@ class MainWindow(QMainWindow):
                       lambda: self.session.write_report(
                           fmt="both", filename="刚架分析报告"))
 
-    def _analyse(self, kind: str, title: str, fn) -> None:
+    def _analyse(self, kind: str, title: str, fn, with_progress: bool = False) -> None:
         """跑一个分析，结果进**结果面板**。
 
         原来是弹一个消息框、把 JSON 塞进"详细信息"——那是给开发者看的。
@@ -3020,7 +3051,13 @@ class MainWindow(QMainWindow):
             self.results.show_message(f"{title}　计算出错",
                                       f"{kind_}：{message[:400]}")
 
-        self.runner.submit(fn, on_done=done, on_failed=failed)
+        def progress(text: str, _args=None, _ok: bool = True) -> None:
+            # 分钟级作业要一直看得见走到哪了，不能只有一句"计算中"
+            self.statusBar().showMessage(f"{title}：{text}")
+            self.results.show_message(title, text)
+
+        self.runner.submit(fn, on_done=done, on_failed=failed,
+                           on_progress=progress if with_progress else None)
 
     @staticmethod
     def _explain(payload: dict) -> str:
