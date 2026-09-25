@@ -67,7 +67,7 @@ ZH_EN: dict[str, str] = {
     "应力比": "Utilization",
     # 抽屉页签与两侧窄栏
     "手绘草图": "Hand Sketch", "结果表": "Result Table", "截面优化": "Section Opt",
-    "过程": "Steps", "单杆": "Chart", "优化": "Optimize", "AI\n助手": "AI",
+    "边界": "BCs", "过程": "Steps", "单杆": "Chart", "优化": "Optimize", "AI\n助手": "AI",
     "包络": "Envelope", "最大挠度": "Deflection", "报告": "Report",
     "强度验算": "Strength", "对称性": "Symmetry",
     "编号与存储": "Numbering", "前视": "Front", "侧视": "Side",

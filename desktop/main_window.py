@@ -35,7 +35,8 @@ from .sketch_panel import SketchPanel                # noqa: E402
 from .section_opt_panel import SectionOptPanel       # noqa: E402
 from .bc_panel import BCPanel                          # noqa: E402
 from .properties import PropertiesPanel             # noqa: E402
-from .drawers import BOTTOM, LEFT, RIGHT, DrawerHost, SideRail  # noqa: E402
+from .drawers import (BOTTOM, LEFT, RIGHT, DrawerHost,  # noqa: E402
+                      PanelWindow, SideRail)
 from . import dialog_styles                         # noqa: E402
 from . import result_rows                           # noqa: E402
 from .viewport import Viewport                     # noqa: E402
@@ -146,17 +147,11 @@ class MainWindow(QMainWindow):
         # 入口是右侧窄栏最上面那颗「AI」按钮，一点召唤，再点收起。
         self.chat_dock = self.right_drawer.add_page("chat", "AI 助手", self.chat)
 
-        self.bc = BCPanel(self.session, self)
-        self.bc.changed.connect(
-            lambda: self._after_manual_edit("边界条件或荷载已修改"))
-        self.bc_dock = self.right_drawer.add_page(
-            "bc", "边界条件", self._scrolled(self.bc))
-
-        # 手绘草图 → 模型：通过建模页的「草图识别」按钮打开
+        # 手绘草图 → 模型：独立窗口，从建模页的「草图识别」打开。它是一次走完
+        # 就关的流程、要宽画布，不和常驻参考的面板挤在抽屉里。
         self.sketch = SketchPanel(self.session, self.runner, self)
         self.sketch.model_loaded.connect(self._on_sketch_loaded)
-        self.sketch_dock = self.right_drawer.add_page(
-            "sketch", "手绘草图", self._scrolled(self.sketch))
+        self.sketch_dock = PanelWindow("手绘草图识别", self.sketch, self)
 
         self.tree = ModelTree(self)
         self.tree.activated_item.connect(self._on_tree_action)
@@ -172,6 +167,14 @@ class MainWindow(QMainWindow):
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
         self.props_dock = self.left_drawer.add_page("props", "属性", self.properties)
+
+        # 边界条件定义的是**模型本身**，和模型树、属性是一类，放在左抽屉；
+        # 原来和 AI 助手挤在右抽屉，只是因为它们以前都停靠在右边。
+        self.bc = BCPanel(self.session, self)
+        self.bc.changed.connect(
+            lambda: self._after_manual_edit("边界条件或荷载已修改"))
+        self.bc_dock = self.left_drawer.add_page(
+            "bc", "边界条件", self._scrolled(self.bc))
 
         self.timeline = TimelinePanel(self)
         self.timeline.goto_step.connect(self.goto_step)
@@ -369,19 +372,20 @@ class MainWindow(QMainWindow):
               "sketch_dock", "results_dock", "diagram_dock", "section_opt_dock")
 
     # 两侧窄栏上的抽屉开关：(键, 抽屉属性名, 按钮文字, 提示, 是否主按钮)。
-    # 边界条件与手绘草图不上栏——它们由功能区命令打开，是"做一件事"的面板，
-    # 不是常驻参考，放上来只会让栏变长。
+    # 左栏管"模型是什么"与"算出了什么"：上段开左抽屉，分隔线下开底部抽屉。
+    # 右栏只有 AI 助手一颗——右侧一个按钮召唤、再点收起。
     LEFT_RAIL = (
         ("tree", "left_drawer", "模型树", "模型树：材料、截面、约束、荷载与结果", False),
         ("props", "left_drawer", "属性", "选中对象的属性，可就地修改（Ctrl+P）", False),
+        ("bc", "left_drawer", "边界", "边界条件与荷载：支座、节点力、杆件荷载", False),
         ("timeline", "left_drawer", "过程", "建模过程：逐步回看、跳回任意一步（Ctrl+H）", False),
-    )
-    RIGHT_RAIL = (
-        ("chat", "right_drawer", "AI\n助手", "AI 助手：一点召唤，再点收起（Ctrl+G）", True),
         None,
         ("results", "bottom_drawer", "结果", "结果表：位移、反力、杆端力与校验清单", False),
         ("diagram", "bottom_drawer", "单杆", "单杆内力图：沿杆长的 N/V/M 曲线", False),
         ("section_opt", "bottom_drawer", "优化", "截面优化", False),
+    )
+    RIGHT_RAIL = (
+        ("chat", "right_drawer", "AI\n助手", "AI 助手：一点召唤，再点收起（Ctrl+G）", True),
     )
 
     @staticmethod
@@ -420,6 +424,7 @@ class MainWindow(QMainWindow):
     def _on_drawer_page_opened(self, key: str) -> None:
         """面板打开时补一次刷新——关着的面板不跟随模型变化，省掉无用功。"""
         handle = getattr(self, {"tree": "tree_dock", "props": "props_dock",
+                                "bc": "bc_dock",
                                 "timeline": "timeline_dock", "chat": "chat_dock",
                                 "results": "results_dock", "diagram": "diagram_dock",
                                 "section_opt": "section_opt_dock"}.get(key, ""), None)
@@ -430,6 +435,9 @@ class MainWindow(QMainWindow):
             self.properties.refresh()
         elif key == "timeline":
             self.timeline.rebuild(self.session.history)
+        elif key == "bc":
+            self.bc.session = self.session
+            self.bc.refresh()
         elif key == "diagram":
             self.diagram.attach(self.session, self.case)
         elif key == "tree":
@@ -1335,8 +1343,12 @@ class MainWindow(QMainWindow):
         i18n.retranslate(
             (self.ribbon, self.quickbar, self.workflow_bar, self.results,
              self.left_rail, self.right_rail,
-             *(d.tabs for d in drawers), *(d.title for d in drawers)),
+             *(d.tabs for d in drawers)),
             self.actions_by_name.values())
+        # 抽屉标题随当前页变化，不能交给 retranslate（它把第一次见到的文字
+        # 当作原文缓存下来）；让抽屉按当前语言重写一次
+        for drawer in drawers:
+            drawer._sync_header()
         # 流程条自己翻自己（步骤名后面还挂着算出来的 ✓ / !3），
         # 所以切完语言要让它按当前模型状态重画一次。
         self.workflow_bar.update_state(self.session)

@@ -93,8 +93,29 @@ def test_panels_live_in_three_drawers_not_loose_windows(qt_app):
     assert set(w.drawers.drawers.values()) == drawers
     for name in w.PANELS:
         handle = getattr(w, name)
+        if name == "sketch_dock":
+            continue                     # 草图识别是独立窗口，见下一条
         assert handle._drawer in drawers, f"{name} 不在任何一个抽屉里"
         assert handle.windowTitle().strip(), f"{name} 没有标题，页签会是空的"
+
+
+def test_each_side_holds_one_kind_of_thing(qt_app):
+    """左抽屉放"模型是什么"（含边界条件），右侧只有 AI 助手，草图识别是独立窗口。
+
+    边界条件原来和 AI 助手挤在右抽屉，只因为它们以前都停靠在右边——
+    用户问"边界条件为什么要和 AI 助手在一块"，答案是没有理由。
+    """
+    from PySide6.QtWidgets import QDialog
+
+    w = MainWindow()
+    assert w.left_drawer.keys() == ["tree", "props", "bc", "timeline"]
+    assert w.right_drawer.keys() == ["chat"]
+    assert list(w.right_rail.buttons) == ["chat"], "右侧只该有 AI 一颗按钮"
+    assert {"results", "diagram", "section_opt"} <= set(w.left_rail.buttons)
+    assert isinstance(w.sketch_dock, QDialog) and not w.sketch_dock.isModal()
+    w.open_sketch_ai()
+    assert w.sketch_dock.isVisible()
+    w.sketch_dock.close()
 
 
 def test_opening_panels_never_shrinks_the_viewport(qt_app):
@@ -178,8 +199,8 @@ def test_one_button_on_the_right_summons_and_dismisses_the_assistant(qt_app):
 def test_rail_buttons_follow_the_real_drawer_state(qt_app):
     """抽屉被别的途径关掉（×、Esc、切到别的页）时，窄栏按钮不能还亮着。"""
     w = MainWindow()
-    results = w.right_rail.buttons["results"]
-    diagram = w.right_rail.buttons["diagram"]
+    results = w.left_rail.buttons["results"]
+    diagram = w.left_rail.buttons["diagram"]
     results.click()
     assert results.isChecked() and w.results_dock.isVisible()
     diagram.click()                      # 同一个抽屉换页
@@ -568,7 +589,11 @@ def test_switching_to_english_translates_drawer_tabs_and_rail_buttons(qt_app):
         w.actions_by_name["lang"].setChecked(True)
         w.toggle_language()
         tabs = [w.left_drawer.tabs.tabText(i) for i in range(w.left_drawer.tabs.count())]
-        assert tabs == ["Model Tree", "Property", "History"]
+        assert tabs == ["Model Tree", "Property", "Boundary", "History"]
+        w.tree_dock.show()
+        assert w.left_drawer.title.text() == "Model Tree"
+        w.bc_dock.show()
+        assert w.left_drawer.title.text() == "Boundary", "标题要跟着页走，不能卡在第一次"
         assert w.right_rail.buttons["chat"].text() == "AI"
         assert w.left_rail.buttons["timeline"].text() == "Steps"
         w.actions_by_name["lang"].setChecked(False)
@@ -585,9 +610,9 @@ def test_closing_a_drawer_window_by_the_system_keeps_its_state_honest(qt_app):
 
     w = MainWindow()
     w.results_dock.show()
-    assert w.right_rail.buttons["results"].isChecked()
+    assert w.left_rail.buttons["results"].isChecked()
     event = QCloseEvent()
     w.bottom_drawer.closeEvent(event)
     assert not event.isAccepted()
     assert w.results_dock.isHidden()
-    assert not w.right_rail.buttons["results"].isChecked()
+    assert not w.left_rail.buttons["results"].isChecked()
