@@ -515,7 +515,7 @@ def plot_diagram(frame, solution, component: str = "Mz", case: str | None = None
     弯矩按工程习惯画在受拉侧。
     """
     from frame3d import local_axes
-    from internal_forces import all_diagrams, physical_member_diagram
+    from internal_forces import all_diagrams, exceeds, peak_index, physical_member_diagram
 
     name = case or solution.primary
     units = unit_system(frame)
@@ -567,8 +567,8 @@ def plot_diagram(frame, solution, component: str = "Mz", case: str | None = None
                 faces["正" if values[start] >= 0 else "负"].append(patch)
             start = k
         pos, value = d.extreme(component)
-        if abs(value) > abs(worst["value"]):
-            index = int(np.argmax(np.abs(values)))
+        if exceeds(value, worst["value"]):
+            index = peak_index(values)
             worst = {"member": mid, "value": value, "x": pos}
             worst_point = offset[index]
 
