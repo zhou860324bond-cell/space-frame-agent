@@ -130,6 +130,9 @@ class MainWindow(QMainWindow):
 
         # 求解和大模型调用都得离开界面线程，否则窗口会变"未响应"
         self.runner = Runner(self)
+        # 模型每变一次，推迟一会儿写一份自动存档（见 desktop/autosave.py）
+        from .autosave import AutoSave
+        self.autosave = AutoSave(self)
 
         # 三个抽屉：左放"模型是什么"，右放"找人帮忙/定义边界"，底放"算出了
         # 什么"。每侧一个抽屉、多页用页签切——不再是九个各自漂着的小窗。
@@ -660,6 +663,31 @@ class MainWindow(QMainWindow):
         if redraw:
             self.redraw()
 
+    def offer_autosave_restore(self) -> bool:
+        """启动时：上次有没保存的模型就问要不要恢复。只在程序入口调用，
+        不放进构造函数——测试和对话里新建窗口不该弹这个问题。"""
+        pending = self.autosave.pending()
+        if pending is None or self.session.model.get("nodes"):
+            return False
+        model = pending["model"]
+        count = f"{len(model.get('nodes') or [])} 个节点、{len(model.get('members') or [])} 根杆件"
+        answer = QMessageBox.question(
+            self, "恢复未保存的模型",
+            f"上次关闭时有一个没保存的模型（{count}，{pending.get('saved_at', '')}）。\n"
+            "要恢复它吗？选「否」会丢弃这份自动存档。")
+        if answer != QMessageBox.StandardButton.Yes:
+            self.autosave.discard()
+            return False
+        # 不走 set_model：它要求模型完整（材料、截面、支座齐全），而自动存档
+        # 最该救回来的恰恰是还没建完的半成品——原样恢复，缺什么界面会接着提示
+        import copy
+        session = Session(model=copy.deepcopy(model))
+        self._replace_session(session)
+        self.result = self.case = None
+        self.refresh()
+        self.statusBar().showMessage("已恢复上次未保存的模型，记得保存。", 8000)
+        return True
+
     def new_model(self) -> None:
         self._replace_session(Session())
         self.result = None
@@ -976,6 +1004,7 @@ class MainWindow(QMainWindow):
         self.empty_state.setVisible(not has_model)
         if self.empty_state.isVisible():
             self._position_empty_state()
+        self.autosave.schedule()
 
     def _sync_model_tree(self, has_model: bool) -> None:
         """Give an empty viewport its width back, then reveal real model data."""
@@ -2649,6 +2678,7 @@ class MainWindow(QMainWindow):
         self.result = self.case = None
         self.refresh()
         self._remember_recent_path(path)
+        self.autosave.mark_saved()
         if sidecar_warning:
             QMessageBox.warning(self, "多模态追溯未恢复", sidecar_warning)
         self.statusBar().showMessage(f"已载入模型 {Path(path).name}", 5000)
@@ -2671,6 +2701,7 @@ class MainWindow(QMainWindow):
         from draft_commit import save_sidecar
         save_sidecar(path, self.session.model, self.session.multimodal_provenance)
         self._remember_recent_path(Path(path))
+        self.autosave.mark_saved()
         self.statusBar().showMessage(f"模型已保存至 {Path(path).name}", 5000)
 
     # --- 显示 ---
@@ -3004,6 +3035,10 @@ class MainWindow(QMainWindow):
             if self.runner.busy:
                 self.runner.wait(3000)
         except Exception:                       # noqa: BLE001
+            pass
+        try:
+            self.autosave.flush()               # 别等计时器，关窗前把最后一版写下来
+        except OSError:
             pass
         try:
             self.viewport.shutdown()

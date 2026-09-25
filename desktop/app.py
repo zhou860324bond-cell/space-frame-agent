@@ -114,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
 
     window = MainWindow()
     window.show()
+    window.offer_autosave_restore()
     return app.exec()
 
 

@@ -93,3 +93,18 @@ def _capsules_stay_out_of_the_repo(tmp_path_factory):
     capsule.DEFAULT_CAPSULE_DIR = tmp_path_factory.mktemp("capsules")
     yield
     capsule.DEFAULT_CAPSULE_DIR = original
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _autosave_stays_out_of_the_user_profile(tmp_path_factory):
+    """桌面端自动存档写进临时目录。测试会建上千个窗口，每个都会存一份——
+    写进真实的用户数据目录，下次打开软件就会问要不要恢复一个测试模型。"""
+    import os
+
+    previous = os.environ.get("FRAMELAB_AUTOSAVE_DIR")
+    os.environ["FRAMELAB_AUTOSAVE_DIR"] = str(tmp_path_factory.mktemp("autosave"))
+    yield
+    if previous is None:
+        os.environ.pop("FRAMELAB_AUTOSAVE_DIR", None)
+    else:
+        os.environ["FRAMELAB_AUTOSAVE_DIR"] = previous
