@@ -117,3 +117,56 @@ def test_a_window_with_a_model_already_open_does_not_ask(qt_app, fresh_dir, monk
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(1))
     assert not MainWindow(_model()).offer_autosave_restore()
     assert not asked
+
+
+# --------------------------------------------------------------------------- 界面设置
+
+@pytest.fixture
+def fresh_settings(tmp_path, monkeypatch):
+    path = tmp_path / "desktop.ini"
+    monkeypatch.setenv("FRAMELAB_SETTINGS_FILE", str(path))
+    return path
+
+
+def test_display_choices_survive_a_restart(qt_app, fresh_settings):
+    """色系、分级、分量、抽屉宽度：关掉再开要还是上次的样子。"""
+    first = MainWindow()
+    first.restore_preferences()
+    first.results.levels.setCurrentIndex(first.results.levels.findData(12))
+    first.results.palette.setCurrentIndex(first.results.palette.findData("rainbow"))
+    first.component = "Vz"
+    first.left_drawer.extent = 333
+    first.close()
+
+    second = MainWindow()
+    assert second.results.display_options()["levels"] == 0, "没恢复之前是默认值"
+    second.restore_preferences()
+    options = second.results.display_options()
+    assert options["levels"] == 12 and options["palette"] == "rainbow"
+    assert second.result_display_options["levels"] == 12, "恢复后要同步到视口用的那份"
+    assert second.component == "Vz"
+    assert second.left_drawer.extent == 333
+
+
+def test_an_ordinary_window_never_writes_the_settings(qt_app, fresh_settings):
+    """只有程序入口恢复过设置的窗口才写回；测试里建的窗口关掉不能改设置。"""
+    w = MainWindow()
+    w.component = "T"
+    w.close()
+    assert not fresh_settings.exists() or "results" not in fresh_settings.read_text()
+
+
+def test_unrecognised_saved_values_are_ignored(qt_app, fresh_settings):
+    """旧版本存的、已经不存在的选项值不能让下拉框进入不存在的状态。"""
+    from desktop.main_window import _settings
+
+    s = _settings()
+    s.setValue("results/display", '{"palette": "no-such-palette", "levels": 999}')
+    s.setValue("results/component", "sigma_bogus")
+    s.sync()
+    w = MainWindow()
+    before = w.results.display_options()
+    w.restore_preferences()
+    assert w.results.display_options()["palette"] == before["palette"]
+    assert w.results.display_options()["levels"] == before["levels"]
+    assert w.component == "M"

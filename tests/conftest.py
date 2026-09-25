@@ -108,3 +108,18 @@ def _autosave_stays_out_of_the_user_profile(tmp_path_factory):
         os.environ.pop("FRAMELAB_AUTOSAVE_DIR", None)
     else:
         os.environ["FRAMELAB_AUTOSAVE_DIR"] = previous
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _settings_stay_out_of_the_user_profile(tmp_path_factory):
+    """界面设置（最近打开、窗口大小、云图选项）写进临时 ini，不碰用户注册表。"""
+    import os
+
+    previous = os.environ.get("FRAMELAB_SETTINGS_FILE")
+    os.environ["FRAMELAB_SETTINGS_FILE"] = str(
+        tmp_path_factory.mktemp("settings") / "desktop.ini")
+    yield
+    if previous is None:
+        os.environ.pop("FRAMELAB_SETTINGS_FILE", None)
+    else:
+        os.environ["FRAMELAB_SETTINGS_FILE"] = previous

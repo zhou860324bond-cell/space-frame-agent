@@ -44,6 +44,17 @@ from .worker import Runner                         # noqa: E402
 from .workflow_bar import WorkflowBar, draft_target  # noqa: E402
 from . import glyphs
 
+def _settings() -> QSettings:
+    """界面设置的唯一入口。设了 FRAMELAB_SETTINGS_FILE 就用那个 ini 文件——
+    测试靠它把设置隔离到临时目录，不去碰用户注册表里真实的设置。"""
+    import os
+
+    path = os.environ.get("FRAMELAB_SETTINGS_FILE")
+    if path:
+        return QSettings(path, QSettings.Format.IniFormat)
+    return QSettings("SpaceFrameAgent", "Desktop")
+
+
 def _takes_command(handler) -> bool:
     """处理函数要不要收那条 Command。
 
@@ -662,6 +673,55 @@ class MainWindow(QMainWindow):
             act.setChecked(True)
         if redraw:
             self.redraw()
+
+    # 记住的界面设置。只在程序入口 restore_preferences() 之后才会写回——
+    # 测试会建上千个窗口，每个关窗时都写一遍的话，用户真实的设置会被测试
+    # 用的默认值覆盖掉。
+    _persist_preferences = False
+
+    def restore_preferences(self) -> None:
+        """恢复上次的窗口大小、抽屉宽度、云图显示选项与内力分量。
+
+        不记住的话，每次启动都回到默认值——用户上次选的「24 级 + Abaqus
+        彩虹 + Vz」这类状态，关掉就没了，下次还得重新找一遍。
+        """
+        import json
+
+        self._persist_preferences = True
+        settings = _settings()
+        geometry = settings.value("window/geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        for side, drawer in self.drawers.drawers.items():
+            extent = settings.value(f"drawers/{side}")
+            try:
+                if extent is not None:
+                    drawer.extent = int(extent)
+            except (TypeError, ValueError):
+                pass
+        try:
+            options = json.loads(settings.value("results/display", "{}") or "{}")
+        except (TypeError, ValueError):
+            options = {}
+        if isinstance(options, dict) and options:
+            self.results.apply_options(options)
+        component = settings.value("results/component")
+        if component in {"M", "V", "N", "Vy", "Vz", "T", "My", "Mz", scene.STRESS}:
+            self.component = component
+        self.drawers.relayout()
+
+    def _save_preferences(self) -> None:
+        if not self._persist_preferences:
+            return
+        import json
+
+        settings = _settings()
+        settings.setValue("window/geometry", self.saveGeometry())
+        for side, drawer in self.drawers.drawers.items():
+            settings.setValue(f"drawers/{side}", int(drawer.extent))
+        settings.setValue("results/display",
+                          json.dumps(self.results.display_options()))
+        settings.setValue("results/component", self.component)
 
     def offer_autosave_restore(self) -> bool:
         """启动时：上次有没保存的模型就问要不要恢复。只在程序入口调用，
@@ -2614,7 +2674,7 @@ class MainWindow(QMainWindow):
 
     def _recent_paths(self) -> list[Path]:
         """返回仍存在的近期模型，最多八个。"""
-        settings = QSettings("SpaceFrameAgent", "Desktop")
+        settings = _settings()
         raw = settings.value("recent_model_paths", [])
         if isinstance(raw, str):
             raw = [raw]
@@ -2626,7 +2686,7 @@ class MainWindow(QMainWindow):
         return paths[:8]
 
     def _remember_recent_path(self, path: Path) -> None:
-        settings = QSettings("SpaceFrameAgent", "Desktop")
+        settings = _settings()
         paths = [path, *(item for item in self._recent_paths() if item != path)]
         settings.setValue("recent_model_paths", [str(item) for item in paths[:8]])
 
@@ -2644,7 +2704,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.addSeparator()
         clear = self.recent_menu.addAction("清除近期记录")
         clear.triggered.connect(
-            lambda: QSettings("SpaceFrameAgent", "Desktop").remove("recent_model_paths"))
+            lambda: _settings().remove("recent_model_paths"))
 
     def _load_model_path(self, path: Path) -> bool:
         """从明确路径加载模型；文件选择器和“最近打开”共用这条安全路径。"""
@@ -3040,6 +3100,7 @@ class MainWindow(QMainWindow):
             self.autosave.flush()               # 别等计时器，关窗前把最后一版写下来
         except OSError:
             pass
+        self._save_preferences()
         try:
             self.viewport.shutdown()
         except Exception:                       # noqa: BLE001
