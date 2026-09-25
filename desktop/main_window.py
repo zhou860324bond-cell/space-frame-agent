@@ -91,7 +91,7 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 
 
 # 视口显示模式。切模式时整个场景重建。
-MODES = ("模型", "分析网格", "变形", "云图", "内力图", "模态")
+MODES = ("模型", "分析网格", "变形", "云图", "内力图", "应力比", "模态")
 
 
 class MainWindow(QMainWindow):
@@ -166,6 +166,8 @@ class MainWindow(QMainWindow):
         # 用户亲手收起过模型树，就别在下一次刷新时又自作主张地弹出来
         self._tree_dismissed = False
         self._pending_command = None
+        # (求解对象, 强度验算 payload)——按求解对象身份判断是否过期
+        self._utilization = None
 
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
@@ -323,6 +325,7 @@ class MainWindow(QMainWindow):
                              "变形": self.actions_by_name["deformed"],
                              "云图": self.actions_by_name["contour"],
                              "内力图": self.actions_by_name["force_diagram"],
+                             "应力比": self.actions_by_name["utilization"],
                              "模态": self.actions_by_name["modal"]}
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -550,6 +553,7 @@ class MainWindow(QMainWindow):
                  ("分析", ("solve", None, "modal", "buckling", "solid_joint", None,
                            "diagnose", "analysis_mesh")),
                  ("结果", ("model", "deformed", "contour", "force_diagram",
+                           "utilization",
                            "diagram", None,
                            "envelope", "clear_results", "labels")),
                  ("视图", ("iso", "front", "side", "top", "fit", None,
@@ -640,7 +644,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "quickbar"):
             self.quickbar.show_context_for(
                 self.ribbon.tabText(self.ribbon.currentIndex()), name)
-        if name in {"变形", "云图", "内力图"} and self.session.solution is not None:
+        if name in {"变形", "云图", "内力图", "应力比"} and self.session.solution is not None:
             self.viewport.set_pick_mode("member")
         act = self.mode_actions.get(name)
         if act is not None:
@@ -890,6 +894,15 @@ class MainWindow(QMainWindow):
                     levels=options.get("levels"),
                     overlay_deformed=options["overlay_deformed"],
                     show_extrema=options["show_extrema"])
+        elif self.mode == "应力比":
+            cached = self._utilization
+            if cached is not None and cached[0] is self.session.solution:
+                self.viewport.show_utilization(frame, self.session.compilation.mapping,
+                                               cached[1])
+            else:
+                # 结果换过（重新求解）而验算还是上一次的：先画模型，后台重算
+                self.viewport.show_model(frame, self.case)
+                QTimer.singleShot(0, lambda: self.show_utilization(interactive=False))
         elif self.mode == "内力图":
             component = self.component
             if component == scene.STRESS:
@@ -2692,6 +2705,57 @@ class MainWindow(QMainWindow):
             self.results_dock.raise_()
             self.set_mode("云图")
 
+    def show_utilization(self, interactive: bool = True) -> None:
+        """应力比图。验算按物理构件逐根做，大模型要几秒，放后台跑；
+        同一次求解只算一次，从「强度验算」按钮算过的结果也直接复用。
+
+        ``interactive=False`` 是重画时自动补算（比如停在应力比上重新求解了）：
+        算不了只在状态栏说一声并退回模型显示，**不弹模态框**——模态框从后台
+        回调里弹出来，会和正在跑的事件循环嵌套，实测在测试里直接把进程带崩
+        （0xc0000374 堆损坏）；用户也没有主动点什么，不该被一个对话框打断。"""
+        if not self._needs_solution():
+            return
+        cached = self._utilization
+        if cached is not None and cached[0] is self.session.solution:
+            self.set_mode("应力比")
+            return
+        if self.runner.busy:
+            return
+        solution = self.session.solution
+        self._on_busy(True)
+        self.statusBar().showMessage("应力比：强度与稳定验算中…")
+
+        def done(result) -> None:
+            self._on_busy(False)
+            self.statusBar().clearMessage()
+            if not result.ok:
+                # 最常见的是材料没给许用应力、截面没给 cy/cz——说清楚去哪补
+                why = self._explain(result.payload)
+                if interactive:
+                    QMessageBox.information(self, "无法显示应力比", why)
+                else:
+                    self.statusBar().showMessage(f"无法显示应力比：{why[:160]}", 10000)
+                self.set_mode("模型" if self.mode == "应力比" else self.mode)
+                return
+            self._remember_strength(solution, result.payload)
+            self.set_mode("应力比")
+
+        def failed(kind: str, message: str) -> None:
+            self._on_busy(False)
+            self.statusBar().clearMessage()
+            QMessageBox.critical(self, "应力比验算出错", f"{kind}：{message[:400]}")
+
+        if not self.runner.submit(lambda: self.session.check_strength(),
+                                  on_done=done, on_failed=failed):
+            self._on_busy(False)
+
+    def _remember_strength(self, solution, payload: dict) -> None:
+        """记下某次求解的验算结果，并把逐杆表填进结果页（不弹出）。"""
+        self._utilization = (solution, payload)
+        caption, cols, rows, loc = result_rows.to_rows("strength", payload)
+        self.results.show_rows(f"强度验算　{caption}", cols, rows, loc,
+                               result_rows.row_marks("strength", payload))
+
     def show_force_diagram(self) -> None:
         """三维内力图。不弹结果抽屉：图本身就是结果，别再挡住它。"""
         if self._needs_solution():
@@ -2837,6 +2901,9 @@ class MainWindow(QMainWindow):
                     f"{title}未完成",
                     self._explain(result.payload))
             else:
+                if kind == "strength":
+                    # 从「强度验算」按钮算过就记下，应力比图直接复用
+                    self._utilization = (self.session.solution, result.payload)
                 caption, cols, rows, loc = result_rows.to_rows(
                     kind, result.payload)
                 self.results.show_rows(f"{title}　{caption}", cols, rows, loc,

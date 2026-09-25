@@ -694,6 +694,82 @@ def test_the_force_diagram_mode_draws_diagrams_and_keeps_the_picked_component(
     assert window.mode == "内力图" and drawn[-1] == "Vz"
 
 
+def _checkable() -> Session:
+    """带许用应力与截面几何的模型——没有它们强度验算做不了。"""
+    s = Session()
+    s.define_materials_and_sections(
+        [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0,
+          "allow_tension": 305e6, "allow_compression": 305e6,
+          "yield_stress": 355e6}],
+        [{"name": "COLUMN", "A": 0.0147, "Iy": 4.2e-5, "Iz": 1.18e-3, "J": 9e-7,
+          "cy": 0.15, "cz": 0.1},
+         {"name": "RAFTER", "A": 0.0186, "Iy": 5.2e-5, "Iz": 2.47e-3, "J": 1.4e-6,
+          "cy": 0.2, "cz": 0.1}])
+    g = s.generate_portal_frame(spans=[24.0], eave_height=7.5, ridge_rise=1.2,
+                                column_section="COLUMN", rafter_section="RAFTER",
+                                material="Q355", base="pinned")
+    s.set_load_cases(cases=[{"name": "D", "member_loads":
+                             [{"member": m, "w": [0, 0, -8e3]}
+                              for m in g.payload["rafter_member_ids"]]}])
+    return s
+
+
+def test_the_utilization_mode_runs_the_check_once_and_draws_it(qt_app):
+    """应力比图后台跑一次验算；同一次求解再切过去直接用缓存，结果表也填好。"""
+    w = solved(MainWindow(_checkable()))
+    drawn = []
+    w.viewport.show_utilization = lambda frame, mapping, payload: drawn.append(payload)
+    w.show_utilization()
+    assert w.runner.wait(30000)
+    qt_app.processEvents()
+    assert w.mode == "应力比" and drawn
+    assert drawn[-1]["members"], "验算结果要带逐杆的利用率"
+    assert "强度验算" in w.results.caption.text()
+    runs = []
+    w.session.check_strength = lambda **_kw: runs.append(1)
+    w.set_mode("模型")
+    w.show_utilization()                   # 同一次求解：不重算
+    assert w.mode == "应力比" and not runs
+
+
+def test_the_utilization_mode_says_what_is_missing_instead_of_drawing_nothing(
+        qt_app, monkeypatch):
+    """材料没给许用应力时说清楚去哪补，并退回模型显示，不留一个空视口。"""
+    from PySide6.QtWidgets import QMessageBox
+
+    told = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda _parent, title, text: told.append(text))
+    w = solved(MainWindow(built()))        # built() 的材料没有许用应力
+    w.show_utilization()
+    assert w.runner.wait(30000)
+    qt_app.processEvents()
+    assert told and "allow" in told[-1] + str(told)
+    assert w.mode != "应力比"
+
+
+def test_an_automatic_utilization_refresh_never_pops_a_modal_dialog(
+        qt_app, monkeypatch):
+    """停在应力比上重新求解时，重画会自动补算；算不了只在状态栏说，不弹框。
+
+    模态框从后台回调里弹出来会和事件循环嵌套——这条路径曾在全量测试里把
+    进程直接带崩（Windows 0xc0000374 堆损坏）。
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    popped = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *args: popped.append(args))
+    w = solved(MainWindow(built()))        # 没有许用应力，验算必然失败
+    w.set_mode("应力比")                     # 不经按钮，直接切模式
+    qt_app.processEvents()
+    assert w.runner.wait(30000)
+    qt_app.processEvents()
+    assert not popped
+    assert w.mode == "模型"
+    assert "无法显示应力比" in w.statusBar().currentMessage()
+
+
 def test_turning_off_contour_shading_gives_flat_colour(qt_app):
     """要精确对色标读数时可以关掉打光，这时必须是纯平涂。"""
     window = solved(MainWindow(built()))

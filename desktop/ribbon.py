@@ -404,7 +404,8 @@ class QuickBar(QWidget):
         self.mode_buttons: dict[str, QToolButton] = {}
         for label, name in (("模型", "model"), ("分析网格", "analysis_mesh"),
                             ("变形", "deformed"), ("云图", "contour"),
-                            ("内力图", "force_diagram"), ("模态", "modal")):
+                            ("内力图", "force_diagram"), ("应力比", "utilization"),
+                            ("模态", "modal")):
             b = labelled(name)
             # 按钮上写 MODES 里的短名。动作本身叫"梁内力云图"（说明书式的
             # 全名，tooltip 里保留），但这排是**并列的状态标签**，
@@ -421,7 +422,7 @@ class QuickBar(QWidget):
                                     for n in ("model_node", "model_member")))
 
     # 看这几个显示模式时，需要的是工况与放大倍数，不是建节点
-    RESULT_MODES = ("变形", "云图", "内力图", "模态")
+    RESULT_MODES = ("变形", "云图", "内力图", "应力比", "模态")
 
     def show_context_for(self, page: str, mode: str | None = None) -> None:
         """切换中段控件。

@@ -64,6 +64,7 @@ ZH_EN: dict[str, str] = {
     "节点实体": "Joint", "模型": "Model", "变形": "Deformed",
     "梁内力云图": "Contour", "内力分量": "Component",
     "清除结果": "Clear", "内力图": "Diagram", "单杆内力图": "Member Chart",
+    "应力比": "Utilization",
     # 抽屉页签与两侧窄栏
     "手绘草图": "Hand Sketch", "结果表": "Result Table", "截面优化": "Section Opt",
     "过程": "Steps", "单杆": "Chart", "优化": "Optimize", "AI\n助手": "AI",
@@ -82,6 +83,7 @@ ZH_EN: dict[str, str] = {
     "尚无分析结果": "No results yet",
     "95% 裁剪": "Clip 95%", "满量程": "Full range",
     "全部": "All", "仅正值": "Positive only", "仅负值": "Negative only",
+    "平滑彩虹（默认）": "Smooth Rainbow (default)", "连续": "Continuous",
     "彩虹（Abaqus 式）": "Rainbow (Abaqus)",
     "蓝—灰—红（发散）": "Blue-Grey-Red (diverging)",
     "单蓝（顺序）": "Blue (sequential)",
