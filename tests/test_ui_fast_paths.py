@@ -326,3 +326,47 @@ def test_a_member_with_constant_force_gets_a_rectangle():
     s = solved_session()
     got = scene.force_diagram(s.frame, s.solution, None, "N")
     assert got["ribbon"].n_cells > 0 and got["peak"]["member"] is not None
+
+
+# --------------------------------------------------------------------------- 应力比
+
+def test_utilization_is_the_worst_of_strength_combined_and_stability():
+    """只看强度会把剪切控制的短梁、稳定控制的细长柱判成"安全得很"。"""
+    ratio, governs = scene.member_utilization(
+        {"stress_ratio": 0.4, "combined_ratio": 0.55, "code_stability_ratio": 0.82,
+         "buckling_ratio": 0.1})
+    assert (ratio, governs) == (0.82, "稳定")
+    # 没有规范法 φ 时退回欧拉
+    assert scene.member_utilization(
+        {"stress_ratio": 0.3, "combined_ratio": 0.2, "buckling_ratio": 0.6}) == (0.6, "稳定")
+    assert scene.member_utilization({"stress_ratio": 0.3, "combined_ratio": 0.7})[1] \
+        == "折算应力"
+
+
+@pytest.mark.parametrize("ratio, band", [(0.0, 0), (0.49, 0), (0.5, 1), (0.69, 1),
+                                         (0.7, 2), (0.9, 3), (1.0, 3), (1.0001, 4),
+                                         (3.0, 4)])
+def test_utilization_bands_put_exactly_one_in_the_passing_band(ratio, band):
+    """利用率恰好 1.0 是合格，超过才标红。"""
+    assert scene.utilization_band(ratio) == band
+
+
+def test_utilization_lines_colour_every_element_of_a_physical_member():
+    """一根物理构件被剖成几个分析单元时，每个单元都按整根的利用率着色；
+    判不了的单独成一份灰色网格，不混进合格也不混进不合格。"""
+    from types import SimpleNamespace
+
+    s = solved_session()
+    frame = s.frame
+    elements = sorted(frame.members)
+    a, b, c = elements[:3]
+    mapping = SimpleNamespace(element_ids=lambda p: {1: (a, b), 2: (c,)}[p])
+    payload = {"members": [{"member": 1, "stress_ratio": 1.2, "combined_ratio": 0.3},
+                           {"member": 2, "stress_ratio": 0.2, "combined_ratio": 0.1}],
+               "inconclusive_members": [2], "failed_members": [1]}
+    got = scene.utilization_lines(frame, mapping, payload)
+    assert got["lines"].n_cells == 2
+    assert list(got["lines"].cell_data["band"]) == [4.0, 4.0]
+    assert got["inconclusive"].n_cells == 1
+    assert got["worst"]["member"] == 1 and got["worst"]["ratio"] == pytest.approx(1.2)
+    assert [text for _p, text in got["labels"]] == ["1.20"]

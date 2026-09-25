@@ -176,6 +176,10 @@ COMMANDS: tuple[Command, ...] = (
             "三维内力图：每根杆旁画出内力沿杆的分布，高度即数值，"
             "弯矩画在受拉侧（SAP2000 / 盈建科式）",
             "show_force_diagram", "Ctrl+5", True),
+    Command("utilization", "应力比", "strength",
+            "应力比图：每根杆件按强度 / 折算应力 / 稳定三者最大值分档着色，"
+            "超过 1.0 标红；判不了的画灰色。首次打开时先执行强度验算",
+            "show_utilization", "Ctrl+6", True),
     Command("diagram", "内力分量", "diagram",
             "选择云图与内力图显示哪个内力分量", "pick_component"),
     Command("clear_results", "清除结果", "remove",

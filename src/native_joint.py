@@ -50,7 +50,8 @@ def _canonical_tet10(raw: np.ndarray, xyz: np.ndarray) -> np.ndarray:
 
 
 def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
-                        hotspot_size_mm: float | None = None
+                        hotspot_size_mm: float | None = None,
+                        gmsh_options: dict[str, float] | None = None
                         ) -> tuple[solid3d.SolidMesh, dict[int, np.ndarray]]:
     """用 Gmsh OpenCASCADE 建圆钢/圆管布尔并集并输出二次四面体。"""
     gmsh = _gmsh_module()
@@ -113,6 +114,8 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
                 gmsh.model.mesh.field.setAsBackgroundMesh(threshold)
         gmsh.option.setNumber("Mesh.ElementOrder", 2)
         gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 0)
+        for key, value in (gmsh_options or {}).items():
+            gmsh.option.setNumber(key, float(value))
         gmsh.model.mesh.generate(3)
         gmsh.model.mesh.setOrder(2)
 
@@ -260,12 +263,66 @@ def diagnose_hotspot_convergence(values: list[tuple[float, float]],
             "relative_changes": changes, "tolerance": tolerance, "reason": reason}
 
 
+# 默认网格放粗的实测规律：同一节点上单元数大约与网格尺寸的 1.8 次方成反比
+# （6 杆 D219×8 圆管节点：2.5t→94147、3.5t→50461、5t→26539 个 C3D10），
+# 每个单元约带 5.8 个自由度。按这个比例一次算准目标尺寸，再留 12% 余量，
+# 不去一档一档地试——每划一次网格就是十几到三十秒。
+_ELEMENT_SIZE_EXPONENT = 1.8
+_DEFAULT_MESH_RETRIES = 3
+
+
+def _fit_default_mesh(spec, size: float, reference: float,
+                      max_elements: int, max_dof: int):
+    """划默认网格；超过求解规模就按实测规律放粗重划。
+
+    连杆多、管径大的相贯节点，默认 2.5t 的网格能到上限的三四倍（实测 6 杆
+    节点 9.4 万单元、55 万自由度），而界面上没有改网格的入口——不自动放粗，
+    这个功能在这类节点上就**只能失败**。放粗是有代价的：热点区网格跟着
+    变粗，热点外推可能不收敛，那时结果里的 Kt 会按原有规则拒绝给出。
+    这件事写进 warnings，不静默发生。
+    """
+    first = size
+    for _attempt in range(_DEFAULT_MESH_RETRIES + 1):
+        hotspot = max(reference, 0.4 * size)
+        # 放粗之后网格比壁厚粗好几倍，二次单元的边中节点若贴到弯曲管壁上，
+        # 薄壁处的单元会被拧翻（实测 detJ = -1.8，求解器直接拒算；Gmsh 的
+        # HighOrderOptimize 也修不回来）。放粗档改为边中节点取直线：单元
+        # 必然有效，代价是管壁按折线逼近——16 mm 单元在 R110 管上的弦高约
+        # 0.3 mm，不到壁厚的 4%。默认档（没放粗）保持原样，那是对过标的路径。
+        options = {"Mesh.SecondOrderLinear": 1} if size > first else None
+        try:
+            mesh, cut_faces = generate_joint_mesh(spec, size, hotspot, options)
+        except solid3d.Solid3DError as exc:
+            raise SolidJointError(f"自研实体网格检查失败：{exc}") from exc
+        elements, dof = len(mesh.elements), 3 * len(mesh.nodes)
+        if elements <= max_elements and dof <= max_dof:
+            note = None
+            if size > first:
+                note = (f"默认网格（全局 {first:.1f} mm）超过自研求解器规模上限，"
+                        f"已自动放粗到全局 {size:.1f} mm、热点区 {hotspot:.1f} mm"
+                        f"（{elements} 个 C3D10，{dof} 自由度），二次单元边中节点"
+                        "取直线以免薄壁处单元翻转。热点区网格变粗后热点外推可能"
+                        "不收敛；需要细网格结论请改用 Abaqus 后端。")
+            return size, hotspot, mesh, cut_faces, note
+        excess = max(elements / max_elements, dof / max_dof)
+        size *= 1.12 * excess ** (1.0 / _ELEMENT_SIZE_EXPONENT)
+    raise SolidJointError(
+        f"自动放粗 {_DEFAULT_MESH_RETRIES} 次后网格仍超过自研求解器上限"
+        f"（{max_elements} 个 C3D10 / {max_dof} 自由度）。这个节点请改用 Abaqus 后端。")
+
+
 def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               anchor_member: int | None = None,
                               mesh_sizes_mm: list[float] | None = None,
                               output_dir: Path | str = "results/native_solid_joint",
-                              *, max_elements: int = 80000) -> dict[str, Any]:
-    """使用自研 C3D10 求解器运行一档或多档节点实体网格。"""
+                              *, max_elements: int = 80000,
+                              max_dof: int = 180000) -> dict[str, Any]:
+    """使用自研 C3D10 求解器运行一档或多档节点实体网格。
+
+    没有显式给 ``mesh_sizes_mm`` 时，默认那一档若超过求解规模上限，会按
+    实测规律自动放粗后重划（见 ``_fit_default_mesh``），并在结果里写明；
+    显式给了尺寸就照给的划，超限直接报错——那是用户的明确要求。
+    """
     spec = prepare_joint_spec(session, node_id, case, anchor_member)
     reference = mesh_reference_length(spec)
     # native-v1 默认先给一档可交互的工程网格。Python 稀疏直接解比 Abaqus
@@ -278,21 +335,26 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
     target = Path(output_dir).resolve() / f"node_{spec.node_id}_{spec.case}"
     target.mkdir(parents=True, exist_ok=True)
     levels: list[dict[str, Any]] = []
+    auto_note: str | None = None
     for index, size in enumerate(sizes):
-        # 三档远场网格 40/30/20 mm 对应焊趾 16/12/8 mm；C3D10 的
-        # 边中点使最细档表面取样间距约为 0.5t，同时守住直接解规模。
-        hotspot_size = max(reference, 0.4 * size)
-        try:
-            mesh, cut_faces = generate_joint_mesh(spec, size, hotspot_size)
-        except solid3d.Solid3DError as exc:
-            raise SolidJointError(f"自研实体网格检查失败：{exc}") from exc
+        if mesh_sizes_mm is None:
+            size, hotspot_size, mesh, cut_faces, auto_note = _fit_default_mesh(
+                spec, size, reference, max_elements, max_dof)
+        else:
+            # 三档远场网格 40/30/20 mm 对应焊趾 16/12/8 mm；C3D10 的
+            # 边中点使最细档表面取样间距约为 0.5t，同时守住直接解规模。
+            hotspot_size = max(reference, 0.4 * size)
+            try:
+                mesh, cut_faces = generate_joint_mesh(spec, size, hotspot_size)
+            except solid3d.Solid3DError as exc:
+                raise SolidJointError(f"自研实体网格检查失败：{exc}") from exc
         if len(mesh.elements) > int(max_elements):
             raise SolidJointError(
                 f"自研求解器安全上限为 {max_elements} 个 C3D10；当前网格有 "
                 f"{len(mesh.elements)} 个。请先增大网格尺寸或提高 max_elements。")
-        if 3 * len(mesh.nodes) > 180000:
+        if 3 * len(mesh.nodes) > int(max_dof):
             raise SolidJointError(
-                f"native-v1 稀疏直接解安全上限为 180000 自由度；当前有 "
+                f"native-v1 稀疏直接解安全上限为 {max_dof} 自由度；当前有 "
                 f"{3 * len(mesh.nodes)}。请增大网格尺寸，或使用 Abaqus 后端跑细网格。")
         loads = np.zeros_like(mesh.nodes)
         for arm in spec.arms:
@@ -404,7 +466,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         "stress_concentration_basis": kt_basis,
         "stress_concentration_refused": kt_refused,
         "meshes": levels,
-        "warnings": list(spec.warnings),
+        "warnings": list(spec.warnings) + ([auto_note] if auto_note else []),
         "files": {
             "directory": str(target),
             "contour_png": levels[-1]["contour_png"],

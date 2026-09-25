@@ -574,6 +574,86 @@ def force_diagram(frame, solution, case: str | None, component: str,
             "peak": peak, "scale": scale}
 
 
+# 应力比（利用率）分档。参照 SAP2000 的习惯：一眼要看出的不是"精确多少"，
+# 而是"哪些快满了、哪些超了"——所以按工程上有意义的几个门槛分五档，
+# 而不是连续色标。
+UTILIZATION_BANDS = (0.5, 0.7, 0.9, 1.0)
+UTILIZATION_LABELS = ("<0.5", "0.5-0.7", "0.7-0.9", "0.9-1.0", ">1.0")
+UTILIZATION_COLORS = ("#3b73c9", "#2fa36b", "#e0c233", "#ef8a2c", "#d93a3a")
+
+
+def member_utilization(row: dict) -> tuple[float, str]:
+    """一根物理构件的利用率与控制项。
+
+    取三条独立结论里最大的那个：强度（拉压分别比许用应力）、折算应力
+    （GB 50017，σ 与 τ 合起来判）、稳定（有规范法 φ 用规范法，否则欧拉）。
+    只看强度会把剪切控制的短深梁、稳定控制的细长柱都判成"安全得很"。
+    """
+    items = [("强度", row.get("stress_ratio")),
+             ("折算应力", row.get("combined_ratio"))]
+    stability = row.get("code_stability_ratio")
+    if stability is None:
+        stability = row.get("buckling_ratio")
+    items.append(("稳定", stability))
+    known = [(float(v), name) for name, v in items if v is not None]
+    if not known:
+        return 0.0, ""
+    ratio, name = max(known)
+    return ratio, name
+
+
+def utilization_band(ratio: float) -> int:
+    """落在第几档（0…4）。恰好 1.0 算合格那一档，超过才算超限。"""
+    for k, edge in enumerate(UTILIZATION_BANDS):
+        if ratio < edge or (edge == 1.0 and ratio <= 1.0):
+            return k
+    return len(UTILIZATION_BANDS)
+
+
+def utilization_lines(frame, mapping, payload: dict) -> dict:
+    """应力比图的几何：每个分析单元一条线，按它所属物理构件的利用率分档。
+
+    返回::
+
+        lines         判得了的构件，单元标量 "band"（0…4）与 "ratio"
+        inconclusive  判不了的构件（粗短柱上欧拉不适用那一类）——单独画灰色，
+                      不能混进"合格"，也不能混进"不合格"
+        labels        [(位置, 文字)]：只标 ≥0.9 的构件，全标会糊成一片
+        worst         {"member", "ratio", "governs", "point"}
+    """
+    inconclusive_ids = {int(m) for m in payload.get("inconclusive_members") or []}
+    ok_chunks, ok_ratio, ok_band = [], [], []
+    grey_chunks, labels = [], []
+    worst = {"member": None, "ratio": -1.0, "governs": "", "point": None}
+    for row in payload.get("members") or []:
+        physical = int(row["member"])
+        ratio, governs = member_utilization(row)
+        elements = (mapping.element_ids(physical) if mapping is not None
+                    else (physical,))
+        segments = [np.vstack(member_endpoints(frame, frame.members[e]))
+                    for e in elements if e in frame.members]
+        if not segments:
+            continue
+        middle = segments[len(segments) // 2].mean(axis=0)
+        if physical in inconclusive_ids:
+            grey_chunks.extend(segments)
+            continue
+        ok_chunks.extend(segments)
+        ok_ratio.extend([ratio] * len(segments))
+        ok_band.extend([utilization_band(ratio)] * len(segments))
+        if ratio >= UTILIZATION_BANDS[2]:
+            labels.append((middle, f"{ratio:.2f}"))
+        if ratio > worst["ratio"]:
+            worst = {"member": physical, "ratio": ratio, "governs": governs,
+                     "point": middle}
+    lines = _polylines(ok_chunks)
+    if ok_chunks:
+        lines.cell_data["band"] = np.asarray(ok_band, dtype=float)
+        lines.cell_data["ratio"] = np.asarray(ok_ratio, dtype=float)
+    return {"lines": lines, "inconclusive": _polylines(grey_chunks),
+            "labels": labels, "worst": worst}
+
+
 def banded_tubes(line: pv.PolyData, component: str,
                  clim: tuple[float, float], levels: int,
                  radius: float) -> pv.PolyData:

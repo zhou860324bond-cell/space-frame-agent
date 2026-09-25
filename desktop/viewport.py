@@ -1074,6 +1074,77 @@ class Viewport(QWidget):
         self.plotter.render()
 
     @_batched
+    def show_utilization(self, frame, mapping, payload: dict) -> dict:
+        """应力比（利用率）图：每根构件按强度/折算应力/稳定三者最大值分五档着色。
+
+        工程师最终要回答的是"够不够"。内力云图、内力图回答"多大"，
+        这张图回答"用了几成、哪根超了"——SAP2000、盈建科最常看的就是它。
+        判不了的构件（欧拉不适用的粗短柱）画灰色，不冒充合格。
+        """
+        got = scene.utilization_lines(frame, mapping, payload)
+        if not CAN_RENDER:
+            self._frame = frame
+            self._first_render = False
+            return got
+        self.clear()
+        from matplotlib.colors import ListedColormap
+
+        lines = got["lines"]
+        bands = len(scene.UTILIZATION_COLORS)
+        if lines.n_cells:
+            # 分档文字挂在颜色映射表上（annotations），色标会把它们画在各档旁边；
+            # 数值刻度关掉——这张图读的是"落在哪一档"，不是连续数值。
+            self.plotter.add_mesh(
+                lines, scalars="band", cmap=ListedColormap(scene.UTILIZATION_COLORS),
+                clim=(-0.5, bands - 0.5), n_colors=bands,
+                annotations={float(k): text for k, text in
+                             enumerate(scene.UTILIZATION_LABELS)},
+                render_lines_as_tubes=True, line_width=CONTOUR_LINE_PX,
+                lighting=True, ambient=0.42, diffuse=0.58, show_scalar_bar=False,
+                name="_utilization")
+            self.plotter.add_scalar_bar(
+                title="", n_labels=0, n_colors=bands, vertical=True,
+                color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
+                width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+        grey = got["inconclusive"]
+        if grey.n_cells:
+            self.plotter.add_mesh(grey, color=theme.VIEWPORT_INK_MUTED,
+                                  render_lines_as_tubes=True,
+                                  line_width=CONTOUR_LINE_PX - 2, opacity=0.55,
+                                  name="_utilization_unclear")
+        for mesh in scene.support_glyphs(frame).values():
+            self.plotter.add_mesh(mesh, color=theme.SUPPORT, smooth_shading=True,
+                                  ambient=0.28, diffuse=0.72)
+        if got["labels"]:
+            points, texts = zip(*got["labels"], strict=True)
+            self.plotter.add_point_labels(
+                list(points), list(texts), name="_utilization_labels",
+                font_size=9, text_color=theme.VIEWPORT_INK, shape=None,
+                always_visible=True, show_points=False)
+        failed = len(payload.get("failed_members") or [])
+        unclear = len(payload.get("inconclusive_members") or [])
+        total = len(payload.get("members") or [])
+        worst = got["worst"]
+        self.plotter.add_text("utilization", position=(0.795, 0.735),
+                              viewport=True, color=theme.VIEWPORT_INK,
+                              font_size=10, name="_contour_bar_title")
+        head = (f"MEMBER UTILIZATION - {total} members, {failed} over 1.0"
+                + (f", {unclear} inconclusive (grey)" if unclear else ""))
+        tail = ("max of strength / combined stress (GB 50017) / stability"
+                + (f" - worst M{worst['member']} = {worst['ratio']:.2f}"
+                   if worst["member"] is not None else ""))
+        caption = self.plotter.add_text(
+            head + "\n" + tail, position=(0.01, 0.97), viewport=True,
+            color=theme.VIEWPORT_INK, font_size=9, name="_contour_definition")
+        if caption is not None:
+            caption.GetTextProperty().SetVerticalJustificationToTop()
+        self._contour_actors = True
+        self._place_contour_overlays()
+        self._decorate(frame)
+        self._fit()
+        return got
+
+    @_batched
     def show_force_diagram(self, frame, solution, case: str, component: str,
                            size_ratio: float = scene.DIAGRAM_SIZE_RATIO) -> dict:
         """三维内力图：杆件画成细线，旁边画出该分量沿杆的分布形状。
