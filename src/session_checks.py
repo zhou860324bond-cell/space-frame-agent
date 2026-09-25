@@ -164,10 +164,12 @@ class ChecksMixin:
             "note": "一致质量矩阵，频率略高于精确解；每跨四个单元时误差 0.2% 以内。"
                     "**参与质量比的分母是 participable_mass（能参与振动的质量），"
                     "不是 total_mass**——压在支座上的质量永远不参与，"
-                    "两者的差随网格变粗而变大。",
+                    "两者的差随网格变粗而变大。可参与质量为 0 的方向比值记 0，"
+                    "该方向不适用 90% 判据。",
         }
         short = {axis: float(cumulative[k])
-                 for k, axis in enumerate("XYZ") if cumulative[k] < 0.9}
+                 for k, axis in enumerate("XYZ")
+                 if r.participable_mass[k] > 0 and cumulative[k] < 0.9}
         if short:
             payload["mass_ratio_warning"] = (
                 "这些方向的累计参与质量比不到 90%（GB 50011 的门槛）："
