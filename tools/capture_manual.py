@@ -17,6 +17,26 @@ for extra in (ROOT, ROOT / "src"):
 
 from render_smoke import build_session  # noqa: E402
 
+# 手册图在 Word 里按页宽排版，1600 px 足够清楚；再大只会让 docx 膨胀
+MAX_WIDTH = 1600
+
+
+def shrink(path: Path) -> None:
+    """缩到 MAX_WIDTH 宽并转 256 色调色板 PNG。
+
+    高分屏整窗截图是 2500+ px 真彩色，每张 600–840 KB；压完 230–310 KB，
+    文字仍清楚。`tests/test_docs_current.py` 守着体积上限。
+    """
+    from PIL import Image
+
+    with Image.open(path) as image:
+        picture = image.convert("RGB")
+    if picture.width > MAX_WIDTH:
+        height = round(picture.height * MAX_WIDTH / picture.width)
+        picture = picture.resize((MAX_WIDTH, height), Image.Resampling.LANCZOS)
+    picture.quantize(colors=256, method=Image.Quantize.MEDIANCUT).save(
+        path, "PNG", optimize=True)
+
 
 def main() -> None:
     from PySide6.QtWidgets import QApplication
@@ -43,6 +63,7 @@ def main() -> None:
         print(f"{name}: 窗口 {window.width()}×{window.height()}，"
               f"结果抽屉 {window.bottom_drawer.is_open()}")
         window.export_screenshot(str(output / name))
+        shrink(output / name)
 
     with tempfile.TemporaryDirectory(prefix="framelab-manual-") as scratch:
         os.environ["FRAMELAB_AUTOSAVE_DIR"] = str(Path(scratch) / "autosave")

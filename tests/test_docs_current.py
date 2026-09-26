@@ -118,6 +118,22 @@ def test_manual_screenshots_are_all_present():
     assert not missing, f"《使用手册》引了这些图但文件不在：{missing}"
 
 
+def test_manual_screenshots_are_not_bloated():
+    """手册截图按高分屏原始分辨率存过一次：每张 600–840 KB、2579 px 宽，
+    《使用手册.docx》从 0.6 MB 涨到 3.8 MB，Word 里却根本用不上这么高的分辨率。
+    `tools/capture_manual.py` 拍完会缩到 1600 px 宽、转 256 色；手工替换的图也要守这条线。"""
+    from PIL import Image
+
+    fat = []
+    for shot in sorted((ROOT / "docs" / "手册图").glob("*.png")):
+        with Image.open(shot) as image:
+            width = image.width
+        size_kb = shot.stat().st_size // 1024
+        if width > 1600 or size_kb > 400:
+            fat.append(f"{shot.name}（{width} px，{size_kb} KB）")
+    assert not fat, "这些手册图过大，用 tools/capture_manual.py 的 shrink() 压一下：" + "、".join(fat)
+
+
 # ---------------------------------------------------------------- 报告
 
 def test_report_exists():
