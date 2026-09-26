@@ -9,8 +9,13 @@ from __future__ import annotations
 
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
 import tomllib
+import zipfile
+
+import pytest
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -47,6 +52,38 @@ def test_the_packaging_metadata_is_readable_and_declares_a_python_floor():
         "否则装得上却过不了自检")
 
 
+def test_the_wheel_contains_every_core_module(tmp_path):
+    """普通安装曾只打进 desktop，源码目录能跑，wheel 却缺 agent/frame3d。
+
+    构建不联网（--no-build-isolation），要求当前环境里有 setuptools：
+    Python 3.12 起不再自带，CI 在「装依赖」一步显式装上。
+    """
+    pytest.importorskip("setuptools.build_meta",
+                        reason="构建 wheel 需要 setuptools；pip install setuptools")
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("pyproject.toml", "setup.py", "README.md"):
+        shutil.copy2(ROOT / name, source / name)
+    for folder in ("src", "desktop"):
+        target = source / folder
+        target.mkdir()
+        for path in (ROOT / folder).glob("*.py"):
+            shutil.copy2(path, target / path.name)
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    built = subprocess.run(
+        [sys.executable, "-m", "pip", "wheel", "--no-index", "--no-deps",
+         "--no-build-isolation", "-w", str(wheels), str(source)],
+        capture_output=True, text=True)
+    assert built.returncode == 0, built.stdout + built.stderr
+    with zipfile.ZipFile(next(wheels.glob("*.whl"))) as wheel:
+        shipped = set(wheel.namelist())
+    expected = {path.name for path in (ROOT / "src").glob("*.py")}
+    expected.discard("__init__.py")
+    assert expected <= shipped
+    assert "desktop/__init__.py" in shipped
+
+
 def test_every_runtime_import_is_declared_somewhere():
     """内核直接 import 的第三方包，必须出现在依赖声明里。
 
@@ -58,7 +95,7 @@ def test_every_runtime_import_is_declared_somewhere():
     for group in data["project"]["optional-dependencies"].values():
         declared += " " + " ".join(group)
     declared = declared.lower()
-    for package in ("numpy", "scipy", "jsonschema", "matplotlib",
+    for package in ("numpy", "scipy", "jsonschema", "matplotlib", "pillow",
                     "pyvista", "pyside6", "gmsh", "streamlit"):
         assert package in declared, f"{package} 没有出现在 pyproject 的依赖里"
 
