@@ -69,6 +69,10 @@ jobs:
           # 用 importorskip 门着它——不装的话那 14 个测试整个模块不被收集，
           # 不声不响地少跑。这是 CI 第一次真跑时靠「总条数」那条闸发现的。
           pip install PySide6 pyvista pyvistaqt gmsh mcp
+          # tests/test_packaging.py 要在本机构建 wheel（--no-build-isolation，
+          # 不联网），得有 setuptools。Python 3.12 起 setup-python 不再自带它——
+          # 3.11 绿、3.12 两台红，报 "Cannot import 'setuptools.build_meta'"。
+          pip install setuptools
 
       # PYTHONPATH 不在这里设：pytest.ini 里的 `pythonpath = src evalset abaqus_bench`
       # 已经声明了，而且那份声明跨平台（写成 env 就要分 `:` 和 `;` 两种分隔符）。

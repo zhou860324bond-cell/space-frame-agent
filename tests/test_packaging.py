@@ -15,6 +15,8 @@ import sys
 import tomllib
 import zipfile
 
+import pytest
+
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -51,7 +53,13 @@ def test_the_packaging_metadata_is_readable_and_declares_a_python_floor():
 
 
 def test_the_wheel_contains_every_core_module(tmp_path):
-    """普通安装曾只打进 desktop，源码目录能跑，wheel 却缺 agent/frame3d。"""
+    """普通安装曾只打进 desktop，源码目录能跑，wheel 却缺 agent/frame3d。
+
+    构建不联网（--no-build-isolation），要求当前环境里有 setuptools：
+    Python 3.12 起不再自带，CI 在「装依赖」一步显式装上。
+    """
+    pytest.importorskip("setuptools.build_meta",
+                        reason="构建 wheel 需要 setuptools；pip install setuptools")
     source = tmp_path / "source"
     source.mkdir()
     for name in ("pyproject.toml", "setup.py", "README.md"):
