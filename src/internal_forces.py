@@ -43,6 +43,25 @@ DERIVED_COMPONENTS = ("V", "M")
 DISPLAY_COMPONENTS = COMPONENTS + DERIVED_COMPONENTS
 
 
+# 数值上"并列"的峰值。对称结构里两处极值解析上相等，算出来只差末几位，
+# 谁大谁小随求解器的求和顺序、随模型存成哪套单位而变——报出来的最不利
+# 位置就跟着在两处之间跳。差在这个相对量以内一律算并列，取先遇到的那个。
+PEAK_TIE_RTOL = 1e-9
+
+
+def peak_index(values) -> int:
+    """绝对值最大的下标；并列时取第一个。"""
+    magnitude = np.abs(np.asarray(values, dtype=float))
+    if magnitude.size == 0:
+        return 0
+    return int(np.argmax(magnitude >= magnitude.max() * (1.0 - PEAK_TIE_RTOL)))
+
+
+def exceeds(value: float, incumbent: float) -> bool:
+    """value 的绝对值是否**明显**大过 incumbent——并列不算。"""
+    return abs(value) > abs(incumbent) * (1.0 + PEAK_TIE_RTOL)
+
+
 @dataclass
 class MemberDiagram:
     """一根杆件沿长度的内力分布。x 从 i 端量起，单位米；内力用 N 与 N·m。"""
@@ -69,7 +88,7 @@ class MemberDiagram:
     def extreme(self, name: str) -> tuple[float, float]:
         """返回该分量绝对值最大的 (x, 值)。画图标注和查最不利截面都用它。"""
         values = self.component(name)
-        k = int(np.argmax(np.abs(values)))
+        k = peak_index(values)
         return float(self.x[k]), float(values[k])
 
 
@@ -272,7 +291,7 @@ def envelope(frame: Frame, solution, component: str,
     best = {"component": component, "value": 0.0, "member": None, "x": 0.0}
     for mid, d in diagrams.items():
         pos, value = d.extreme(component)
-        if abs(value) > abs(best["value"]) or best["member"] is None:
+        if best["member"] is None or exceeds(value, best["value"]):
             best = {"component": component, "value": value, "member": mid, "x": pos}
     return best
 

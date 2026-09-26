@@ -185,7 +185,7 @@ class QueryMixin:
         if self.solution is None or self.result_db is None:
             return ToolResult(False, {"error": "还没有结果，请先调用 solve_model"})
         try:
-            from internal_forces import COMPONENTS, physical_member_diagram
+            from internal_forces import COMPONENTS, exceeds, physical_member_diagram
         except ImportError as exc:
             return ToolResult(False, {"error": f"内力模块不可用：{exc}"})
         if component not in COMPONENTS:
@@ -207,7 +207,7 @@ class QueryMixin:
                     self.frame, result_view, self.compilation.mapping,
                     physical_id, name, stations=201)
                 x_at, value = diagram.extreme(component)
-                if worst is None or abs(value) > abs(worst["value"]):
+                if worst is None or exceeds(value, worst["value"]):
                     worst = {"value": value, "member": physical_id, "x": x_at}
             if worst is None:
                 return ToolResult(False, {"error": "模型里没有杆件"})

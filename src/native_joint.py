@@ -311,41 +311,76 @@ def _fit_default_mesh(spec, size: float, reference: float,
         f"（{max_elements} 个 C3D10 / {max_dof} 自由度）。这个节点请改用 Abaqus 后端。")
 
 
+def _default_plan(spec, reference: float, levels: int,
+                  max_elements: int, max_dof: int):
+    """默认网格的档位安排：[(全局尺寸, 已划好的网格或 None)]，由粗到细。
+
+    最细一档是求解规模内能划到的最细（超限会自动放粗）；多档时另外两档
+    各放粗 1.5 倍、2.25 倍——比最细档粗，必然也在上限以内，不用再试。
+    放粗过的档边中节点一律取直线（理由见 ``_fit_default_mesh``）。
+    """
+    first = 2.5 * reference
+    size, hotspot, mesh, cut_faces, note = _fit_default_mesh(
+        spec, first, reference, max_elements, max_dof)
+    options = {"Mesh.SecondOrderLinear": 1} if size > first else None
+    coarser = [(size * 1.5 ** k, None)
+               for k in range(max(1, int(levels)) - 1, 0, -1)]
+    return coarser + [(size, (size, hotspot, mesh, cut_faces))], options, note
+
+
 def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               anchor_member: int | None = None,
                               mesh_sizes_mm: list[float] | None = None,
                               output_dir: Path | str = "results/native_solid_joint",
                               *, max_elements: int = 80000,
-                              max_dof: int = 180000) -> dict[str, Any]:
+                              max_dof: int = 180000, levels: int = 1,
+                              progress=None) -> dict[str, Any]:
     """使用自研 C3D10 求解器运行一档或多档节点实体网格。
 
     没有显式给 ``mesh_sizes_mm`` 时，默认那一档若超过求解规模上限，会按
     实测规律自动放粗后重划（见 ``_fit_default_mesh``），并在结果里写明；
     显式给了尺寸就照给的划，超限直接报错——那是用户的明确要求。
+
+    ``levels=3``（仅默认网格时有效）做收敛判断：先找出求解规模内最细的
+    一档，再各放粗 1.5 倍、2.25 倍，由粗到细三档都算——三档都保证在上限
+    以内，热点应力收敛了才给正式 Kt。``progress`` 是一个接收一句话的回调，
+    每档划网格、求解时各报一次：整个作业是分钟级的，不能只显示"计算中"。
     """
+    def say(text: str) -> None:
+        if progress is not None:
+            progress(text)
+
     spec = prepare_joint_spec(session, node_id, case, anchor_member)
     reference = mesh_reference_length(spec)
     # native-v1 默认先给一档可交互的工程网格。Python 稀疏直接解比 Abaqus
     # 慢，默认就上 h=t 会让桌面一次作业跨进几十万自由度；用户需要收敛判断时
     # 再显式给三档。Gmsh仍会受薄壁几何约束，在厚度方向放入二次节点。
-    sizes = ([2.5 * reference] if mesh_sizes_mm is None
-             else sorted({float(v) for v in mesh_sizes_mm}, reverse=True))
-    if not sizes or any(not math.isfinite(v) or v <= 0.0 for v in sizes):
-        raise SolidJointError("native-solid 网格尺寸必须为正数")
+    if mesh_sizes_mm is None:
+        say("划分默认网格…")
+        plan, options, auto_note = _default_plan(
+            spec, reference, levels, max_elements, max_dof)
+    else:
+        sizes = sorted({float(v) for v in mesh_sizes_mm}, reverse=True)
+        if not sizes or any(not math.isfinite(v) or v <= 0.0 for v in sizes):
+            raise SolidJointError("native-solid 网格尺寸必须为正数")
+        plan = [(v, None) for v in sizes]
+        options, auto_note = None, None
     target = Path(output_dir).resolve() / f"node_{spec.node_id}_{spec.case}"
     target.mkdir(parents=True, exist_ok=True)
-    levels: list[dict[str, Any]] = []
-    auto_note: str | None = None
-    for index, size in enumerate(sizes):
-        if mesh_sizes_mm is None:
-            size, hotspot_size, mesh, cut_faces, auto_note = _fit_default_mesh(
-                spec, size, reference, max_elements, max_dof)
+    levels_out: list[dict[str, Any]] = []
+    for index, (size, prepared) in enumerate(plan):
+        tag = f"第 {index + 1}/{len(plan)} 档"
+        if isinstance(prepared, tuple):
+            size, hotspot_size, mesh, cut_faces = prepared
         else:
             # 三档远场网格 40/30/20 mm 对应焊趾 16/12/8 mm；C3D10 的
             # 边中点使最细档表面取样间距约为 0.5t，同时守住直接解规模。
             hotspot_size = max(reference, 0.4 * size)
+            say(f"{tag}：划分网格（全局 {size:.1f} mm）…")
             try:
-                mesh, cut_faces = generate_joint_mesh(spec, size, hotspot_size)
+                mesh, cut_faces = generate_joint_mesh(
+                    spec, size, hotspot_size,
+                    options if mesh_sizes_mm is None else None)
             except solid3d.Solid3DError as exc:
                 raise SolidJointError(f"自研实体网格检查失败：{exc}") from exc
         if len(mesh.elements) > int(max_elements):
@@ -356,6 +391,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             raise SolidJointError(
                 f"native-v1 稀疏直接解安全上限为 {max_dof} 自由度；当前有 "
                 f"{3 * len(mesh.nodes)}。请增大网格尺寸，或使用 Abaqus 后端跑细网格。")
+        say(f"{tag}：求解 {3 * len(mesh.nodes)} 个自由度（{len(mesh.elements)} 个 C3D10）…")
         loads = np.zeros_like(mesh.nodes)
         for arm in spec.arms:
             if arm.member_id == spec.anchor_member:
@@ -418,16 +454,16 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             element_mises=result.element_mises,
             element_abs_principal=result.element_abs_principal,
             gauss_stress=result.gauss_stress)
-        levels.append(row)
+        levels_out.append(row)
 
-    hot_spots = levels[-1]["hot_spot_extrapolation"]
+    hot_spots = levels_out[-1]["hot_spot_extrapolation"]
     hotspot_convergence: dict[str, Any] = {}
     for arm in spec.arms:
         if arm.member_id == spec.anchor_member:
             continue
         mid = str(arm.member_id)
         values = []
-        for level in levels:
+        for level in levels_out:
             item = level["hot_spot_extrapolation"].get(mid, {})
             if "hot_spot_mpa" in item:
                 values.append((level["hotspot_mesh_size_mm"], item["hot_spot_mpa"]))
@@ -458,19 +494,19 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         "case": spec.case,
         "anchor_member": spec.anchor_member,
         "nominal_normal_mpa": spec.nominal_normal_mpa,
-        "peak_convergence": diagnose_peak_convergence(levels),
+        "peak_convergence": diagnose_peak_convergence(levels_out),
         "hot_spot_extrapolation": hot_spots,
         "hot_spot_convergence": hotspot_convergence,
         "governing_arm": governing,
         "stress_concentration_factor": kt,
         "stress_concentration_basis": kt_basis,
         "stress_concentration_refused": kt_refused,
-        "meshes": levels,
+        "meshes": levels_out,
         "warnings": list(spec.warnings) + ([auto_note] if auto_note else []),
         "files": {
             "directory": str(target),
-            "contour_png": levels[-1]["contour_png"],
-            "finest_vtu": levels[-1]["vtu"],
+            "contour_png": levels_out[-1]["contour_png"],
+            "finest_vtu": levels_out[-1]["vtu"],
         },
     }
     (target / "summary.json").write_text(

@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from frame3d import Frame
-from internal_forces import (COMPONENTS, member_diagram, member_length,
-                             physical_member_diagram)
+from internal_forces import (COMPONENTS, exceeds, member_diagram, member_length,
+                             peak_index, physical_member_diagram)
 
 
 @dataclass
@@ -45,9 +45,9 @@ class MemberEnvelope:
     def extreme(self, component: str) -> dict:
         """该分量绝对值最大的一点：位置、数值、控制组合、是上包线还是下包线。"""
         hi, lo = self.upper[component], self.lower[component]
-        k_hi = int(np.argmax(np.abs(hi)))
-        k_lo = int(np.argmax(np.abs(lo)))
-        if abs(hi[k_hi]) >= abs(lo[k_lo]):
+        k_hi = peak_index(hi)
+        k_lo = peak_index(lo)
+        if not exceeds(lo[k_lo], hi[k_hi]):
             return {"x": float(self.x[k_hi]), "value": float(hi[k_hi]),
                     "case": self.upper_case[component][k_hi], "side": "upper"}
         return {"x": float(self.x[k_lo]), "value": float(lo[k_lo]),
@@ -151,7 +151,7 @@ def governing_summary(frame: Frame, solution, cases: tuple[str, ...] | None = No
             anywhere.update(env.upper_case[comp])
             anywhere.update(env.lower_case[comp])
             got = env.extreme(comp)
-            if best is None or abs(got["value"]) > abs(best["value"]):
+            if best is None or exceeds(got["value"], best["value"]):
                 best = {**got, "member": mid}
         worst[comp] = best
         if best is not None:

@@ -114,9 +114,7 @@ def probe_member(frame, solution, member_id: int, point,
 def global_extreme(frame, solution, component: str,
                    case: str | None = None, stations: int = 101) -> dict:
     """全结构指定分量的绝对极值及其中心线位置。"""
-    from internal_forces import member_diagram
-
-    import numpy as _np
+    from internal_forces import exceeds, member_diagram, peak_index
 
     from .scene import STRESS, member_scalar
 
@@ -130,11 +128,11 @@ def global_extreme(frame, solution, component: str,
             # （scene.member_scalar）自己取极值，免得云图和标注各算各的。
             values = member_scalar(frame, frame.members[member_id],
                                    diagram, STRESS)
-            k = int(_np.argmax(_np.abs(values)))
+            k = peak_index(values)
             x, value = float(diagram.x[k]), float(values[k])
         else:
             x, value = diagram.extreme(component)
-        if best is None or abs(value) > abs(best["raw_value"]):
+        if best is None or exceeds(value, best["raw_value"]):
             best = {"member": member_id, "x": x, "raw_value": value}
     if best is None:
         return {"member": None, "x": 0.0, "value": 0.0, "unit": ""}

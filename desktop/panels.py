@@ -215,6 +215,33 @@ class ResultPanel(QWidget):
                 "overlay_deformed": self.overlay_deformed.isChecked(),
                 "show_extrema": self.show_extrema.isChecked()}
 
+    def apply_options(self, options: dict) -> None:
+        """按保存下来的选项摆好各控件，最后只发一次 display_changed。
+
+        认不出的值（比如旧版本存的色系名）就跳过、保留当前值——设置文件
+        不该有本事让界面进入一个下拉框里不存在的状态。
+        """
+        combos = {"percentile": self.range_mode, "sign": self.sign_mode,
+                  "levels": self.levels, "palette": self.palette}
+        checks = {"shading": self.shading, "overlay_deformed": self.overlay_deformed,
+                  "show_extrema": self.show_extrema}
+        widgets = list(combos.values()) + list(checks.values())
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            for key, combo in combos.items():
+                if key in options:
+                    index = combo.findData(options[key])
+                    if index >= 0:
+                        combo.setCurrentIndex(index)
+            for key, box in checks.items():
+                if key in options:
+                    box.setChecked(bool(options[key]))
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+        self._emit_display_options()
+
     def _emit_display_options(self, *_args) -> None:
         self.display_changed.emit(self.display_options())
 

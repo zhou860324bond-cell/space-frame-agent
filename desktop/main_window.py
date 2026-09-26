@@ -35,13 +35,25 @@ from .sketch_panel import SketchPanel                # noqa: E402
 from .section_opt_panel import SectionOptPanel       # noqa: E402
 from .bc_panel import BCPanel                          # noqa: E402
 from .properties import PropertiesPanel             # noqa: E402
-from .drawers import BOTTOM, LEFT, RIGHT, DrawerHost, SideRail  # noqa: E402
+from .drawers import (BOTTOM, LEFT, RIGHT, DrawerHost,  # noqa: E402
+                      PanelWindow, SideRail)
 from . import dialog_styles                         # noqa: E402
 from . import result_rows                           # noqa: E402
 from .viewport import Viewport                     # noqa: E402
 from .worker import Runner                         # noqa: E402
 from .workflow_bar import WorkflowBar, draft_target  # noqa: E402
 from . import glyphs
+
+def _settings() -> QSettings:
+    """界面设置的唯一入口。设了 FRAMELAB_SETTINGS_FILE 就用那个 ini 文件——
+    测试靠它把设置隔离到临时目录，不去碰用户注册表里真实的设置。"""
+    import os
+
+    path = os.environ.get("FRAMELAB_SETTINGS_FILE")
+    if path:
+        return QSettings(path, QSettings.Format.IniFormat)
+    return QSettings("SpaceFrameAgent", "Desktop")
+
 
 def _takes_command(handler) -> bool:
     """处理函数要不要收那条 Command。
@@ -129,6 +141,9 @@ class MainWindow(QMainWindow):
 
         # 求解和大模型调用都得离开界面线程，否则窗口会变"未响应"
         self.runner = Runner(self)
+        # 模型每变一次，推迟一会儿写一份自动存档（见 desktop/autosave.py）
+        from .autosave import AutoSave
+        self.autosave = AutoSave(self)
 
         # 三个抽屉：左放"模型是什么"，右放"找人帮忙/定义边界"，底放"算出了
         # 什么"。每侧一个抽屉、多页用页签切——不再是九个各自漂着的小窗。
@@ -146,17 +161,11 @@ class MainWindow(QMainWindow):
         # 入口是右侧窄栏最上面那颗「AI」按钮，一点召唤，再点收起。
         self.chat_dock = self.right_drawer.add_page("chat", "AI 助手", self.chat)
 
-        self.bc = BCPanel(self.session, self)
-        self.bc.changed.connect(
-            lambda: self._after_manual_edit("边界条件或荷载已修改"))
-        self.bc_dock = self.right_drawer.add_page(
-            "bc", "边界条件", self._scrolled(self.bc))
-
-        # 手绘草图 → 模型：通过建模页的「草图识别」按钮打开
+        # 手绘草图 → 模型：独立窗口，从建模页的「草图识别」打开。它是一次走完
+        # 就关的流程、要宽画布，不和常驻参考的面板挤在抽屉里。
         self.sketch = SketchPanel(self.session, self.runner, self)
         self.sketch.model_loaded.connect(self._on_sketch_loaded)
-        self.sketch_dock = self.right_drawer.add_page(
-            "sketch", "手绘草图", self._scrolled(self.sketch))
+        self.sketch_dock = PanelWindow("手绘草图识别", self.sketch, self)
 
         self.tree = ModelTree(self)
         self.tree.activated_item.connect(self._on_tree_action)
@@ -172,6 +181,14 @@ class MainWindow(QMainWindow):
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
         self.props_dock = self.left_drawer.add_page("props", "属性", self.properties)
+
+        # 边界条件定义的是**模型本身**，和模型树、属性是一类，放在左抽屉；
+        # 原来和 AI 助手挤在右抽屉，只是因为它们以前都停靠在右边。
+        self.bc = BCPanel(self.session, self)
+        self.bc.changed.connect(
+            lambda: self._after_manual_edit("边界条件或荷载已修改"))
+        self.bc_dock = self.left_drawer.add_page(
+            "bc", "边界条件", self._scrolled(self.bc))
 
         self.timeline = TimelinePanel(self)
         self.timeline.goto_step.connect(self.goto_step)
@@ -369,19 +386,20 @@ class MainWindow(QMainWindow):
               "sketch_dock", "results_dock", "diagram_dock", "section_opt_dock")
 
     # 两侧窄栏上的抽屉开关：(键, 抽屉属性名, 按钮文字, 提示, 是否主按钮)。
-    # 边界条件与手绘草图不上栏——它们由功能区命令打开，是"做一件事"的面板，
-    # 不是常驻参考，放上来只会让栏变长。
+    # 左栏管"模型是什么"与"算出了什么"：上段开左抽屉，分隔线下开底部抽屉。
+    # 右栏只有 AI 助手一颗——右侧一个按钮召唤、再点收起。
     LEFT_RAIL = (
         ("tree", "left_drawer", "模型树", "模型树：材料、截面、约束、荷载与结果", False),
         ("props", "left_drawer", "属性", "选中对象的属性，可就地修改（Ctrl+P）", False),
+        ("bc", "left_drawer", "边界", "边界条件与荷载：支座、节点力、杆件荷载", False),
         ("timeline", "left_drawer", "过程", "建模过程：逐步回看、跳回任意一步（Ctrl+H）", False),
-    )
-    RIGHT_RAIL = (
-        ("chat", "right_drawer", "AI\n助手", "AI 助手：一点召唤，再点收起（Ctrl+G）", True),
         None,
         ("results", "bottom_drawer", "结果", "结果表：位移、反力、杆端力与校验清单", False),
         ("diagram", "bottom_drawer", "单杆", "单杆内力图：沿杆长的 N/V/M 曲线", False),
         ("section_opt", "bottom_drawer", "优化", "截面优化", False),
+    )
+    RIGHT_RAIL = (
+        ("chat", "right_drawer", "AI\n助手", "AI 助手：一点召唤，再点收起（Ctrl+G）", True),
     )
 
     @staticmethod
@@ -420,6 +438,7 @@ class MainWindow(QMainWindow):
     def _on_drawer_page_opened(self, key: str) -> None:
         """面板打开时补一次刷新——关着的面板不跟随模型变化，省掉无用功。"""
         handle = getattr(self, {"tree": "tree_dock", "props": "props_dock",
+                                "bc": "bc_dock",
                                 "timeline": "timeline_dock", "chat": "chat_dock",
                                 "results": "results_dock", "diagram": "diagram_dock",
                                 "section_opt": "section_opt_dock"}.get(key, ""), None)
@@ -430,6 +449,9 @@ class MainWindow(QMainWindow):
             self.properties.refresh()
         elif key == "timeline":
             self.timeline.rebuild(self.session.history)
+        elif key == "bc":
+            self.bc.session = self.session
+            self.bc.refresh()
         elif key == "diagram":
             self.diagram.attach(self.session, self.case)
         elif key == "tree":
@@ -651,6 +673,80 @@ class MainWindow(QMainWindow):
             act.setChecked(True)
         if redraw:
             self.redraw()
+
+    # 记住的界面设置。只在程序入口 restore_preferences() 之后才会写回——
+    # 测试会建上千个窗口，每个关窗时都写一遍的话，用户真实的设置会被测试
+    # 用的默认值覆盖掉。
+    _persist_preferences = False
+
+    def restore_preferences(self) -> None:
+        """恢复上次的窗口大小、抽屉宽度、云图显示选项与内力分量。
+
+        不记住的话，每次启动都回到默认值——用户上次选的「24 级 + Abaqus
+        彩虹 + Vz」这类状态，关掉就没了，下次还得重新找一遍。
+        """
+        import json
+
+        self._persist_preferences = True
+        settings = _settings()
+        geometry = settings.value("window/geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        for side, drawer in self.drawers.drawers.items():
+            extent = settings.value(f"drawers/{side}")
+            try:
+                if extent is not None:
+                    drawer.extent = int(extent)
+            except (TypeError, ValueError):
+                pass
+        try:
+            options = json.loads(settings.value("results/display", "{}") or "{}")
+        except (TypeError, ValueError):
+            options = {}
+        if isinstance(options, dict) and options:
+            self.results.apply_options(options)
+        component = settings.value("results/component")
+        if component in {"M", "V", "N", "Vy", "Vz", "T", "My", "Mz", scene.STRESS}:
+            self.component = component
+        self.drawers.relayout()
+
+    def _save_preferences(self) -> None:
+        if not self._persist_preferences:
+            return
+        import json
+
+        settings = _settings()
+        settings.setValue("window/geometry", self.saveGeometry())
+        for side, drawer in self.drawers.drawers.items():
+            settings.setValue(f"drawers/{side}", int(drawer.extent))
+        settings.setValue("results/display",
+                          json.dumps(self.results.display_options()))
+        settings.setValue("results/component", self.component)
+
+    def offer_autosave_restore(self) -> bool:
+        """启动时：上次有没保存的模型就问要不要恢复。只在程序入口调用，
+        不放进构造函数——测试和对话里新建窗口不该弹这个问题。"""
+        pending = self.autosave.pending()
+        if pending is None or self.session.model.get("nodes"):
+            return False
+        model = pending["model"]
+        count = f"{len(model.get('nodes') or [])} 个节点、{len(model.get('members') or [])} 根杆件"
+        answer = QMessageBox.question(
+            self, "恢复未保存的模型",
+            f"上次关闭时有一个没保存的模型（{count}，{pending.get('saved_at', '')}）。\n"
+            "要恢复它吗？选「否」会丢弃这份自动存档。")
+        if answer != QMessageBox.StandardButton.Yes:
+            self.autosave.discard()
+            return False
+        # 不走 set_model：它要求模型完整（材料、截面、支座齐全），而自动存档
+        # 最该救回来的恰恰是还没建完的半成品——原样恢复，缺什么界面会接着提示
+        import copy
+        session = Session(model=copy.deepcopy(model))
+        self._replace_session(session)
+        self.result = self.case = None
+        self.refresh()
+        self.statusBar().showMessage("已恢复上次未保存的模型，记得保存。", 8000)
+        return True
 
     def new_model(self) -> None:
         self._replace_session(Session())
@@ -968,6 +1064,7 @@ class MainWindow(QMainWindow):
         self.empty_state.setVisible(not has_model)
         if self.empty_state.isVisible():
             self._position_empty_state()
+        self.autosave.schedule()
 
     def _sync_model_tree(self, has_model: bool) -> None:
         """Give an empty viewport its width back, then reveal real model data."""
@@ -1335,8 +1432,12 @@ class MainWindow(QMainWindow):
         i18n.retranslate(
             (self.ribbon, self.quickbar, self.workflow_bar, self.results,
              self.left_rail, self.right_rail,
-             *(d.tabs for d in drawers), *(d.title for d in drawers)),
+             *(d.tabs for d in drawers)),
             self.actions_by_name.values())
+        # 抽屉标题随当前页变化，不能交给 retranslate（它把第一次见到的文字
+        # 当作原文缓存下来）；让抽屉按当前语言重写一次
+        for drawer in drawers:
+            drawer._sync_header()
         # 流程条自己翻自己（步骤名后面还挂着算出来的 ✓ / !3），
         # 所以切完语言要让它按当前模型状态重画一次。
         self.workflow_bar.update_state(self.session)
@@ -2573,7 +2674,7 @@ class MainWindow(QMainWindow):
 
     def _recent_paths(self) -> list[Path]:
         """返回仍存在的近期模型，最多八个。"""
-        settings = QSettings("SpaceFrameAgent", "Desktop")
+        settings = _settings()
         raw = settings.value("recent_model_paths", [])
         if isinstance(raw, str):
             raw = [raw]
@@ -2585,7 +2686,7 @@ class MainWindow(QMainWindow):
         return paths[:8]
 
     def _remember_recent_path(self, path: Path) -> None:
-        settings = QSettings("SpaceFrameAgent", "Desktop")
+        settings = _settings()
         paths = [path, *(item for item in self._recent_paths() if item != path)]
         settings.setValue("recent_model_paths", [str(item) for item in paths[:8]])
 
@@ -2603,7 +2704,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.addSeparator()
         clear = self.recent_menu.addAction("清除近期记录")
         clear.triggered.connect(
-            lambda: QSettings("SpaceFrameAgent", "Desktop").remove("recent_model_paths"))
+            lambda: _settings().remove("recent_model_paths"))
 
     def _load_model_path(self, path: Path) -> bool:
         """从明确路径加载模型；文件选择器和“最近打开”共用这条安全路径。"""
@@ -2637,6 +2738,7 @@ class MainWindow(QMainWindow):
         self.result = self.case = None
         self.refresh()
         self._remember_recent_path(path)
+        self.autosave.mark_saved()
         if sidecar_warning:
             QMessageBox.warning(self, "多模态追溯未恢复", sidecar_warning)
         self.statusBar().showMessage(f"已载入模型 {Path(path).name}", 5000)
@@ -2659,6 +2761,7 @@ class MainWindow(QMainWindow):
         from draft_commit import save_sidecar
         save_sidecar(path, self.session.model, self.session.multimodal_provenance)
         self._remember_recent_path(Path(path))
+        self.autosave.mark_saved()
         self.statusBar().showMessage(f"模型已保存至 {Path(path).name}", 5000)
 
     # --- 显示 ---
@@ -2849,10 +2952,41 @@ class MainWindow(QMainWindow):
             return
         node_id = int(self._selected_id)
         case = self.case
-        title = f"节点 {node_id} 局部实体"
+        levels = self._ask_joint_levels(node_id)
+        if levels is None:
+            return
+        title = f"节点 {node_id} 局部实体（{'收敛判断 3 档' if levels > 1 else '快速 1 档'}）"
         self._analyse(
             "solid_joint", title,
-            lambda: self.session.analyze_joint_solid(node_id=node_id, case=case))
+            lambda report: self.session.analyze_joint_solid(
+                node_id=node_id, case=case, levels=levels,
+                progress=lambda text: report(text, None, True)),
+            with_progress=True)
+
+    def _ask_joint_levels(self, node_id: int) -> int | None:
+        """先说清两种算法的代价与区别，再开算。
+
+        节点实体是分钟级作业（实测 6 杆 D219×8 节点单档约 4 分钟），而且
+        单档网格判不了热点应力是否收敛，正式的应力集中系数 Kt 只有多档才给。
+        不问一句就开算，用户等了几分钟才发现拿不到想要的那个数。
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle("节点实体")
+        box.setText(f"对节点 {node_id} 做局部实体分析，选择算法：")
+        box.setInformativeText(
+            "快速（1 档）：几分钟，看应力分布与峰值；不给正式 Kt。\n"
+            "收敛判断（3 档）：约 3 倍时间，热点应力收敛时给出正式 Kt。")
+        quick = box.addButton("快速（1 档）", QMessageBox.ButtonRole.AcceptRole)
+        full = box.addButton("收敛判断（3 档）", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(quick)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is quick:
+            return 1
+        if clicked is full:
+            return 3
+        return None
 
     # --- 校核 ---
 
@@ -2874,7 +3008,7 @@ class MainWindow(QMainWindow):
                       lambda: self.session.write_report(
                           fmt="both", filename="刚架分析报告"))
 
-    def _analyse(self, kind: str, title: str, fn) -> None:
+    def _analyse(self, kind: str, title: str, fn, with_progress: bool = False) -> None:
         """跑一个分析，结果进**结果面板**。
 
         原来是弹一个消息框、把 JSON 塞进"详细信息"——那是给开发者看的。
@@ -2917,7 +3051,13 @@ class MainWindow(QMainWindow):
             self.results.show_message(f"{title}　计算出错",
                                       f"{kind_}：{message[:400]}")
 
-        self.runner.submit(fn, on_done=done, on_failed=failed)
+        def progress(text: str, _args=None, _ok: bool = True) -> None:
+            # 分钟级作业要一直看得见走到哪了，不能只有一句"计算中"
+            self.statusBar().showMessage(f"{title}：{text}")
+            self.results.show_message(title, text)
+
+        self.runner.submit(fn, on_done=done, on_failed=failed,
+                           on_progress=progress if with_progress else None)
 
     @staticmethod
     def _explain(payload: dict) -> str:
@@ -2993,6 +3133,11 @@ class MainWindow(QMainWindow):
                 self.runner.wait(3000)
         except Exception:                       # noqa: BLE001
             pass
+        try:
+            self.autosave.flush()               # 别等计时器，关窗前把最后一版写下来
+        except OSError:
+            pass
+        self._save_preferences()
         try:
             self.viewport.shutdown()
         except Exception:                       # noqa: BLE001

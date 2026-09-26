@@ -25,7 +25,7 @@ import pyvista as pv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from internal_forces import (max_centerline_displacement,
+from internal_forces import (exceeds, max_centerline_displacement, peak_index,
                              member_diagram, member_displacement)  # noqa: E402
 from frame3d import (Frame, Node, Member, local_axes,
                      member_endpoints)                             # noqa: E402
@@ -543,8 +543,8 @@ def force_diagram(frame, solution, case: str | None, component: str,
         base = pi + (x / length)[:, None] * (pj - pi)
         direction = sign * np.asarray(rot[axis], dtype=float)
         shapes.append((mid, x, v, base, direction))
-        k = int(np.argmax(np.abs(v))) if len(v) else 0
-        if len(v) and abs(v[k]) > abs(peak["value"]):
+        k = peak_index(v)
+        if len(v) and exceeds(v[k], peak["value"]):
             peak.update(value=float(v[k]), member=mid, x=float(x[k]))
     top = abs(peak["value"])
     scale = size_ratio * model_size(frame) / top if top > 0.0 else 0.0

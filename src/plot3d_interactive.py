@@ -286,7 +286,7 @@ def figure_diagram_3d(frame, solution, component: str = "Mz",
     不是随便找个方向摊开。
     """
     from frame3d import local_axes
-    from internal_forces import all_diagrams
+    from internal_forces import all_diagrams, exceeds
 
     name = case or solution.primary
     units = unit_system(frame)
@@ -339,7 +339,7 @@ def figure_diagram_3d(frame, solution, component: str = "Mz",
             hovertemplate="%{text}<extra></extra>", text=text))
 
         pos, value = d.extreme(component)
-        if abs(value) > abs(worst["value"]):
+        if exceeds(value, worst["value"]):
             worst = {"member": mid, "value": value, "x": pos}
 
     if worst["member"] is not None:

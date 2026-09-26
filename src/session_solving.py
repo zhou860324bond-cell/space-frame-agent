@@ -428,7 +428,8 @@ class SolvingMixin:
                             anchor_member: int | None = None,
                             mesh_sizes_mm: list[float] | None = None,
                             backend: str = "native",
-                            dry_run: bool = False) -> ToolResult:
+                            dry_run: bool = False, levels: int = 1,
+                            progress=None) -> ToolResult:
         """节点局部实体子模型：看杆件相交处的应力集中。
 
         分两段，是有意的。**建规格**（把梁模型的杆端力翻译成实体子模型的
@@ -455,7 +456,8 @@ class SolvingMixin:
             if backend == "native":
                 import native_joint
                 summary = native_joint.run_native_joint_analysis(
-                    self, int(node_id), case, anchor_member, mesh_sizes_mm)
+                    self, int(node_id), case, anchor_member, mesh_sizes_mm,
+                    levels=int(levels), progress=progress)
             elif backend == "abaqus":
                 summary = solid_joint.run_joint_analysis(
                     self, int(node_id), case, anchor_member, mesh_sizes_mm)

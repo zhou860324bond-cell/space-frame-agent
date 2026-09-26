@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea,
+from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel, QScrollArea,
                                QStackedWidget,
                                QTabBar, QToolButton, QVBoxLayout, QWidget)
 
@@ -100,6 +100,42 @@ class PanelHandle(QObject):
         # 抽屉里只有"当前页"一说，没有叠放次序
         if self._drawer.is_open():
             self._drawer.open_page(self.key)
+
+
+class PanelWindow(QDialog):
+    """放在独立窗口里的面板（非模态，归主窗口所有）。
+
+    给"做一件完整的事、需要宽画布"的面板用——手绘草图识别就是：选图、
+    核对覆盖标注、标定尺度、确认加载，一次走完就关。塞进抽屉页签，要么
+    抽屉被它撑宽，要么画布被压窄；和常驻参考的面板挤在一起也说不通。
+
+    对外接口与 PanelHandle 一致（setVisible/isVisible/raise_/
+    visibilityChanged/windowTitle），主窗口里的调用不用分两套。
+    """
+
+    visibilityChanged = Signal(bool)
+
+    def __init__(self, title: str, widget: QWidget, parent: QWidget,
+                 size: tuple[int, int] = (560, 720)):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(False)
+        area = QScrollArea(self)
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setWidget(widget)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(area)
+        self.resize(*size)
+
+    def showEvent(self, event):                   # noqa: N802  Qt 回调名
+        super().showEvent(event)
+        self.visibilityChanged.emit(True)
+
+    def hideEvent(self, event):                   # noqa: N802
+        super().hideEvent(event)
+        self.visibilityChanged.emit(False)
 
 
 class _EdgeGrip(QWidget):
@@ -244,12 +280,22 @@ class Drawer(QFrame):
         return self._pages[index].key if 0 <= index < len(self._pages) else None
 
     def _sync_header(self) -> None:
-        # 只有一页时页签是噪音，换成标题
-        single = len(self._pages) == 1
-        self.tabs.setVisible(not single)
-        self.title.setVisible(single)
-        if single:
-            self.title.setText(self._pages[0].title)
+        """抽屉顶上只写当前页的标题，不放页签。
+
+        切页由两侧窄栏负责——顶上再放一排页签是重复，而且左抽屉四页在
+        290 px 里放不下，「建模过程」被挤到滚动箭头后面看不见（实拍如此）。
+        页签控件留着但不显示：它仍是"第几页"的记录者，语言切换也照常翻它。
+        """
+        from .i18n import tr
+
+        self.tabs.setVisible(False)
+        self.title.setVisible(True)
+        key = self.current_key()
+        page = next((p for p in self._pages if p.key == key), None)
+        if page is None and self._pages:
+            page = self._pages[0]
+        if page is not None:
+            self.title.setText(tr(page.title))
 
     def _on_tab(self, index: int) -> None:
         if not 0 <= index < len(self._pages):
@@ -259,6 +305,7 @@ class Drawer(QFrame):
         after = self._pages[index].key
         if before != after:
             self._emit_page_visibility(before, after)
+            self._sync_header()
             self.page_changed.emit(after)
 
     def _emit_page_visibility(self, before: str | None, after: str | None) -> None:
@@ -291,6 +338,7 @@ class Drawer(QFrame):
             self.page(key).handle.visibilityChanged.emit(True)
         elif before != key:
             self._emit_page_visibility(before, key)
+        self._sync_header()
         if before != key:
             self.page_changed.emit(key)
 

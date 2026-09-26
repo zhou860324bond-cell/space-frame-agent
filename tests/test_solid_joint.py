@@ -601,14 +601,17 @@ def test_agent_routes_the_default_solid_backend_to_native(monkeypatch):
 
     seen = {}
 
-    def fake(session, node_id, case, anchor, sizes):
+    def fake(session, node_id, case, anchor, sizes, **options):
         seen["args"] = (node_id, case, anchor, sizes)
+        seen["options"] = options
         return {"node_id": node_id, "case": case or "LC1", "backend": "native"}
 
     monkeypatch.setattr(native_joint, "run_native_joint_analysis", fake)
     result = _l_joint().analyze_joint_solid(2, mesh_sizes_mm=[20.0])
     assert result.ok and result.payload["backend"] == "native"
     assert seen["args"] == (2, None, None, [20.0])
+    # 没指定就是快速的单档；进度出口默认不给（agent 调用时没有界面可报）
+    assert seen["options"] == {"levels": 1, "progress": None}
 
 
 def test_gmsh_generates_positive_c3d10_and_cut_faces_when_available():

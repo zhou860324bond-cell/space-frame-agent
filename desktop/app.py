@@ -113,7 +113,9 @@ def main(argv: list[str] | None = None) -> int:
     app.setStyleSheet(theme.STYLESHEET)
 
     window = MainWindow()
+    window.restore_preferences()
     window.show()
+    window.offer_autosave_restore()
     return app.exec()
 
 

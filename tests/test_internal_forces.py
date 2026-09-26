@@ -171,3 +171,21 @@ def test_unknown_member_and_component_are_rejected():
         member_diagram(f, sol, 1).component("Q")
     with pytest.raises(ValueError, match="stations"):
         member_diagram(f, sol, 1, stations=1)
+
+
+def test_tied_peaks_resolve_to_the_first_one_regardless_of_roundoff():
+    """对称结构里两处极值解析上相等，算出来只差末几位。
+
+    求解器换了求和顺序（SuperLU 对称模式）或模型换了单位制，末位谁大谁小
+    就翻过来，报出的最不利位置在两处之间跳——单位不变性测试就是这么红的。
+    差在 PEAK_TIE_RTOL 以内算并列，取先遇到的那个。
+    """
+    from internal_forces import PEAK_TIE_RTOL, exceeds, peak_index
+
+    a = 123.456
+    for wobble in (1.0 + 1e-13, 1.0 - 1e-13):
+        assert peak_index([a, 0.5, -a * wobble]) == 0
+        assert not exceeds(-a * wobble, a)
+    assert peak_index([a, 0.5, -a * (1.0 + 10 * PEAK_TIE_RTOL)]) == 2
+    assert exceeds(a * (1.0 + 10 * PEAK_TIE_RTOL), a)
+    assert peak_index([]) == 0
