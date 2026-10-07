@@ -99,6 +99,19 @@ a = Analysis(                                       # noqa: F821
     noarchive=False,
 )
 
+# Codex 桌面运行时把自带 Poppler 的 bin 目录放进 DLL 搜索路径。PyInstaller
+# 会把那里的 ICU 78 误认成 Qt6Core 依赖的 Windows 系统 ICU：两者同名，
+# 但导出符号不同，结果是打包成功、双击后 QtWidgets 以 WinError 127 退出。
+# 只移除来源明确属于 Poppler 的冲突库；其他依赖收集结果保持不动。
+_POPLER_ICU = {"icudt78.dll", "icuuc.dll"}
+a.binaries[:] = [
+    entry for entry in a.binaries
+    if not (
+        Path(entry[0]).name.lower() in _POPLER_ICU
+        and "poppler" in {part.lower() for part in Path(entry[1]).parts}
+    )
+]
+
 # --- 安全闸：密钥绝不能进包 -------------------------------------------------
 # 打进去等于把 API 额度送给每一个拿到文件的人。这里是**兜底**，
 # 正常情况下 deepseek.key 根本不会被 Analysis 收进来；
