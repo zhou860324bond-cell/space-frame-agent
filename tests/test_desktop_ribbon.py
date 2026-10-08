@@ -338,10 +338,13 @@ def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app
     assert w.ribbon.maximumHeight() < tall
     assert w.ribbon.tabBar().isVisibleTo(w.ribbon), "页签不能跟着收掉"
     assert w.ribbon.count() == 7, "收起不该动页签本身"
+    w.ribbon.setCurrentIndex(4)
+    assert all(w.ribbon.widget(i).isHidden() for i in range(w.ribbon.count()))
 
     w.ribbon.toggle_collapsed()
     assert not w.ribbon.is_collapsed()
     assert w.ribbon.maximumHeight() == tall
+    assert [i for i in range(w.ribbon.count()) if not w.ribbon.widget(i).isHidden()] == [4]
 
 
 def test_the_assistant_starts_out_of_the_way_but_reachable(qt_app):

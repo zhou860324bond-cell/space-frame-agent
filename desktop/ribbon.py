@@ -134,6 +134,7 @@ class Ribbon(QTabWidget):
         self.setMaximumHeight(self.EXPANDED_HEIGHT)
         self.pages: dict[str, RibbonPage] = {}
         self._collapsed = False
+        self.currentChanged.connect(self._sync_pages)
 
         # 顶部原来是四层：页签 + 功能区 + 快捷栏 + 流程条，一共吃掉约 260px，
         # 在 1000px 高的窗口上是 26%。功能区是其中最高的一层，而它又是**查完
@@ -160,8 +161,7 @@ class Ribbon(QTabWidget):
         把当前所处的阶段也藏了，那是另一种反人类。
         """
         self._collapsed = bool(collapsed)
-        for name in self.pages:
-            self.pages[name].setVisible(not self._collapsed)
+        self._sync_pages()
         for page in self.pages.values():
             page.ensurePolished()
         expanded = max(self.EXPANDED_HEIGHT,
@@ -174,6 +174,11 @@ class Ribbon(QTabWidget):
 
     def is_collapsed(self) -> bool:
         return self._collapsed
+
+    def _sync_pages(self, *_args) -> None:
+        """展开仅显示当前页；折叠后切页也不能把隐藏的命令重新显示。"""
+        for index in range(self.count()):
+            self.widget(index).setVisible(not self._collapsed and index == self.currentIndex())
 
     def _sync_toggle(self) -> None:
         from . import i18n
