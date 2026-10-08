@@ -51,7 +51,7 @@ def test_the_packaging_metadata_is_readable_and_declares_a_python_floor():
 
 
 def test_the_wheel_contains_every_core_module(tmp_path):
-    """普通安装曾只打进 desktop，源码目录能跑，wheel 却缺 agent/frame3d。"""
+    """防止 wheel 遗漏内核模块，并验证 CI 已安装离线构建所需的后端。"""
     source = tmp_path / "source"
     source.mkdir()
     for name in ("pyproject.toml", "setup.py", "README.md"):

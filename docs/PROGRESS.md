@@ -10,6 +10,7 @@ Codex 与 Claude Code 共用的交接记录。开工先读，收工更新；最�
 - 下一步：重新打包并验收包含星标改进的 Windows 版本。现有 Windows ZIP 仍是 2026-10-07 的版本，尚未重新打包。
 - 推送状态（2026-10-08）：用户已明确授权推送到 `zhou860324bond-cell/space-frame-agent`；功能提交 `599b497` 已推送至 `origin/codex/optimization-pass`，分支跟踪已配置。本次开工 git pull 遇到连接重置；GitHub PR 的分支提交已核对。
 - 合并流程（2026-10-08）：用户已明确授权合并 master；本轮优化通过 [PR #23](https://github.com/zhou860324bond-cell/space-frame-agent/pull/23) 交付。合并仅在最新提交的 Ubuntu 3.11、Ubuntu 3.12、Windows 3.12 CI 全部通过后执行；具体 CI 与合并状态以该 PR 记录为准。
+- CI 修复（2026-10-08）：首次 Windows 作业发现干净 Python 3.12 未安装 `setuptools.build_meta`，离线 wheel 回归失败；工作流已显式安装 setuptools 与 wheel，保留真实 wheel 构建回归，最终三平台验收以 PR #23 最新提交为准。
 
 ## 体验评估（2026-10-07）
 
