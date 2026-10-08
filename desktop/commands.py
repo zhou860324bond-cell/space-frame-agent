@@ -175,6 +175,12 @@ COMMANDS: tuple[Command, ...] = (
             "show_deformed", "Ctrl+2", True),
     Command("contour", "梁内力云图", "contour", "梁中心线内力结果；不是实体截面应力云图。合量用顺序色标，有符号局部分量关于零对称",
             "show_contour", "Ctrl+3", True),
+    Command("solid_contour", "实体云图", "contour",
+            "在主视口查看节点实体应力与位移，可旋转、缩放并切换网格档位",
+            "show_solid_contour", "Ctrl+7", True),
+    Command("open_solid_result", "打开实体结果", "open",
+            "打开已保存的节点实体 JSON、VTU 或 NPZ 结果，在主视口查看",
+            "open_solid_result"),
     Command("force_diagram", "内力图", "diagram",
             "三维内力图：每根杆旁画出内力沿杆的分布，高度即数值，"
             "弯矩画在受拉侧（SAP2000 / 盈建科式）",

@@ -100,7 +100,7 @@ def test_panels_live_in_three_drawers_not_loose_windows(qt_app):
 
 
 def test_each_side_holds_one_kind_of_thing(qt_app):
-    """左抽屉放"模型是什么"（含边界条件），右侧只有 AI 助手，草图识别是独立窗口。
+    """左抽屉放模型定义与实体显示设置，右侧只有 AI 助手，草图识别是独立窗口。
 
     边界条件原来和 AI 助手挤在右抽屉，只因为它们以前都停靠在右边——
     用户问"边界条件为什么要和 AI 助手在一块"，答案是没有理由。
@@ -108,7 +108,7 @@ def test_each_side_holds_one_kind_of_thing(qt_app):
     from PySide6.QtWidgets import QDialog
 
     w = MainWindow()
-    assert w.left_drawer.keys() == ["tree", "props", "bc", "timeline"]
+    assert w.left_drawer.keys() == ["tree", "props", "solid", "bc", "timeline"]
     assert w.right_drawer.keys() == ["chat"]
     assert list(w.right_rail.buttons) == ["chat"], "右侧只该有 AI 一颗按钮"
     assert {"results", "diagram", "section_opt"} <= set(w.left_rail.buttons)
@@ -694,7 +694,7 @@ def test_switching_to_english_translates_drawer_tabs_and_rail_buttons(qt_app):
         w.actions_by_name["lang"].setChecked(True)
         w.toggle_language()
         tabs = [w.left_drawer.tabs.tabText(i) for i in range(w.left_drawer.tabs.count())]
-        assert tabs == ["Model Tree", "Property", "Boundary", "History"]
+        assert tabs == ["Model Tree", "Property", "Solid results", "Boundary", "History"]
         w.tree_dock.show()
         assert w.left_drawer.title.text() == "Model Tree"
         w.bc_dock.show()

@@ -383,7 +383,7 @@ class Viewport(QWidget):
 
     def _refresh_grid_floor(self) -> None:
         """按当前状态和背景重画网格地面。"""
-        if not CAN_RENDER or not self.show_grid_floor:
+        if not CAN_RENDER or not self.show_grid_floor or getattr(self, "_solid_active", False):
             return
         try:
             import pyvista as pv
@@ -486,10 +486,13 @@ class Viewport(QWidget):
             return False
         width, height = max(1, self.width()), max(1, self.height())
         left, right, bottom = self._insets
+        top = (self.result_overlay.geometry().bottom() + 12
+               if getattr(self, "_solid_active", False) and self.result_overlay.isVisible()
+               else 0)
         free_w = max(1, width - left - right)
-        free_h = max(1, height - bottom)
+        free_h = max(1, height - bottom - top)
         center_x = left + free_w / 2.0
-        center_y = free_h / 2.0                      # 从上沿量起
+        center_y = top + free_h / 2.0               # 从上沿量起
         nx = (center_x - width / 2.0) / (width / 2.0)
         ny = (height / 2.0 - center_y) / (height / 2.0)
         camera = self.plotter.renderer.GetActiveCamera()
@@ -514,7 +517,8 @@ class Viewport(QWidget):
             self.axis_indicator.raise_()
         if hasattr(self, "result_overlay") and self.result_overlay.active:
             left, right, bottom = self._insets
-            self.result_overlay.setFixedWidth(max(100, min(370, self.width() - left - right - 24)))
+            limit = 300 if getattr(self, "_solid_active", False) else 370
+            self.result_overlay.setFixedWidth(max(100, min(limit, self.width() - left - right - 24)))
             self.result_overlay.adjustSize()
             y = self.mode_badge.geometry().bottom() + 8 if self.mode_badge.isVisible() else 12
             self.result_overlay.move(left + 12, y)
@@ -535,6 +539,9 @@ class Viewport(QWidget):
     @_batched
     def clear(self) -> None:
         self._annotation_context = None
+        if getattr(self, "_solid_active", False):
+            self._first_render = True
+        self._solid_active = False
         self.result_overlay.reset()
         if not CAN_RENDER:
             return
@@ -1407,6 +1414,74 @@ class Viewport(QWidget):
         self._fit()
         self.plotter.render()
         return clim
+
+    @_batched
+    def show_solid_result(self, grid, caption: str, *, field="Mises_MPa",
+                          percentile=99, scale=0.0, show_edges=False,
+                          reset_camera=False) -> dict:
+        """在主视口绘制真实实体单元结果，保留单元应力与节点位移的关联。"""
+        from .solid_result import FIELDS
+
+        _key, label, unit, association = next(item for item in FIELDS if item[0] == field)
+        array = grid.cell_data[field] if association == "cell" else grid.point_data[field]
+        values = np.asarray(array)
+        peak = float(values.max())
+        high = float(np.percentile(values, percentile)) if percentile else peak
+        high = max(high, np.finfo(float).eps)
+        displayed = grid.copy(deep=True)
+        displayed.points += float(scale) * np.asarray(grid.point_data["Displacement_mm"])
+        current_camera = self.plotter.camera_position
+        self.clear()
+        self._frame = None
+        self._solid_active = True
+        self._first_render = False
+        self._solid_last = dict(field=field, association=association, peak=peak,
+                                clim=(0.0, high), scale=float(scale),
+                                show_edges=bool(show_edges), mesh=displayed)
+        clipped = peak > high
+        self.result_overlay.set_content(
+            title=f"实体云图 · {label}", peak=f"真实峰值：{peak:.6g} {unit}",
+            range_text=f"色标范围：0 ～ {high:.6g} {unit}",
+            status=f"{caption} · {'P99 截色' if clipped else '完整范围'} · 变形 ×{scale:g}",
+            details=(f"{grid.n_points} 个节点，{grid.n_cells} 个 C3D10 单元。"
+                     "应力按单元保存，不进行跨单元平均；位移按节点保存。"
+                     "色标截断仅影响颜色，真实峰值取全部结果。坐标单位为 mm。"),
+            light=self._is_light_bg())
+        self._place_overlays()
+        if not CAN_RENDER:
+            return self._solid_last
+        self.plotter.remove_actor("_grid_floor", reset_camera=False, render=False)
+        self.plotter.add_mesh(
+            displayed, scalars=field, preference=association,
+            cmap=theme.palette_cmap(self.contour_palette, "M"), clim=(0.0, high),
+            show_edges=show_edges, edge_color=theme.VIEWPORT_INK_MUTED,
+            line_width=0.5, show_scalar_bar=False, smooth_shading=False,
+            interpolate_before_map=association == "point", lighting=self.contour_shading,
+            ambient=0.42, diffuse=0.58, name="_solid_result")
+        self.plotter.add_scalar_bar(
+            title="", n_labels=7, vertical=True, fmt="%.3g",
+            color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
+            width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+        bar_label = {"Mises_MPa": "Mises [MPa]", "AbsPrincipal_MPa": "|Principal| [MPa]",
+                     "DisplacementMagnitude_mm": "Displacement [mm]"}[field]
+        self.plotter.add_text(bar_label, position=(0.795, 0.735), viewport=True,
+                              color=theme.VIEWPORT_INK, font_size=10,
+                              name="_contour_bar_title")
+        index = int(np.argmax(values))
+        point = (displayed.cell_centers().points[index] if association == "cell"
+                 else displayed.points[index])
+        self.plotter.add_point_labels(
+            [point], [f"MAX {peak:.6g} {unit}"], name="_solid_peak", font_size=9,
+            text_color=theme.VIEWPORT_INK, shape=None, always_visible=True,
+            show_points=True, point_color=theme.HIGHLIGHT, point_size=8)
+        if reset_camera or current_camera is None:
+            self._apply_view("isometric")
+        else:
+            self.plotter.camera_position = current_camera
+        self._contour_actors = True
+        self._place_contour_overlays()
+        self._inset_camera()
+        return self._solid_last
 
     @_batched
     def show_mode(self, frame, shapes: np.ndarray, mode: int,

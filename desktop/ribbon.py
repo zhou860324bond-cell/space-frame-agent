@@ -432,7 +432,13 @@ class QuickBar(QWidget):
 
         self.context.addWidget(build_page)
         self.context.addWidget(result_page)
-        self._context_pages = {"建模": 0, "结果": 1}
+        solid_page = QWidget(self)
+        solid_row = QHBoxLayout(solid_page)
+        solid_row.setContentsMargins(0, 0, 0, 0)
+        section("实体结果", solid_row)
+        labelled("open_solid_result", solid_row)
+        self.context.addWidget(solid_page)
+        self._context_pages = {"建模": 0, "结果": 1, "实体结果": 2}
 
         row.addStretch(1)
 
@@ -444,6 +450,7 @@ class QuickBar(QWidget):
         self.mode_buttons: dict[str, QToolButton] = {}
         for label, name in (("模型", "model"), ("分析网格", "analysis_mesh"),
                             ("变形", "deformed"), ("云图", "contour"),
+                            ("实体云图", "solid_contour"),
                             ("内力图", "force_diagram"), ("应力比", "utilization"),
                             ("模态", "modal")):
             b = labelled(name)
@@ -518,7 +525,9 @@ class QuickBar(QWidget):
         工况和放大倍数，而不是"建节点/建杆件"。只有不在结果模式时，
         才按功能区页判断。
         """
-        if mode in self.RESULT_MODES:
+        if mode == "实体云图":
+            key = "实体结果"
+        elif mode in self.RESULT_MODES:
             key = "结果"
         elif page in ("结果", "分析"):
             key = "结果"
@@ -634,6 +643,9 @@ def build(window) -> Ribbon:
     g = p.group("显示")
     g.add_large(a["diagram"])
     g.add_small(a["clear_results"])
+    g = p.group("实体结果")
+    g.add_large(a["solid_contour"])
+    g.add_small(a["open_solid_result"])
     g = p.group("查询")
     g.add_small(a["curve"]); g.add_small(a["deflection"])
     g.add_small(a["envelope"]); g.add_small(a["report"])

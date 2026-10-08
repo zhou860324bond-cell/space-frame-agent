@@ -80,7 +80,7 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 
 
 # 视口显示模式。切模式时整个场景重建。
-MODES = ("模型", "分析网格", "变形", "云图", "内力图", "应力比", "模态")
+MODES = ("模型", "分析网格", "变形", "云图", "实体云图", "内力图", "应力比", "模态")
 
 
 class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
@@ -95,6 +95,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         # 局部分量时再切到 My/Mz；默认直接画 Mz 会让不同方向杆件看起来乱跳色。
         self.component = "M"
         self.scale = 0.0
+        self._solid_grid = None
+        self._solid_binding = None
+        self._solid_info = None
+        self._solid_reset_camera = True
         self.analysis_type = "linear"
         self.analysis_options = {"increments": 10, "max_iter": 40,
                                  "tolerance": 1e-7}
@@ -163,6 +167,14 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
         self.props_dock = self.left_drawer.add_page("props", "属性", self.properties)
+
+        from .solid_result import SolidResultPanel
+        self.solid_panel = SolidResultPanel(self)
+        self.solid_panel.changed.connect(self._redraw_solid_result)
+        self.solid_panel.file_requested.connect(self._switch_solid_level)
+        self.solid_panel.open_requested.connect(self.open_solid_result)
+        self.solid_panel.model_requested.connect(self.show_model)
+        self.solid_dock = self.left_drawer.add_page("solid", "实体结果", self.solid_panel)
 
         # 边界条件定义的是**模型本身**，和模型树、属性是一类，放在左抽屉；
         # 原来和 AI 助手挤在右抽屉，只是因为它们以前都停靠在右边。
@@ -281,7 +293,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.empty_state.raise_()
 
     # 全部面板把手（PanelHandle），测试与"全部收起"按它逐个检查。
-    PANELS = ("tree_dock", "props_dock", "timeline_dock", "chat_dock", "bc_dock",
+    PANELS = ("tree_dock", "props_dock", "solid_dock", "timeline_dock", "chat_dock", "bc_dock",
               "sketch_dock", "results_dock", "diagram_dock", "section_opt_dock")
 
     # 两侧窄栏上的抽屉开关：(键, 抽屉属性名, 按钮文字, 提示, 是否主按钮)。
@@ -477,7 +489,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                  ("分析", ("solve", None, "modal", "buckling", "solid_joint", None,
                            "diagnose", "analysis_mesh")),
                  ("结果", ("model", "deformed", "contour", "force_diagram",
-                           "utilization",
+                           "utilization", "solid_contour", "open_solid_result",
                            "diagram", None,
                            "envelope", "clear_results", "labels")),
                  ("视图", ("iso", "front", "side", "top", "fit", None,
@@ -573,7 +585,17 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def set_mode(self, name: str, redraw: bool = True) -> None:
         """切换显示模式。紧接着要 refresh() 的调用方传 redraw=False，
         免得同一帧画两遍——大模型上一遍就是几百毫秒。"""
+        if self.mode == "实体云图" and name != "实体云图":
+            self.viewport.clear()
+            self.solid_dock.hide()
         self.mode = name
+        if name == "实体云图":
+            self.viewport.set_model_mode(None)
+            self.viewport.set_pick_mode(None)
+            for key in ("model_node", "model_member", "pick_node", "pick_member"):
+                self.actions_by_name[key].setChecked(False)
+            self.solid_dock.show()
+            self.empty_state.hide()
         # 中段控件也要跟着换：看变形图时要的是工况和放大，不是建节点
         if hasattr(self, "quickbar"):
             self.quickbar.show_context_for(
@@ -720,12 +742,16 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def clear_results(self) -> None:
         """丢弃求解结果，但不改任何建模数据。"""
-        if self.result is None and self.session.solution is None:
+        if self.result is None and self.session.solution is None and self._solid_grid is None:
             self.statusBar().showMessage("当前没有需要清除的计算结果。", 4000)
             return
         self.result = None
         self.case = None
         self.session.solution = None
+        self._solid_grid = self._solid_binding = self._solid_info = None
+        self.solid_panel.caption.setText("实体结果已清除，请重新分析或打开已保存结果。")
+        self.solid_panel.levels.clear()
+        self.solid_panel.source.clear()
         self.results.show_message("计算结果已清除", "模型、材料、约束与荷载均未修改，可重新求解。")
         self.set_mode("模型")
         self.refresh()
@@ -766,7 +792,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.btn_cancel_task.setEnabled(busy)
         for widget in (self.workflow_bar, self.quickbar, self.tree, self.properties,
                        self.bc, self.timeline, self.sketch, self.section_opt,
-                       self.diagram, self.results, self.empty_state):
+                       self.diagram, self.results, self.empty_state, self.solid_panel):
             widget.setEnabled(idle)
         if idle and self._close_pending:
             QTimer.singleShot(0, self.close)
@@ -828,6 +854,12 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def redraw(self) -> None:
         self._sync_result_validity()
+        if self.mode == "实体云图" and self._solid_grid is not None:
+            self.viewport.show_solid_result(
+                self._solid_grid, self._solid_info[-1], **self.solid_panel.options(),
+                reset_camera=self._solid_reset_camera)
+            self._solid_reset_camera = False
+            return
         frame = None
         draft = False
         try:
@@ -956,7 +988,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.redraw()
         has_model = bool(model.get("nodes"))
         self._sync_model_tree(has_model)
-        self.empty_state.setVisible(not has_model)
+        self.empty_state.setVisible(not has_model and self.mode != "实体云图")
         if self.empty_state.isVisible():
             self._position_empty_state()
         self.autosave.schedule()
@@ -965,6 +997,17 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         """模型修改后清空表、探针、曲线与云图，共用会话内容校验。"""
         if self.runner.busy:
             return
+        if self._solid_binding is not None and (
+                self._solid_binding[0] is not self.session.solution
+                or self._solid_binding[1] != self.session.result_identity
+                or self.session.result_error()):
+            self._solid_grid = self._solid_binding = self._solid_info = None
+            self.solid_panel.caption.setText("实体结果已失效，请重新求解并进行节点实体分析。")
+            self.solid_panel.levels.clear()
+            self.solid_panel.source.clear()
+            self.results.show_message("实体结果已失效", "整体求解版本已变化，请重新进行节点实体分析。")
+            if self.mode == "实体云图":
+                self.set_mode("模型", redraw=False)
         identity = self.result.payload.get("result_identity") if self.result else None
         stale = self.session.solution is not None and self.session.result_error()
         changed = (identity is not None and identity != self.session.result_identity)
@@ -981,8 +1024,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.case = None
             self._last_probe = None
             self._utilization = None
-            self.mode = "模型"
-            self.mode_actions["模型"].setChecked(True)
+            if self.mode != "实体云图":
+                self.set_mode("模型", redraw=False)
             self.results.show_message("结果已失效", "模型或求解版本已变化，请重新求解。")
             self.diagram.attach(self.session, None)
             self.viewport.set_result_marker(None)
@@ -1217,6 +1260,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def _apply_pick_mode(self) -> None:
         mode = next((k for k, a in self.pick_actions.items() if a.isChecked()),
                     None)
+        if mode and self.mode == "实体云图":
+            self.set_mode("模型")
         self.viewport.set_pick_mode(mode)
         if mode == "node":
             self.set_prompt("选择节点模式：在视口中点击节点选中，可用于创建边界条件/载荷/查看属性")
@@ -1289,6 +1334,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             "node": self.actions_by_name["model_node"],
             "member": self.actions_by_name["model_member"],
         }.items() if a.isChecked()), None)
+        if mode and self.mode == "实体云图":
+            self.set_mode("模型")
         # 建模模式和拾取模式互斥
         if mode:
             self.pick_actions["node"].setChecked(False)
@@ -1485,6 +1532,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         用户在三维视图里找不到它们；有了这条路，报告里"每个数字可溯源"
         才在界面上真正兑现。
         """
+        if self.mode == "实体云图":
+            self.set_mode("模型")
         self.viewport.set_selection(kind, ident)
         self._on_picked(kind, ident)
         label = "节点" if kind == "node" else "杆件"
@@ -2649,6 +2698,55 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.results_dock.raise_()
             self.set_mode("云图")
 
+    def show_solid_contour(self) -> None:
+        """切回实体主视口；无缓存时允许打开已有结果，避免重新计算。"""
+        self._sync_result_validity()
+        if self._solid_grid is None:
+            self.open_solid_result()
+            self.mode_actions[self.mode].setChecked(True)
+            return
+        self._solid_reset_camera = self.mode != "实体云图"
+        self.set_mode("实体云图")
+
+    def open_solid_result(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "打开实体结果", str(Path("results/native_solid_joint").resolve()),
+            "节点实体结果 (*.json *.vtu *.npz)")
+        if path:
+            self._load_solid_result(path)
+
+    def _load_solid_result(self, path, binding=None) -> bool:
+        from .solid_result import read_result
+
+        try:
+            grid, summary, paths, index, caption = read_result(path)
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            QMessageBox.warning(self, "实体结果无法打开",
+                                f"结果文件读取失败：{exc}。请重新选择完整结果或重新进行节点实体分析。")
+            return False
+        self._solid_grid, self._solid_binding = grid, binding
+        self._solid_info = (summary, paths, index, caption)
+        self.solid_panel.bind(paths, index, caption, saved=binding is None)
+        if summary:
+            title, columns, rows, locators = result_rows.to_rows("solid_joint", summary)
+            self.results.show_rows(title, columns, rows,
+                                   locators if binding is not None else [None] * len(rows))
+        self._solid_reset_camera = True
+        self.set_mode("实体云图")
+        self.statusBar().showMessage("实体结果已打开，可旋转、缩放并在左侧切换结果量。", 6000)
+        return True
+
+    def _switch_solid_level(self, path) -> None:
+        if not self._load_solid_result(path, self._solid_binding) and self._solid_info:
+            _summary, paths, index, caption = self._solid_info
+            self.solid_panel.bind(paths, index, caption, saved=self._solid_binding is None)
+
+    def _redraw_solid_result(self) -> None:
+        if self.mode == "实体云图" and self._solid_grid is not None and not self.runner.busy:
+            self.redraw()
+
     def show_utilization(self, interactive: bool = True) -> None:
         """应力比图。验算按物理构件逐根做，大模型要几秒，放后台跑；
         同一次求解只算一次，从「强度验算」按钮算过的结果也直接复用。
@@ -2896,6 +2994,12 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                                        if kind == "strength" else None,
                                        primary_columns={"杆件", "截面", "应力比 σ/[σ]", "折算比", "N/(φA)/f", "结论"}
                                        if kind == "strength" else None)
+                if kind == "solid_joint":
+                    directory = (result.payload.get("files") or {}).get("directory")
+                    if directory:
+                        self._load_solid_result(
+                            Path(directory) / "summary.json",
+                            (self.session.solution, self.session.result_identity))
             self.refresh()
 
         def failed(kind_: str, message: str) -> None:
@@ -3042,7 +3146,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                 geo.width(), geo.height()))
             # 抽屉是独立的 Tool 窗口，空模型引导卡片在视口上层；
             # VTK 画面贴回后必须把这些覆盖层再贴一次，否则导出图里会消失。
-            for overlay in (self.empty_state, self.viewport.result_overlay, self.left_drawer,
+            for overlay in (self.empty_state, self.viewport.axis_indicator,
+                            self.viewport.result_overlay, self.left_drawer,
                             self.right_drawer, self.bottom_drawer):
                 if overlay.isVisible():
                     painter.drawPixmap(self.mapFromGlobal(overlay.mapToGlobal(overlay.rect().topLeft())),

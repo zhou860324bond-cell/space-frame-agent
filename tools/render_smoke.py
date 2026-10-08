@@ -167,6 +167,49 @@ def main(report_path: Path | None = None) -> int:
         check("抽屉打开后仍有色标", False)
     check("右侧 AI 按钮看得见", window.agent_button.isVisible())
 
+    # 实体云图必须真画 C3D10：防止单元应力被误当成节点数据或切换时丢失相机。
+    import tempfile
+
+    import numpy as np
+    from solid3d import EDGE_PAIRS
+
+    corners = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+    tetra = np.vstack([corners, [(corners[i] + corners[j]) / 2 for i, j in EDGE_PAIRS]])
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "render_c3d10.npz"
+        nodes = np.vstack([tetra, tetra + [1.2, 0, 0]])
+        np.savez(path, nodes=nodes, elements=np.arange(20).reshape(2, 10),
+                 element_mises=[100., 200.], element_abs_principal=[120., 240.],
+                 displacement=np.tile([0.01, 0., 0.], (20, 1)))
+        before = len(errors)
+        window.results_dock.hide()
+        check("实体云图：加载已保存网格", window._load_solid_result(path))
+        settle()
+        check("实体云图：画面有彩色", _colourful_fraction(shot()) > 0.003)
+        actor = plotter.actors["_solid_result"]
+        check("实体云图：应力按单元着色", actor.GetMapper().GetScalarMode() == 2)
+        # VTK 图层合成后，Qt 绘制的坐标指示器也必须保留在导出画面中。
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QImage
+
+        saved = Path(directory) / "solid_view.png"
+        window.export_screenshot(str(saved))
+        indicator = window.viewport.axis_indicator
+        point = indicator.mapTo(window, QPoint(65, 48))
+        dpr = window.devicePixelRatioF()
+        colour = QImage(str(saved)).pixelColor(round(point.x() * dpr), round(point.y() * dpr))
+        check("实体云图：导出保留坐标指示器", colour.red() > colour.green() + 30)
+        camera = plotter.camera_position
+        window.solid_panel.field.setCurrentIndex(2)
+        settle()
+        check("实体云图：位移按节点着色",
+              plotter.actors["_solid_result"].GetMapper().GetScalarMode() == 1)
+        check("实体云图：切换结果量保留相机", plotter.camera_position == camera)
+        window.show_model()
+        settle()
+        check("实体云图：返回整体模型无异常",
+              len(errors) == before and window.viewport._frame is not None)
+
     check("全程无未处理异常", not errors, "\n\n".join(e[-600:] for e in errors))
     window.close()
 
