@@ -81,6 +81,29 @@ def test_an_empty_window_does_not_crash(qt_app):
     assert not w.act_solve.isEnabled(), "没有模型时求解按钮该是灰的"
 
 
+def test_export_screenshot_keeps_the_empty_state_card(qt_app, monkeypatch, tmp_path):
+    """防止 VTK 截图回贴时盖住空模型引导卡片，造成手册图缺失入口。"""
+    import numpy as np
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QImage
+
+    w = MainWindow()
+    w.show()
+    qt_app.processEvents()
+    monkeypatch.setattr(w.viewport.plotter, "screenshot",
+                        lambda **_kw: np.full((40, 40, 3), (255, 0, 0),
+                                                dtype=np.uint8))
+    path = tmp_path / "empty-state.png"
+    w.export_screenshot(str(path))
+    picture = QImage(str(path))
+    point = w.empty_state.mapTo(w, w.empty_state.rect().center())
+    ratio = picture.width() / w.width()
+    pixel = picture.pixelColor(QPoint(int(point.x() * ratio),
+                                      int(point.y() * ratio)))
+    assert pixel.red() < 250 or pixel.green() > 10 or pixel.blue() > 10
+    w.close()
+
+
 def test_solving_an_empty_model_is_refused(qt_app, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     shown = []

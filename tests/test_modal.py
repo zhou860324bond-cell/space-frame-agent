@@ -109,6 +109,17 @@ def test_a_single_element_cantilever_is_within_half_a_percent():
     assert abs(simple / beam_frequency(CASES["simple"]) - 1.0) > 0.05
 
 
+def test_a_fully_restrained_direction_has_no_invalid_mass_ratio():
+    """只留 z 向弯曲时，x/y 可参与质量为零；原实现除零产生 NaN 和警告。"""
+    result = modal(bending(4, "cantilever"), 2)
+    with np.errstate(divide="raise", invalid="raise"):
+        ratio = result.mass_ratio
+        cumulative = result.cumulative_ratio
+    assert np.array_equal(result.participable_mass[:2], [0.0, 0.0])
+    assert np.array_equal(ratio[:, :2], np.zeros((2, 2)))
+    assert np.array_equal(cumulative[:, :2], np.zeros((2, 2)))
+
+
 @pytest.mark.parametrize("ends, beta", CASES.items())
 def test_convergence_is_monotone_from_above(ends, beta):
     """一致质量矩阵**必然高估**频率，加密时单调下降逼近精确解。

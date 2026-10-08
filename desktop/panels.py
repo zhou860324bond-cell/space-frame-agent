@@ -23,6 +23,7 @@ from . import glyphs
 
 STEP_INDEX = Qt.ItemDataRole.UserRole + 1
 LOCATE = Qt.ItemDataRole.UserRole + 2
+ROW_MARK = Qt.ItemDataRole.UserRole + 3
 
 
 class TimelinePanel(QWidget):
@@ -204,6 +205,19 @@ class ResultPanel(QWidget):
             QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_select)
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("结果筛选"))
+        self.row_filter = QComboBox(self)
+        for text, mark in (("全部", None), ("超限", "fail"),
+                           ("无法判定", "unclear")):
+            self.row_filter.addItem(text, mark)
+        self.row_filter.currentIndexChanged.connect(self._filter_rows)
+        self.table.horizontalHeader().sortIndicatorChanged.connect(self._filter_rows)
+        filter_row.addWidget(self.row_filter)
+        self.filter_count = QLabel(self)
+        filter_row.addWidget(self.filter_count)
+        filter_row.addStretch(1)
+        box.addLayout(filter_row)
         box.addWidget(self.table, 1)
 
     def display_options(self) -> dict:
@@ -254,8 +268,18 @@ class ResultPanel(QWidget):
         if target:
             self.locate.emit(target[0], int(target[1]))
 
-    # 严重度 → 底色。红只留给**真的不合格**；"判不了"用琥珀色，
-    # 因为把它染成红的会让人以为结构有问题——那正是这一档要避免的误读。
+    def _filter_rows(self, *_args) -> None:
+        """严重度随首列单元格排序，筛选不改变编号与定位关联。"""
+        wanted = self.row_filter.currentData()
+        visible = 0
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 0)
+            show = wanted is None or (cell is not None and cell.data(ROW_MARK) == wanted)
+            self.table.setRowHidden(row, not show)
+            visible += int(show)
+        self.filter_count.setText(f"显示 {visible}/{self.table.rowCount()} 行")
+
+    # 超限用红色；无法判定用琥珀色，避免把缺参数误读为不合格。
     _MARK_TINT = {"fail": "#f7dede", "unclear": "#fbf0da"}
 
     def show_rows(self, title: str, columns: list[str],
@@ -286,6 +310,8 @@ class ResultPanel(QWidget):
                     cell.setText("" if value is None else str(value))
                 if c == 0 and locators and r < len(locators) and locators[r]:
                     cell.setData(LOCATE, locators[r])
+                if c == 0 and marks and r < len(marks):
+                    cell.setData(ROW_MARK, marks[r])
                 tint = (self._MARK_TINT.get(marks[r])
                         if marks and r < len(marks) else None)
                 if tint:
@@ -295,6 +321,10 @@ class ResultPanel(QWidget):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self._set_caption(title)
+        self.row_filter.setEnabled(bool(marks))
+        if not marks:
+            self.row_filter.setCurrentIndex(0)
+        self._filter_rows()
 
     def _set_caption(self, title: str) -> None:
         """标题第一行是结论，其余是限制与警告。
@@ -316,4 +346,7 @@ class ResultPanel(QWidget):
         self.table.clear()
         self.table.setRowCount(0)
         self.table.setColumnCount(0)
+        self.row_filter.setCurrentIndex(0)
+        self.row_filter.setEnabled(False)
+        self._filter_rows()
         self._set_caption(f"{title}\n{text}")

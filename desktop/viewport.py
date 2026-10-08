@@ -156,6 +156,7 @@ class Viewport(QWidget):
             self.plotter.add_axes(color=theme.VIEWPORT_INK_MUTED)
             self.plotter.enable_anti_aliasing("fxaa")
         self._first_render = True
+        self._annotation_context = None
 
         # 云图显示选项。三样都做成状态而不是每次调用的参数：用户在功能区
         # 上改一次，后面每张云图都跟着走，不用每次重新选。
@@ -521,6 +522,7 @@ class Viewport(QWidget):
 
     @_batched
     def clear(self) -> None:
+        self._annotation_context = None
         if not CAN_RENDER:
             return
         self.plotter.clear()
@@ -600,6 +602,8 @@ class Viewport(QWidget):
                          "_local_axis_z", "_local_axis_labels"):
                 self.plotter.remove_actor(name, reset_camera=False)
             self._decorate(self._frame)
+            if self._annotation_context is not None:
+                self._show_model_annotations(*self._annotation_context)
             self.plotter.render()
 
     @_batched
@@ -937,6 +941,41 @@ class Viewport(QWidget):
         self.load_labels = on
         return True
 
+    def _show_model_annotations(self, frame, case, supports, loads) -> None:
+        """支座与荷载共用一个布局器，旋转缩放时由 VTK 自动避让。"""
+        if not CAN_RENDER:
+            return
+        points, texts, owners, priorities = [], [], [], []
+        if supports:
+            support_points, support_texts = scene.support_labels(frame, owners=owners)
+            points.extend(support_points)
+            texts.extend(support_texts)
+            priorities.extend([2.0] * len(support_texts))
+        if loads and case and self.load_labels:
+            load_points, load_texts = scene.load_labels(frame, case, owners=owners)
+            points.extend(load_points)
+            texts.extend(load_texts)
+            priorities.extend([1.0] * len(load_texts))
+        self.plotter.remove_actor("_model_annotations-labels", reset_camera=False,
+                                  render=False)
+        if not points:
+            return
+        import pyvista as pv
+        data = pv.PolyData(np.asarray(points))
+        data["annotation_text"] = np.asarray(texts)
+        data["annotation_priority"] = np.asarray([
+            10.0 if owner == self.selection else priority
+            for owner, priority in zip(owners, priorities, strict=True)])
+        actor = self.plotter.add_point_labels(
+            data, "annotation_text", name="_model_annotations", font_size=10,
+            text_color=theme.VIEWPORT_INK, shape=None, always_visible=True,
+            show_points=False, render=False)
+        mapper = actor.GetMapper()
+        hierarchy = mapper.GetInputAlgorithm()
+        hierarchy.SetPriorityArrayName("annotation_priority")
+        mapper.SetPlaceAllLabels(False)
+        mapper.SetMaximumLabelFraction(0.35)
+
     @_batched
     def show_model(self, frame, case: str | None = None,
                    supports: bool = True, loads: bool = True) -> dict:
@@ -963,12 +1002,6 @@ class Viewport(QWidget):
                     mesh, color=theme.SUPPORT,
                     smooth_shading=True, ambient=0.28, diffuse=0.72,
                     specular=0.10, specular_power=12)
-            support_points, support_texts = scene.support_labels(frame)
-            if support_points:
-                self.plotter.add_point_labels(
-                    support_points, support_texts, font_size=9,
-                    text_color=theme.VIEWPORT_INK_MUTED,
-                    shape=None, always_visible=True, show_points=False)
             info["supports"] = {k: 1 for k in glyphs}
         legend: list[tuple[str, str]] = []
         if tubes is not None and tubes.n_points:
@@ -990,17 +1023,12 @@ class Viewport(QWidget):
                 legend.append((_LEGEND_TEXT.get(label, label), color))
             # **数值直接标在旁边。** 四类荷载用四种颜色跑不过 all-pairs 校验，
             # 而且颜色只回答"哪一类"、回答不了"多大"——后者才是工程师要看的。
-            points, texts = scene.load_labels(frame, case)
-            if points and self.load_labels:
-                self.plotter.add_point_labels(
-                    # 文字用文字色，不用系列色：标注是说明，不是又一个分类。
-                    # 力矩标成橙色而箭头是绿色，本身就自相矛盾。
-                    points, texts, font_size=11, text_color=theme.VIEWPORT_INK,
-                    shape=None, always_visible=True, show_points=False)
             info["loads"] = list(arrows)
         self._add_legend(legend)
         self._decorate(frame)
         self._fit()
+        self._annotation_context = (frame, case, supports, loads)
+        self._show_model_annotations(*self._annotation_context)
         self.plotter.render()
         return info
 

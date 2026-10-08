@@ -26,6 +26,7 @@ dependencies = [
     "jsonschema>=4.20",
     "matplotlib>=3.8",
     "python-docx>=1.1",
+    "Pillow>=10",
 ]
 
 [project.optional-dependencies]
@@ -47,14 +48,8 @@ all = [
     "space-frame-agent[dev]",
 ]
 
-[tool.setuptools]
-# 源码在 src/ 与 desktop/ 两处，不是标准布局；这里显式列出来，
-# 免得 setuptools 去猜（猜错了会把 tests 也打进包里）。
-packages = ["desktop"]
-py-modules = []
-
-[tool.setuptools.package-dir]
-desktop = "desktop"
+# 源码在 src/ 与 desktop/ 两处，模块清单由 setup.py 从 src/*.py 生成。
+# 这样新增内核模块也会进入 wheel，不会出现源码运行正常、安装后缺模块。
 
 # --------------------------------------------------------------------------- 静态检查
 

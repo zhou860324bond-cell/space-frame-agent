@@ -696,7 +696,8 @@ def support_glyphs(frame, size: float | None = None) -> dict[str, pv.PolyData]:
             for k, v in groups.items()}
 
 
-def support_labels(frame, size: float | None = None) -> tuple[list, list[str]]:
+def support_labels(frame, size: float | None = None,
+                   owners: list | None = None) -> tuple[list, list[str]]:
     """返回主支座的精确约束自由度标注。
 
     锥体、方块只能表达支座的概略类别，不能表达 ``U1/U2/U3/UR1/UR2/UR3``
@@ -717,6 +718,8 @@ def support_labels(frame, size: float | None = None) -> tuple[list, list[str]]:
         p = np.asarray(frame.nodes[nid].xyz, dtype=float)
         points.append(p + np.array([offset, offset, offset]))
         texts.append(f"N{nid} BC: {fixed}")
+        if owners is not None:
+            owners.append(("node", nid))
     return points, texts
 
 
@@ -1259,7 +1262,8 @@ def mode_shape_tubes(frame, shapes: np.ndarray, mode: int, scale: float,
     return _polylines(blocks).tube(radius=r, n_sides=32, capping=True)
 
 
-def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list]:
+def load_labels(frame, case: str, size: float | None = None,
+                owners: list | None = None) -> tuple[list, list]:
     """每个荷载的标注点与文字（含带符号全局分量、数值和单位）。
 
     **类型不该只靠颜色分。** 四类荷载用四种颜色，跑 validate_palette.js 的
@@ -1287,20 +1291,22 @@ def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list
                  for axis, value in zip("xyz", values, strict=True) if value != 0.0]
         return f"{', '.join(terms)} {unit} [global]" if terms else ""
 
-    def add(point, text: str) -> None:
+    def add(point, text: str, owner: tuple) -> None:
         if not text:
             return
         points.append(np.asarray(point, dtype=float) + np.array([0.0, 0.0, span]))
         texts.append(text)
+        if owners is not None:
+            owners.append(owner)
 
     for node_id, load in load_case.nodal_loads.items():
         if node_id not in frame.nodes:
             continue
         p = frame.nodes[node_id].xyz
         add(p, vector_text("F", load[:3], system.force_scale,
-                           system.force_unit))
+                           system.force_unit), ("node", node_id))
         add(p, vector_text("M", load[3:], system.moment_scale,
-                           system.moment_unit))
+                           system.moment_unit), ("node", node_id))
 
     for member_id, member in frame.members.items():
         pi, pj = member_endpoints(frame, member)
@@ -1309,7 +1315,7 @@ def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list
                 length = float(np.linalg.norm(pj - pi)) or 1.0
                 where = pi + (float(load.a) / length) * (pj - pi)
                 add(where, vector_text("P", load.w1, system.force_scale,
-                                       system.force_unit))
+                                       system.force_unit), ("member", member_id))
             elif load.kind == TRAPEZOID:
                 first = vector_text("w1", load.w1, system.line_load_scale,
                                     system.line_load_unit)
@@ -1318,9 +1324,9 @@ def load_labels(frame, case: str, size: float | None = None) -> tuple[list, list
                 # 单位与坐标系只写一次，避免长标签重复两遍。
                 first = first.removesuffix(
                     f" {system.line_load_unit} [global]")
-                add(0.5 * (pi + pj), f"{first} -> {second}")
+                add(0.5 * (pi + pj), f"{first} -> {second}", ("member", member_id))
             else:
                 add(0.5 * (pi + pj), vector_text(
                     "w", load.w1, system.line_load_scale,
-                    system.line_load_unit))
+                    system.line_load_unit), ("member", member_id))
     return points, texts

@@ -73,9 +73,12 @@ class ModalResult:
         """(n_modes, 3) 各阶的参与质量比，分母是**能参与的**质量。
 
         拿 total_mass 当分母是错的：支座上那部分永远参与不了，比值上不去
-        100%，而用户会以为阶数不够。
+        100%，而用户会以为阶数不够。某方向完全受约束时分母为 0，
+        该方向记 0 并由 participable_mass=0 标明不适用。
         """
-        return self.effective_mass / self.participable_mass
+        return np.divide(self.effective_mass, self.participable_mass,
+                         out=np.zeros_like(self.effective_mass),
+                         where=self.participable_mass > 0)
 
     @property
     def cumulative_ratio(self) -> np.ndarray:

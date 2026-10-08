@@ -49,6 +49,9 @@ print(result.evaluations)   # 所有评估点
 
 from __future__ import annotations
 
+import math
+from task_control import TaskCancelled, checkpoint
+
 import itertools
 import random
 import time
@@ -225,6 +228,8 @@ class SectionOptimizer:
                 params=params, objectives=objectives, constraints=constraints,
                 feasible=feasible, duration_ms=(time.monotonic() - start) * 1000,
             )
+        except TaskCancelled:
+            raise
         except Exception as e:  # noqa: BLE001  单个候选截面算不出来只标 feasible=False 继续搜；error 字段留了原文
             return EvaluationPoint(
                 params=params, objectives={}, constraints={}, feasible=False,
@@ -294,31 +299,40 @@ class SectionOptimizer:
 
     # --------------------------------------------------------- 优化算法
 
-    def grid_search(self) -> OptimizationResult:
+    def grid_search(self, progress=None) -> OptimizationResult:
         """网格搜索：穷举所有参数组合。"""
         start = time.monotonic()
         param_names = list(self._variables.keys())
         value_lists = [self._variables[name] for name in param_names]
-        combinations = list(itertools.product(*value_lists))
+        combinations = itertools.product(*value_lists)
+        total = math.prod(len(values) for values in value_lists)
 
         evaluations = []
         for combo in combinations:
+            checkpoint()
             params = dict(zip(param_names, combo, strict=True))
             evaluations.append(self._evaluate(params))
+            if progress is not None:
+                progress(len(evaluations), total)
+        checkpoint()
 
         return self._make_result("grid_search", evaluations, start)
 
-    def random_search(self, n_samples: int = 100) -> OptimizationResult:
+    def random_search(self, n_samples: int = 100, progress=None) -> OptimizationResult:
         """随机搜索：在参数范围内随机采样 n_samples 次。"""
         start = time.monotonic()
         param_names = list(self._variables.keys())
         evaluations = []
         for _ in range(n_samples):
+            checkpoint()
             params = {}
             for name in param_names:
                 values = self._variables[name]
                 params[name] = self._rng.uniform(min(values), max(values))
             evaluations.append(self._evaluate(params))
+            if progress is not None:
+                progress(len(evaluations), n_samples)
+        checkpoint()
         return self._make_result("random_search", evaluations, start)
 
     def optimize(self, algorithm: str = "grid_search", **kwargs) -> OptimizationResult:

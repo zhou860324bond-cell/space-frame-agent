@@ -246,7 +246,7 @@ class SectionOptPanel(QWidget):
         self.btn_run.setEnabled(False)
         self.lbl_status.setText("正在遍历参数组合并求解……")
 
-        def _job():
+        def _job(report):
             from section_optimizer import SectionOptimizer
             opt = SectionOptimizer(
                 model=model, section_name=section_name,
@@ -256,10 +256,14 @@ class SectionOptPanel(QWidget):
                 n = 1
                 for v in variables.values():
                     n *= v[2]
-                return opt.random_search(n_samples=n)
-            return opt.grid_search()
+                return opt.random_search(
+                    n_samples=n, progress=lambda done, total: report(
+                        f"已完成 {done}/{total} 个参数样本", None, True))
+            return opt.grid_search(progress=lambda done, total: report(
+                f"已完成 {done}/{total} 个参数样本", None, True))
 
-        self.runner.submit(_job, on_done=self._on_done, on_failed=self._on_failed)
+        self.runner.submit(_job, on_done=self._on_done, on_failed=self._on_failed,
+                           on_progress=lambda text, _args, _ok: self.lbl_status.setText(text))
 
     def _on_done(self, result):
         self.btn_run.setEnabled(True)
@@ -289,5 +293,8 @@ class SectionOptPanel(QWidget):
 
     def _on_failed(self, exc_type, msg):
         self.btn_run.setEnabled(True)
+        if exc_type == "TaskCancelled":
+            self.lbl_status.setText("优化已停止；可调整参数后重新开始。")
+            return
         self.lbl_status.setText(f"{glyphs.CROSS} 优化失败：{exc_type}: {msg}")
         self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")

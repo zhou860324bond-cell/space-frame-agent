@@ -7,7 +7,10 @@
 from __future__ import annotations
 
 import math
+import os
+import tempfile
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -19,6 +22,24 @@ from span_loads import KINDS as SPAN_KINDS
 from span_loads import SpanLoad
 
 CURRENT_SCHEMA_VERSION = 1
+
+
+def atomic_write_text(path: str | Path, text: str) -> None:
+    """正式保存先完整写入同目录临时文件，再替换原文件。"""
+    target = Path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", newline="", delete=False,
+                dir=target.parent, prefix=f".{target.name}.", suffix=".tmp") as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 _LOAD6 = {"type": "array", "minItems": 6, "maxItems": 6, "items": {"type": "number"}}
 _VEC3 = {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}

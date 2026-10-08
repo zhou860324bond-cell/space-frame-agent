@@ -14,6 +14,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
+from datetime import datetime, timezone
+from uuid import uuid4
 from typing import Any
 
 import numpy as np
@@ -25,6 +28,7 @@ from result_db import from_solution as result_db_from_solution
 from session_base import ToolResult
 import capsule as _capsule
 import silent_failures as _silent
+from task_control import TaskCancelled, checkpoint
 
 
 class SolvingMixin:
@@ -64,9 +68,13 @@ class SolvingMixin:
                 "error": f"没有名为 {target!r} 的分析步", "steps": names})
 
         original = self.model
+        original_results = (self.solution, self.result_db, self.frame, self.compilation,
+                            self.result_identity, self.solve_summary, self._solution_model_key)
+        completed = False
         summary = []
         try:
             for eff in effective:
+                checkpoint()
                 self.model = step_module.payload_for(eff, original)
                 if eff.analysis == "pdelta":
                     outcome = self.solve_model(
@@ -98,11 +106,24 @@ class SolvingMixin:
                     "equilibrium_ok": entry.get("equilibrium_ok")})
                 if eff.name == target:
                     kept = (self.solution, self.result_db,
-                            self.frame, self.compilation)
+                            self.frame, self.compilation, self.result_identity,
+                            self.solve_summary)
+            completed = True
         finally:
             self.model = original
+            if not completed:
+                (self.solution, self.result_db, self.frame, self.compilation,
+                 self.result_identity, self.solve_summary,
+                 self._solution_model_key) = original_results
 
-        self.solution, self.result_db, self.frame, self.compilation = kept
+        (self.solution, self.result_db, self.frame, self.compilation,
+         self.result_identity, self.solve_summary) = kept
+        self._solution_model_key = self._model_key()
+        if self.result_identity is not None:
+            self.result_identity["model_fingerprint"] = self._solution_model_key.hex()
+            self.result_identity["step"] = target
+            self.result_db.metadata["result_identity"] = deepcopy(self.result_identity)
+            self.solve_summary.payload["result_identity"] = deepcopy(self.result_identity)
         return ToolResult(True, {
             "steps": summary, "count": len(summary), "inspecting": target,
             "note": f"会话里留的是分析步 {target!r} 的结果，后处理都按它来；"
@@ -134,6 +155,41 @@ class SolvingMixin:
     def solve_model(self, analysis: str = "linear", increments: int = 10,
                     max_iter: int = 40, tolerance: float = 1e-7,
                     amplitudes: dict | None = None) -> ToolResult:
+        """取消计算时恢复原结果，避免把半次求解发布给后处理。"""
+        if self.solution is not None:
+            self.result_error()
+        previous = (self.frame, self.solution, self.compilation, self.result_db,
+                    self.result_identity, self.solve_summary, self._solution_model_key)
+        parameters = {"analysis": analysis, "increments": increments,
+                      "max_iter": max_iter, "tolerance": tolerance,
+                      "amplitudes": deepcopy(amplitudes)}
+        try:
+            checkpoint()
+            outcome = self._solve_model(**parameters)
+            if (outcome.payload.get("cases") and self.solution is not None
+                    and self.result_db is not None):
+                self._solution_model_key = self._model_key()
+                self.result_identity = {
+                    "solve_id": uuid4().hex,
+                    "model_fingerprint": self._solution_model_key.hex(),
+                    "solved_at": datetime.now(timezone.utc).isoformat(),
+                    "parameters": parameters,
+                    "analysis": deepcopy(self.solution.analysis),
+                }
+                self.result_db.metadata["result_identity"] = deepcopy(self.result_identity)
+                outcome.payload["result_identity"] = deepcopy(self.result_identity)
+                self.solve_summary = deepcopy(outcome)
+            else:
+                self._invalidate()
+            return outcome
+        except TaskCancelled:
+            (self.frame, self.solution, self.compilation, self.result_db,
+             self.result_identity, self.solve_summary, self._solution_model_key) = previous
+            raise
+
+    def _solve_model(self, analysis: str = "linear", increments: int = 10,
+                     max_iter: int = 40, tolerance: float = 1e-7,
+                     amplitudes: dict | None = None) -> ToolResult:
         errors = self.validation_errors()
         if errors:
             return ToolResult(False, {"errors": errors,
@@ -141,6 +197,7 @@ class SolvingMixin:
         self.compilation = compile_model(self.model, validated=True)
         self.frame = self.compilation.analysis_model
         self.result_db = None
+        checkpoint()
         try:
             if analysis == "linear":
                 self.solution = solve(self.frame)
@@ -183,6 +240,7 @@ class SolvingMixin:
             else:
                 payload["hint"] = "检查约束是否足以消除全部刚体位移"
             return ToolResult(False, payload)
+        checkpoint()
         self.result_db = result_db_from_solution(
             self.compilation.source_ir, self.frame, self.solution,
             self.compilation.mapping)

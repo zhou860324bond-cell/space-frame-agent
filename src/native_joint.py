@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 import solid3d
+from task_control import checkpoint
 from solid_joint import (JointSpec, SolidJointError, diagnose_peak_convergence,
                          hot_spot_stress_linear, mesh_reference_length,
                          prepare_joint_spec)
@@ -283,6 +284,7 @@ def _fit_default_mesh(spec, size: float, reference: float,
     """
     first = size
     for _attempt in range(_DEFAULT_MESH_RETRIES + 1):
+        checkpoint()
         hotspot = max(reference, 0.4 * size)
         # 放粗之后网格比壁厚粗好几倍，二次单元的边中节点若贴到弯曲管壁上，
         # 薄壁处的单元会被拧翻（实测 detJ = -1.8，求解器直接拒算；Gmsh 的
@@ -347,8 +349,10 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
     每档划网格、求解时各报一次：整个作业是分钟级的，不能只显示"计算中"。
     """
     def say(text: str) -> None:
+        checkpoint()
         if progress is not None:
             progress(text)
+        checkpoint()
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member)
     reference = mesh_reference_length(spec)
@@ -369,6 +373,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
     target.mkdir(parents=True, exist_ok=True)
     levels_out: list[dict[str, Any]] = []
     for index, (size, prepared) in enumerate(plan):
+        checkpoint()
         tag = f"第 {index + 1}/{len(plan)} 档"
         if isinstance(prepared, tuple):
             size, hotspot_size, mesh, cut_faces = prepared
@@ -405,6 +410,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                 cut_faces[spec.anchor_member], loads)
         except solid3d.Solid3DError as exc:
             raise SolidJointError(f"自研 C3D10 求解失败：{exc}") from exc
+        checkpoint()
         stem = target / f"native_joint_{index}"
         vtu, png = _write_vtu_and_png(mesh, result, stem)
         equilibrium = result.reaction + loads

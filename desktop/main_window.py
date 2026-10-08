@@ -1,11 +1,8 @@
 """主窗口。
 
-布局照 CAE 的通行做法：顶部模块工具栏、左侧模型树、中间视口、
-底部状态栏，右侧一个可停靠的属性/结果面板。
-
-**主窗口只搭骨架和转发动作**，算什么、画什么都在别处。这样它才不会长成
-那种两千行的上帝类——参照项目的 `main_window.py` 就是那样，
-一个文件塞下了整个应用。
+布局照 CAE 的通行做法：顶部模块工具栏、中间视口、两侧与底部抽屉。
+主窗口负责装配与建模流程；命令、结果交互和偏好设置分别由 mixin 承担，
+实际数值计算留在内核，场景绘制留在视口。
 """
 
 from __future__ import annotations
@@ -14,8 +11,7 @@ import sys
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QPushButton,
                                QScrollArea, QStatusBar, QToolBar,
@@ -43,28 +39,9 @@ from .viewport import Viewport                     # noqa: E402
 from .worker import Runner                         # noqa: E402
 from .workflow_bar import WorkflowBar, draft_target  # noqa: E402
 from . import glyphs
-
-def _settings() -> QSettings:
-    """界面设置的唯一入口。设了 FRAMELAB_SETTINGS_FILE 就用那个 ini 文件——
-    测试靠它把设置隔离到临时目录，不去碰用户注册表里真实的设置。"""
-    import os
-
-    path = os.environ.get("FRAMELAB_SETTINGS_FILE")
-    if path:
-        return QSettings(path, QSettings.Format.IniFormat)
-    return QSettings("SpaceFrameAgent", "Desktop")
-
-
-def _takes_command(handler) -> bool:
-    """处理函数要不要收那条 Command。
-
-    与其让每个处理函数都写一个用不上的参数，不如在这里看一眼签名。
-    """
-    import inspect
-    try:
-        return bool(inspect.signature(handler).parameters)
-    except (TypeError, ValueError):
-        return False
+from .window_commands import WindowCommandsMixin
+from .window_preferences import WindowPreferencesMixin, _settings
+from .window_results import WindowResultsMixin
 
 
 def _format_combo_factors(factors: dict[str, float]) -> str:
@@ -106,7 +83,8 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 MODES = ("模型", "分析网格", "变形", "云图", "内力图", "应力比", "模态")
 
 
-class MainWindow(QMainWindow):
+class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
+                 WindowResultsMixin, QMainWindow):
     def __init__(self, session: Session | None = None):
         super().__init__()
         self.session = session or Session()
@@ -177,6 +155,10 @@ class MainWindow(QMainWindow):
         self._pending_command = None
         # (求解对象, 强度验算 payload)——按求解对象身份判断是否过期
         self._utilization = None
+        self._task_busy = False
+        self._close_pending = False
+        self._busy_action_states = {}
+        self._displayed_solution = None
 
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
@@ -228,7 +210,9 @@ class MainWindow(QMainWindow):
         self._build_ribbon()
         self._build_menus()
         self._build_statusbar()
+        self.runner.busy_changed.connect(self._on_busy)
         self.refresh()
+        self.actions_by_name["stop_task"].setEnabled(False)
 
     # --- 构件 ---
 
@@ -246,7 +230,7 @@ class MainWindow(QMainWindow):
         title = QLabel("创建第一个结构模型", panel)
         title.setProperty("emptyState", "title")
         subtitle = QLabel(
-            "从图纸识别、参数化生成或二维草图开始；三条路径最终进入同一模型。",
+            "推荐从参数化框架开始；图纸识别为实验性功能，需核对识别结果。",
             panel)
         subtitle.setProperty("emptyState", "subtitle")
         subtitle.setWordWrap(True)
@@ -263,11 +247,13 @@ class MainWindow(QMainWindow):
         box.addSpacing(6)
         actions = QHBoxLayout()
         for text, action_name, primary in (
-                ("AI 识别图纸", "sketch_ai", True),
-                ("参数化框架", "frame", False),
+                ("AI 识别图纸", "sketch_ai", False),
+                ("参数化框架", "frame", True),
                 ("二维草图", "sketch", False)):
             button = QPushButton(text, panel)
             button.setMinimumHeight(34)
+            if action_name == "sketch_ai":
+                button.setToolTip("实验性：识别后请核对拓扑、尺度和边界条件，再确认加载。")
             if primary:
                 button.setProperty("role", "primary")
             button.clicked.connect(self.actions_by_name[action_name].trigger)
@@ -292,94 +278,6 @@ class MainWindow(QMainWindow):
         y = area.top() + max(12, (area.height() - self.empty_state.height()) // 2)
         self.empty_state.move(x, y)
         self.empty_state.raise_()
-
-    def _build_actions(self) -> None:
-        """按 commands.COMMANDS 建 QAction。
-
-        **状态只存在 QAction 上**：功能区按钮绑的是同一个对象，
-        所以置灰、勾选、快捷键都只写一遍，不会出现"菜单是灰的、
-        功能区是亮的"这种自相矛盾。
-        """
-        from . import commands, icons
-
-        self.actions_by_name: dict[str, QAction] = {}
-        for cmd in commands.COMMANDS:
-            act = QAction(icons.icon(cmd.icon), cmd.label, self)
-            act.setObjectName(cmd.name)
-            act.setToolTip(cmd.tip)
-            act.setStatusTip(cmd.tip)
-            if cmd.shortcut:
-                act.setShortcut(cmd.shortcut)
-            if cmd.checkable:
-                act.setCheckable(True)
-            # 晚绑定：点的时候才去主窗口上取方法，这样动作表不依赖构造顺序
-            act.triggered.connect(
-                lambda _=False, c=cmd: self._run_command(c))
-            self.actions_by_name[cmd.name] = act
-            self.addAction(act)                 # 让快捷键在窗口任何位置都生效
-
-        # Esc 全局退出当前建模/拾取模式（视口自身也会发 escape_pressed，
-        # 这里再兜一层，焦点在面板/树上时按 Esc 同样有效；cancel 幂等）
-        sc_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
-        sc_esc.activated.connect(self.cancel_interaction)
-
-        # 常用的几个留成属性，代码里读起来顺一点
-        self._sync_selection_actions()
-        self.act_new = self.actions_by_name["new"]
-        self.act_solve = self.actions_by_name["solve"]
-        self.act_generate = self.actions_by_name["frame"]
-        self.act_report = self.actions_by_name["report"]
-        self.act_chat = self.actions_by_name["chat"]
-        self.act_chat.setChecked(False)
-        # 这两个开关的初值必须和视口的实际状态一致，否则第一次点是反的
-        self.actions_by_name["load_labels"].setChecked(self.viewport.load_labels)
-        self.actions_by_name["lang"].setChecked(False)
-
-        # 四个显示模式做成互斥的一组。**看得见当前在哪个模式**，
-        # 比按了之后靠图猜要好——变形图和模型图在小位移下长得很像
-        self.mode_actions = {"模型": self.actions_by_name["model"],
-                             "分析网格": self.actions_by_name["analysis_mesh"],
-                             "变形": self.actions_by_name["deformed"],
-                             "云图": self.actions_by_name["contour"],
-                             "内力图": self.actions_by_name["force_diagram"],
-                             "应力比": self.actions_by_name["utilization"],
-                             "模态": self.actions_by_name["modal"]}
-        group = QActionGroup(self)
-        group.setExclusive(True)
-        for act in self.mode_actions.values():
-            group.addAction(act)
-        self.mode_actions[self.mode].setChecked(True)
-
-        # 拾取过滤器也是互斥的一组，但**允许全不选**——不选时回到纯看图，
-        # 转视角不会误点中东西
-        self.pick_actions = {"node": self.actions_by_name["pick_node"],
-                             "member": self.actions_by_name["pick_member"]}
-        picks = QActionGroup(self)
-        picks.setExclusive(True)
-        picks.setExclusionPolicy(
-            QActionGroup.ExclusionPolicy.ExclusiveOptional)
-        for act in self.pick_actions.values():
-            picks.addAction(act)
-
-    def _run_command(self, cmd) -> None:
-        """分派。找不到处理函数就说清楚，不要静默无反应——
-        **按了没动静是最糟的交互**，用户分不清是没点中还是坏了。"""
-        handler = getattr(self, cmd.handler, None)
-        if handler is None:
-            QMessageBox.information(self, cmd.label,
-                                    f"「{cmd.label}」还没接上（缺 {cmd.handler}）。")
-            return
-        # 点了别的命令就放弃之前"等你去点选"的那个：不然用户改主意去做别的，
-        # 之后为了别的目的点中一根杆，先前的「创建载荷」对话框会莫名其妙
-        # 弹出来。需要拾取的命令会在自己的处理函数里重新挂上。
-        self._pending_command = None
-        try:
-            handler(cmd) if _takes_command(handler) else handler()
-        except Exception as e:  # noqa: BLE001  命令执行的界面边界：异常要变成对话框，不能把主窗口带走；类名与消息都展示了
-            QMessageBox.critical(self, f"{cmd.label} 失败",
-                                 f"错误：{type(e).__name__}: {str(e)}")
-            import traceback
-            traceback.print_exc()
 
     # 全部面板把手（PanelHandle），测试与"全部收起"按它逐个检查。
     PANELS = ("tree_dock", "props_dock", "timeline_dock", "chat_dock", "bc_dock",
@@ -649,6 +547,10 @@ class MainWindow(QMainWindow):
         self.lbl_last.setToolTip("最近一次成功或失败的建模操作")
         self.lbl_last.setStyleSheet(f"color: {theme.INK_DIM}; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_last)
+        self.btn_cancel_task = QPushButton("停止任务", self)
+        self.btn_cancel_task.setVisible(False)
+        self.btn_cancel_task.clicked.connect(self.stop_task)
+        self.statusBar().addPermanentWidget(self.btn_cancel_task)
 
         self._on_ribbon_page_changed(self.ribbon.currentIndex())
 
@@ -673,55 +575,6 @@ class MainWindow(QMainWindow):
             act.setChecked(True)
         if redraw:
             self.redraw()
-
-    # 记住的界面设置。只在程序入口 restore_preferences() 之后才会写回——
-    # 测试会建上千个窗口，每个关窗时都写一遍的话，用户真实的设置会被测试
-    # 用的默认值覆盖掉。
-    _persist_preferences = False
-
-    def restore_preferences(self) -> None:
-        """恢复上次的窗口大小、抽屉宽度、云图显示选项与内力分量。
-
-        不记住的话，每次启动都回到默认值——用户上次选的「24 级 + Abaqus
-        彩虹 + Vz」这类状态，关掉就没了，下次还得重新找一遍。
-        """
-        import json
-
-        self._persist_preferences = True
-        settings = _settings()
-        geometry = settings.value("window/geometry")
-        if geometry:
-            self.restoreGeometry(geometry)
-        for side, drawer in self.drawers.drawers.items():
-            extent = settings.value(f"drawers/{side}")
-            try:
-                if extent is not None:
-                    drawer.extent = int(extent)
-            except (TypeError, ValueError):
-                pass
-        try:
-            options = json.loads(settings.value("results/display", "{}") or "{}")
-        except (TypeError, ValueError):
-            options = {}
-        if isinstance(options, dict) and options:
-            self.results.apply_options(options)
-        component = settings.value("results/component")
-        if component in {"M", "V", "N", "Vy", "Vz", "T", "My", "Mz", scene.STRESS}:
-            self.component = component
-        self.drawers.relayout()
-
-    def _save_preferences(self) -> None:
-        if not self._persist_preferences:
-            return
-        import json
-
-        settings = _settings()
-        settings.setValue("window/geometry", self.saveGeometry())
-        for side, drawer in self.drawers.drawers.items():
-            settings.setValue(f"drawers/{side}", int(drawer.extent))
-        settings.setValue("results/display",
-                          json.dumps(self.results.display_options()))
-        settings.setValue("results/component", self.component)
 
     def offer_autosave_restore(self) -> bool:
         """启动时：上次有没保存的模型就问要不要恢复。只在程序入口调用，
@@ -872,6 +725,10 @@ class MainWindow(QMainWindow):
         """求解器自己抛异常。守门拦不住的（比如奇异矩阵）会走到这里。"""
         self._on_busy(False)
         self.statusBar().clearMessage()
+        if kind == "TaskCancelled":
+            self.statusBar().showMessage(message, 8000)
+            self.refresh()
+            return
         QMessageBox.critical(self, "求解过程出错", f"{kind}: {message[:600]}")
 
     # --- Agent 面板 ---
@@ -882,11 +739,37 @@ class MainWindow(QMainWindow):
         不置灰的话，用户在求解途中点「新建」，后台线程正在读的那个
         Session 就被换掉了——**这类竞态出来的错误现场根本没法复现**。
         """
+        busy = bool(busy or self.runner.busy)
         idle = not busy
-        self.act_new.setEnabled(idle)
-        self.act_generate.setEnabled(idle)
+        if busy and not self._task_busy:
+            self._busy_action_states = {
+                name: action.isEnabled() for name, action in self.actions_by_name.items()
+                if name not in self.BUSY_ALLOWED}
+            self._pending_command = None
+            self.viewport.set_model_mode(None)
+        for name, enabled in self._busy_action_states.items():
+            self.actions_by_name[name].setEnabled(idle and enabled)
+        self._task_busy = busy
         self.act_solve.setEnabled(idle and bool(self.session.model.get("nodes")))
-        self.workflow_bar.setEnabled(idle)
+        self.actions_by_name["stop_task"].setEnabled(busy)
+        self.btn_cancel_task.setVisible(busy)
+        self.btn_cancel_task.setEnabled(busy)
+        for widget in (self.workflow_bar, self.quickbar, self.tree, self.properties,
+                       self.bc, self.timeline, self.sketch, self.section_opt,
+                       self.diagram, self.results, self.empty_state):
+            widget.setEnabled(idle)
+        if idle and self._close_pending:
+            QTimer.singleShot(0, self.close)
+
+    def stop_task(self) -> None:
+        """请求停止当前任务，等安全检查点到达后再恢复编辑。"""
+        if self.chat.conversation is not None:
+            self.chat.conversation.cancel()
+        if self.runner.cancel():
+            self.btn_cancel_task.setEnabled(False)
+            self.actions_by_name["stop_task"].setEnabled(False)
+            self.statusBar().showMessage(
+                "正在停止任务；将于安全检查点结束，矩阵分解完成前请等待。")
 
     def _on_chat_changed(self, touched_model: bool) -> None:
         """对话改过模型就重画。
@@ -934,6 +817,7 @@ class MainWindow(QMainWindow):
     # --- 绘制 ---
 
     def redraw(self) -> None:
+        self._sync_result_validity()
         frame = None
         draft = False
         try:
@@ -1031,6 +915,7 @@ class MainWindow(QMainWindow):
                                             self.case)
 
     def refresh(self) -> None:
+        self._sync_result_validity()
         self.tree.rebuild(self.session, self.result)
         model = self.session.model
         if model.get("nodes"):
@@ -1056,7 +941,7 @@ class MainWindow(QMainWindow):
             self.lbl_last.setText(f"最近：第 {last.index + 1} 步　{last.summary}")
         else:
             self.lbl_last.setText("最近：尚未建模")
-        self.act_solve.setEnabled(bool(model.get("nodes")))
+        self.act_solve.setEnabled(not self.runner.busy and bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
         self.redraw()
         has_model = bool(model.get("nodes"))
@@ -1065,6 +950,32 @@ class MainWindow(QMainWindow):
         if self.empty_state.isVisible():
             self._position_empty_state()
         self.autosave.schedule()
+
+    def _sync_result_validity(self) -> None:
+        """模型修改后清空表、探针、曲线与云图，共用会话内容校验。"""
+        if self.runner.busy:
+            return
+        identity = self.result.payload.get("result_identity") if self.result else None
+        stale = self.session.solution is not None and self.session.result_error()
+        changed = (identity is not None and identity != self.session.result_identity)
+        if self._displayed_solution is not self.session.solution:
+            self._displayed_solution = self.session.solution
+            self._last_probe = None
+            self._utilization = None
+            self._modal_view = None
+            self.diagram.attach(self.session, self.case)
+            self.viewport.set_result_marker(None)
+        if stale or changed or (self.result is not None and self.result.ok
+                                and self.session.solution is None):
+            self.result = None
+            self.case = None
+            self._last_probe = None
+            self._utilization = None
+            self.mode = "模型"
+            self.mode_actions["模型"].setChecked(True)
+            self.results.show_message("结果已失效", "模型或求解版本已变化，请重新求解。")
+            self.diagram.attach(self.session, None)
+            self.viewport.set_result_marker(None)
 
     def _sync_model_tree(self, has_model: bool) -> None:
         """Give an empty viewport its width back, then reveal real model data."""
@@ -1168,101 +1079,6 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.statusBar().showMessage(what, 5000)
 
-    def _on_result_display_changed(self, options: dict) -> None:
-        """结果显示选项只改变视图，不触碰求解数据。
-
-        色系和打光是**视口的状态**，在这里就落到视口上，不放在 redraw 里：
-        redraw 在没有结果时会提前返回去画模型图，选项就悄悄丢了——
-        用户下次真的出云图，看到的还是上上次那套配色。
-        """
-        self.result_display_options = dict(options)
-        self.viewport.set_contour_palette(
-            options.get("palette", theme.DEFAULT_PALETTE))
-        self.viewport.set_contour_shading(options.get("shading", True))
-        if self.mode == "云图" and self.session.solution is not None:
-            self.redraw()
-
-    def probe_member_result(self, member_id: int, point) -> None:
-        """将视口点击位置变成可审查的杆件截面结果表。"""
-        if self.session.solution is None or self.session.frame is None:
-            return
-        from .result_inspector import probe_member
-
-        data = probe_member(self.session.frame, self.session.solution,
-                            member_id, point, self.case)
-        self._last_probe = data
-        rows = []
-        for component in ("N", "Vy", "Vz", "T", "My", "Mz"):
-            unit = (data["moment_unit"] if component in {"T", "My", "Mz"}
-                    else data["force_unit"])
-            rows.append([component, data["forces"][component], unit,
-                         "杆件局部分量"])
-        for prefix, values in (("U(global)", data["global_displacement"]),
-                               ("U(local)", data["local_displacement"])):
-            for axis, value in zip("xyz", values, strict=True):
-                rows.append([f"{prefix}.{axis}", float(value),
-                             data["displacement_unit"], "中心线位移"])
-        if data["stress"] is not None:
-            rows += [["sigma_min", data["stress"]["min"], "MPa", "受压端"],
-                     ["sigma_max", data["stress"]["max"], "MPa", "受拉端"]]
-        else:
-            rows.append(["截面正应力", "不可用", "", data["stress_error"]])
-        self.results_dock.setVisible(True)
-        self.results_dock.raise_()
-        self.results.show_rows(
-            f"结果探针：杆件 {member_id}，工况 {data['case']}，"
-            f"距 i 端 x={data['x']:.4g}/{data['length']:.4g}",
-            ["结果量", "值", "单位", "约定"], rows,
-            [("member", member_id)] * len(rows))
-        self.viewport.set_result_marker(
-            data["point"], f"PROBE M{member_id} x={data['x']:.3g}")
-
-    def locate_current_extreme(self) -> None:
-        """定位当前梁内力分量的全结构绝对极值。"""
-        if self.session.solution is None or self.session.frame is None:
-            QMessageBox.information(self, "尚无分析结果", "请先求解。")
-            return
-        from .result_inspector import global_extreme
-
-        extreme = global_extreme(self.session.frame, self.session.solution,
-                                 self.component, self.case)
-        if extreme["member"] is None:
-            return
-        self.locate("member", extreme["member"])
-        self.viewport.set_result_marker(
-            extreme["point"],
-            f"MAX |{self.component}|={extreme['value']:+.3g} {extreme['unit']}")
-        self.results.show_rows(
-            f"{self.component} 全结构绝对极值，工况 {extreme['case']}",
-            ["杆件", "距 i 端 x", "值", "单位"],
-            [[extreme["member"], extreme["x"], extreme["value"],
-              extreme["unit"]]], [("member", extreme["member"])])
-
-    def show_section_stress(self) -> None:
-        """打开当前探针截面的轴力+双向弯曲正应力图。"""
-        if self.session.solution is None or self.session.frame is None:
-            QMessageBox.information(self, "尚无分析结果", "请先求解。")
-            return
-        data = self._last_probe
-        selected = getattr(self, "_selected_id", None)
-        if data is None or (selected is not None and data["member"] != selected):
-            if getattr(self, "_selected_kind", None) != "member":
-                QMessageBox.information(
-                    self, "请选择杆件", "先在视口中选择或探测一根杆件。")
-                return
-            from .result_inspector import probe_member
-            member = self.session.frame.members[selected]
-            midpoint = 0.5 * (self.session.frame.nodes[member.i].xyz
-                              + self.session.frame.nodes[member.j].xyz)
-            data = probe_member(self.session.frame, self.session.solution,
-                                selected, midpoint, self.case)
-            self._last_probe = data
-        if data["stress"] is None:
-            QMessageBox.information(self, "截面正应力不可用", data["stress_error"])
-            return
-        from .result_inspector import show_stress_dialog
-        show_stress_dialog(self, data)
-
     def run_diagnose(self) -> None:
         """约束诊断。
 
@@ -1335,6 +1151,8 @@ class MainWindow(QMainWindow):
         """切换显示哪个工况/组合的结果。审结果时这是切得最勤的一个动作。"""
         if name and name != self.case:
             self.case = name
+            self._last_probe = None
+            self.viewport.set_result_marker(None)
             self.redraw()
             self.lbl_solve.setText(self._solve_text())
 
@@ -1568,6 +1386,8 @@ class MainWindow(QMainWindow):
 
     def _create_node_at(self, xyz) -> None:
         """统一处理鼠标与精确输入建点，包括已有坐标复用。"""
+        if self.runner.busy:
+            return
         values = [float(value) for value in xyz]
         result = self.session.add_nodes([values])
         if not result.ok:
@@ -1592,6 +1412,8 @@ class MainWindow(QMainWindow):
 
     def _on_member_created(self, ni: int, nj: int) -> None:
         """视口中点击两节点创建了杆件。"""
+        if self.runner.busy:
+            return
         from PySide6.QtWidgets import QInputDialog
 
         sections = [s["name"] for s in self.session.model.get("sections", [])]
@@ -2230,7 +2052,7 @@ class MainWindow(QMainWindow):
             action = self.actions_by_name.get(name)
             if action is None:
                 continue
-            action.setEnabled(True)
+            action.setEnabled(not self.runner.busy)
             what = "节点或杆件" if len(accepted) > 1 else "节点"
             action.setToolTip(action.text() if kind in accepted
                               else f"{action.text()}：点击后在视口中点选一个{what}")
@@ -2708,6 +2530,9 @@ class MainWindow(QMainWindow):
 
     def _load_model_path(self, path: Path) -> bool:
         """从明确路径加载模型；文件选择器和“最近打开”共用这条安全路径。"""
+        if self.runner.busy:
+            self.statusBar().showMessage("后台任务执行中；请等待完成或停止任务后再打开模型。")
+            return False
         if not path.is_file():
             QMessageBox.warning(self, "文件不存在", f"找不到模型文件：\n{path}")
             return False
@@ -2755,11 +2580,16 @@ class MainWindow(QMainWindow):
         if not path:
             return
         import json
-        Path(path).write_text(
-            json.dumps(self.session.model, ensure_ascii=False, indent=2),
-            encoding="utf-8")
+        from model_io import atomic_write_text
         from draft_commit import save_sidecar
-        save_sidecar(path, self.session.model, self.session.multimodal_provenance)
+        try:
+            atomic_write_text(path, json.dumps(self.session.model,
+                                               ensure_ascii=False, indent=2))
+            save_sidecar(path, self.session.model, self.session.multimodal_provenance)
+        except OSError as exc:
+            QMessageBox.warning(self, "保存未完成",
+                                f"文件写入失败：{exc}。请检查目录权限或另选保存位置。")
+            return
         self._remember_recent_path(Path(path))
         self.autosave.mark_saved()
         self.statusBar().showMessage(f"模型已保存至 {Path(path).name}", 5000)
@@ -2846,6 +2676,9 @@ class MainWindow(QMainWindow):
         def failed(kind: str, message: str) -> None:
             self._on_busy(False)
             self.statusBar().clearMessage()
+            if kind == "TaskCancelled":
+                self.statusBar().showMessage(message, 8000)
+                return
             QMessageBox.critical(self, "应力比验算出错", f"{kind}：{message[:400]}")
 
         if not self.runner.submit(lambda: self.session.check_strength(),
@@ -2911,6 +2744,9 @@ class MainWindow(QMainWindow):
         拦下来时要**把模式退回"模型"**：不退的话按钮勾在"变形"上，
         视口里画的却是模型——界面在说谎。
         """
+        if self.runner.busy:
+            return False
+        self._sync_result_validity()
         if self.result is not None and self.result.ok:
             return True
         QMessageBox.information(self, "尚无分析结果", "尚无分析结果。请先执行求解，再查看该结果视图。")
@@ -3048,7 +2884,8 @@ class MainWindow(QMainWindow):
         def failed(kind_: str, message: str) -> None:
             self._on_busy(False)
             self.statusBar().clearMessage()
-            self.results.show_message(f"{title}　计算出错",
+            self.results.show_message(f"{title}　已停止" if kind_ == "TaskCancelled"
+                                      else f"{title}　计算出错",
                                       f"{kind_}：{message[:400]}")
 
         def progress(text: str, _args=None, _ok: bool = True) -> None:
@@ -3128,11 +2965,11 @@ class MainWindow(QMainWindow):
         顺序要紧：先等后台线程停下，再关渲染窗口。反过来的话，
         工作线程可能正拿着一个已经被销毁的对象。
         """
-        try:
-            if self.runner.busy:
-                self.runner.wait(3000)
-        except Exception:                       # noqa: BLE001
-            pass
+        if self.runner.busy:
+            self._close_pending = True
+            event.ignore()
+            self.stop_task()
+            return
         try:
             self.autosave.flush()               # 别等计时器，关窗前把最后一版写下来
         except OSError:
@@ -3152,7 +2989,16 @@ class MainWindow(QMainWindow):
         if not self.result.ok:
             return "求解：模型校验未通过"
         n = len(self.result.payload["cases"])
-        return f"求解：{n} 个工况/组合　当前 {self.case}"
+        identity = self.session.result_identity or {}
+        kind = (identity.get("parameters") or {}).get("analysis", "linear")
+        label = {"linear": "线性", "pdelta": "P-Δ", "material": "材料非线性",
+                 "step": "非比例加载"}.get(kind, kind)
+        self.lbl_solve.setToolTip(
+            f"求解编号：{identity.get('solve_id', '')}\n"
+            f"模型指纹：{identity.get('model_fingerprint', '')}\n"
+            f"求解时间：{identity.get('solved_at', '')}\n"
+            f"参数：{identity.get('parameters', {})}")
+        return f"求解：{label}　{n} 个工况/组合　当前 {self.case}"
 
     def export_screenshot(self, path: str) -> str:
         """整窗截图。
@@ -3177,6 +3023,13 @@ class MainWindow(QMainWindow):
             painter = QPainter(chrome)
             painter.drawImage(top_left, view.scaled(
                 geo.width(), geo.height()))
+            # 抽屉是独立的 Tool 窗口，空模型引导卡片在视口上层；
+            # VTK 画面贴回后必须把这些覆盖层再贴一次，否则导出图里会消失。
+            for overlay in (self.empty_state, self.left_drawer,
+                            self.right_drawer, self.bottom_drawer):
+                if overlay.isVisible():
+                    painter.drawPixmap(overlay.mapTo(self, overlay.rect().topLeft()),
+                                       overlay.grab())
             painter.end()
         chrome.save(path)
         return path

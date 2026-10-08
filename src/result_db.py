@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -118,7 +119,8 @@ class ResultDB:
             results[name] = CaseResult(name, displacement, reaction, member_forces)
         primary = str(self.metadata["primary_step"])
         return _SolutionView(results, primary,
-                             {"type": self.metadata["analysis_type"]})
+                             deepcopy(self.metadata.get("analysis")
+                                      or {"type": self.metadata["analysis_type"]}))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -198,6 +200,7 @@ def from_solution(payload: dict[str, Any], model: Frame,
         RESULT_DB_SCHEMA_VERSION,
         {
             "analysis_type": procedure,
+            "analysis": deepcopy(solution.analysis),
             "primary_step": solution.primary,
             "model_hash": _model_hash(payload),
             "model_schema_version": payload.get("schema_version", 0),

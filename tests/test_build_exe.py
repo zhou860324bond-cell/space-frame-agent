@@ -153,6 +153,19 @@ def test_the_word_report_backend_is_bundled():
     assert '"docx"' in text, "spec 没点名 docx，延迟导入的它不会被收进去"
 
 
+def test_codex_poppler_icu_cannot_shadow_windows_icu():
+    """Codex 的 Poppler ICU 不能混进 Windows 打包体。
+
+    真实故障是 PyInstaller 从 Codex 运行时的 Poppler 目录收进同名
+    ``icuuc.dll``；它没有 Qt6Core 要的 20 个 Windows ICU 导出，导致
+    构建成功但双击 ``FrameLab.exe`` 后 QtWidgets 立刻以 WinError 127 退出。
+    """
+    text = _spec_text()
+    assert '"icuuc.dll"' in text and '"icudt78.dll"' in text
+    assert '"poppler" in {part.lower() for part in Path(entry[1]).parts}' in text, \
+        "spec 不再过滤来自 Poppler 的冲突 ICU，打包版会启动即退出"
+
+
 def test_the_zip_step_refuses_to_ship_a_key():
     """打包体里放过密钥是最容易犯、后果最重的一个错。
 

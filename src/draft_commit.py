@@ -421,7 +421,8 @@ def save_sidecar(model_path: str | Path, model: Mapping[str, Any],
     target = sidecar_path(model_path)
     payload = {"format": SIDECAR_FORMAT, "model_hash": model_digest(dict(model)),
                "provenance": deepcopy(dict(provenance))}
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    from model_io import atomic_write_text
+    atomic_write_text(target, json.dumps(payload, ensure_ascii=False, indent=2))
     return target
 
 

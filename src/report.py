@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as _dt
 from pathlib import Path
 from typing import Any
+from task_control import TaskCancelled, checkpoint
 
 _COMPONENT_LABEL = {"N": "轴力 N", "Vy": "剪力 Vy", "Vz": "剪力 Vz",
                     "T": "扭矩 T", "My": "弯矩 My", "Mz": "弯矩 Mz"}
@@ -75,8 +76,13 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
     模态与屈曲**不强制**：没有密度就不做模态，全受拉就不做屈曲，
     对应小节直接略过并说明原因——比塞一段"分析失败"要干净。
     """
+    checkpoint()
     if session.solution is None:
         raise ValueError("还没有求解结果，先调用 solve_model")
+    if error := session.result_error():
+        raise ValueError(error)
+    if session.solve_summary is None or not session.solve_summary.ok:
+        raise ValueError("当前结果未通过求解检查，请先修正问题并重新求解。")
 
     name = case or session._controlling_case()
     out_dir = Path(out_dir or "results")
@@ -87,6 +93,7 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
 
     doc: dict[str, Any] = {
         "generated": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "result_identity": dict(session.result_identity or {}),
         "case": name,
         "units": {"model": model.get("units", "N-m-Pa"),
                   "report": f"位移 {U.disp_unit}、力 {U.force_unit}、"
@@ -112,7 +119,7 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
     }
 
     # --- 求解与校验 ---
-    solved = session.solve_model()
+    solved = session.solve_summary
     doc["checks"] = [
         {"工况 / 组合": k,
          "最大节点位移 (mm)": v["max_displacement_mm"],
@@ -160,6 +167,7 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
         doc["never_governs"] = first.get("never_governs_anywhere", [])
 
     # --- 模态 ---
+    checkpoint()
     modal = session.modal_analysis(num_modes=6)
     if modal.ok:
         doc["modal"] = modal.payload
@@ -168,6 +176,7 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
             "error", str(modal.payload.get("errors", "")))[:120]
 
     # --- 屈曲 ---
+    checkpoint()
     buck = session.buckling_analysis(case=name, num_modes=3)
     if buck.ok:
         doc["buckling"] = buck.payload
@@ -220,6 +229,7 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
                      ("弯矩图 Mz", plot_diagram, out_dir / f"Mz_{tag}.png", ("Mz",)),
                      ("剪力图 Vy", plot_diagram, out_dir / f"Vy_{tag}.png", ("Vy",))]
             for label, fn, path, extra in plans:
+                checkpoint()
                 try:
                     if extra:
                         fn(frame, result_view, extra[0], name, path,
@@ -228,9 +238,20 @@ def gather(session, case: str | None = None, out_dir: Path | None = None,
                         fn(frame, result_view, name, path,
                            mapping=session.compilation.mapping)
                     doc["figures"][label] = _describe(_trim(path))
+                except TaskCancelled:
+                    raise
                 except Exception as exc:          # noqa: BLE001 出图失败不该毁掉报告
                     doc["skipped"][label] = f"{type(exc).__name__}: {exc}"
     return doc
+
+
+def _identity_text(doc: dict[str, Any]) -> str:
+    """报告携带本次结果来源，编号、指纹与参数都来自求解状态。"""
+    identity = doc.get("result_identity") or {}
+    if not identity:
+        return ""
+    return (f"求解编号：{identity['solve_id']}　·　模型指纹："
+            f"{identity['model_fingerprint']}　·　求解参数：{identity['parameters']}")
 
 
 # --------------------------------------------------------------- Markdown
@@ -259,6 +280,8 @@ def to_markdown(doc: dict[str, Any], path: Path | None = None) -> str:
     a("")
     a(f"生成时间：{doc['generated']}　·　模型单位制：{doc['units']['model']}"
       f"　·　报告单位：{doc['units']['report']}")
+    if identity := _identity_text(doc):
+        a(identity)
     a("")
     a("> 报告中每一个数字都来自求解工具的返回值，与界面、评测集走同一条计算链路，"
       "没有任何另行估算的成分。")
@@ -578,6 +601,8 @@ def to_docx(doc: dict[str, Any], path: Path) -> Path:
     heading("空间刚架分析报告", 0)
     para(f"生成时间 {doc['generated']}　·　模型单位制 {doc['units']['model']}"
          f"　·　报告单位：{doc['units']['report']}", size=9, grey=True)
+    if identity := _identity_text(doc):
+        para(identity, size=9, grey=True)
     para("报告中每一个数字都来自求解工具的返回值，与界面、评测集走同一条计算链路。",
          italic=True, size=9, grey=True)
 
