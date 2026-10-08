@@ -194,6 +194,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
         self.section_opt_dock = self.bottom_drawer.add_page(
             "section_opt", "截面优化", self.section_opt)
+        self.section_opt_dock.prefer_floating = True
 
         self.viewport.picked.connect(self._on_picked)
         self.viewport.probed.connect(self.probe_member_result)
@@ -235,7 +236,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         subtitle.setProperty("emptyState", "subtitle")
         subtitle.setWordWrap(True)
         steps = QLabel(
-            "建好几何之后，按底部流程的下一步操作：定义材料截面与荷载 → "
+            "建好几何之后，按顶部「分析流程」往右走：定义材料截面与荷载 → "
             "校验 → 求解 → 看变形、内力与校核结论。",
             panel)
         steps.setProperty("emptyState", "subtitle")
@@ -323,6 +324,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         for drawer in (self.left_drawer, self.right_drawer, self.bottom_drawer):
             drawer.opened_changed.connect(lambda _on: self._sync_rails())
             drawer.page_changed.connect(lambda _key: self._sync_rails())
+            for key in drawer.keys():
+                drawer.page(key).handle.visibilityChanged.connect(lambda _on: self._sync_rails())
         # 保留旧名字：别处（测试、快捷键说明）按 agent_button 找 AI 入口
         self.agent_button = self.right_rail.buttons["chat"]
 
@@ -360,7 +363,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def _sync_rails(self) -> None:
         """窄栏按钮、功能区开关动作，与抽屉的真实状态保持一致。"""
         for key, (drawer, button) in self._rail_targets.items():
-            on = drawer.is_open() and drawer.current_key() == key
+            on = drawer.page(key).handle.isVisible()
             if button.isChecked() != on:
                 button.setChecked(on)
         for action_name, handle in (("chat", self.chat_dock), ("props", self.props_dock),
@@ -381,8 +384,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.quickbar = ribbon.QuickBar(self, self)
         self.quickbar.case_changed.connect(self.set_case)
         self.quickbar.scale_changed.connect(self.set_scale)
-        self.ribbon.set_collapsed(True)
-        self.workflow_bar = WorkflowBar(self, compact=True)
+        self.ribbon.set_collapsed(False)
+        self.workflow_bar = WorkflowBar(self)
         self.workflow_bar.stage_requested.connect(self._on_workflow_stage)
         holder = QWidget(self)
         box = QVBoxLayout(holder)
@@ -390,6 +393,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         box.setSpacing(0)
         box.addWidget(self.ribbon)
         box.addWidget(self.quickbar)
+        box.addWidget(self.workflow_bar)
         bar = QToolBar("功能区", self)
         bar.setMovable(False)
         bar.setFloatable(False)
@@ -508,7 +512,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         from .qt_style import ElidedLabel
         self.setStatusBar(QStatusBar(self))
         self.statusBar().setSizeGripEnabled(False)
-        self.statusBar().addPermanentWidget(self.workflow_bar)
 
         # Abaqus 式提示区：显示当前操作需要做什么（纯文字，不加背景条）
         self.lbl_prompt = ElidedLabel("就绪 | 选择上方功能区模块开始建模")

@@ -31,7 +31,8 @@ class WindowCommandsMixin:
         for cmd in commands.COMMANDS:
             act = QAction(icons.icon(cmd.icon), cmd.label, self)
             act.setObjectName(cmd.name)
-            act.setToolTip(cmd.tip)
+            act.setToolTip(f"{cmd.label}（{cmd.shortcut}）\n{cmd.tip}" if cmd.shortcut
+                           else f"{cmd.label}\n{cmd.tip}")
             act.setStatusTip(cmd.tip)
             if cmd.shortcut:
                 act.setShortcut(cmd.shortcut)

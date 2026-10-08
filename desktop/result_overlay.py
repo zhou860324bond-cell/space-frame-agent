@@ -16,7 +16,7 @@ class ResultOverlay(QFrame):
         self.setObjectName("viewportResultCard")
         self.active = False
         box = QVBoxLayout(self)
-        box.setContentsMargins(10, 8, 10, 8)
+        box.setContentsMargins(6, 4, 6, 4)
         box.setSpacing(3)
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
@@ -75,7 +75,7 @@ class ResultOverlay(QFrame):
         ink = "#253444" if light else "#edf3fa"
         muted = "#526b83" if light else "#b7c6d6"
         self.setStyleSheet(f"""
-            QFrame#viewportResultCard {{ background:{surface}; border:1px solid {muted}; border-radius:6px; }}
+            QFrame#viewportResultCard {{ background:{surface}; border:0; border-radius:0; }}
             QFrame#viewportResultCard QLabel {{ background:transparent; color:{ink}; font-size:9.5pt; }}
             QLabel#resultOverlayTitle {{ font-size:10pt; font-weight:600; }}
             QLabel#resultOverlayStatus {{ color:{muted}; font-size:9pt; }}

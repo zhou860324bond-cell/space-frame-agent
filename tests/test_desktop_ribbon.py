@@ -155,6 +155,7 @@ def test_drawers_stay_inside_the_viewport_and_never_overlap(qt_app):
     w.chat_dock.show()
     w.tree_dock.show()
     w.section_opt_dock.show()           # 最小尺寸最大的那一页
+    w.section_opt_dock.dock_panel()     # 独立优化窗口也允许用户停靠回底部
     qt_app.processEvents()
     area = w.drawers.viewport_rect()
     left, right, bottom = (w.left_drawer.geometry(), w.right_drawer.geometry(),
@@ -328,7 +329,7 @@ def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app
     模块"的指示，一起藏掉是另一种反人类。
     """
     w = MainWindow()
-    assert w.ribbon.is_collapsed()
+    assert not w.ribbon.is_collapsed(), "原先的完整模块布局应默认展开"
     w.ribbon.set_collapsed(False)
     tall = w.ribbon.maximumHeight()
     assert not w.ribbon.is_collapsed()
@@ -525,7 +526,8 @@ def test_compact_workspace_fits_small_high_dpi_window(qt_app):
         w.show()
         qt_app.processEvents()
         assert w.width() == 911
-        assert w.ribbon.is_collapsed()
+        assert w.height() == 512, "侧栏入口不能把窗口撑出屏幕"
+        assert not w.ribbon.is_collapsed()
         w._show_ribbon_page("结果")
         qt_app.processEvents()
         assert w.quickbar.height() < 55
@@ -534,8 +536,8 @@ def test_compact_workspace_fits_small_high_dpi_window(qt_app):
         from PySide6.QtWidgets import QToolButton
         for button in w.ribbon.currentWidget().findChildren(QToolButton):
             assert button.height() >= button.minimumSizeHint().height()
-        assert w.workflow_bar.mapToGlobal(w.workflow_bar.rect().topLeft()).y() > (
-            w.viewport.mapToGlobal(w.viewport.rect().bottomLeft()).y())
+        assert w.workflow_bar.mapToGlobal(w.workflow_bar.rect().bottomLeft()).y() < (
+            w.viewport.mapToGlobal(w.viewport.rect().topLeft()).y())
     finally:
         w.close()
         qt_app.setStyleSheet(previous)
@@ -546,6 +548,72 @@ def test_compact_workspace_fits_small_high_dpi_window(qt_app):
 def test_no_command_uses_agent_prefill():
     """功能区只提供已实现的直接操作，不能把示例话术伪装成功能。"""
     assert not [c.name for c in commands.COMMANDS if c.handler == "prefill"]
+
+
+def test_floating_panel_rail_tracks_close_and_reopen(qt_app):
+    """面板成为独立窗口后，原入口仍须反映可见状态并能关闭、重新打开。"""
+    w = MainWindow()
+    w.resize(1200, 800)
+    w.show()
+    w.results_dock.show()
+    w.bottom_drawer.float_button.click()
+    qt_app.processEvents()
+    button = w.left_rail.buttons["results"]
+    assert button.isChecked() and w.results_dock.isVisible()
+    assert not w.bottom_drawer.is_open()
+    w.results_dock._window.close()
+    assert not button.isChecked()
+    button.click()
+    assert button.isChecked() and w.results_dock.isVisible()
+    button.click()
+    assert not button.isChecked() and not w.results_dock.isVisible()
+    w.close()
+
+
+def test_section_optimization_opens_independently_and_can_dock(qt_app):
+    """宽幅截面优化不能默认盖住模型，用户停靠回去后应尊重这次选择。"""
+    w = MainWindow()
+    w.show()
+    button = w.left_rail.buttons["section_opt"]
+    button.click()
+    assert w.section_opt_dock._floating and w.section_opt_dock.isVisible()
+    assert not w.bottom_drawer.is_open()
+    w.section_opt_dock.dock_panel()
+    assert not w.section_opt_dock._floating and w.bottom_drawer.is_open()
+    button.click()
+    button.click()
+    assert not w.section_opt_dock._floating and w.bottom_drawer.is_open()
+    w.close()
+
+
+def test_narrow_workspace_buttons_are_not_clipped_and_keep_current_mode(qt_app):
+    """恢复直接工具入口后，窄屏不能把选择/编辑按钮压成一条线或丢掉当前模式。"""
+    from desktop import theme
+    from PySide6.QtWidgets import QToolButton
+    from PySide6.QtCore import Qt
+    previous = qt_app.styleSheet()
+    qt_app.setStyleSheet(theme.STYLESHEET)
+    w = MainWindow()
+    try:
+        w.resize(911, 512)
+        w.show()
+        qt_app.processEvents()
+        for button in w.quickbar.findChildren(QToolButton):
+            if button.defaultAction() and button.isVisibleTo(w.quickbar):
+                assert button.width() >= button.minimumSizeHint().width(), button.text()
+                assert button.parentWidget().rect().contains(button.geometry()), button.text()
+        current = w.quickbar.mode_buttons["模型"]
+        assert current.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        assert current.defaultAction().isChecked()
+        for mode in ("变形", "分析网格", "模型"):
+            w.set_mode(mode, redraw=False)
+            qt_app.processEvents()
+            assert w.quickbar.mode_buttons[mode].toolButtonStyle() == (
+                Qt.ToolButtonStyle.ToolButtonTextBesideIcon), mode
+            assert w.quickbar.mode_buttons[mode].defaultAction().isChecked()
+    finally:
+        w.close()
+        qt_app.setStyleSheet(previous)
 
 
 def test_the_display_modes_are_mutually_exclusive(qt_app):

@@ -1,16 +1,18 @@
-"""抽屉：贴在视口边缘、叠在视口上方的面板。
+"""工作区面板：默认贴视口边缘，可移出为独立窗口并停靠回原位。
 
 为什么不是停靠，也不是自由浮窗
 ------------------------------
 * **停靠**每开一个面板就把视口挤小一次，看结果时尤其明显——表格一出来，
   模型只剩半屏。
-* **自由浮窗**（上一版的做法）不挤视口，但九个小窗各飘各的：会压在功能区
+* **默认自由浮窗**不挤视口，但九个小窗各飘各的：会压在功能区
   和快捷栏上面把按钮挡住（实拍里模型树正好盖住了「侧视/顶视」），拖走了
   找不回来，主窗口一挪它们还留在原地。
 
 抽屉取两者之长：**位置由视口决定**（永远在视口矩形之内，碰不到工具栏），
 **尺寸不影响视口**（叠在上方，关掉即还原），并且跟着主窗口移动、最小化。
 同一侧只有一个抽屉，多个面板在抽屉里用页签切换，而不是摞成一堆窗。
+需要宽画布的截面优化默认独立打开；其他面板由标题栏按钮移出，原入口仍可
+关闭与重开，同一个面板搬动而非复制，保留未提交输入和结果。
 
 为什么是顶层 Tool 窗而不是视口的子控件
 ------------------------------------
@@ -30,10 +32,11 @@ from dataclasses import dataclass
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel, QScrollArea,
+                               QSizePolicy,
                                QStackedWidget,
                                QTabBar, QToolButton, QVBoxLayout, QWidget)
 
-from . import theme
+from . import icons, theme
 
 LEFT, RIGHT, BOTTOM = "left", "right", "bottom"
 
@@ -43,7 +46,7 @@ _MAX_SIDE_RATIO = 0.45
 _MAX_BOTTOM_RATIO = 0.7
 _MIN_SIDE = 220
 _MIN_BOTTOM = 140
-GRIP = 6
+GRIP = 8
 
 
 @dataclass
@@ -71,11 +74,18 @@ class PanelHandle(QObject):
         self._drawer = drawer
         self.key = key
         self._title = title
+        self._window: PanelWindow | None = None
+        self._floating = False
+        self.prefer_floating = False
+        self._container: QWidget | None = None
+        self._placeholder: QWidget | None = None
 
     def windowTitle(self) -> str:
         return self._title
 
     def isVisible(self) -> bool:
+        if self._floating:
+            return self._window.isVisible()
         return self._drawer.is_open() and self._drawer.current_key() == self.key
 
     def isVisibleTo(self, _ancestor=None) -> bool:
@@ -85,6 +95,13 @@ class PanelHandle(QObject):
         return not self.isVisible()
 
     def setVisible(self, on: bool) -> None:
+        if self._floating:
+            was_visible = self._window.isVisible()
+            self._window.setVisible(on)
+            if on and not was_visible:
+                self._window.raise_()
+                self._window.activateWindow()
+            return
         if on:
             self._drawer.open_page(self.key)
         elif self.isVisible():
@@ -97,9 +114,50 @@ class PanelHandle(QObject):
         self.setVisible(False)
 
     def raise_(self) -> None:
+        if self._floating:
+            self.setVisible(True)
+            self._window.raise_()
+            self._window.activateWindow()
+            return
         # 抽屉里只有"当前页"一说，没有叠放次序
         if self._drawer.is_open():
             self._drawer.open_page(self.key)
+
+    def float_panel(self) -> None:
+        """搬动原面板而非复制；输入、表格排序与选择状态全部保留。"""
+        if self._floating:
+            self.setVisible(True)
+            return
+        drawer = self._drawer
+        index = drawer.keys().index(self.key)
+        self._container = drawer.stack.widget(index)
+        if self.isVisible():
+            drawer.close()
+        drawer.stack.removeWidget(self._container)
+        self._placeholder = QWidget(drawer.stack)
+        drawer.stack.insertWidget(index, self._placeholder)
+        self._window = PanelWindow(self._title, self._container, drawer.host.window,
+                                   size=(1000, 580) if drawer.side == BOTTOM else (480, 680),
+                                   dock_back=self.dock_panel)
+        self._floating = True
+        self._window.visibilityChanged.connect(self.visibilityChanged.emit)
+        self.setVisible(True)
+
+    def dock_panel(self) -> None:
+        """回到原侧的同一入口，不丢失页序与内容。"""
+        if not self._floating:
+            return
+        self._window.hide()
+        index = self._drawer.keys().index(self.key)
+        self._drawer.stack.removeWidget(self._placeholder)
+        self._drawer.stack.insertWidget(index, self._container)
+        self._placeholder.deleteLater()
+        self._floating = False
+        self.prefer_floating = False
+        self._window.deleteLater()
+        self._window = None
+        self._container = self._placeholder = None
+        self._drawer.open_page(self.key)
 
 
 class PanelWindow(QDialog):
@@ -116,18 +174,40 @@ class PanelWindow(QDialog):
     visibilityChanged = Signal(bool)
 
     def __init__(self, title: str, widget: QWidget, parent: QWidget,
-                 size: tuple[int, int] = (560, 720)):
+                 size: tuple[int, int] = (560, 720), dock_back=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(False)
-        area = QScrollArea(self)
-        area.setWidgetResizable(True)
-        area.setFrameShape(QFrame.Shape.NoFrame)
-        area.setWidget(widget)
+        if isinstance(widget, QScrollArea):
+            area = widget
+        else:
+            area = QScrollArea(self)
+            area.setWidgetResizable(True)
+            area.setFrameShape(QFrame.Shape.NoFrame)
+            area.setWidget(widget)
         box = QVBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
-        box.addWidget(area)
-        self.resize(*size)
+        if dock_back is not None:
+            header = QWidget(self)
+            header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            row = QHBoxLayout(header)
+            row.setContentsMargins(4, 2, 4, 2)
+            row.addStretch()
+            self.dock_button = QToolButton(self)
+            self.dock_button.setText("停靠回工作区")
+            self.dock_button.setIcon(icons.icon("float"))
+            self.dock_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            self.dock_button.setToolTip("返回原来的面板位置，保留当前输入和结果")
+            self.dock_button.clicked.connect(dock_back)
+            row.addWidget(self.dock_button)
+            box.addWidget(header)
+        box.addWidget(area, 1)
+        # 从 QStackedWidget 移出的当前页带显式隐藏状态，重新归属后必须恢复。
+        area.show()
+        available = parent.screen().availableGeometry()
+        content_width = area.widget().minimumSizeHint().width() if area.widget() else 0
+        self.resize(min(max(size[0], content_width + 4), available.width() - 40),
+                    min(size[1], available.height() - 80))
 
     def showEvent(self, event):                   # noqa: N802  Qt 回调名
         super().showEvent(event)
@@ -146,6 +226,8 @@ class _EdgeGrip(QWidget):
         self._drawer = drawer
         self._origin: QPoint | None = None
         self._start = 0
+        self.setMouseTracking(True)
+        self.setToolTip("拖动调整面板尺寸；双击恢复默认尺寸")
         horizontal = drawer.side == BOTTOM
         self.setCursor(Qt.CursorShape.SizeVerCursor if horizontal
                        else Qt.CursorShape.SizeHorCursor)
@@ -170,8 +252,23 @@ class _EdgeGrip(QWidget):
     def mouseReleaseEvent(self, _event):
         self._origin = None
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drawer.set_extent(self._drawer.default_extent)
+            self._origin = None
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
+
     def paintEvent(self, _event):
         p = QPainter(self)
+        if self.underMouse() or self._origin is not None:
+            p.fillRect(self.rect(), QColor(theme.SELECTION))
         p.setPen(QPen(QColor(theme.BORDER), 1))
         if self._drawer.side == BOTTOM:
             p.drawLine(0, 0, self.width(), 0)
@@ -179,6 +276,12 @@ class _EdgeGrip(QWidget):
             p.drawLine(self.width() - 1, 0, self.width() - 1, self.height())
         else:
             p.drawLine(0, 0, 0, self.height())
+        p.setPen(QPen(QColor(theme.ACCENT if self.underMouse() else theme.BORDER_LIGHT), 2))
+        for offset in (-6, 0, 6):
+            if self._drawer.side == BOTTOM:
+                p.drawPoint(self.width() // 2 + offset, self.height() // 2)
+            else:
+                p.drawPoint(self.width() // 2, self.height() // 2 + offset)
         p.end()
 
 
@@ -196,6 +299,7 @@ class Drawer(QFrame):
         self.host = host
         self.side = side
         self.extent = extent
+        self.default_extent = extent
         self._open = False
         self._pages: list[_Page] = []
 
@@ -208,10 +312,18 @@ class Drawer(QFrame):
         self.title.setObjectName("drawerTitle")
         self.close_button = QToolButton(self)
         self.close_button.setObjectName("drawerClose")
-        self.close_button.setText("×")
+        self.close_button.setIcon(icons.icon("close"))
+        self.close_button.setIconSize(QSize(16, 16))
         self.close_button.setToolTip("收起（Esc）")
         self.close_button.setAutoRaise(True)
         self.close_button.clicked.connect(self.close)
+        self.float_button = QToolButton(self)
+        self.float_button.setObjectName("drawerFloat")
+        self.float_button.setIcon(icons.icon("float"))
+        self.float_button.setIconSize(QSize(16, 16))
+        self.float_button.setToolTip("在独立窗口打开当前面板；可随时停靠回工作区")
+        self.float_button.setAutoRaise(True)
+        self.float_button.clicked.connect(self._float_current)
         self.stack = QStackedWidget(self)
 
         header = QHBoxLayout()
@@ -219,6 +331,7 @@ class Drawer(QFrame):
         header.setSpacing(6)
         header.addWidget(self.title)
         header.addWidget(self.tabs, 1)
+        header.addWidget(self.float_button)
         header.addWidget(self.close_button)
 
         body = QVBoxLayout()
@@ -268,6 +381,10 @@ class Drawer(QFrame):
 
     def keys(self) -> list[str]:
         return [p.key for p in self._pages]
+
+    def _float_current(self):
+        if key := self.current_key():
+            self.page(key).handle.float_panel()
 
     def page(self, key: str) -> _Page:
         for p in self._pages:
@@ -323,6 +440,12 @@ class Drawer(QFrame):
         return self._open
 
     def open_page(self, key: str) -> None:
+        if self.page(key).handle.prefer_floating:
+            self.page(key).handle.float_panel()
+            return
+        if self.page(key).handle._floating:
+            self.page(key).handle.show()
+            return
         index = self.keys().index(key)
         before = self.current_key() if self._open else None
         if self.tabs.currentIndex() != index:
@@ -355,6 +478,10 @@ class Drawer(QFrame):
         return True
 
     def toggle_page(self, key: str) -> None:
+        handle = self.page(key).handle
+        if handle._floating:
+            handle.setVisible(not handle.isVisible())
+            return
         if self._open and self.current_key() == key:
             self.close()
         else:
@@ -363,7 +490,10 @@ class Drawer(QFrame):
     # --- 尺寸 ---
 
     def set_extent(self, value: int) -> None:
-        self.extent = self._clamp(int(value))
+        value = self._clamp(int(value))
+        if value == self.extent:
+            return
+        self.extent = value
         self.host.relayout()
 
     def _clamp(self, value: int) -> int:
@@ -454,10 +584,12 @@ class DrawerHost(QObject):
             if d is None:
                 continue
             if d.is_open() and shown:
-                d.setGeometry(self.geometry_for(side))
+                geometry = self.geometry_for(side)
+                if d.geometry() != geometry:
+                    d.setGeometry(geometry)
                 if not d.isVisible():
                     d.show()
-                d.raise_()
+                    d.raise_()
             elif d.isVisible():
                 QFrame.hide(d)
         if self.on_insets is not None:
@@ -478,6 +610,16 @@ class DrawerHost(QObject):
                     QEvent.Type.Hide, QEvent.Type.WindowStateChange):
             self.relayout()
         return False
+
+
+class _RailButton(QToolButton):
+    """通常沿用原按钮高度；小窗口允许缩短，入口仍完整保留。"""
+
+    def sizeHint(self):
+        return QSize(SideRail.WIDTH - 6, 56 if self.property("primary") else 50)
+
+    def minimumSizeHint(self):
+        return QSize(SideRail.WIDTH - 6, 40 if self.property("primary") else 28)
 
 
 class SideRail(QFrame):
@@ -505,16 +647,18 @@ class SideRail(QFrame):
 
     def add_button(self, key: str, text: str, tip: str, *, primary: bool = False,
                    at_end: bool = False) -> QToolButton:
-        b = QToolButton(self)
+        b = _RailButton(self)
         b.setObjectName("railButton")
         b.setProperty("primary", primary)
         b.setText(text)
         b.setToolTip(tip)
         b.setCheckable(True)
         b.setAutoRaise(True)
-        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setFixedSize(QSize(self.WIDTH - 6, 56 if primary else 50))
+        b.setFixedWidth(self.WIDTH - 6)
+        b.setMinimumHeight(40 if primary else 28)
+        b.setMaximumHeight(56 if primary else 50)
         if at_end:
             self._tail.addWidget(b)
         else:

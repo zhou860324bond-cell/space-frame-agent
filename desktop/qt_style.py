@@ -53,6 +53,14 @@ class ElidedLabel(QLabel):
 class FrameStyle(QProxyStyle):
     """接管勾选框、单选钮与数字框箭头的绘制，其余交还原生样式。"""
 
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        # 提示短暂停留后出现，移向相邻按钮时保持同样的延迟。
+        if hint == QStyle.StyleHint.SH_ToolTip_WakeUpDelay:
+            return 500
+        if hint == QStyle.StyleHint.SH_ToolTip_FallAsleepDelay:
+            return 0
+        return super().styleHint(hint, option, widget, returnData)
+
     def pixelMetric(self, metric, option=None, widget=None) -> int:
         if metric in (QStyle.PixelMetric.PM_IndicatorWidth,
                       QStyle.PixelMetric.PM_IndicatorHeight,
