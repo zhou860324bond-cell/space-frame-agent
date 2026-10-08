@@ -312,10 +312,10 @@ def strength(payload: dict) -> Rows:
                     f"（杆件 {wc.get('member')}，控制点 {wc.get('point', '')}）")
     failed = payload.get("failed_members") or []
     unclear = payload.get("inconclusive_members") or []
-    bits.append("全部通过" if not failed else
+    bits.append(("可判定杆件均通过" if unclear else "全部通过") if not failed else
                 "超限：" + "、".join(str(v) for v in failed))
     if unclear:
-        bits.append("连规范法也判不了（材料缺屈服应力）："
+        bits.append("无法判定（材料缺少屈服应力）："
                     + "、".join(str(v) for v in unclear))
     title = "　".join(bits)
     for w in payload.get("warnings") or []:
@@ -332,6 +332,26 @@ def strength(payload: dict) -> Rows:
     if limitation:
         title += "\n" + limitation
     return title, cols, rows, loc
+
+
+def strength_overview(payload: dict) -> list[dict]:
+    """摘要只引用工具的极值与判定清单，不用四舍五入后的表格重新判断。"""
+    cards = []
+    for key, label in (("worst_strength", "最大应力比"),
+                       ("worst_combined", "最大折算比")):
+        data = payload.get(key) or {}
+        ratio, member = data.get("ratio"), data.get("member")
+        detail = data.get("governs") or data.get("point") or ""
+        cards.append({"label": label, "value": f"{ratio:.4g}" if ratio is not None else "—",
+                      "detail": f"杆件 {member} · {detail}" if member is not None else "缺少可判定结果",
+                      "target": ("member", member) if isinstance(member, int) else None,
+                      "state": "fail" if data.get("ok") is False else "metric"})
+    for key, label, mark in (("failed_members", "超限杆件", "fail"),
+                             ("inconclusive_members", "无法判定", "unclear")):
+        count = len(payload.get(key) or [])
+        cards.append({"label": label, "value": str(count), "detail": "点击筛选对应杆件",
+                      "filter": mark, "state": mark if count else "metric"})
+    return cards
 
 
 def symmetry(payload: dict) -> Rows:

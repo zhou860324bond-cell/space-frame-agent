@@ -15,9 +15,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleOption, QWidget
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen
+from PySide6.QtWidgets import QLabel, QProxyStyle, QStyle, QStyleOption, QToolTip, QWidget
 
 from . import theme
 
@@ -25,6 +25,29 @@ from . import theme
 #: 像素，看不清是勾还是点。
 INDICATOR = 16
 BORDER_WIDTH = 1.6
+
+
+class ElidedLabel(QLabel):
+    """窄窗口用省略号展示状态，完整内容保留在悬停提示中。"""
+
+    def minimumSizeHint(self):
+        return QSize(24, super().minimumSizeHint().height())
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(QPalette.ColorRole.WindowText))
+        rect = self.contentsRect().adjusted(self.margin(), 0, -self.margin(), 0)
+        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+
+    def event(self, event):
+        if event.type() == QEvent.Type.ToolTip:
+            full = self.text()
+            if self.toolTip() and self.toolTip() != full:
+                full += "\n" + self.toolTip()
+            QToolTip.showText(event.globalPos(), full, self)
+            return True
+        return super().event(event)
 
 
 class FrameStyle(QProxyStyle):

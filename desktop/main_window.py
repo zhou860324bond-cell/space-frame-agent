@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QPushButton,
-                               QScrollArea, QStatusBar, QToolBar,
+                               QScrollArea, QSizePolicy, QStatusBar, QToolBar,
                                QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -235,7 +235,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         subtitle.setProperty("emptyState", "subtitle")
         subtitle.setWordWrap(True)
         steps = QLabel(
-            "建好几何之后，按顶部「分析流程」往右走：定义材料截面与荷载 → "
+            "建好几何之后，按底部流程的下一步操作：定义材料截面与荷载 → "
             "校验 → 求解 → 看变形、内力与校核结论。",
             panel)
         steps.setProperty("emptyState", "subtitle")
@@ -381,7 +381,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.quickbar = ribbon.QuickBar(self, self)
         self.quickbar.case_changed.connect(self.set_case)
         self.quickbar.scale_changed.connect(self.set_scale)
-        self.workflow_bar = WorkflowBar(self)
+        self.ribbon.set_collapsed(True)
+        self.workflow_bar = WorkflowBar(self, compact=True)
         self.workflow_bar.stage_requested.connect(self._on_workflow_stage)
         holder = QWidget(self)
         box = QVBoxLayout(holder)
@@ -389,7 +390,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         box.setSpacing(0)
         box.addWidget(self.ribbon)
         box.addWidget(self.quickbar)
-        box.addWidget(self.workflow_bar)
         bar = QToolBar("功能区", self)
         bar.setMovable(False)
         bar.setFloatable(False)
@@ -505,12 +505,15 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.menuBar().hide()
 
     def _build_statusbar(self) -> None:
+        from .qt_style import ElidedLabel
         self.setStatusBar(QStatusBar(self))
         self.statusBar().setSizeGripEnabled(False)
+        self.statusBar().addPermanentWidget(self.workflow_bar)
 
         # Abaqus 式提示区：显示当前操作需要做什么（纯文字，不加背景条）
-        self.lbl_prompt = QLabel("  就绪 | 选择上方功能区模块开始建模")
-        self.lbl_prompt.setMinimumWidth(450)
+        self.lbl_prompt = ElidedLabel("就绪 | 选择上方功能区模块开始建模")
+        self.lbl_prompt.setMinimumWidth(0)
+        self.lbl_prompt.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.lbl_prompt.setStyleSheet(
             f"color:{theme.ACCENT}; font-weight:600; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_prompt, 1)
@@ -522,17 +525,20 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.statusBar().addPermanentWidget(sep1)
 
         # 状态信息 - 模型状态
-        self.lbl_model = QLabel("模型：空")
+        self.lbl_model = ElidedLabel("模型：空")
+        self.lbl_model.setMaximumWidth(210)
         self.lbl_model.setStyleSheet(f"color: {theme.INK_MUTED}; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_model)
 
         # 状态信息 - 求解状态
-        self.lbl_solve = QLabel("求解：未求解")
+        self.lbl_solve = ElidedLabel("求解：未求解")
+        self.lbl_solve.setMaximumWidth(260)
         self.lbl_solve.setStyleSheet(f"color: {theme.INK_MUTED}; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_solve)
 
         # 状态信息 - 拾取状态
-        self.lbl_pick = QLabel("")
+        self.lbl_pick = ElidedLabel("")
+        self.lbl_pick.setMaximumWidth(130)
         self.lbl_pick.setStyleSheet(f"color: {theme.WARN}; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_pick)
 
@@ -543,7 +549,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.statusBar().addPermanentWidget(sep2)
 
         # 最近操作
-        self.lbl_last = QLabel("最近：尚未建模")
+        self.lbl_last = ElidedLabel("最近：尚未建模")
+        self.lbl_last.setMaximumWidth(220)
         self.lbl_last.setToolTip("最近一次成功或失败的建模操作")
         self.lbl_last.setStyleSheet(f"color: {theme.INK_DIM}; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_last)
@@ -2690,7 +2697,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._utilization = (solution, payload)
         caption, cols, rows, loc = result_rows.to_rows("strength", payload)
         self.results.show_rows(f"强度验算　{caption}", cols, rows, loc,
-                               result_rows.row_marks("strength", payload))
+                               result_rows.row_marks("strength", payload),
+                               overview=result_rows.strength_overview(payload),
+                               primary_columns={"杆件", "截面", "应力比 σ/[σ]", "折算比", "N/(φA)/f", "结论"})
 
     def show_force_diagram(self) -> None:
         """三维内力图。不弹结果抽屉：图本身就是结果，别再挡住它。"""
@@ -2878,7 +2887,11 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                     kind, result.payload)
                 self.results.show_rows(f"{title}　{caption}", cols, rows, loc,
                                        result_rows.row_marks(kind,
-                                                             result.payload))
+                                                             result.payload),
+                                       overview=result_rows.strength_overview(result.payload)
+                                       if kind == "strength" else None,
+                                       primary_columns={"杆件", "截面", "应力比 σ/[σ]", "折算比", "N/(φA)/f", "结论"}
+                                       if kind == "strength" else None)
             self.refresh()
 
         def failed(kind_: str, message: str) -> None:
@@ -3028,7 +3041,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             for overlay in (self.empty_state, self.left_drawer,
                             self.right_drawer, self.bottom_drawer):
                 if overlay.isVisible():
-                    painter.drawPixmap(overlay.mapTo(self, overlay.rect().topLeft()),
+                    painter.drawPixmap(self.mapFromGlobal(overlay.mapToGlobal(overlay.rect().topLeft())),
                                        overlay.grab())
             painter.end()
         chrome.save(path)

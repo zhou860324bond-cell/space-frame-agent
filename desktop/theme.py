@@ -19,20 +19,13 @@ import viz_theme as V                                    # noqa: E402
 
 # 浅色 CAD chrome：三层表面明确区分工作区、面板和浮层。
 #
-# 整体比"办公软件白"压深一档，是为了**和视口衔接**。深色视口 (#1b2027)
-# 紧挨着纯白面板时，两者之间是一条硬边——眼睛会先看到那条边界，再看模型。
-# 把 chrome 压到中浅灰以后，视口读起来像嵌进去的画布，不像贴上去的另一张图。
-# Abaqus/ANSYS 的中灰 chrome 是同一个道理。
-#
-# 压深会挤压文字对比度，所以次级墨色跟着一起加深：
-# INK_MUTED 对 PANEL 从 4.5:1 提到 5.1:1，INK_DIM 从 2.6:1 提到 3.6:1
-# （INK_DIM 只用于"未开始"这类刻意弱化的文字，不承载正文）。
-PANEL = "#e6ebf0"
-PANEL_ALT = "#f5f8fa"
-PANEL_RAISED = "#d9e1e9"
-PANEL_HOVER = "#cbd6e0"
-BORDER = "#b9c4d0"
-BORDER_LIGHT = "#9dabbb"
+# 浅灰承载工作区，白色突出结果与编辑表面，蓝色用于当前状态与主操作。
+PANEL = "#f1f4f7"
+PANEL_ALT = "#ffffff"
+PANEL_RAISED = "#e8eef4"
+PANEL_HOVER = "#e5edf5"
+BORDER = "#d7dfe7"
+BORDER_LIGHT = "#b4c1ce"
 INK = "#17212b"
 INK_MUTED = "#55626f"
 INK_DIM = "#6f7c88"
@@ -188,8 +181,8 @@ STYLESHEET = f"""
 QMainWindow, QWidget {{
     background: {PANEL};
     color: {INK};
-    font-size: 9pt;
-    font-family: "DengXian", "Microsoft YaHei UI", "Source Han Sans SC", sans-serif;
+    font-size: 10.5pt;
+    font-family: "Microsoft YaHei UI", "DengXian", "Source Han Sans SC", sans-serif;
 }}
 QMenuBar {{
     background: {PANEL};
@@ -267,7 +260,7 @@ QDockWidget::title {{
     background: {PANEL_RAISED};
     padding: 7px 10px;
     border-bottom: 1px solid {BORDER};
-    font-size: 8.5pt;
+    font-size: 9.5pt;
     color: {INK};
 }}
 QDockWidget::close-button, QDockWidget::float-button {{
@@ -303,7 +296,7 @@ QHeaderView::section {{
     border-right: 1px solid {BORDER};
     border-bottom: 1px solid {BORDER};
     padding: 4px 6px;
-    font-size: 8pt;
+    font-size: 9pt;
 }}
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
@@ -395,7 +388,7 @@ QStatusBar {{
     background: {PANEL};
     border-top: 1px solid {BORDER};
     color: {INK_MUTED};
-    font-size: 8pt;
+    font-size: 9pt;
     padding: 2px 6px;
 }}
 QStatusBar::item {{
@@ -421,7 +414,7 @@ QWidget#workflowBar {{
 }}
 QLabel[workflow="caption"] {{
     color: {INK_MUTED};
-    font-size: 8pt;
+    font-size: 9pt;
     font-weight: 600;
     padding-right: 6px;
 }}
@@ -527,7 +520,7 @@ QWidget[ribbonGroup="true"] {{
 }}
 QLabel[toolbar="section"] {{
     color: {INK_DIM};
-    font-size: 7.5pt;
+    font-size: 9pt;
     font-weight: 600;
     padding: 0 3px;
 }}
@@ -594,7 +587,7 @@ QGroupBox::title {{
     left: 10px;
     padding: 0 5px;
     color: {INK_MUTED};
-    font-size: 8pt;
+    font-size: 9pt;
     background: {PANEL};
 }}
 QProgressBar {{
@@ -614,7 +607,7 @@ QToolTip {{
     color: {INK};
     border: 1px solid {BORDER_LIGHT};
     padding: 3px 7px;
-    font-size: 8pt;
+    font-size: 9pt;
 }}
 
 QCheckBox, QRadioButton {{
@@ -678,7 +671,7 @@ QToolButton[ribbon="large"]:disabled, QToolButton[ribbon="small"]:disabled {{
 
 QLabel[ribbon="caption"] {{
     color: {INK_DIM};
-    font-size: 7pt;
+    font-size: 9pt;
     font-weight: 600;
     padding-top: 3px;
 }}
@@ -719,7 +712,7 @@ QToolButton#railButton {{
     background: transparent;
     border: 1px solid transparent;
     border-radius: {RADIUS_MD};
-    font-size: 8pt;
+    font-size: 9pt;
     padding: 2px 0px;
 }}
 QToolButton#railButton:hover {{
@@ -733,11 +726,11 @@ QToolButton#railButton:checked {{
     font-weight: 600;
 }}
 QToolButton#railButton[primary="true"] {{
-    background: {ACCENT};
-    color: #ffffff;
-    font-weight: 700;
+    background: transparent;
+    color: {INK_MUTED};
+    font-weight: 600;
 }}
-QToolButton#railButton[primary="true"]:hover {{ background: {ACCENT_HOVER}; }}
+QToolButton#railButton[primary="true"]:hover {{ background: {PANEL_HOVER}; }}
 QToolButton#railButton[primary="true"]:checked {{
     background: {ACCENT_DIM};
     border-color: {ACCENT_DIM};
@@ -773,3 +766,22 @@ QToolButton#drawerClose:hover {{ background: {PANEL_HOVER}; color: {INK}; }}
 """
 
 STYLESHEET = STYLESHEET + DRAWER_QSS
+
+STYLESHEET += f"""
+QToolBar#workspaceTools {{
+    background: {PANEL_ALT}; border: none; border-bottom: 1px solid {BORDER};
+    padding: 4px 8px; spacing: 4px;
+}}
+QToolBar#workspaceTools QToolButton {{ padding: 5px 8px; }}
+QLabel[result="title"] {{ font-weight: 600; font-size: 11pt; }}
+QWidget#resultSummary {{ background: transparent; }}
+QFrame[resultCard] {{ background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: 6px; }}
+QFrame[resultCard="fail"] {{ border-color: {ERROR}; }}
+QFrame[resultCard="unclear"] {{ border-color: {WARN}; }}
+QWidget#resultSummary QLabel {{ background: transparent; border: none; }}
+QLabel[result="label"] {{ color: {INK_MUTED}; font-size: 9pt; }}
+QLabel[result="value"] {{ color: {INK}; font-size: 16pt; font-weight: 600; }}
+QToolButton[result="detail"] {{ background: transparent; color: {ACCENT_DIM}; padding: 0px; font-size: 9pt; }}
+QToolButton[result="detail"]:hover {{ color: {ACCENT}; text-decoration: underline; }}
+QToolButton[result="detail"]:disabled {{ color: {INK_DIM}; }}
+"""

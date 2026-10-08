@@ -104,6 +104,29 @@ def test_export_screenshot_keeps_the_empty_state_card(qt_app, monkeypatch, tmp_p
     w.close()
 
 
+def test_export_screenshot_positions_tool_drawers_in_window_coordinates(qt_app, monkeypatch, tmp_path):
+    """主窗离开原点时，独立 Tool 抽屉截图不能再次叠加屏幕坐标而偏移。"""
+    import numpy as np
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QImage
+
+    w = MainWindow(built())
+    w.move(150, 90)
+    w.show()
+    w.tree_dock.show()
+    qt_app.processEvents()
+    monkeypatch.setattr(w.viewport.plotter, "screenshot",
+                        lambda **_kw: np.full((40, 40, 3), (255, 0, 0), dtype=np.uint8))
+    path = tmp_path / "drawer.png"
+    w.export_screenshot(str(path))
+    picture = QImage(str(path))
+    point = w.mapFromGlobal(w.left_drawer.mapToGlobal(QPoint(20, 100)))
+    ratio = picture.width() / w.width()
+    pixel = picture.pixelColor(int(point.x() * ratio), int(point.y() * ratio))
+    assert pixel.green() > 10 or pixel.blue() > 10
+    w.close()
+
+
 def test_solving_an_empty_model_is_refused(qt_app, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     shown = []

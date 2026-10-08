@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QToolButton, QWidget
 
 from workflow import WorkflowPhase, inspect_workflow
 from . import glyphs
@@ -59,7 +59,7 @@ class WorkflowBar(QWidget):
         "pending": "尚未开始",
     }
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, compact: bool = False):
         super().__init__(parent)
         self.setObjectName("workflowBar")
         row = QHBoxLayout(self)
@@ -97,6 +97,25 @@ class WorkflowBar(QWidget):
         row.addWidget(self.next_button)
         self._next_stage = "model"
         self.status = None
+        self.stage_menu = None
+        if compact:
+            for index in range(row.count() - 1):
+                widget = row.itemAt(index).widget()
+                if widget is not None:
+                    widget.hide()
+            row.setContentsMargins(0, 0, 0, 0)
+            self.next_button.setProperty("role", "secondary")
+            self.stage_menu = QMenu(self)
+            self.stage_actions = {}
+            for stage, text in self.STAGES:
+                action = self.stage_menu.addAction(text)
+                action.triggered.connect(lambda _=False, value=stage: self.stage_requested.emit(value))
+                self.stage_actions[stage] = action
+            self.flow_button = QToolButton(self)
+            self.flow_button.setText("流程")
+            self.flow_button.setMenu(self.stage_menu)
+            self.flow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            row.insertWidget(0, self.flow_button)
 
     @staticmethod
     def _set_state(button: QPushButton, state: str, suffix: str = "") -> None:
@@ -152,10 +171,16 @@ class WorkflowBar(QWidget):
             elif state == "pending":
                 tip += "（可直接点击跳到该步）"
             button.setToolTip(tip)
+            if self.stage_menu is not None:
+                self.stage_actions[stage].setText(button.text())
+                self.stage_actions[stage].setToolTip(tip)
         from . import i18n
         self.guidance.setText(i18n.tr(message))
         self.guidance.setToolTip("\n".join(status.validation_errors))
         self.next_button.setText(i18n.tr(action))
+        if self.stage_menu is not None:
+            self.flow_button.setToolTip(i18n.tr(message))
+            self.next_button.setToolTip(i18n.tr(message))
 
     def _request_next(self) -> None:
         self.stage_requested.emit(self._next_stage)

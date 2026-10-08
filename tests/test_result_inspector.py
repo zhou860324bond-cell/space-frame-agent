@@ -131,7 +131,8 @@ def test_bc_edit_invalidates_backend_and_desktop_result_together(qt_app):
     assert session.solution is None and session.result_db is None
     assert window.result is None and window.case is None
     assert window.mode == "模型"
-    assert "失效" in window.results.caption.text()
+    assert "失效" in window.results.notes.toPlainText()
+    assert not window.results.notes.isHidden()
 
 
 def test_load_can_be_copied_and_support_has_an_explicit_delete(qt_app, monkeypatch):
