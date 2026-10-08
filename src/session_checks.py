@@ -259,6 +259,8 @@ class ChecksMixin:
         errors = validate_payload(self.model)
         if errors:
             return ToolResult(False, {"errors": errors})
+        if self.solution is not None and (error := self.result_error()):
+            return ToolResult(False, {"error": error})
         if self.solution is None:
             solved = self.solve_model()
             if not solved.ok:
@@ -310,6 +312,8 @@ class ChecksMixin:
         按**物理构件**验算：传编译映射进去，剖分过的杆件才会按整根算 Pcr。
         按分段算会让临界力成倍偏大，而且不报错。
         """
+        if self.solution is not None and (error := self.result_error()):
+            return ToolResult(False, {"error": error})
         if self.solution is None:
             solved = self.solve_model()
             if not solved.ok:
@@ -463,6 +467,8 @@ class ChecksMixin:
                     "只会给出一个看着合理的错答案；而整解本来就很快，"
                     "省下的算力不值这个风险。对称性在这里当**校核手段**用。",
         }
+        if self.solution is not None and (error := self.result_error()):
+            return ToolResult(False, {"error": error})
         if self.solution is not None:
             name = case or self._controlling_case()
             checked = check_symmetric_response(self.frame, self.solution, name)

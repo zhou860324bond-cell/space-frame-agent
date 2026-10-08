@@ -301,6 +301,8 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
                        arm_length_factor: float = 2.0) -> JointSpec:
     if session.solution is None or session.frame is None or session.compilation is None:
         raise SolidJointError("还没有整体梁模型结果，请先调用 solve_model")
+    if error := session.result_error():
+        raise SolidJointError(error)
     node_id = int(node_id)
     nodes = {int(item["id"]): item for item in session.model.get("nodes") or []}
     if node_id not in nodes:

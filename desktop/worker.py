@@ -32,8 +32,10 @@ Qt 的 `AutoConnection` 按**接收者的线程归属**决定是直接调用还�
 from __future__ import annotations
 
 from typing import Any, Callable
+from threading import Event
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
+from task_control import checkpoint, task_scope
 
 
 class _Job(QObject):
@@ -43,18 +45,22 @@ class _Job(QObject):
     failed = Signal(str, str)             # 异常：(类型名, 消息)
     progress = Signal(str, object, bool)  # 中途进度：(名称, 参数, 是否成功)
 
-    def __init__(self, fn: Callable[..., Any], wants_report: bool):
+    def __init__(self, fn: Callable[..., Any], wants_report: bool,
+                 cancel_event: Event):
         super().__init__()
         self._fn = fn
         self._wants_report = wants_report
+        self._cancel_event = cancel_event
 
     def run(self) -> None:
         try:
             # 有 `report` 形参的可调用对象，就把进度出口交给它。
             # **进度必须走信号，不能让工作线程直接回调界面**——
             # 那就是跨线程碰控件，之前已经因此崩过一次
-            result = (self._fn(report=self.progress.emit) if self._wants_report
-                      else self._fn())
+            with task_scope(self._cancel_event):
+                checkpoint()
+                result = (self._fn(report=self.progress.emit) if self._wants_report
+                          else self._fn())
         except Exception as exc:          # noqa: BLE001
             # 工作线程里的异常不会自动冒到主线程。不抓住的话，
             # 界面就只是"永远转圈"，比报错更难查
@@ -78,6 +84,8 @@ class Runner(QObject):
     他要的是"算一次"，不是"算两次"。
     """
 
+    busy_changed = Signal(bool)
+
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self._thread: QThread | None = None
@@ -85,6 +93,14 @@ class Runner(QObject):
         self._on_done: Callable[[Any], None] | None = None
         self._on_failed: Callable[[str, str], None] | None = None
         self._on_progress: Callable[[str, Any, bool], None] | None = None
+        self._cancel_event = Event()
+
+    def cancel(self) -> bool:
+        """请求停止，保留线程直到任务抵达安全检查点。"""
+        if not self.busy:
+            return False
+        self._cancel_event.set()
+        return True
 
     @property
     def busy(self) -> bool:
@@ -105,7 +121,9 @@ class Runner(QObject):
             return False
 
         thread = QThread()
-        job = _Job(fn, wants_report=on_progress is not None)
+        self._cancel_event = Event()
+        job = _Job(fn, wants_report=on_progress is not None,
+                   cancel_event=self._cancel_event)
         job.moveToThread(thread)
         thread.started.connect(job.run)
 
@@ -121,6 +139,7 @@ class Runner(QObject):
         self._on_done, self._on_failed = on_done, on_failed
         self._on_progress = on_progress
         thread.start()
+        self.busy_changed.emit(True)
         return True
 
     # --- 以下几个槽都在主线程里执行 ---
@@ -150,6 +169,7 @@ class Runner(QObject):
             thread.wait(5000)             # 主线程等工作线程，方向是对的
         if job is not None:
             job.deleteLater()
+        self.busy_changed.emit(False)
 
     def wait(self, msec: int = 30000) -> bool:
         """等当前这件事跑完并且回调也走完。**测试里用，界面流程不该调。**

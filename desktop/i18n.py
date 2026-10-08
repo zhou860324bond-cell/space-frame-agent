@@ -57,6 +57,8 @@ ZH_EN: dict[str, str] = {
     "删除选中": "Delete", "编号标注": "Labels", "荷载数值": "Load Values",
     "中 / EN": "EN / 中", "分析步": "Step", "模态": "Modal",
     "求解设置": "Procedure", "幅值曲线": "Amplitude",
+    "停止任务": "Stop task", "超限": "Exceeded",
+    "无法判定": "Undetermined", "结果筛选": "Result filter",
     "规范组合": "Code Combos", "活载布置": "Live Pattern",
     "面荷载": "Area Load", "边界条件管理器": "BC Manager",
     "规范与导荷": "Code & Tributary",

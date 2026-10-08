@@ -15,12 +15,12 @@ class WindowResultsMixin:
         self.viewport.set_contour_palette(
             options.get("palette", theme.DEFAULT_PALETTE))
         self.viewport.set_contour_shading(options.get("shading", True))
-        if self.mode == "云图" and self.session.solution is not None:
+        if not self.runner.busy and self.mode == "云图" and self.session.solution is not None:
             self.redraw()
 
     def probe_member_result(self, member_id: int, point) -> None:
         """将视口点击位置变成可审查的杆件截面结果表。"""
-        if self.session.solution is None or self.session.frame is None:
+        if not self._needs_solution():
             return
         data = probe_member(self.session.frame, self.session.solution,
                             member_id, point, self.case)
@@ -53,8 +53,7 @@ class WindowResultsMixin:
 
     def locate_current_extreme(self) -> None:
         """定位当前梁内力分量的全结构绝对极值。"""
-        if self.session.solution is None or self.session.frame is None:
-            QMessageBox.information(self, "尚无分析结果", "请先求解。")
+        if not self._needs_solution():
             return
         extreme = global_extreme(self.session.frame, self.session.solution,
                                  self.component, self.case)
@@ -72,8 +71,7 @@ class WindowResultsMixin:
 
     def show_section_stress(self) -> None:
         """打开当前探针截面的轴力与双向弯曲正应力图。"""
-        if self.session.solution is None or self.session.frame is None:
-            QMessageBox.information(self, "尚无分析结果", "请先求解。")
+        if not self._needs_solution():
             return
         data = self._last_probe
         selected = getattr(self, "_selected_id", None)

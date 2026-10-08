@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from session_base import ToolResult
+from task_control import checkpoint
 
 
 class QueryMixin:
@@ -24,8 +25,8 @@ class QueryMixin:
     def query_results(self, what: str, case: str | None = None,
                       member_id: int | None = None,
                       span: float | None = None) -> ToolResult:
-        if self.solution is None or self.result_db is None:
-            return ToolResult(False, {"error": "还没有结果，请先调用 solve_model"})
+        if error := self.result_error():
+            return ToolResult(False, {"error": error})
         name = case or self._controlling_case()
         U = self.units
         if name not in self.result_db.steps:
@@ -143,8 +144,8 @@ class QueryMixin:
 
     def plot_results(self, kind: str, case: str | None = None) -> ToolResult:
         """出图。只回路径与摘要，不回图像——结论仍须引用 query_results 的数字。"""
-        if self.solution is None or self.result_db is None:
-            return ToolResult(False, {"error": "还没有结果，请先调用 solve_model"})
+        if error := self.result_error():
+            return ToolResult(False, {"error": error})
         try:
             from plot3d import plot_axial, plot_deformed, plot_diagram
         except ImportError as exc:
@@ -182,8 +183,8 @@ class QueryMixin:
                       case: str | None = None,
                       stations: int | None = None) -> ToolResult:
         """沿杆长的内力。解析恢复，与网格无关。"""
-        if self.solution is None or self.result_db is None:
-            return ToolResult(False, {"error": "还没有结果，请先调用 solve_model"})
+        if error := self.result_error():
+            return ToolResult(False, {"error": error})
         try:
             from internal_forces import COMPONENTS, exceeds, physical_member_diagram
         except ImportError as exc:
@@ -283,10 +284,13 @@ class QueryMixin:
 
         # 扫描**绝不能动**当前模型：用户扫完还要接着用原模型算别的
         original = copy.deepcopy(self.model)
-        original_solution = self.solution
+        original_results = (self.frame, self.solution, self.compilation,
+                            self.result_db, self.result_identity,
+                            self.solve_summary, self._solution_model_key)
         rows: list[dict] = []
         try:
             for v in values:
+                checkpoint()
                 probe = copy.deepcopy(original)
                 if what == "section_property":
                     for sec in probe["sections"]:
@@ -314,9 +318,9 @@ class QueryMixin:
             # 只还原 model 不还原 frame/solution 的话，接下来的查询会拿
             # 最后一个探针的结果去回答原模型的问题——不报错，但数全是错的
             self.model = original
-            self._invalidate()
-            if original_solution is not None:
-                self.solve_model()
+            (self.frame, self.solution, self.compilation, self.result_db,
+             self.result_identity, self.solve_summary,
+             self._solution_model_key) = original_results
 
         good = [r for r in rows if r["metric"] is not None]
         if not good:
@@ -351,8 +355,8 @@ class QueryMixin:
     def query_envelope(self, component: str, member: int | None = None,
                        cases: list[str] | None = None) -> ToolResult:
         """内力包络与控制组合。"""
-        if self.solution is None or self.result_db is None:
-            return ToolResult(False, {"error": "还没有结果，请先调用 solve_model"})
+        if error := self.result_error():
+            return ToolResult(False, {"error": error})
         try:
             from envelope import governing_summary, member_envelope
             from internal_forces import COMPONENTS

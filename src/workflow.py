@@ -49,6 +49,8 @@ class WorkflowStatus:
 
 
 def inspect_workflow(session) -> WorkflowStatus:
+    if session.solution is not None:
+        session.result_error()
     model = session.model or {}
     counts = {
         "nodes": len(model.get("nodes") or []),

@@ -172,6 +172,9 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
     solution: Any = None
     compilation: Any = None
     result_db: Any = None
+    result_identity: dict[str, Any] | None = None
+    solve_summary: ToolResult | None = field(default=None, repr=False)
+    _solution_model_key: bytes | None = field(default=None, repr=False)
     tool_log: list[tuple[str, dict, "ToolResult"]] = field(default_factory=list)
     # 建模过程。界面拖时间轴回看每一步靠它
     history: BuildHistory = field(default_factory=BuildHistory)
@@ -234,6 +237,9 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         self.solution = None
         self.compilation = None
         self.result_db = None
+        self.result_identity = None
+        self.solve_summary = None
+        self._solution_model_key = None
         self.pending_change = None
         self.authorized_preview_id = None
 
@@ -650,8 +656,8 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
     def write_report(self, case: str | None = None, fmt: str = "both",
                      filename: str = "报告") -> ToolResult:
         """产出分析报告。"""
-        if self.solution is None:
-            return ToolResult(False, {"error": "还没有结果，请先调用 solve_model"})
+        if error := self.result_error():
+            return ToolResult(False, {"error": error})
         if fmt not in ("markdown", "docx", "both"):
             return ToolResult(False, {"error": "fmt 只能取 markdown / docx / both"})
         try:
@@ -708,6 +714,8 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         荷载方向加反、支座漏了，正是应该在算之前就看出来的事。
         所以单开这个入口，语义明确：只装配，不算。
         """
+        if self.solution is not None:
+            self.result_error()
         if self.frame is not None:
             return self.frame
         # **按内容缓存。** 界面每次重画、每点选一个对象都要调这里，而整份
@@ -755,6 +763,19 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
         self.solution = None
         self.compilation = None
         self.result_db = None
+        self.result_identity = None
+        self.solve_summary = None
+        self._solution_model_key = None
+
+    def result_error(self) -> str | None:
+        """所有后处理共用内容校验，也能发现绕过编辑工具的字典修改。"""
+        if self.solution is None or self.result_db is None:
+            return "还没有求解结果，请先调用 solve_model 求解。"
+        if (self._solution_model_key is not None
+                and self._solution_model_key != self._model_key()):
+            self._invalidate()
+            return "模型已修改，原计算结果已失效；请重新求解。"
+        return None
 
     def _applied_load_magnitude(self, case: str) -> float:
         """该工况施加的荷载总量级，用来分辨"没有荷载"和"荷载被约束吃掉了"。

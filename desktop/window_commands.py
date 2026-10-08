@@ -21,6 +21,10 @@ def _takes_command(handler) -> bool:
 
 
 class WindowCommandsMixin:
+    # 任务执行期间仅保留相机与面板开关，不允许读取半次求解的结果。
+    BUSY_ALLOWED = {"front", "side", "top", "iso", "fit", "camera",
+                    "chat", "props", "timeline", "stop_task"}
+
     def _build_actions(self) -> None:
         """从命令表创建菜单、功能区和快捷键共用的 QAction。"""
         self.actions_by_name: dict[str, QAction] = {}
@@ -75,6 +79,9 @@ class WindowCommandsMixin:
 
     def _run_command(self, cmd) -> None:
         """分派命令；缺处理函数或执行异常时在界面上说明原因。"""
+        if self.runner.busy and cmd.name not in self.BUSY_ALLOWED:
+            self.statusBar().showMessage("后台任务执行中；请等待完成或停止任务后再操作。")
+            return
         handler = getattr(self, cmd.handler, None)
         if handler is None:
             QMessageBox.information(self, cmd.label,

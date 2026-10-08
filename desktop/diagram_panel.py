@@ -172,6 +172,8 @@ class DiagramPanel(QWidget):
         """换模型或换工况时调。**杆件下拉要重填**，
         否则会留着上一个模型的编号，选中一个不存在的杆。"""
         self.session = session
+        if session.solution is not None:
+            session.result_error()
         self.case = case
         frame = getattr(session, "frame", None)
         current = self.member.currentText()
@@ -199,6 +201,8 @@ class DiagramPanel(QWidget):
 
         session, mid = self.session, self.current_member()
         if session is None or mid is None or session.solution is None:
+            return None
+        if session.result_error():
             return None
         comp = COMPONENTS[self.component.currentText()]
         frame, solution = session.frame, session.solution

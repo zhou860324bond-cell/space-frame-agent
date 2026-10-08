@@ -155,6 +155,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._pending_command = None
         # (求解对象, 强度验算 payload)——按求解对象身份判断是否过期
         self._utilization = None
+        self._task_busy = False
+        self._close_pending = False
+        self._busy_action_states = {}
+        self._displayed_solution = None
 
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
@@ -206,7 +210,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._build_ribbon()
         self._build_menus()
         self._build_statusbar()
+        self.runner.busy_changed.connect(self._on_busy)
         self.refresh()
+        self.actions_by_name["stop_task"].setEnabled(False)
 
     # --- 构件 ---
 
@@ -224,7 +230,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         title = QLabel("创建第一个结构模型", panel)
         title.setProperty("emptyState", "title")
         subtitle = QLabel(
-            "从图纸识别、参数化生成或二维草图开始；三条路径最终进入同一模型。",
+            "推荐从参数化框架开始；图纸识别为实验性功能，需核对识别结果。",
             panel)
         subtitle.setProperty("emptyState", "subtitle")
         subtitle.setWordWrap(True)
@@ -241,11 +247,13 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         box.addSpacing(6)
         actions = QHBoxLayout()
         for text, action_name, primary in (
-                ("AI 识别图纸", "sketch_ai", True),
-                ("参数化框架", "frame", False),
+                ("AI 识别图纸", "sketch_ai", False),
+                ("参数化框架", "frame", True),
                 ("二维草图", "sketch", False)):
             button = QPushButton(text, panel)
             button.setMinimumHeight(34)
+            if action_name == "sketch_ai":
+                button.setToolTip("实验性：识别后请核对拓扑、尺度和边界条件，再确认加载。")
             if primary:
                 button.setProperty("role", "primary")
             button.clicked.connect(self.actions_by_name[action_name].trigger)
@@ -539,6 +547,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.lbl_last.setToolTip("最近一次成功或失败的建模操作")
         self.lbl_last.setStyleSheet(f"color: {theme.INK_DIM}; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_last)
+        self.btn_cancel_task = QPushButton("停止任务", self)
+        self.btn_cancel_task.setVisible(False)
+        self.btn_cancel_task.clicked.connect(self.stop_task)
+        self.statusBar().addPermanentWidget(self.btn_cancel_task)
 
         self._on_ribbon_page_changed(self.ribbon.currentIndex())
 
@@ -713,6 +725,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         """求解器自己抛异常。守门拦不住的（比如奇异矩阵）会走到这里。"""
         self._on_busy(False)
         self.statusBar().clearMessage()
+        if kind == "TaskCancelled":
+            self.statusBar().showMessage(message, 8000)
+            self.refresh()
+            return
         QMessageBox.critical(self, "求解过程出错", f"{kind}: {message[:600]}")
 
     # --- Agent 面板 ---
@@ -723,11 +739,37 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         不置灰的话，用户在求解途中点「新建」，后台线程正在读的那个
         Session 就被换掉了——**这类竞态出来的错误现场根本没法复现**。
         """
+        busy = bool(busy or self.runner.busy)
         idle = not busy
-        self.act_new.setEnabled(idle)
-        self.act_generate.setEnabled(idle)
+        if busy and not self._task_busy:
+            self._busy_action_states = {
+                name: action.isEnabled() for name, action in self.actions_by_name.items()
+                if name not in self.BUSY_ALLOWED}
+            self._pending_command = None
+            self.viewport.set_model_mode(None)
+        for name, enabled in self._busy_action_states.items():
+            self.actions_by_name[name].setEnabled(idle and enabled)
+        self._task_busy = busy
         self.act_solve.setEnabled(idle and bool(self.session.model.get("nodes")))
-        self.workflow_bar.setEnabled(idle)
+        self.actions_by_name["stop_task"].setEnabled(busy)
+        self.btn_cancel_task.setVisible(busy)
+        self.btn_cancel_task.setEnabled(busy)
+        for widget in (self.workflow_bar, self.quickbar, self.tree, self.properties,
+                       self.bc, self.timeline, self.sketch, self.section_opt,
+                       self.diagram, self.results, self.empty_state):
+            widget.setEnabled(idle)
+        if idle and self._close_pending:
+            QTimer.singleShot(0, self.close)
+
+    def stop_task(self) -> None:
+        """请求停止当前任务，等安全检查点到达后再恢复编辑。"""
+        if self.chat.conversation is not None:
+            self.chat.conversation.cancel()
+        if self.runner.cancel():
+            self.btn_cancel_task.setEnabled(False)
+            self.actions_by_name["stop_task"].setEnabled(False)
+            self.statusBar().showMessage(
+                "正在停止任务；将于安全检查点结束，矩阵分解完成前请等待。")
 
     def _on_chat_changed(self, touched_model: bool) -> None:
         """对话改过模型就重画。
@@ -775,6 +817,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     # --- 绘制 ---
 
     def redraw(self) -> None:
+        self._sync_result_validity()
         frame = None
         draft = False
         try:
@@ -872,6 +915,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                                             self.case)
 
     def refresh(self) -> None:
+        self._sync_result_validity()
         self.tree.rebuild(self.session, self.result)
         model = self.session.model
         if model.get("nodes"):
@@ -897,7 +941,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.lbl_last.setText(f"最近：第 {last.index + 1} 步　{last.summary}")
         else:
             self.lbl_last.setText("最近：尚未建模")
-        self.act_solve.setEnabled(bool(model.get("nodes")))
+        self.act_solve.setEnabled(not self.runner.busy and bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
         self.redraw()
         has_model = bool(model.get("nodes"))
@@ -906,6 +950,32 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if self.empty_state.isVisible():
             self._position_empty_state()
         self.autosave.schedule()
+
+    def _sync_result_validity(self) -> None:
+        """模型修改后清空表、探针、曲线与云图，共用会话内容校验。"""
+        if self.runner.busy:
+            return
+        identity = self.result.payload.get("result_identity") if self.result else None
+        stale = self.session.solution is not None and self.session.result_error()
+        changed = (identity is not None and identity != self.session.result_identity)
+        if self._displayed_solution is not self.session.solution:
+            self._displayed_solution = self.session.solution
+            self._last_probe = None
+            self._utilization = None
+            self._modal_view = None
+            self.diagram.attach(self.session, self.case)
+            self.viewport.set_result_marker(None)
+        if stale or changed or (self.result is not None and self.result.ok
+                                and self.session.solution is None):
+            self.result = None
+            self.case = None
+            self._last_probe = None
+            self._utilization = None
+            self.mode = "模型"
+            self.mode_actions["模型"].setChecked(True)
+            self.results.show_message("结果已失效", "模型或求解版本已变化，请重新求解。")
+            self.diagram.attach(self.session, None)
+            self.viewport.set_result_marker(None)
 
     def _sync_model_tree(self, has_model: bool) -> None:
         """Give an empty viewport its width back, then reveal real model data."""
@@ -1081,6 +1151,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         """切换显示哪个工况/组合的结果。审结果时这是切得最勤的一个动作。"""
         if name and name != self.case:
             self.case = name
+            self._last_probe = None
+            self.viewport.set_result_marker(None)
             self.redraw()
             self.lbl_solve.setText(self._solve_text())
 
@@ -1314,6 +1386,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def _create_node_at(self, xyz) -> None:
         """统一处理鼠标与精确输入建点，包括已有坐标复用。"""
+        if self.runner.busy:
+            return
         values = [float(value) for value in xyz]
         result = self.session.add_nodes([values])
         if not result.ok:
@@ -1338,6 +1412,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def _on_member_created(self, ni: int, nj: int) -> None:
         """视口中点击两节点创建了杆件。"""
+        if self.runner.busy:
+            return
         from PySide6.QtWidgets import QInputDialog
 
         sections = [s["name"] for s in self.session.model.get("sections", [])]
@@ -1976,7 +2052,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             action = self.actions_by_name.get(name)
             if action is None:
                 continue
-            action.setEnabled(True)
+            action.setEnabled(not self.runner.busy)
             what = "节点或杆件" if len(accepted) > 1 else "节点"
             action.setToolTip(action.text() if kind in accepted
                               else f"{action.text()}：点击后在视口中点选一个{what}")
@@ -2454,6 +2530,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def _load_model_path(self, path: Path) -> bool:
         """从明确路径加载模型；文件选择器和“最近打开”共用这条安全路径。"""
+        if self.runner.busy:
+            self.statusBar().showMessage("后台任务执行中；请等待完成或停止任务后再打开模型。")
+            return False
         if not path.is_file():
             QMessageBox.warning(self, "文件不存在", f"找不到模型文件：\n{path}")
             return False
@@ -2501,11 +2580,16 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if not path:
             return
         import json
-        Path(path).write_text(
-            json.dumps(self.session.model, ensure_ascii=False, indent=2),
-            encoding="utf-8")
+        from model_io import atomic_write_text
         from draft_commit import save_sidecar
-        save_sidecar(path, self.session.model, self.session.multimodal_provenance)
+        try:
+            atomic_write_text(path, json.dumps(self.session.model,
+                                               ensure_ascii=False, indent=2))
+            save_sidecar(path, self.session.model, self.session.multimodal_provenance)
+        except OSError as exc:
+            QMessageBox.warning(self, "保存未完成",
+                                f"文件写入失败：{exc}。请检查目录权限或另选保存位置。")
+            return
         self._remember_recent_path(Path(path))
         self.autosave.mark_saved()
         self.statusBar().showMessage(f"模型已保存至 {Path(path).name}", 5000)
@@ -2592,6 +2676,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         def failed(kind: str, message: str) -> None:
             self._on_busy(False)
             self.statusBar().clearMessage()
+            if kind == "TaskCancelled":
+                self.statusBar().showMessage(message, 8000)
+                return
             QMessageBox.critical(self, "应力比验算出错", f"{kind}：{message[:400]}")
 
         if not self.runner.submit(lambda: self.session.check_strength(),
@@ -2657,6 +2744,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         拦下来时要**把模式退回"模型"**：不退的话按钮勾在"变形"上，
         视口里画的却是模型——界面在说谎。
         """
+        if self.runner.busy:
+            return False
+        self._sync_result_validity()
         if self.result is not None and self.result.ok:
             return True
         QMessageBox.information(self, "尚无分析结果", "尚无分析结果。请先执行求解，再查看该结果视图。")
@@ -2794,7 +2884,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         def failed(kind_: str, message: str) -> None:
             self._on_busy(False)
             self.statusBar().clearMessage()
-            self.results.show_message(f"{title}　计算出错",
+            self.results.show_message(f"{title}　已停止" if kind_ == "TaskCancelled"
+                                      else f"{title}　计算出错",
                                       f"{kind_}：{message[:400]}")
 
         def progress(text: str, _args=None, _ok: bool = True) -> None:
@@ -2874,11 +2965,11 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         顺序要紧：先等后台线程停下，再关渲染窗口。反过来的话，
         工作线程可能正拿着一个已经被销毁的对象。
         """
-        try:
-            if self.runner.busy:
-                self.runner.wait(3000)
-        except Exception:                       # noqa: BLE001
-            pass
+        if self.runner.busy:
+            self._close_pending = True
+            event.ignore()
+            self.stop_task()
+            return
         try:
             self.autosave.flush()               # 别等计时器，关窗前把最后一版写下来
         except OSError:
@@ -2898,7 +2989,16 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if not self.result.ok:
             return "求解：模型校验未通过"
         n = len(self.result.payload["cases"])
-        return f"求解：{n} 个工况/组合　当前 {self.case}"
+        identity = self.session.result_identity or {}
+        kind = (identity.get("parameters") or {}).get("analysis", "linear")
+        label = {"linear": "线性", "pdelta": "P-Δ", "material": "材料非线性",
+                 "step": "非比例加载"}.get(kind, kind)
+        self.lbl_solve.setToolTip(
+            f"求解编号：{identity.get('solve_id', '')}\n"
+            f"模型指纹：{identity.get('model_fingerprint', '')}\n"
+            f"求解时间：{identity.get('solved_at', '')}\n"
+            f"参数：{identity.get('parameters', {})}")
+        return f"求解：{label}　{n} 个工况/组合　当前 {self.case}"
 
     def export_screenshot(self, path: str) -> str:
         """整窗截图。

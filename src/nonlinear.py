@@ -24,6 +24,7 @@ from frame3d import (BUILTIN_AMPLITUDES, Amplitude, CaseResult, Frame, LoadCase,
                      assemble, combined_case, constrained_dofs, fixed_end,
                      span_loads_of)
 from scipy.sparse import coo_matrix
+from task_control import checkpoint
 
 
 def _solve_constrained(K, rhs: np.ndarray, fixed: np.ndarray,
@@ -108,6 +109,7 @@ def _pdelta_run(model: Frame, base_K, fixed, name: str, case_at,
     F = np.zeros(model.num_dofs)
     free = np.setdiff1d(np.arange(model.num_dofs), fixed)
     for step in range(1, increments + 1):
+        checkpoint()
         load_factor = step / increments
         scaled = case_at(load_factor)
         probe = _case_frame(model, scaled)
@@ -115,6 +117,7 @@ def _pdelta_run(model: Frame, base_K, fixed, name: str, case_at,
         F = loads[:, 0]
         converged = False
         for iteration in range(1, max_iter + 1):
+            checkpoint()
             member_forces = _member_forces(probe, U, scaled)
             axial = {mid: float(force[6]) for mid, force in member_forces.items()}
             Kt = base_K + assemble_geometric(model, axial)
@@ -350,12 +353,14 @@ def solve_material_nonlinear(model: Frame, cases: list[str] | None = None,
         external_nodal = np.zeros(model.num_dofs)
         internal = np.zeros(model.num_dofs)
         for step in range(1, increments + 1):
+            checkpoint()
             scaled = _scaled_case(original, step / increments)
             external_nodal[:] = 0.0
             for nid, load in scaled.nodal_loads.items():
                 external_nodal[model.node_dofs(nid)] += np.asarray(load)
             converged = False
             for iteration in range(1, max_iter + 1):
+                checkpoint()
                 last_tangent, internal, trial, forces = _material_system(
                     model, U, scaled, committed)
                 residual = external_nodal - internal
