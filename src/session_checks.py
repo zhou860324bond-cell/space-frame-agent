@@ -417,11 +417,13 @@ class ChecksMixin:
             "worst_strength": got["worst_strength"] and {
                 "member": got["worst_strength"]["member"],
                 "ratio": round(got["worst_strength"]["ratio"], 4),
+                "ok": got["worst_strength"]["ok"],
                 "case": got["worst_strength"]["case"],
                 "governs": got["worst_strength"]["governs"]},
             "worst_combined": got["worst_combined"] and {
                 "member": got["worst_combined"]["member"],
                 "ratio": round(got["worst_combined"]["ratio"], 4),
+                "ok": got["worst_combined"]["ok"],
                 "point": got["worst_combined"]["point"],
                 "basis": got["worst_combined"]["basis"]},
             "worst_buckling": got["worst_buckling"] and {

@@ -69,16 +69,19 @@ def main() -> None:
         window.view_fit()
 
         window._show_ribbon_page("结果")
+        window.ribbon.set_collapsed(False)
         window.set_mode("模型")
         settle()
         capture(window, "02-结果页功能区.png")
+        window.ribbon.set_collapsed(True)
 
         window.run_strength_check()
         window.runner.wait(60000)
         window.results_dock.show()
         window.bottom_drawer.set_extent(600)
         result_area = window.bottom_drawer.stack.currentWidget()
-        result_area.verticalScrollBar().setValue(180)
+        result_area.verticalScrollBar().setValue(0)
+        window.view_fit()
         settle()
         capture(window, "03-强度验算结果.png")
 

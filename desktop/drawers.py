@@ -40,7 +40,7 @@ LEFT, RIGHT, BOTTOM = "left", "right", "bottom"
 # 抽屉占视口的比例上限。**上限比默认值更要紧**：拖大到盖住整个视口的
 # 抽屉，等于回到了"看结果就看不见模型"。
 _MAX_SIDE_RATIO = 0.45
-_MAX_BOTTOM_RATIO = 0.5
+_MAX_BOTTOM_RATIO = 0.7
 _MIN_SIDE = 220
 _MIN_BOTTOM = 140
 GRIP = 6
@@ -530,4 +530,3 @@ class SideRail(QFrame):
         line.setFixedHeight(1)
         self._box.insertWidget(self._count, line)
         self._count += 1
-

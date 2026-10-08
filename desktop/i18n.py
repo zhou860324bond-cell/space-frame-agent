@@ -36,6 +36,10 @@ ZH_EN: dict[str, str] = {
     "求解": "Solve", "特征值": "Eigen", "检查": "Check", "子模型": "Submodel",
     "显示": "Display", "评估": "Evaluate", "校核": "Checks", "输出": "Output",
     "视角": "Viewpoint", "视口": "Viewport", "工具": "Tools",
+    "更多命令": "More commands", "收起命令": "Hide commands",
+    "流程": "Workflow", "计算说明": "Calculation notes", "显示设置": "Display settings",
+    "全部计算列": "All calculation columns", "最大应力比": "Peak stress ratio",
+    "最大折算比": "Peak equivalent ratio", "超限杆件": "Exceeded members",
     # --- 常驻快捷栏 ---
     "工作平面": "Work plane", "捕捉": "Snap", "关闭": "Off",
     "坐标建点": "Point by XYZ", "放大": "Scale", "自动": "Auto",

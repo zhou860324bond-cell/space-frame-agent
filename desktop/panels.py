@@ -8,18 +8,18 @@
 
 from __future__ import annotations
 
-from html import escape
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
-                               QHeaderView, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QPushButton, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFrame, QGridLayout,
+                               QHeaderView, QHBoxLayout, QLabel, QListWidget, QMenu,
+                               QListWidgetItem, QPushButton, QSizePolicy, QTableWidget,
+                               QTableWidgetItem, QTextBrowser, QToolButton,
+                               QVBoxLayout, QWidget, QWidgetAction)
 
-from . import theme
 from . import glyphs
+from .qt_style import ElidedLabel
 
 STEP_INDEX = Qt.ItemDataRole.UserRole + 1
 LOCATE = Qt.ItemDataRole.UserRole + 2
@@ -112,10 +112,17 @@ class ResultPanel(QWidget):
         box.setContentsMargins(6, 6, 6, 6)
         box.setSpacing(4)
 
-        self.caption = QLabel("尚无分析结果")
-        self.caption.setProperty("panel", "hint")
-        self.caption.setWordWrap(True)
+        self.caption = ElidedLabel("尚无分析结果")
+        self.caption.setProperty("result", "title")
         box.addWidget(self.caption)
+        self.summary = QWidget(self)
+        self.summary.setObjectName("resultSummary")
+        self.summary_grid = QGridLayout(self.summary)
+        self.summary_grid.setContentsMargins(0, 4, 0, 4)
+        self.summary_grid.setSpacing(8)
+        self.summary_cards = []
+        self.summary.hide()
+        box.addWidget(self.summary)
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("云图量程"))
@@ -190,7 +197,24 @@ class ResultPanel(QWidget):
         self.btn_stress.clicked.connect(lambda: self.stress_requested.emit())
         controls.addWidget(self.btn_stress)
         controls.addStretch(1)
-        box.addLayout(controls)
+        # 显示参数在弹出面板中排列，避免一条长工具栏撑大结果窗口。
+        items = [controls.itemAt(index).widget() for index in range(controls.count())]
+        while controls.count():
+            controls.takeAt(0)
+        self.display_menu = QMenu(self)
+        self.display_controls = QWidget(self.display_menu)
+        grid = QGridLayout(self.display_controls)
+        grid.setContentsMargins(12, 12, 12, 12)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(8)
+        for line, (label, field) in enumerate(((0, 1), (2, 3), (4, 5), (7, 8))):
+            grid.addWidget(items[label], line, 0)
+            grid.addWidget(items[field], line, 1)
+        for line, index in enumerate((6, 9, 10, 11, 12), start=4):
+            grid.addWidget(items[index], line, 0, 1, 2)
+        display_action = QWidgetAction(self.display_menu)
+        display_action.setDefaultWidget(self.display_controls)
+        self.display_menu.addAction(display_action)
         for widget in (self.range_mode, self.sign_mode, self.levels, self.palette):
             widget.currentIndexChanged.connect(self._emit_display_options)
         self.shading.stateChanged.connect(self._emit_display_options)
@@ -215,9 +239,31 @@ class ResultPanel(QWidget):
         self.table.horizontalHeader().sortIndicatorChanged.connect(self._filter_rows)
         filter_row.addWidget(self.row_filter)
         self.filter_count = QLabel(self)
-        filter_row.addWidget(self.filter_count)
-        filter_row.addStretch(1)
+        filter_row.addWidget(self.filter_count, 1)
         box.addLayout(filter_row)
+        filter_row = QHBoxLayout()
+        filter_row.addStretch(1)
+        self.all_columns = QCheckBox("全部计算列", self)
+        self.all_columns.toggled.connect(self._show_columns)
+        self.all_columns.hide()
+        self._primary_columns = None
+        filter_row.addWidget(self.all_columns)
+        self.details_button = QToolButton(self)
+        self.details_button.setText("计算说明")
+        self.details_button.setCheckable(True)
+        filter_row.addWidget(self.details_button)
+        self.display_button = QToolButton(self)
+        self.display_button.setText("显示设置")
+        self.display_button.setMenu(self.display_menu)
+        self.display_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        filter_row.addWidget(self.display_button)
+        box.addLayout(filter_row)
+        self.notes = QTextBrowser(self)
+        self.notes.setMaximumHeight(140)
+        self.notes.setMinimumHeight(56)
+        self.notes.hide()
+        self.details_button.toggled.connect(self.notes.setVisible)
+        box.addWidget(self.notes)
         box.addWidget(self.table, 1)
 
     def display_options(self) -> dict:
@@ -282,10 +328,67 @@ class ResultPanel(QWidget):
     # 超限用红色；无法判定用琥珀色，避免把缺参数误读为不合格。
     _MARK_TINT = {"fail": "#f7dede", "unclear": "#fbf0da"}
 
+    def _show_columns(self, *_args) -> None:
+        for column in range(self.table.columnCount()):
+            label = self.table.horizontalHeaderItem(column).text()
+            self.table.setColumnHidden(column, self._primary_columns is not None
+                                       and not self.all_columns.isChecked()
+                                       and label not in self._primary_columns)
+
+    def _show_overview(self, cards: list[dict]) -> None:
+        for card in self.summary_cards:
+            card.setParent(None)
+            card.deleteLater()
+        self.summary_cards = []
+        for data in cards:
+            card = QFrame(self.summary)
+            card.setProperty("resultCard", data.get("state", "metric"))
+            layout = QVBoxLayout(card)
+            layout.setContentsMargins(12, 8, 12, 8)
+            layout.setSpacing(4)
+            label = ElidedLabel(str(data["label"]), card)
+            label.setProperty("result", "label")
+            value = ElidedLabel(str(data["value"]), card)
+            value.setProperty("result", "value")
+            layout.addWidget(label)
+            layout.addWidget(value)
+            detail = QToolButton(card)
+            target = data.get("target")
+            detail.setText(f"定位杆件 {target[1]}" if target else "查看清单")
+            detail.setToolTip(str(data.get("detail", "")))
+            detail.setProperty("result", "detail")
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            if target := data.get("target"):
+                detail.clicked.connect(lambda _=False, target=target: self.locate.emit(*target))
+            elif mark := data.get("filter"):
+                detail.clicked.connect(lambda _=False, mark=mark: self.row_filter.setCurrentIndex(
+                    self.row_filter.findData(mark)))
+            else:
+                detail.setEnabled(False)
+            layout.addWidget(detail)
+            card.ensurePolished()
+            card.setMinimumHeight(92)
+            self.summary_cards.append(card)
+        self.summary.setVisible(bool(cards))
+        self._layout_overview()
+
+    def _layout_overview(self) -> None:
+        columns = 4 if self.width() >= 480 else 2
+        for index, card in enumerate(self.summary_cards):
+            self.summary_grid.addWidget(card, index // columns, index % columns)
+        self.summary.setMinimumHeight(((len(self.summary_cards) + columns - 1) // columns) * 100)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_overview()
+
     def show_rows(self, title: str, columns: list[str],
                   rows: list[list[Any]],
                   locators: list[tuple[str, int] | None] | None = None,
-                  marks: list[str | None] | None = None) -> None:
+                  marks: list[str | None] | None = None, *,
+                  overview: list[dict] | None = None,
+                  primary_columns: set[str] | None = None) -> None:
         """填表。
 
         `locators[i]` 说明第 i 行对应视口里的哪个对象，可为 None。
@@ -320,25 +423,29 @@ class ResultPanel(QWidget):
         self.table.setSortingEnabled(True)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self._set_caption(title)
+        self._primary_columns = primary_columns
+        self.all_columns.setVisible(primary_columns is not None)
+        self.all_columns.setChecked(False)
+        self._show_columns()
+        self._show_overview(overview or [])
+        self._set_caption(title, concise=f"强度验算 · {len(rows)} 根杆件" if overview else None)
         self.row_filter.setEnabled(bool(marks))
         if not marks:
             self.row_filter.setCurrentIndex(0)
         self._filter_rows()
 
-    def _set_caption(self, title: str) -> None:
+    def _set_caption(self, title: str, concise: str | None = None) -> None:
         """标题第一行是结论，其余是限制与警告。
 
-        全用同一种字号铺成一堵墙时，最要紧的那一行反而看不见了。所以第一行
-        加粗，后面的话降一号、用弱色——**但一句都不删**：那些话正是这个结果
-        最容易被误读的地方。
+        标题保持单行，完整结论、限制与警告保存在可展开的计算说明中。
         """
-        head, *rest = [line for line in str(title).split("\n") if line.strip()]
-        body = (f'<div style="font-weight:600">{escape(head)}</div>'
-                + "".join(
-                    f'<div style="color:{theme.INK_MUTED};font-size:11px">'
-                    f'{escape(line)}</div>' for line in rest))
-        self.caption.setText(body)
+        head, *rest = [line for line in str(title).split("\n") if line.strip()] or ["结果"]
+        self.caption.setText(concise or head)
+        self.caption.setToolTip(head)
+        details = "\n\n".join(([head] if concise else []) + rest)
+        self.notes.setPlainText(details)
+        self.details_button.setVisible(bool(details))
+        self.details_button.setChecked(False)
 
     def show_message(self, title: str, text: str) -> None:
         """没有表可给的时候（比如报错），也要在同一个地方说话，
@@ -346,7 +453,11 @@ class ResultPanel(QWidget):
         self.table.clear()
         self.table.setRowCount(0)
         self.table.setColumnCount(0)
+        self._show_overview([])
+        self._primary_columns = None
+        self.all_columns.hide()
         self.row_filter.setCurrentIndex(0)
         self.row_filter.setEnabled(False)
         self._filter_rows()
         self._set_caption(f"{title}\n{text}")
+        self.details_button.setChecked(bool(text))

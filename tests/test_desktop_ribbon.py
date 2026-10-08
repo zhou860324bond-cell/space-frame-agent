@@ -178,7 +178,7 @@ def test_drawers_never_cover_the_toolbars(qt_app):
     top = w.drawers.viewport_rect().top()
     for drawer in (w.left_drawer, w.right_drawer):
         assert drawer.geometry().top() >= top
-    bar = w.workflow_bar
+    bar = w.quickbar
     bar_bottom = bar.mapToGlobal(bar.rect().bottomLeft()).y()
     assert w.left_drawer.geometry().top() > bar_bottom
     w.close()
@@ -328,6 +328,8 @@ def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app
     模块"的指示，一起藏掉是另一种反人类。
     """
     w = MainWindow()
+    assert w.ribbon.is_collapsed()
+    w.ribbon.set_collapsed(False)
     tall = w.ribbon.maximumHeight()
     assert not w.ribbon.is_collapsed()
 
@@ -336,10 +338,13 @@ def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app
     assert w.ribbon.maximumHeight() < tall
     assert w.ribbon.tabBar().isVisibleTo(w.ribbon), "页签不能跟着收掉"
     assert w.ribbon.count() == 7, "收起不该动页签本身"
+    w.ribbon.setCurrentIndex(4)
+    assert all(w.ribbon.widget(i).isHidden() for i in range(w.ribbon.count()))
 
     w.ribbon.toggle_collapsed()
     assert not w.ribbon.is_collapsed()
     assert w.ribbon.maximumHeight() == tall
+    assert [i for i in range(w.ribbon.count()) if not w.ribbon.widget(i).isHidden()] == [4]
 
 
 def test_the_assistant_starts_out_of_the_way_but_reachable(qt_app):
@@ -445,7 +450,7 @@ def test_workspace_bar_uses_one_compact_row_and_marks_primary_actions(qt_app):
     primary = [button.defaultAction().objectName() for button in
                w.ribbon.findChildren(QToolButton)
                if button.property("role") == "primary"]
-    assert set(primary) == {"sketch_ai", "solve"}
+    assert set(primary) == {"frame", "solve"}
 
 
 def test_empty_viewport_offers_real_starting_paths(qt_app):
@@ -481,11 +486,15 @@ def test_ribbon_does_not_repeat_actions_that_are_always_in_the_quickbar(qt_app):
     from PySide6.QtWidgets import QToolButton
 
     w = MainWindow()
-    ribbon_actions = {button.defaultAction() for button in
-                      w.ribbon.findChildren(QToolButton) if button.property("ribbon")}
-    quick_actions = {button.defaultAction() for button in
-                     w.quickbar.findChildren(QToolButton) if button.property("ribbon")}
-    assert ribbon_actions.isdisjoint(quick_actions)
+    for collapsed in (True, False):
+        w.ribbon.set_collapsed(collapsed)
+        ribbon_actions = {button.defaultAction() for button in
+                          w.ribbon.findChildren(QToolButton)
+                          if button.property("ribbon") and button.isVisibleTo(w.ribbon)}
+        quick_actions = {button.defaultAction() for button in
+                         w.quickbar.findChildren(QToolButton)
+                         if button.property("ribbon") and button.isVisibleTo(w.quickbar)}
+        assert ribbon_actions.isdisjoint(quick_actions)
 
 
 def test_the_menus_use_the_same_actions(qt_app):
@@ -502,6 +511,34 @@ def test_the_menus_use_the_same_actions(qt_app):
                 assert act in owned, act.text()
                 seen += 1
     assert seen > 15, "菜单里的动作太少，八成没建起来"
+
+
+def test_compact_workspace_fits_small_high_dpi_window(qt_app):
+    """1366 像素在 150% 缩放时仅有 911 逻辑像素，隐藏编辑页不能撑大结果栏。"""
+    from desktop import theme
+
+    previous = qt_app.styleSheet()
+    qt_app.setStyleSheet(theme.STYLESHEET)
+    w = MainWindow()
+    try:
+        w.resize(911, 512)
+        w.show()
+        qt_app.processEvents()
+        assert w.width() == 911
+        assert w.ribbon.is_collapsed()
+        w._show_ribbon_page("结果")
+        qt_app.processEvents()
+        assert w.quickbar.height() < 55
+        w.ribbon.set_collapsed(False)
+        qt_app.processEvents()
+        from PySide6.QtWidgets import QToolButton
+        for button in w.ribbon.currentWidget().findChildren(QToolButton):
+            assert button.height() >= button.minimumSizeHint().height()
+        assert w.workflow_bar.mapToGlobal(w.workflow_bar.rect().topLeft()).y() > (
+            w.viewport.mapToGlobal(w.viewport.rect().bottomLeft()).y())
+    finally:
+        w.close()
+        qt_app.setStyleSheet(previous)
 
 
 # ------------------------------------------------- 行为

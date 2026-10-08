@@ -22,12 +22,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QSizePolicy,
-                               QStackedWidget, QTabWidget, QToolButton,
+                               QHBoxLayout, QLabel, QMenu, QSizePolicy,
+                               QStackedWidget, QTabWidget, QToolBar, QToolButton,
+                               QWidgetAction,
                                QVBoxLayout, QWidget)
 
 from . import icons
-from . import glyphs
 
 LARGE = QSize(30, 30)
 SMALL = QSize(20, 20)
@@ -41,11 +41,10 @@ def _button(action, large: bool) -> QToolButton:
                          else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     b.setAutoRaise(True)
     b.setProperty("ribbon", "large" if large else "small")
-    if action.objectName() in {"solve", "sketch_ai"}:
+    if action.objectName() in {"solve", "frame"}:
         b.setProperty("role", "primary")
     if large:
         b.setMinimumWidth(58)
-        b.setMaximumWidth(92)
     return b
 
 
@@ -123,6 +122,7 @@ class Ribbon(QTabWidget):
     这不是随手排的——不熟悉的人从左往右点一遍就能走完一次完整分析。
     """
 
+    collapsed_changed = Signal(bool)
     EXPANDED_HEIGHT = 112
 
     def __init__(self, parent=None):
@@ -134,6 +134,7 @@ class Ribbon(QTabWidget):
         self.setMaximumHeight(self.EXPANDED_HEIGHT)
         self.pages: dict[str, RibbonPage] = {}
         self._collapsed = False
+        self.currentChanged.connect(self._sync_pages)
 
         # 顶部原来是四层：页签 + 功能区 + 快捷栏 + 流程条，一共吃掉约 260px，
         # 在 1000px 高的窗口上是 26%。功能区是其中最高的一层，而它又是**查完
@@ -160,18 +161,28 @@ class Ribbon(QTabWidget):
         把当前所处的阶段也藏了，那是另一种反人类。
         """
         self._collapsed = bool(collapsed)
-        for name in self.pages:
-            self.pages[name].setVisible(not self._collapsed)
+        self._sync_pages()
+        for page in self.pages.values():
+            page.ensurePolished()
+        expanded = max(self.EXPANDED_HEIGHT,
+                       max((page.minimumSizeHint().height() for page in self.pages.values()), default=0)
+                       + self.tabBar().sizeHint().height() + 4)
         self.setMaximumHeight(self.tabBar().sizeHint().height() + 4
-                              if self._collapsed else self.EXPANDED_HEIGHT)
+                              if self._collapsed else expanded)
         self._sync_toggle()
+        self.collapsed_changed.emit(self._collapsed)
 
     def is_collapsed(self) -> bool:
         return self._collapsed
 
+    def _sync_pages(self, *_args) -> None:
+        """展开仅显示当前页；折叠后切页也不能把隐藏的命令重新显示。"""
+        for index in range(self.count()):
+            self.widget(index).setVisible(not self._collapsed and index == self.currentIndex())
+
     def _sync_toggle(self) -> None:
-        self._toggle.setText(glyphs.CHEVRON_DOWN if self._collapsed
-                             else glyphs.CHEVRON_UP)
+        from . import i18n
+        self._toggle.setText(i18n.tr("更多命令" if self._collapsed else "收起命令"))
         self._toggle.setToolTip("展开功能区（也可双击页签）" if self._collapsed
                                 else "收起功能区，把高度让给视口（也可双击页签）")
 
@@ -214,6 +225,16 @@ def _fits(widget, sample: str) -> int:
     return int(fm.horizontalAdvance(sample) + max(chrome, 0) + 4)
 
 
+class ContextStack(QStackedWidget):
+    """只按当前控件组计算宽度，避免隐藏的建模输入撑大结果工具栏。"""
+
+    def sizeHint(self):
+        return self.currentWidget().sizeHint() if self.currentWidget() else super().sizeHint()
+
+    def minimumSizeHint(self):
+        return self.currentWidget().minimumSizeHint() if self.currentWidget() else super().minimumSizeHint()
+
+
 class QuickBar(QWidget):
     """功能区下面那条**常驻**图标带。
 
@@ -234,186 +255,165 @@ class QuickBar(QWidget):
         self.setObjectName("workspaceBar")
         self._window = window
         a = window.actions_by_name
-        row = QHBoxLayout(self)
-        row.setContentsMargins(8, 3, 8, 3)
-        row.setSpacing(2)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.toolbar = QToolBar(self)
+        self.toolbar.setObjectName("workspaceTools")
+        self.toolbar.setMovable(False)
+        self.toolbar.setFloatable(False)
+        outer.addWidget(self.toolbar)
+        row = self.toolbar
 
-        def separator(into=None) -> None:
-            sep = QFrame(self)
-            sep.setFrameShape(QFrame.Shape.VLine)
-            sep.setProperty("toolbar", "sep")
-            (into or row).addWidget(sep)
+        def labelled(name, into, text=None):
+            button = _button(a[name], False)
+            button.setIconSize(QSize(18, 18))
+            if text is not None:
+                button.setText(text)
+            into.addWidget(button)
+            return button
 
-        def section(text: str, into=None) -> None:
-            label = QLabel(text, self)
-            label.setProperty("toolbar", "section")
-            (into or row).addWidget(label)
+        def popup(text, names, into):
+            button = QToolButton(self)
+            button.setText(text)
+            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            menu = QMenu(button)
+            panel = QWidget(menu)
+            layout = QVBoxLayout(panel)
+            layout.setContentsMargins(8, 8, 8, 8)
+            layout.setSpacing(4)
+            for name in names:
+                item = labelled(name, layout)
+                item.clicked.connect(menu.close)
+            action = QWidgetAction(menu)
+            action.setDefaultWidget(panel)
+            menu.addAction(action)
+            button.setMenu(menu)
+            into.addWidget(button)
+            return button, layout
 
-        def labelled(name: str, into=None, size: int = 16):
-            """带文字的工具按钮。
+        self.view_button, _ = popup("视角", ("front", "side", "top", "iso"), row)
+        self.view_button.setIcon(a["iso"].icon())
+        labelled("fit", row)
+        row.addSeparator()
+        for name in ("undo", "redo"):
+            button = labelled(name, row)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        row.addSeparator()
 
-            **纯图标是这条工具栏原来最大的毛病**：18 个 20px 的线框图标挤在
-            一起，不逐个悬停认不出任何一个。图标只在含义早已固化时才独立成立
-            （撤销/重做那种），其余一律配字。
-            """
-            b = _button(a[name], False)
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            b.setIconSize(QSize(size, size))
-            (into or row).addWidget(b)
-            return b
+        self.common = QWidget(self)
+        common_row = QHBoxLayout(self.common)
+        common_row.setContentsMargins(0, 0, 0, 0)
+        common_row.setSpacing(4)
+        self.common_commands = {
+            "项目": ("open", "save"), "建模": ("frame", "sketch"),
+            "属性": ("material", "assign_section"),
+            "载荷": ("create_bc", "create_load"),
+            "分析": ("diagnose", "solve"), "结果": ("strength", "report"),
+            "视图": ("bg_settings", "grid_floor"),
+        }
+        self.common_buttons = {}
+        for names in self.common_commands.values():
+            for name in names:
+                button = labelled(name, common_row)
+                button.setVisible(False)
+                self.common_buttons[name] = button
+        row.addWidget(self.common)
+        row.addSeparator()
 
-        def icon_only(name: str, into=None, size: int = 18):
-            b = _button(a[name], False)
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-            b.setIconSize(QSize(size, size))
-            (into or row).addWidget(b)
-            return b
-
-        # ---- 左段：任何阶段都要用的东西，固定不动 ----
-        section("视角")
-        for n in ("front", "side", "top", "iso", "fit"):
-            labelled(n)
-        separator()
-        # 撤销/重做的图标是通用约定，配字反而占地方
-        icon_only("undo"); icon_only("redo")
-        separator()
-
-        # ---- 中段：随当前功能区页变化 ----
-        # 原来这里把"建模用的"和"看结果用的"控件**同时**摆着：选择/建节点/
-        # 删除/工作平面/捕捉，和工况/放大，一共十几项常驻。可它们从来不会在
-        # 同一时刻被用到——建几何时没有结果可切，审结果时不会去建节点。
-        # 按阶段切换之后，同屏可见的控件少一半，而且剩下的都配了字。
-        self.context = QStackedWidget(self)
-        self.context.setSizePolicy(QSizePolicy.Policy.Maximum,
-                                   QSizePolicy.Policy.Preferred)
+        self.context = ContextStack(self)
+        self.context.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         row.addWidget(self.context)
-
         build_page = QWidget(self)
         build_row = QHBoxLayout(build_page)
         build_row.setContentsMargins(0, 0, 0, 0)
-        build_row.setSpacing(2)
-        section("选择", build_row)
-        for n in ("pick_node", "pick_member"):
-            labelled(n, build_row)
-        separator(build_row)
-        section("编辑", build_row)
-        for n in ("model_node", "model_member", "delete"):
-            labelled(n, build_row)
-        separator(build_row)
-        icon_only("labels", build_row); icon_only("props", build_row)
-        separator(build_row)
+        build_row.setSpacing(4)
+        popup("选择", ("pick_node", "pick_member"), build_row)
+        self.edit_button, editor = popup(
+            "编辑", ("model_node", "model_member", "delete", "labels", "props"), build_row)
 
-        # 精确建模：工作平面 + 网格捕捉 + 精确坐标建点。
-        # 三维里直接点坐标会飘，这几个控件把节点"锁"在工作平面和网格上。
-        #
-        # **只在真的要放点时才出现。** 这一组实测占 425px，是整条工具栏放不下
-        # 模式切换的直接原因；而不点节点的时候它一个都用不上——工作平面、捕捉
-        # 间距只影响"下一个点落在哪儿"。所以跟着建节点/建杆件的勾选状态显隐。
         self.precise = QWidget(self)
-        precise_row = QHBoxLayout(self.precise)
-        precise_row.setContentsMargins(0, 0, 0, 0)
-        precise_row.setSpacing(2)
-        build_row.addWidget(self.precise)
+        build_row = QHBoxLayout(self.precise)
+        build_row.setContentsMargins(4, 6, 4, 6)
+        build_row.setSpacing(6)
+        editor.addWidget(self.precise)
         self.precise.setVisible(False)
-        for _name in ("model_node", "model_member"):
-            a[_name].toggled.connect(self._sync_precise)
-        build_row = precise_row
-        section("工作平面", build_row)
+        for name in ("model_node", "model_member"):
+            a[name].toggled.connect(self._sync_precise)
+        build_row.addWidget(QLabel("工作平面"))
         self.plane = QComboBox(self)
         self.plane.addItems(["XY", "XZ", "YZ"])
         self.plane.setFixedWidth(_fits(self.plane, "XZ"))
-        self.plane.setToolTip(
-            "工作平面：新建节点先投影到该平面\n"
-            "XY=水平面固定 z，XZ=正立面固定 y，YZ=侧立面固定 x")
+        self.plane.setToolTip("XY 固定 z，XZ 固定 y，YZ 固定 x；节点投影到当前工作平面。")
         self.plane.currentTextChanged.connect(self._on_plane)
         build_row.addWidget(self.plane)
-
         self.offset_label = QLabel("z=")
         build_row.addWidget(self.offset_label)
         self.offset = QDoubleSpinBox(self)
         self.offset.setRange(-1.0e6, 1.0e6)
         self.offset.setDecimals(3)
         self.offset.setSingleStep(0.5)
-        # **别写死宽度。** 原来是 setFixedWidth(78)，而这个框量程 ±1e6、
-        # 3 位小数——实拍里 "0.000" 的最后一位被切掉、上下箭头压在数字上。
         self.offset.setMinimumWidth(_fits(self.offset, "-99999.999"))
-        self.offset.setToolTip(
-            "工作平面位置：XY 填 z，XZ 填 y，YZ 填 x；单位跟随当前模型")
+        self.offset.setToolTip("工作平面的固定坐标，单位与模型长度单位一致。")
         self.offset.valueChanged.connect(window.set_work_offset)
         build_row.addWidget(self.offset)
-
         build_row.addWidget(QLabel("捕捉"))
         self.snap = QComboBox(self)
         self.snap.setEditable(True)
         self.snap.addItems(["关闭", "0.1", "0.25", "0.5", "1", "2"])
         self.snap.setMinimumWidth(_fits(self.snap, "关闭"))
-        self.snap.setToolTip(
-            "网格捕捉间距：工作平面内按此间距对齐坐标\n"
-            "选“关闭”则不吸附网格；靠近已有节点始终会自动吸附")
-        # 构建期逐项触发会把捕捉设成中间值，先屏蔽，定到“关闭”
-        self.snap.blockSignals(True)
         self.snap.setCurrentIndex(0)
-        self.snap.blockSignals(False)
         self.snap.currentTextChanged.connect(window.set_snap_size)
         build_row.addWidget(self.snap)
-
         self.coord_btn = QToolButton(self)
         self.coord_btn.setText("坐标建点")
-        self.coord_btn.setAutoRaise(True)
-        self.coord_btn.setToolTip("输入精确 x/y/z 坐标创建节点（鼠标点不准时用）")
         self.coord_btn.clicked.connect(window.create_node_exact)
         build_row.addWidget(self.coord_btn)
-        build_row.addStretch(1)
 
         result_page = QWidget(self)
         result_row = QHBoxLayout(result_page)
         result_row.setContentsMargins(0, 0, 0, 0)
-        result_row.setSpacing(2)
+        result_row.setSpacing(6)
         result_row.addWidget(QLabel("工况"))
         self.cases = QComboBox(self)
-        # 工况名是用户自己起的，是**内容不是界面**：真有人把工况叫"全部"，
-        # 切英文时也不能把它翻成 "All"。让 i18n 绕开这一个下拉。
         self.cases.setProperty("i18nSelfManaged", True)
-        self.cases.setMinimumWidth(132)
+        self.cases.setMinimumWidth(110)
+        self.cases.setMaximumWidth(180)
         self.cases.setToolTip("切换显示哪个荷载工况或组合的结果")
         self.cases.currentTextChanged.connect(self._on_case)
         result_row.addWidget(self.cases)
-
         result_row.addWidget(QLabel("变形放大"))
         self.scale = QComboBox(self)
         self.scale.setEditable(True)
         self.scale.addItems(["自动", "1", "10", "50", "100", "200", "500"])
-        self.scale.setToolTip(
-            "变形图的放大倍数。判断变形是真的大还是被放大了，靠调这个")
         self.scale.setMinimumWidth(_fits(self.scale, "自动"))
+        self.scale.setMaximumWidth(110)
+        self.scale.setToolTip("变形显示的放大倍数，0 或自动表示自动取值。")
         self.scale.currentTextChanged.connect(self._on_scale)
         result_row.addWidget(self.scale)
-        result_row.addStretch(1)
-
         self.context.addWidget(build_page)
         self.context.addWidget(result_page)
         self._context_pages = {"建模": 0, "结果": 1}
 
-        row.addStretch(1)
-
-        # ---- 右段：显示模式。**这是状态不是动作，必须看得出当前在哪个。** ----
-        # 原来它和旁边的动作按钮长得一模一样（四个无字小图标），既看不出
-        # 自己在看什么，也容易误点。改成一排带字的互斥按钮。
-        separator()
-        section("显示")
-        self.mode_buttons: dict[str, QToolButton] = {}
+        space = QWidget(self)
+        space.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        row.addWidget(space)
+        row.addSeparator()
+        self.mode_button, modes = popup("模型", (), row)
+        self.mode_button.setProperty("i18nSelfManaged", True)
+        self.mode_button.setProperty("segment", True)
+        self.mode_buttons = {}
         for label, name in (("模型", "model"), ("分析网格", "analysis_mesh"),
                             ("变形", "deformed"), ("云图", "contour"),
                             ("内力图", "force_diagram"), ("应力比", "utilization"),
                             ("模态", "modal")):
-            b = labelled(name)
-            # 按钮上写 MODES 里的短名。动作本身叫"梁内力云图"（说明书式的
-            # 全名，tooltip 里保留），但这排是**并列的状态标签**，
-            # 一个 105px 的长名会把整排挤歪。
-            b.setText(label)
-            b.setProperty("segment", True)
-            self.mode_buttons[label] = b
+            button = labelled(name, modes, label)
+            button.clicked.connect(self.mode_button.menu().close)
+            self.mode_buttons[label] = button
         self._filling = False
+        window.ribbon.collapsed_changed.connect(
+            lambda _value: self.show_context_for(window.ribbon.tabText(window.ribbon.currentIndex()), window.mode))
+
 
     def _sync_precise(self) -> None:
         """建节点/建杆件任一勾上就显示精确建模控件，都不勾就收起来。"""
@@ -441,6 +441,15 @@ class QuickBar(QWidget):
         index = self._context_pages.get(key)
         if index is not None and index != self.context.currentIndex():
             self.context.setCurrentIndex(index)
+            self.context.updateGeometry()
+        names = self.common_commands.get(page, ())
+        for name, button in self.common_buttons.items():
+            button.setVisible(name in names and self._window.ribbon.is_collapsed())
+        from . import i18n
+        current_mode = mode or self._window.mode
+        self.mode_button.setText(i18n.tr(current_mode))
+        if current_mode in self.mode_buttons:
+            self.mode_button.setIcon(self.mode_buttons[current_mode].icon())
 
     def _on_plane(self, plane: str) -> None:
         self.offset_label.setText({"XY": "z=", "XZ": "y=", "YZ": "x="}.get(
