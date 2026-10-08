@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import math
+import signal
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -615,18 +617,54 @@ def test_agent_routes_the_default_solid_backend_to_native(monkeypatch):
 
 
 def test_gmsh_generates_positive_c3d10_and_cut_faces_when_available():
+    """实体网格保持有效，主线程调用也不能替换应用的 Ctrl+C 处理器。"""
     pytest.importorskip("gmsh")
     import native_joint
 
     session = _l_joint(section=S.solid_circle("R219", TUBE_D))
     spec = sj.prepare_joint_spec(session, 2)
+    handler = signal.getsignal(signal.SIGINT)
     mesh, faces = native_joint.generate_joint_mesh(spec, 80.0)
+    assert signal.getsignal(signal.SIGINT) is handler
     assert len(mesh.elements) > 0
     assert all(len(faces[arm.member_id]) >= 3 for arm in spec.arms)
     for conn in mesh.elements[:20]:
         _B, det = __import__("solid3d")._b_matrix(
             mesh.nodes[conn], np.full(4, 0.25))
         assert det > 0.0
+
+
+def test_native_joint_analysis_can_repeat_in_a_background_thread(tmp_path, monkeypatch):
+    """防止节点实体后台分析在 Gmsh 注册信号时失败，并验证结束后可再次分析。"""
+    gmsh = pytest.importorskip("gmsh")
+    import native_joint
+
+    session = _l_joint(section=S.solid_circle("R219", TUBE_D))
+    handler = signal.getsignal(signal.SIGINT)
+    messages = []
+    # 本回归验证真实网格、求解与数值文件；截图依赖图形环境，另有渲染回归。
+    monkeypatch.setattr(native_joint, "_write_vtu_and_png", lambda *args: (None, None))
+
+    def analyze():
+        result = native_joint.run_native_joint_analysis(
+            session, 2, mesh_sizes_mm=[80.0], output_dir=tmp_path, progress=messages.append)
+        assert gmsh.isInitialized() == 0
+        return result
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        for _ in range(2):
+            result = executor.submit(analyze).result(timeout=60)
+            mesh_result = result["meshes"][0]
+            assert mesh_result["elements"] > 0
+            assert math.isfinite(mesh_result["max_mises_mpa"])
+            assert mesh_result["max_mises_mpa"] > 0.0
+            assert mesh_result["free_residual_norm_n"] < 1e-5
+            assert signal.getsignal(signal.SIGINT) is handler
+
+    assert any("划分网格" in message for message in messages)
+    assert any("求解" in message for message in messages)
+    assert (tmp_path / "node_2_LC1" / "summary.json").is_file()
+    assert (tmp_path / "node_2_LC1" / "native_joint_0.npz").is_file()
 
 
 def test_a_stable_but_wobbly_sequence_is_not_called_inconclusive():
