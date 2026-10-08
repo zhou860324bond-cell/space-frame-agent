@@ -25,6 +25,7 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "高级参数": "Advanced parameters", "说明": "Details",
     # --- 功能区页签 ---
     "项目": "File", "建模": "Model", "属性": "Property", "载荷": "Load",
     "分析": "Step", "结果": "Results", "视图": "View", "主菜单": "Menu",

@@ -784,4 +784,10 @@ QLabel[result="value"] {{ color: {INK}; font-size: 16pt; font-weight: 600; }}
 QToolButton[result="detail"] {{ background: transparent; color: {ACCENT_DIM}; padding: 0px; font-size: 9pt; }}
 QToolButton[result="detail"]:hover {{ color: {ACCENT}; text-decoration: underline; }}
 QToolButton[result="detail"]:disabled {{ color: {INK_DIM}; }}
+QLineEdit[invalid="true"], QComboBox[invalid="true"], QDoubleSpinBox[invalid="true"] {{
+    border: 1px solid {ERROR};
+}}
+QLabel[fieldError="true"] {{
+    color: {ERROR}; background: transparent; font-size: 9pt;
+}}
 """

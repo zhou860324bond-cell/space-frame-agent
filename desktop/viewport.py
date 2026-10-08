@@ -24,7 +24,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from . import scene, theme
+from . import i18n, scene, theme
+from .result_overlay import ResultOverlay
 
 # 无头环境（QT_QPA_PLATFORM=offscreen）里没有可用的 OpenGL：VTK 建不出
 # shader，一渲染就在 C++ 层 abort——**Python 抓不住这种崩溃**。
@@ -208,6 +209,7 @@ class Viewport(QWidget):
             f"QLabel{{background:{theme.ACCENT_DIM}; color:#ffffff; "
             f"border:1px solid {theme.ACCENT}; border-radius:3px; "
             f"padding:4px 10px; font-size:9pt; font-weight:600;}}")
+        self.result_overlay = ResultOverlay(self)
 
     # --- 视口外观 ---
 
@@ -315,6 +317,7 @@ class Viewport(QWidget):
         # 背景变了，坐标轴和网格地面颜色要跟着变，浅色底上画白轴看不见
         self._refresh_axes_color()
         self._refresh_grid_floor()
+        self.result_overlay.set_light(self._is_light_bg())
         self.plotter.render()
 
     def _apply_bg_value(self, value) -> None:
@@ -463,10 +466,7 @@ class Viewport(QWidget):
         title = lookup("_contour_bar_title")
         if hasattr(title, "SetPosition"):
             title.SetPosition(x_right - 0.19, y_bottom + bar_height + 0.015)
-        caption = lookup("_contour_definition")
-        if hasattr(caption, "SetPosition"):
-            # 模式提示占着左上角约 36 px，说明从它下面开始
-            caption.SetPosition(left / width + 0.01, 1.0 - 44.0 / height)
+        self._place_overlays()
 
     def _inset_camera(self) -> bool:
         """让模型落在**没被抽屉盖住**的那一块里，而不是躲在抽屉后面。
@@ -512,6 +512,18 @@ class Viewport(QWidget):
                 self.height() - self.axis_indicator.height() - 10 - self._insets[2]
             )
             self.axis_indicator.raise_()
+        if hasattr(self, "result_overlay") and self.result_overlay.active:
+            left, right, bottom = self._insets
+            self.result_overlay.setFixedWidth(max(100, min(370, self.width() - left - right - 24)))
+            self.result_overlay.adjustSize()
+            y = self.mode_badge.geometry().bottom() + 8 if self.mode_badge.isVisible() else 12
+            self.result_overlay.move(left + 12, y)
+            self.result_overlay.setVisible(y + self.result_overlay.height() <= self.height() - bottom - 8)
+            self.result_overlay.raise_()
+
+    def _show_result_summary(self, summary: dict) -> None:
+        self.result_overlay.set_content(**summary, light=self._is_light_bg())
+        self._place_overlays()
 
     def resizeEvent(self, event):
         """窗口大小变化时，更新坐标系指示器位置。"""
@@ -523,6 +535,7 @@ class Viewport(QWidget):
     @_batched
     def clear(self) -> None:
         self._annotation_context = None
+        self.result_overlay.reset()
         if not CAN_RENDER:
             return
         self.plotter.clear()
@@ -728,6 +741,7 @@ class Viewport(QWidget):
             name = {"node": "选择节点", "member": "选择杆件"}.get(self.pick_mode, "")
         else:
             self.mode_badge.setVisible(False)
+            self._place_overlays()
             return
         ax_char = {"XY": "z", "XZ": "y", "YZ": "x"}[self.work_plane]
         bits = [name,
@@ -740,6 +754,7 @@ class Viewport(QWidget):
         self.mode_badge.move(12 + self._insets[0], 12)
         self.mode_badge.setVisible(True)
         self.mode_badge.raise_()
+        self._place_overlays()
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -947,7 +962,8 @@ class Viewport(QWidget):
             return
         points, texts, owners, priorities = [], [], [], []
         if supports:
-            support_points, support_texts = scene.support_labels(frame, owners=owners)
+            support_points, support_texts = scene.support_labels(
+                frame, owners=owners, compact=True, selection=self.selection)
             points.extend(support_points)
             texts.extend(support_texts)
             priorities.extend([2.0] * len(support_texts))
@@ -974,7 +990,7 @@ class Viewport(QWidget):
         hierarchy = mapper.GetInputAlgorithm()
         hierarchy.SetPriorityArrayName("annotation_priority")
         mapper.SetPlaceAllLabels(False)
-        mapper.SetMaximumLabelFraction(0.35)
+        mapper.SetMaximumLabelFraction(0.22)
 
     @_batched
     def show_model(self, frame, case: str | None = None,
@@ -1156,16 +1172,15 @@ class Viewport(QWidget):
         self.plotter.add_text("utilization", position=(0.795, 0.735),
                               viewport=True, color=theme.VIEWPORT_INK,
                               font_size=10, name="_contour_bar_title")
-        head = (f"MEMBER UTILIZATION - {total} members, {failed} over 1.0"
-                + (f", {unclear} inconclusive (grey)" if unclear else ""))
-        tail = ("max of strength / combined stress (GB 50017) / stability"
-                + (f" - worst M{worst['member']} = {worst['ratio']:.2f}"
-                   if worst["member"] is not None else ""))
-        caption = self.plotter.add_text(
-            head + "\n" + tail, position=(0.01, 0.97), viewport=True,
-            color=theme.VIEWPORT_INK, font_size=9, name="_contour_definition")
-        if caption is not None:
-            caption.GetTextProperty().SetVerticalJustificationToTop()
+        english = i18n.language() == "en"
+        peak = (f"{worst['ratio']:.4g} · " + (f"Member {worst['member']}" if english else f"杆件 {worst['member']}")) if worst["member"] is not None else "—"
+        self._show_result_summary({
+            "title": "Member utilization" if english else "杆件应力比",
+            "peak": ("Maximum ratio: " if english else "最大比值：") + peak,
+            "range_text": f"{total} members · {failed} exceeded · {unclear} inconclusive" if english else f"{total} 根杆件 · 超限 {failed} · 无法判定 {unclear}",
+            "status": "Strength / combined stress / stability" if english else "取强度、折算应力与稳定比的最大值",
+            "details": ("Grey means inconclusive, not passed." if english else "灰色表示无法判定，不能作为通过结论。")
+            + "\n\n" + str(payload.get("limitation") or "").replace("**", "")})
         self._contour_actors = True
         self._place_contour_overlays()
         self._decorate(frame)
@@ -1228,16 +1243,14 @@ class Viewport(QWidget):
                               viewport=True, color=theme.VIEWPORT_INK,
                               font_size=10, name="_contour_bar_title")
         bending = component in {"M", "Mz", "My"}
-        caption = self.plotter.add_text(
-            "BEAM INTERNAL-FORCE DIAGRAM\n"
-            + f"{label} [{unit}] - "
-            + ("drawn on the tension side" if bending
-               else "drawn toward + local axis")
-            + " - one scale for all members",
-            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
-            font_size=9, name="_contour_definition")
-        if caption is not None:
-            caption.GetTextProperty().SetVerticalJustificationToTop()
+        english = i18n.language() == "en"
+        convention = ("Drawn on the tension side" if bending else "Drawn toward + local axis") if english else ("弯矩图绘于受拉侧" if bending else "沿局部坐标正向绘制")
+        self._show_result_summary({
+            "title": f"Internal-force diagram {component} · {unit}" if english else f"三维内力图 {component} · {unit}",
+            "peak": ("Peak: " if english else "峰值：") + f"{shown['value']:+.4g} {unit}",
+            "range_text": (f"Member {shown['member']} · x={shown['x']:.4g}" if english else f"杆件 {shown['member']} · x={shown['x']:.4g}") if shown["member"] is not None else "—",
+            "status": convention,
+            "details": convention + (". One scale for all members." if english else "。各杆件采用同一比例尺；内力图表示梁内力，不是截面应力。")})
         if shown["member"] is not None and shown["point"] is not None:
             self.plotter.add_point_labels(
                 [shown["point"]],
@@ -1354,24 +1367,15 @@ class Viewport(QWidget):
         # 中文字形（实测中文渲染成方块）。写成方块等于没披露。
         label = (scene.STRESS_LABEL_ASCII if component == scene.STRESS
                  else component)
-        bar_title = f"{label}  [{unit}]" + ("" if continuous else f"\n{n} bands")
-        if clipped:
-            bar_title += (f"\nclip p{scene.CONTOUR_PERCENTILE:.0f}"
-                          + ("\nabove: top color" if continuous
-                             else "\noff scale: orange"))
+        bar_title = f"{label}  [{unit}]"
         self.plotter.add_text(
             bar_title, position=(0.795, 0.735), viewport=True,
             color=theme.VIEWPORT_INK, font_size=10, name="_contour_bar_title")
-        caption = self.plotter.add_text(
-            scene.contour_caption(
-                component, unit, clipped, sign_filter, n or None,
-                scale_max=max(abs(clim[0]), abs(clim[1])),
-                true_peak=float(np.abs(np.asarray(line[component])).max())
-                if line.n_points else None),
-            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
-            font_size=9, name="_contour_definition")
-        if caption is not None:                     # 无头环境下 add_text 不给 actor
-            caption.GetTextProperty().SetVerticalJustificationToTop()
+        self._show_result_summary(scene.contour_summary(
+            component, unit, clim,
+            float(np.abs(np.asarray(line["unfiltered_values"])).max()) if line.n_points else None,
+            clipped=clipped, sign_filter=sign_filter, levels=n,
+            percentile=percentile, language=i18n.language()))
         self._contour_actors = True
         self._place_contour_overlays()
         if overlay_deformed:

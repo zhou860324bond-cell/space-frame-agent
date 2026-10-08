@@ -460,8 +460,8 @@ def contour_line(frame, solution, case: str | None, component: str,
     line = member_polylines(frame, solution, case, scale, scalars=component)
     if not line.n_points:
         return line
-    line[component] = sign_filtered(
-        np.asarray(line[component], dtype=float) * value_scale, sign_filter)
+    line["unfiltered_values"] = np.asarray(line[component], dtype=float) * value_scale
+    line[component] = sign_filtered(line["unfiltered_values"], sign_filter)
     return line
 
 
@@ -697,7 +697,8 @@ def support_glyphs(frame, size: float | None = None) -> dict[str, pv.PolyData]:
 
 
 def support_labels(frame, size: float | None = None,
-                   owners: list | None = None) -> tuple[list, list[str]]:
+                   owners: list | None = None, *, compact: bool = False,
+                   selection: tuple | None = None) -> tuple[list, list[str]]:
     """返回主支座的精确约束自由度标注。
 
     锥体、方块只能表达支座的概略类别，不能表达 ``U1/U2/U3/UR1/UR2/UR3``
@@ -717,7 +718,13 @@ def support_labels(frame, size: float | None = None,
             continue
         p = np.asarray(frame.nodes[nid].xyz, dtype=float)
         points.append(p + np.array([offset, offset, offset]))
-        texts.append(f"N{nid} BC: {fixed}")
+        text = f"N{nid} BC: {fixed}"
+        if compact and selection != ("node", nid):
+            if all(mask):
+                text = f"N{nid}: fixed"
+            elif all(mask[:3]) and not any(mask[3:]):
+                text = f"N{nid}: pinned"
+        texts.append(text)
         if owners is not None:
             owners.append(("node", nid))
     return points, texts
@@ -979,7 +986,8 @@ def clim_is_clipped(mesh: pv.PolyData, name: str,
 def contour_caption(component: str, unit: str, clipped: bool = False,
                     sign_filter: str = "all", levels: int | None = None,
                     scale_max: float | None = None,
-                    true_peak: float | None = None) -> str:
+                    true_peak: float | None = None,
+                    percentile: float | None = CONTOUR_PERCENTILE) -> str:
     """梁中心线结果的自描述文字；明确它不是截面实体应力云图。
 
     ``σ`` 那一档尤其要写清楚：它是**极端纤维正应力**，由梁内力和截面几何
@@ -1001,7 +1009,7 @@ def contour_caption(component: str, unit: str, clipped: bool = False,
                       else "signed in member local axes")
     suffix = ""
     if clipped:
-        suffix = f" - clipped at p{CONTOUR_PERCENTILE:.0f}"
+        suffix = f" - clipped at p{percentile:g}" if percentile is not None else " - clipped"
         if scale_max is not None and true_peak:
             suffix += (f": scale max {scale_max:.3g} vs true peak {true_peak:.3g}"
                        f" ({100.0 * scale_max / true_peak:.0f}%)")
@@ -1013,6 +1021,52 @@ def contour_caption(component: str, unit: str, clipped: bool = False,
     # 分隔符用短横不用竖线：VTK 的默认字体里竖线渲染成一大片空白（实测），
     # 一行字会被撑成两截，看着像文字丢了。
     return f"{head}\n{label} [{unit}] - {convention}{suffix}"
+
+
+def contour_summary(component: str, unit: str, clim: tuple, true_peak: float | None,
+                    *, clipped: bool = False, sign_filter: str = "all",
+                    levels: int = 0, percentile: float | None = CONTOUR_PERCENTILE,
+                    language: str = "zh") -> dict:
+    """Qt 摘要保留真实峰值、量程和筛选状态，完整定义放在说明中。"""
+    names = {"N": "轴力", "Vy": "局部剪力", "Vz": "局部剪力", "V": "剪力合量",
+             "T": "扭矩", "My": "局部弯矩", "Mz": "局部弯矩", "M": "弯矩合量",
+             STRESS: "截面正应力"}
+    peak = f"{true_peak:.4g} {unit}" if true_peak is not None else "—"
+    bounds = f"{clim[0]:.4g} ～ {clim[1]:.4g} {unit}"
+    label = STRESS_LABEL if component == STRESS else component
+    filtered = component not in {"M", "V"} and sign_filter != "all"
+    if language == "en":
+        clipping = (f"p{percentile:g} clipped" if percentile is not None else "Clipped") if clipped else "Full range"
+        status = [clipping, f"{levels} bands" if levels else "Continuous",
+                  sign_filter if filtered else "All values"]
+        if component == STRESS:
+            status.append("Normal stress only")
+        return {"title": f"{label} · {unit}", "peak": f"True absolute peak: {peak}",
+                "range_text": f"Colour range: {bounds}", "status": " · ".join(status),
+                "details": contour_caption(component, unit, clipped, sign_filter, levels or None,
+                                           scale_max=max(abs(v) for v in clim), true_peak=true_peak,
+                                           percentile=percentile)
+                + ("\nSign filtering changes colours; the true peak covers all values." if filtered else "")}
+    clipping = (f"{percentile:g}% 裁剪" if percentile is not None else "量程裁剪") if clipped else "满量程"
+    status = [clipping, f"{levels} 级" if levels else "连续",
+              {"positive": "仅正值", "negative": "仅负值"}.get(sign_filter, "全部") if filtered else "全部"]
+    if component == STRESS:
+        status.append("仅正应力")
+        definition = "截面正应力按 σ=N/A±Mc/I 计算，受拉为正；不含剪切与扭转剪应力，不能替代完整承载力验算。"
+    elif component in {"M", "V"}:
+        definition = "显示梁中心线内力合量，数值为非负；不是截面应力或完整承载力验算。"
+    else:
+        definition = "显示梁中心线内力分量，正负号按杆件局部坐标定义；不是截面应力。"
+    notes = [definition, "真实峰值为完整结果的最大绝对值，色标范围用于着色。"]
+    if clipped:
+        notes.append("量程经过裁剪，超出部分饱和到端点颜色；读取峰值请使用真实峰值或极值标注。")
+    if filtered:
+        notes.append("符号筛选只影响着色，真实峰值仍取完整结果。")
+    if true_peak == 0:
+        notes.append("当前结果全零，色标量程仅用于显示，不代表非零内力。")
+    return {"title": f"{names.get(component, component)} {label} · {unit}",
+            "peak": f"真实峰值 |{label}|：{peak}", "range_text": f"色标范围：{bounds}",
+            "status": " · ".join(status), "details": "\n\n".join(notes)}
 
 
 def sign_filtered(values, mode: str) -> np.ndarray:

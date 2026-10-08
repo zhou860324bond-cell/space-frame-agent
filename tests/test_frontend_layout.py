@@ -129,3 +129,26 @@ def test_narrow_summary_keeps_metrics_above_readable_table(app):
     assert all(card.height() >= 92 for card in panel.summary_cards)
     assert panel.table.height() >= 60
     panel.close()
+
+
+def test_result_overlay_follows_mode_badge_and_clears_with_scene(app):
+    """拾取提示出现时不能压住云图摘要，切回模型也不能留下旧的峰值卡片。"""
+    from desktop.viewport import Viewport
+    v = Viewport()
+    v.resize(800, 500)
+    v.show()
+    v._show_result_summary(dict(title="弯矩合量 M · kN·m", peak="真实峰值：69.2",
+                               range_text="色标范围：0 ～ 40.4", status="95% 裁剪",
+                               details="峰值来自完整结果。"))
+    v.set_overlay_insets(240, 80, 180)
+    v.pick_mode = "member"
+    v._update_mode_badge()
+    app.processEvents()
+    assert v.result_overlay.x() >= 240
+    assert v.result_overlay.geometry().right() < v.width() - 80
+    assert v.result_overlay.y() > v.mode_badge.geometry().bottom()
+    assert v.result_overlay.geometry().bottom() < v.height() - 180
+    v.clear()
+    assert v.result_overlay.isHidden()
+    assert not v.result_overlay.active
+    v.close()

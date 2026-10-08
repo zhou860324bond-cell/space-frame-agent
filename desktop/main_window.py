@@ -1269,6 +1269,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.statusBar().showMessage(
             "Interface language: English (dialogs remain in Chinese)"
             if want == "en" else "界面语言：中文", 4000)
+        self.redraw()
 
     # --- 人工建模 ---
 
@@ -3038,7 +3039,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                 geo.width(), geo.height()))
             # 抽屉是独立的 Tool 窗口，空模型引导卡片在视口上层；
             # VTK 画面贴回后必须把这些覆盖层再贴一次，否则导出图里会消失。
-            for overlay in (self.empty_state, self.left_drawer,
+            for overlay in (self.empty_state, self.viewport.result_overlay, self.left_drawer,
                             self.right_drawer, self.bottom_drawer):
                 if overlay.isVisible():
                     painter.drawPixmap(self.mapFromGlobal(overlay.mapToGlobal(overlay.rect().topLeft())),
