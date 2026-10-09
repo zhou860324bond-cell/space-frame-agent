@@ -68,7 +68,7 @@ class IssuePanel(QWidget):
             row.addWidget(button)
         layout.addLayout(row)
         self.list.currentItemChanged.connect(self._selection_changed)
-        self.btn_confirm.clicked.connect(lambda: self._request("confirm"))
+        self.btn_confirm.clicked.connect(lambda: self._request(self._confirm_action))
         self.btn_connect.clicked.connect(lambda: self._request("connect"))
         self.btn_cross.clicked.connect(lambda: self._request("cross"))
         self.btn_reuse.clicked.connect(lambda: self._request("reuse"))
@@ -153,7 +153,12 @@ class IssuePanel(QWidget):
         self.issue_selected.emit(str(issue["id"]), list(issue.get("entity_refs") or []))
 
     def _set_actions(self, category: str | None) -> None:
-        self.btn_confirm.setVisible(category in _CONFIRMABLE)
+        current = self.current_issue() or {}
+        unbound = category == "load_incomplete" and current.get("unbound_symbols_only") is True and bool(current.get("observations"))
+        self._confirm_action = "ignore" if unbound else "confirm"
+        self.btn_confirm.setText("忽略符号" if unbound else "确认此项")
+        self.btn_confirm.setToolTip("明确这些未绑定符号无需施加为外荷载，保留原观察记录；其他荷载问题仍需处理。" if unbound else "核对当前问题涉及的对象后确认。")
+        self.btn_confirm.setVisible(category in _CONFIRMABLE or unbound)
         intersection = category == "intersection_unknown"
         self.btn_connect.setVisible(intersection)
         self.btn_cross.setVisible(intersection)

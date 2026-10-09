@@ -41,6 +41,14 @@ online parsing from offline replay after the parser fix. Replay never calls a
 provider or overwrites the initial score. This small pilot does not establish
 accuracy on drawings, photos or other providers generally.
 
+Two additional first-response rounds on the unchanged development images are
+recorded in [the round comparison](public_cases/ROUND_REPORT.md). Round 3 online
+parsing succeeds on 5/5, with node F1 0.500; current offline replay reaches 0.750
+and is kept separate. Neither passes the complete gate. The annotations and
+pixel tolerance were not relaxed; these development results are not held-out
+accuracy. Request options and pipeline fingerprints prevent stale recognition
+reuse; replay always uses current code while evaluate scores frozen predictions.
+
 ```text
 python -m multimodal_eval.real_world_eval evaluate --root multimodal_eval/public_cases
 python -m multimodal_eval.real_world_eval replay --root multimodal_eval/public_cases --output results/public-replay.json

@@ -255,6 +255,57 @@ def test_public_replay_fixes_frozen_responses_without_calling_provider(monkeypat
     assert all(path.read_bytes() == value for path, value in original.items())
 
 
+@pytest.mark.parametrize("round_name", ["round_02", "round_03"])
+def test_new_public_rounds_keep_original_pixels_and_independent_truth(round_name):
+    """新轮次只能改变识别过程，不能偷偷改原图或评分真值来提高成绩。"""
+    root = ROOT / "public_cases"
+    round_root = root / round_name
+    for folder in ("images", "ground_truth"):
+        for path in (root / folder).iterdir():
+            assert (round_root / folder / path.name).read_bytes() == path.read_bytes()
+    report = evaluate_real_world(round_root)
+    assert report["runtime"]["total_calls"] == 5 and report["gate_cases"] == 5
+    assert report["metrics"]["load_numeric_unit_accuracy"] is None
+    assert all(item["call_metadata"][0]["finish_reason"] == "stop" for item in report["case_outcomes"])
+
+
+def test_current_pixel_replay_is_separate_from_frozen_online_score(monkeypatch):
+    """纵坐标倒置修复只在离线回放体现，不能覆盖首轮在线分数或声称又做了一次识别。"""
+    root = ROOT / "public_cases" / "round_03"
+    from multimodal_contract import canonical_digest
+    snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
+    round_info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    assert canonical_digest(snapshot) == round_info["pipeline_hash"]
+    monkeypatch.setattr("sketch_parser.SketchParser._call_llm",
+                        lambda *a, **k: pytest.fail("回放不能调用接口"))
+    original = {p: p.read_bytes() for p in (root / "responses").glob("*.json")}
+    online = evaluate_real_world(root)
+    replay = replay_real_world(root)
+    assert online["metrics"]["node_f1"] == 0.5
+    assert replay["metrics"]["node_f1"] == 0.75
+    assert replay["new_api_calls"] == 0 and replay["replay_successes"] == 5
+    assert replay["pipeline_hash"]
+    assert all(p.read_bytes() == data for p, data in original.items())
+
+
+@pytest.mark.parametrize("changed", ["request_options", "pipeline_hash"])
+def test_request_or_pipeline_drift_never_reuses_or_overwrites_a_response(tmp_path, monkeypatch, changed):
+    """改变视觉推理设置或像素后处理后，应提示旧响应过期，不能沿用旧预测或重复付费覆盖。"""
+    from multimodal_eval.real_world_eval import PIPELINE_HASH
+    from sketch_parser import SketchParser
+    _, _, _, response_path = _complete_real_case(tmp_path)
+    value = json.loads(response_path.read_text(encoding="utf-8"))
+    value["request_fingerprint"].update(request_options=SketchParser().request_options(), pipeline_hash=PIPELINE_HASH)
+    value["request_fingerprint"][changed] = {"max_tokens": 2000} if changed == "request_options" else "old-pipeline"
+    response_path.write_text(json.dumps(value), encoding="utf-8")
+    original = response_path.read_bytes()
+    monkeypatch.setattr("sketch_parser.SketchParser.from_env",
+                        lambda *a, **k: pytest.fail("不能覆盖冻结响应"))
+    result = recognize(tmp_path, provider="openai", model="test-model")
+    assert result["results"][0]["status"] == "STALE_RESPONSE"
+    assert response_path.read_bytes() == original
+
+
 def test_duplicate_numeric_predictions_cannot_score_above_one(tmp_path):
     """相同荷载重复输出曾使正确数大于真值数，数值准确率超过 100%。"""
     _, _, truth_path, response_path = _complete_real_case(tmp_path)

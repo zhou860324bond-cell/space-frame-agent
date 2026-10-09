@@ -100,6 +100,7 @@ def prepare_vision_entities(draft: dict) -> None:
     entities = draft.get("entities")
     if not isinstance(entities, list):
         return
+    unbound_loads = []
     for entity in entities:
         if not isinstance(entity, dict):
             raise ValueError("识别实体必须是对象，请重新输出实体列表。")
@@ -151,8 +152,27 @@ def prepare_vision_entities(draft: dict) -> None:
             target = candidate or target
         entity["target"] = deepcopy(target)
         if not any(kind == k and target == t for k, t, _ in expected):
+            if kind == "load":
+                # 无求解条目的符号观察单独隔离，不能补零，也不能令整份几何丢失。
+                unbound_loads.append(entity)
+                continue
             raise ValueError("识别实体必须引用 image_model 中存在的审核对象，请检查 target。")
-    entities[:] = [entity for entity in entities if entity.get("kind") != "dimension"]
+    if unbound_loads:
+        issues = draft.setdefault("issues", [])
+        problem = next((issue for issue in issues if issue.get("category") == "load_incomplete"
+                        and not issue.get("entity_refs")), None)
+        symbols_only = problem is None
+        if problem is None:
+            ident = f"unbound-load-{len(issues) + 1}"
+            while any(issue.get("id") == ident for issue in issues):
+                ident += "-new"
+            problem = {"id": ident, "category": "load_incomplete", "entity_refs": [],
+                "message": "荷载符号观察没有对应的求解条目，可能缺少数值或属于反力。请核对作用位置、物理含义及数值；明确无需施加时选择忽略符号，原记录仍保留。"}
+            issues.append(problem)
+        problem.update(severity="blocking", status="open", resolution=None, resolved_by=None,
+                       observations=deepcopy(unbound_loads), unbound_symbols_only=symbols_only)
+    entities[:] = [entity for entity in entities if entity.get("kind") != "dimension"
+                   and not any(entity is unknown for unknown in unbound_loads)]
     for index, (kind, target, geometry) in enumerate(expected, 1):
         match = next((entity for entity in entities if entity.get("kind") == kind
                       and entity.get("target") == target), None)

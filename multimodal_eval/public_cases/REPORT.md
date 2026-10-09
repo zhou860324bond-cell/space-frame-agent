@@ -60,3 +60,9 @@ python -m multimodal_eval.real_world_eval replay --root multimodal_eval/public_c
 
 上述两条仅使用冻结证据，无需凭据或联网。evaluate 未通过完整阈值时返回 1，报告仍保存；不得把这一退出码解释为未执行评分。
 原图、输入参数、独立真值和首次响应均用 SHA-256 绑定，修改后须重新建立明确分开的评测轮次。
+
+## 后续轮次
+
+本文件与已保存的首轮 report.json / replay.json 保留当时测量结果。当前 replay 命令使用
+当前代码，其输出可能与历史 replay.json 不同；不会覆盖历史文件。后续两轮首响应及当前
+代码回放分别记录在 [分轮对照报告](ROUND_REPORT.md)，不把回放提升记为在线准确率。

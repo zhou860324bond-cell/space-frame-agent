@@ -129,6 +129,36 @@ def test_low_confidence_selection_links_issue_to_overlay_and_confirmation(qt_app
     assert panel.issue_panel.summary.text() == "阻断 0 · 警告 0"
 
 
+def test_unbound_symbol_ignore_is_explicit_and_keeps_other_load_blockers(qt_app):
+    """未绑定箭头可以明确忽略并留存记录，但不能消除实际外荷载缺失或改写计算荷载。"""
+    value = base_draft()
+    observation = {"id": "RA", "kind": "load", "target": {"load": {"name": "RA"}}}
+    unknown = issue("symbols", "load_incomplete")
+    unknown["observations"] = [observation]
+    unknown["unbound_symbols_only"] = True
+    numeric = issue("actual-load", "load_incomplete", refs=["node:1"])
+    value["issues"] = [unknown, numeric]
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(value)
+    row = next(i for i in range(panel.issue_panel.list.count())
+               if panel.issue_panel.list.item(i).data(256) == "symbols")
+    panel.issue_panel.list.setCurrentRow(row)
+    assert panel.issue_panel.btn_confirm.text() == "忽略符号"
+    panel.issue_panel.btn_confirm.click()
+    symbols = next(i for i in panel._v2_draft["issues"] if i["id"] == "symbols")
+    assert symbols["status"] == "resolved" and symbols["resolved_by"] == "user"
+    assert symbols["observations"] == [observation]
+    assert next(i for i in panel._v2_draft["issues"] if i["id"] == "actual-load")["status"] == "open"
+    assert panel._v2_draft["image_model"]["load_cases"] == []
+
+
+def test_numeric_load_problem_never_offers_symbol_ignore(qt_app):
+    """有数值条目或普通缺失荷载问题不能用符号忽略操作直接越过审核。"""
+    panel = IssuePanel()
+    panel.set_draft({"issues": [issue("actual", "load_incomplete", refs=["node:1"])]})
+    assert panel.btn_confirm.isHidden()
+
+
 def test_intersection_action_updates_draft_and_cannot_use_global_checkbox(qt_app):
     value = detect_topology(base_draft())
     panel = SketchPanel(Session(), IdleRunner())

@@ -166,6 +166,20 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
    {"load":{"case":"D","collection":"nodal_loads","name":"P1"}}。
    支座和荷载须有对应名称；image_geometry 仅写可见证据的归一化位置。
    人工审核由用户完成，不得输出 verified 或 source=user，也不得将问题标为已解决。
+10. **先区分结构主体与辅助图，再提取拓扑。** 尺寸线、坐标轴、文字引线、
+    剪力图、弯矩图、变形曲线及其他结果图均不是杆件。
+    同图有初始位形和变形轮廓时，按初始位形提取梁轴；无法区分时报告问题，
+    不得将变形后的曲线端点替代原结构节点。
+11. **节点位置取杆件中心轴。** 厚线或矩形梁用两边界的中线，不取外轮廓；
+    支座节点是梁轴上的附着位置，不是三角形顶点、墙体边缘或文字位置。
+    u/v 应尽量保留四位小数，位置仍必须有可见证据，不能用多位小数掩盖不确定。
+12. 仅在杆件端点、真实连接、支座或集中荷载作用点建节点。字母标注的中点、
+    尺寸分界或均布荷载图中单独的文字，不构成新增节点和杆件分段的证据。
+13. **先判断箭头表示的物理量。** 支座旁明确标出的反力（例如 RA、RB）、
+    剪力图/弯矩图的箭头不是外加荷载；不要写进 load_cases。
+    不能区分反力和外荷载时只报告待核实问题，不选择一个用于求解。
+    外荷载只有符号而没有数值/单位时，以 load_incomplete 问题保留作用节点或杆件，
+    不得写 value=null 的求解荷载，更不能补零或推算数值。
 """
 
 
@@ -428,6 +442,7 @@ class V2ParseResult:
     errors: list[str] = field(default_factory=list)
     raw_responses: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
+    call_metadata: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SketchParser:
@@ -457,6 +472,37 @@ class SketchParser:
         self._temperature = temperature
         self._system_prompt = system_prompt
         self._client = None
+        self._last_call_metadata: dict[str, Any] = {}
+
+    def request_options(self) -> dict[str, Any]:
+        """记录实际请求参数；视觉提取直接输出结构，避免默认推理占满输出预算。"""
+        options = {"max_tokens": 4000}
+        if self._provider != "anthropic":
+            options["temperature"] = self._temperature
+        if self._provider == "deepseek" and self._model in (
+                "deepseek-flash", "deepseek-v4-flash-vision-exp"):
+            options["extra_body"] = {"thinking": {"type": "disabled"}}
+        return options
+
+    def _record_call_metadata(self, response: Any, raw: str, *,
+                              finish_reason: Any, reasoning_present: bool = False) -> None:
+        """只记录诊断标量，不保存密钥、请求全文或模型推理内容。"""
+        metadata = {"content_characters": len(raw), "has_reasoning_content": reasoning_present}
+        if isinstance(finish_reason, str):
+            metadata["finish_reason"] = finish_reason
+        usage = getattr(response, "usage", None)
+        names = (("input_tokens", "prompt_tokens"), ("output_tokens", "completion_tokens")) \
+            if self._provider == "anthropic" else (("prompt_tokens", "prompt_tokens"),
+                ("completion_tokens", "completion_tokens"), ("total_tokens", "total_tokens"))
+        for source, target in names:
+            value = getattr(usage, source, None)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                metadata[target] = value
+        details = getattr(usage, "completion_tokens_details", None)
+        reasoning_tokens = getattr(details, "reasoning_tokens", None)
+        if isinstance(reasoning_tokens, int) and not isinstance(reasoning_tokens, bool) and reasoning_tokens >= 0:
+            metadata["reasoning_tokens"] = reasoning_tokens
+        self._last_call_metadata = metadata
 
     @staticmethod
     def _default_model(provider: str) -> str:
@@ -552,7 +598,7 @@ class SketchParser:
         ]
         if correction:
             user_content.insert(1, {"type": "text", "text":
-                f"上一次的输出有以下错误，请修正后重新输出：\n{correction}\n"
+                f"识别上下文及格式修正要求：\n{correction}\n"
                 f"只输出修正后的 JSON，不要输出其他文字。"})
 
         if self._provider in ("openai", "deepseek"):
@@ -562,26 +608,34 @@ class SketchParser:
                     {"role": "system", "content": system_prompt or self._system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                temperature=self._temperature,
-                max_tokens=4000,
+                **self.request_options(),
             )
-            return response.choices[0].message.content or ""
+            choice = response.choices[0] if response.choices else None
+            raw = (choice.message.content or "") if choice else ""
+            self._record_call_metadata(response, raw,
+                finish_reason=getattr(choice, "finish_reason", "missing_choice"),
+                reasoning_present=bool(getattr(getattr(choice, "message", None), "reasoning_content", None)))
+            return raw
         elif self._provider == "anthropic":
             content: list[dict[str, Any]] = [
                 {"type": "text", "text": "请识别这张结构草图，输出 JSON 格式的识别草稿。"},
             ]
             if correction:
                 content.append({"type": "text", "text":
-                    f"上一次的输出有以下错误，请修正后重新输出：\n{correction}\n"
+                    f"识别上下文及格式修正要求：\n{correction}\n"
                     "只输出修正后的 JSON，不要输出其他文字。"})
             content.append(self._anthropic_image(image_data_url))
             response = client.messages.create(
                 model=self._model,
-                max_tokens=4000,
+                **self.request_options(),
                 system=system_prompt or self._system_prompt,
                 messages=[{"role": "user", "content": content}],
             )
-            return response.content[0].text if response.content else ""
+            blocks = response.content or []
+            raw = "".join(block.text for block in blocks if isinstance(getattr(block, "text", None), str))
+            self._record_call_metadata(response, raw, finish_reason=getattr(response, "stop_reason", None),
+                reasoning_present=any(getattr(block, "type", None) == "thinking" for block in blocks))
+            return raw
         return ""
 
     @staticmethod
@@ -704,6 +758,7 @@ class SketchParser:
                 state.cancel_recognition(job_id)
                 result.cancelled = True
                 break
+            self._last_call_metadata = {}
             try:
                 raw = self._call_llm(
                     image_data, correction, system_prompt=V2_SKETCH_SYSTEM_PROMPT)
@@ -712,11 +767,17 @@ class SketchParser:
                     state.cancel_recognition(job_id)
                     result.cancelled = True
                     break
+                if self._last_call_metadata.get("finish_reason") in ("length", "max_tokens"):
+                    raise RuntimeError("视觉接口输出达到长度限制，草稿不完整。请裁剪到结构主体或减少图中内容后重新识别。")
+                if not raw.strip():
+                    raise RuntimeError("视觉接口未返回识别内容。请检查模型是否支持图片，并裁剪到结构主体后重新识别。")
                 payload = self._extract_json(raw)
                 payload = _fill_bookkeeping(payload, state.image_hash, str(image_path))
                 errors = validate_v2_draft(payload)
                 if errors:
                     raise ValueError("；".join(errors))
+                from sketch_axis_refinement import refine_horizontal_axis
+                payload = refine_horizontal_axis(payload, image_path)
                 if not state.complete_recognition(job_id, payload):
                     result.cancelled = True
                     break
@@ -731,6 +792,9 @@ class SketchParser:
                 result.errors.append(
                     f"第{attempt}次 API 调用失败: {type(exc).__name__}: {exc}")
                 break
+            finally:
+                if self._last_call_metadata:
+                    result.call_metadata.append({"attempt": attempt, **self._last_call_metadata})
 
         if not result.success and not result.cancelled \
                 and state.job_status == "running" and state.job_id == job_id:

@@ -29,6 +29,10 @@ ROOT = Path(__file__).resolve().parent / "real_world_cases"
 FORMAT = "space-frame-real-world-case/v1"
 PROMPT_HASH = hashlib.sha256(V2_SKETCH_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
 SCHEMA_HASH = hashlib.sha256(V2_DRAFT_FORMAT.encode("utf-8")).hexdigest()
+PIPELINE_HASH = canonical_digest({name: (Path(__file__).resolve().parents[1] / "src" / name)
+                                 .read_text(encoding="utf-8") for name in (
+    "sketch_parser.py", "multimodal_workflow.py", "sketch_axis_refinement.py",
+    "image_preprocess.py", "dimension_constraints.py", "sketch_topology.py")})
 PROVIDER_KEYS = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -252,6 +256,11 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
                     "provider": provider, "model": model or SketchParser._default_model(provider),
                     "prompt_hash": PROMPT_HASH, "schema_hash": SCHEMA_HASH}.items()):
                 invalid.append("request_fingerprint_changed")
+            options = SketchParser(provider=provider, model=model).request_options()
+            if fingerprint.get("request_options") != options:
+                invalid.append("request_options_changed")
+            if fingerprint.get("pipeline_hash") != PIPELINE_HASH:
+                invalid.append("pipeline_changed")
             results.append({"image_id": image_id,
                             "status": "STALE_RESPONSE" if invalid else "SKIPPED_EXISTS",
                             "reasons": invalid})
@@ -298,6 +307,10 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
             "prediction": prediction,
             "errors": [error.replace(parser._api_key, "[REDACTED]") for error in parsed.errors],
             "raw_responses": [raw.replace(parser._api_key, "[REDACTED]") for raw in parsed.raw_responses],
+            "call_metadata": deepcopy(parsed.call_metadata),
+            "position_refinements": [deepcopy(entity["position_refinement"])
+                                     for entity in (parsed.draft or {}).get("entities", [])
+                                     if "position_refinement" in entity],
             "redaction": {"credentials": "not_recorded",
                           "user_metadata": "not_recorded"},
             "request_fingerprint": {
@@ -305,6 +318,8 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
                 "prompt_hash": PROMPT_HASH, "schema_hash": SCHEMA_HASH,
                 "image_hash": image_hash, "derived_image_hash": prepared.derived_image_hash,
                 "input_context_hash": canonical_digest(input_context(metadata)),
+                "request_options": parser.request_options(),
+                "pipeline_hash": PIPELINE_HASH,
             },
             "preprocessing": prepared.source_metadata()["preprocessing"],
             "runtime": {"attempts": parsed.attempts,
@@ -330,7 +345,8 @@ def evaluate_real_world(root: str | Path = ROOT) -> dict:
             raise ValueError(f"样本 {case['image_id']} 的授权或输入参数哈希漂移")
         response = _read(root / case["response_fixture_path"])
         outcomes.append({"image_id": case["image_id"], "outcome": response["outcome"],
-                         **response["runtime"], "errors": response.get("errors", [])})
+                         **response["runtime"], "errors": response.get("errors", []),
+                         "call_metadata": response.get("call_metadata", [])})
         attempts.append(response["runtime"]["attempts"])
         durations.append(response["runtime"]["duration_ms"])
     report.update(sample_kind="external-real-world-pilot", case_outcomes=outcomes,
@@ -348,6 +364,7 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
     """只回放冻结的首次原文；不调用接口，也不改写首次成绩或耗时。"""
     from dimension_constraints import apply_scale_to_draft
     from sketch_topology import detect_topology
+    from sketch_axis_refinement import refine_horizontal_axis
 
     root = Path(root)
     evaluate_real_world(root)  # 先验证所有原始证据，禁止回放已被修改的样本。
@@ -373,6 +390,7 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
                                         rotation_quarters_cw=options.get("rotation_quarters_cw", 0))
             draft["source"] = prepared.source_metadata()
             draft["work_plane"] = deepcopy(metadata["work_plane"])
+            draft = refine_horizontal_axis(draft, prepared.derived_path)
             draft = detect_topology(apply_scale_to_draft(draft))
             predictions[image_id] = draft_to_prediction(draft, image_id=image_id,
                                                         width=prepared.width_px, height=prepared.height_px)
@@ -387,6 +405,7 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
     report = evaluate_manifest(root / "manifest.json", prediction_overrides=predictions)
     report.update(case_outcomes=outcomes, new_api_calls=0, replay_successes=sum(
         item["outcome"] == "PASS" for item in outcomes),
+        pipeline_hash=PIPELINE_HASH,
         limitations=["修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
                      "输入与真值不变；失败保留在分母，无证据指标仍为 null。"])
     return report
@@ -426,6 +445,8 @@ def freeze_manifest(root: str | Path = ROOT) -> dict[str, Any]:
             "provider": fingerprint["provider"], "model": fingerprint["model"],
             "prompt_hash": fingerprint["prompt_hash"],
             "schema_hash": fingerprint["schema_hash"],
+            "request_options": fingerprint.get("request_options"),
+            "pipeline_hash": fingerprint.get("pipeline_hash"),
             "subset_labels": metadata["subset_labels"], "gate": True,
             "source": metadata["source"], "license": metadata["license"],
         })

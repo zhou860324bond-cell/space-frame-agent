@@ -560,6 +560,10 @@ class SketchPanel(QWidget):
                         entity.update(source="user", confidence=None, verified=True)
                 issue.update(status="resolved", resolution="用户已核对实体",
                              resolved_by="user")
+            elif (category == "load_incomplete" and action == "ignore"
+                  and issue.get("unbound_symbols_only") is True and issue.get("observations")):
+                issue.update(status="resolved", resolution="用户明确忽略未绑定的荷载符号",
+                             resolved_by="user")
             elif category == "merge_collision" and action == "reuse":
                 draft_id = int(issue["candidate_node"])
                 target_id = int(issue["existing_node"])
