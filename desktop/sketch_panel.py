@@ -238,6 +238,24 @@ class SketchPanel(QWidget):
         member_row.addWidget(self.cmb_remove_member)
         member_row.addWidget(self.btn_remove_member)
         edit_layout.addLayout(member_row)
+        self.split_widget = QWidget(self)
+        split_row = QHBoxLayout(self.split_widget)
+        split_row.setContentsMargins(0, 0, 0, 0)
+        self.cmb_split_member = QComboBox()
+        self.spin_member_position = QDoubleSpinBox()
+        self.spin_member_position.setRange(0.01, 99.99)
+        self.spin_member_position.setDecimals(2)
+        self.spin_member_position.setValue(50)
+        self.spin_member_position.setSuffix(" %")
+        self.spin_member_position.setToolTip("从杆件 i 端量起的相对位置；只修正图像拓扑，不代表实际长度。")
+        self.btn_insert_member_node = QPushButton("补充作用节点")
+        self.btn_insert_member_node.setToolTip("在所选杆件内补节点并分段，随后在支座与节点荷载中填写集中力或力矩。已有荷载或尺寸引用时需先处理引用。")
+        self.btn_insert_member_node.clicked.connect(self._insert_member_node)
+        split_row.addWidget(self.cmb_split_member)
+        split_row.addWidget(QLabel("距 i 端"))
+        split_row.addWidget(self.spin_member_position)
+        split_row.addWidget(self.btn_insert_member_node)
+        edit_layout.addWidget(self.split_widget)
         self.edit_widget.setVisible(False)
         layout.addWidget(self.edit_widget)
 
@@ -1010,14 +1028,18 @@ class SketchPanel(QWidget):
                 combo.setCurrentIndex(max(0, combo.findData(current)))
         if self.cmb_member_j.count() > 1 and self.cmb_member_j.currentIndex() == 0:
             self.cmb_member_j.setCurrentIndex(1)
-        for combo in (self.cmb_remove_member, self.cmb_reference_member):
+        for combo in (self.cmb_remove_member, self.cmb_reference_member, self.cmb_split_member):
             current = combo.currentData()
             combo.clear()
             for member in members:
-                combo.addItem(f"杆件 {member['id']}", int(member["id"]))
+                label = (f"杆件 {member['id']}（{member['i']} → {member['j']}）"
+                         if combo is self.cmb_split_member else f"杆件 {member['id']}")
+                combo.addItem(label, int(member["id"]))
             if current is not None:
                 combo.setCurrentIndex(max(0, combo.findData(current)))
         self.btn_remove_member.setEnabled(len(members) > 1)
+        self.split_widget.setVisible(self._v2_draft is not None)
+        self.btn_insert_member_node.setEnabled(bool(members))
 
     def _reset_confirmation(self):
         self.chk_confirm.setChecked(False)
@@ -1086,6 +1108,20 @@ class SketchPanel(QWidget):
             self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
             return
         self._after_geometry_edit(f"已删除杆件 {member_id}")
+
+    def _insert_member_node(self):
+        if self._v2_draft is None:
+            return
+        from sketch_topology import insert_member_node
+        try:
+            draft = insert_member_node(self._v2_draft, int(self.cmb_split_member.currentData()),
+                                       self.spin_member_position.value() / 100)
+        except (TypeError, ValueError) as exc:
+            self._show_edit_error("补充节点失败", exc)
+            return
+        new_id = max(node["id"] for node in draft["image_model"]["nodes"])
+        self._apply_v2_edit(draft, f"已补充作用节点 {new_id} 并拆分杆件")
+        self.cmb_load_node.setCurrentIndex(self.cmb_load_node.findData(new_id))
 
     def _after_geometry_edit(self, message: str):
         self._result_model = self._result_draft.model
@@ -1534,6 +1570,12 @@ class SketchPanel(QWidget):
             if entity.get("kind") == "node" and int(target.get("node", -1)) == node_id:
                 entity["image_geometry"] = {"point": [float(u), float(v)]}
                 entity.update(source="user", confidence=None, verified=True)
+            if entity.get("kind") == "support" and (target.get("support") or {}).get("node") == node_id:
+                from copy import deepcopy
+                entity.setdefault("original_observation", {
+                    "image_geometry": deepcopy(entity.get("image_geometry")),
+                    "confidence": entity.get("confidence")})
+                entity["image_geometry"] = {"point": [float(u), float(v)]}
             if entity.get("kind") != "member" or "member" not in target:
                 continue
             member_id = int(target["member"])

@@ -1,0 +1,13 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "status": "COMPLETE",
+  "results": [
+    {
+      "image_id": "various_loads",
+      "status": "PASS",
+      "attempts": 1,
+      "duration_ms": 7250.0
+    }
+  ]
+}

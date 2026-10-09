@@ -43,7 +43,7 @@ accuracy on drawings, photos or other providers generally.
 
 Two additional first-response rounds on the unchanged development images are
 recorded in [the round comparison](public_cases/ROUND_REPORT.md). Round 3 online
-parsing succeeds on 5/5, with node F1 0.500; current offline replay reaches 0.750
+parsing succeeds on 5/5, with node F1 0.500; the ec052b5 offline replay reached 0.750
 and is kept separate. Neither passes the complete gate. The annotations and
 pixel tolerance were not relaxed; these development results are not held-out
 accuracy. Request options and pipeline fingerprints prevent stale recognition
@@ -54,6 +54,14 @@ records five fresh development calls and one new independent mixed-load diagram.
 Development geometry F1 is 1.000 while independent geometry F1 is 0; both results
 and all first responses are retained separately. Symbolic placeholders still block
 commit, and neither group passes the full gate. This is not a general accuracy claim.
+
+The [action-node and load-range report](public_cases/LOAD_POINTS_REPORT.md) records
+seven new calls: five existing development images plus the known mixed-load image
+in full and cropped form. Both mixed-load attempts still fail geometrically.
+The formerly independent image is now development data. Manual node insertion,
+moment component conversion and explicit partial-length conversion are tested
+separately; they do not imply improved automatic recognition. Duplicate predicted
+issues count as extra false positives instead of aborting the whole evaluation.
 
 ```text
 python -m multimodal_eval.real_world_eval evaluate --root multimodal_eval/public_cases

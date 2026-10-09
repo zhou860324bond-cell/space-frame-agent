@@ -271,6 +271,57 @@ def delete_node(draft: Mapping[str, Any], node_id: int) -> dict[str, Any]:
     return detect_topology(updated)
 
 
+def insert_member_node(draft: Mapping[str, Any], member_id: int, fraction: float) -> dict[str, Any]:
+    """用户指定杆件内的作用位置，补节点并分段；已有荷载或尺寸引用不能自动迁移。"""
+    if (not isinstance(fraction, (int, float)) or isinstance(fraction, bool)
+            or not math.isfinite(fraction) or not 0 < fraction < 1):
+        raise ValueError("作用位置必须在杆件两端之间，请填写大于 0 且小于 100 的百分比。")
+    model = draft.get("image_model") or {}
+    nodes, members = _geometry(model)
+    original = members.get(member_id)
+    if original is None:
+        raise ValueError("所选杆件不存在，请重新选择。")
+    if set(original) - {"id", "i", "j", "section", "material"}:
+        raise ValueError("杆件含端部释放或其他属性，请先核对分段后的属性归属。")
+    # 复用删除检查：拒绝已有荷载、尺寸或人工交点引用，避免偷偷重分配工程数据。
+    try:
+        updated = delete_member(draft, member_id)
+    except ValueError as exc:
+        raise ValueError("所选杆件仍被引用，请先核对并处理荷载、尺寸或交点引用后补充节点。") from exc
+    new_node_id, new_member_id = max(nodes, default=0) + 1, max(members, default=0) + 1
+    a, b = nodes[int(original["i"])], nodes[int(original["j"])]
+    point = tuple(a[index] + fraction * (b[index] - a[index]) for index in range(2))
+    source = draft.get("source") or {}
+    width, height = int(source.get("width_px", 0)), int(source.get("height_px", 0))
+    if width <= 1 or height <= 1:
+        raise ValueError("草稿缺少有效图片尺寸，请重新加载图片后补充作用节点。")
+    if any(math.hypot((point[0] - p[0]) * (width - 1), (point[1] - p[1]) * (height - 1))
+           <= point_match_threshold(width, height) for p in nodes.values()):
+        raise ValueError("作用位置过于接近已有节点，请使用已有节点或调整百分比。")
+    updated["image_model"]["nodes"].append({"id": new_node_id, "u": point[0], "v": point[1]})
+    first = {**deepcopy(original), "j": new_node_id}
+    second = {**deepcopy(original), "id": new_member_id, "i": new_node_id}
+    updated["image_model"]["members"].extend([first, second])
+    entities = updated.setdefault("entities", [])
+    def add(kind, ident, geometry):
+        entity_id = f"user-{kind}-{ident}"
+        while any(e.get("id") == entity_id for e in entities):
+            entity_id += "-new"
+        entities.append({"id": entity_id, "kind": kind, "target": {kind: ident},
+            "source": "user", "verified": True, "confidence": None, "recognition_confidence": None,
+            "image_geometry": geometry, "payload": {}})
+    add("node", new_node_id, {"point": list(point)})
+    add("member", member_id, {"line": [list(a), list(point)]})
+    add("member", new_member_id, {"line": [list(point), list(b)]})
+    for issue in updated.get("issues") or []:
+        ref = f"member:{member_id}"
+        if ref in (issue.get("entity_refs") or []):
+            issue["entity_refs"] = sorted(set([*issue["entity_refs"], f"member:{new_member_id}"]))
+            issue.update(status="open", resolution=None, resolved_by=None)
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
+    return detect_topology(updated)
+
+
 def materialize_geometry(draft: Mapping[str, Any]) -> dict[str, Any]:
     """Materialize confirmed image geometry to SI Domain IR without engineering defaults."""
     work_plane, scale = draft.get("work_plane") or {}, draft.get("scale") or {}

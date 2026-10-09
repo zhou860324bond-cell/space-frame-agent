@@ -1,0 +1,37 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "status": "COMPLETE",
+  "results": [
+    {
+      "image_id": "cantilever",
+      "status": "PASS",
+      "attempts": 1,
+      "duration_ms": 5578.000000001339
+    },
+    {
+      "image_id": "end_load",
+      "status": "PASS",
+      "attempts": 1,
+      "duration_ms": 2781.9999999992433
+    },
+    {
+      "image_id": "overhang",
+      "status": "PASS",
+      "attempts": 1,
+      "duration_ms": 3328.000000001339
+    },
+    {
+      "image_id": "point_load",
+      "status": "PASS",
+      "attempts": 1,
+      "duration_ms": 3438.000000001921
+    },
+    {
+      "image_id": "udl",
+      "status": "PASS",
+      "attempts": 1,
+      "duration_ms": 3468.9999999973224
+    }
+  ]
+}

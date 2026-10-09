@@ -1,0 +1,226 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "various_loads",
+    "width_px": 874,
+    "height_px": 433,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.15,
+          0.56
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.88,
+          0.56
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 2
+      }
+    ],
+    "supports": [
+      {
+        "node": 1,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 2,
+        "fix": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "梁上分布荷载（蓝色向下箭头列）未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "梁上集中荷载（蓝色斜向箭头）未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I3",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:2"
+        ],
+        "message": "梁右端集中力矩（蓝色圆弧箭头）未标注数值和单位，无法确定力矩大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I4",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:1"
+        ],
+        "message": "左端水平红色箭头未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I5",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:1"
+        ],
+        "message": "左端支座处红色向上箭头未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I6",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:2"
+        ],
+        "message": "右端支座处红色向上箭头未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I7",
+        "category": "missing_dimension",
+        "severity": "blocking",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "图中无尺寸标注，无法确定梁的跨度。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 1,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": []
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.1500, \"v\": 0.5600},\n      {\"id\": 2, \"u\": 0.8800, \"v\": 0.5600}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 2, \"kind\": \"roller\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [],\n        \"member_loads\": [],\n        \"member_spans\": []\n      }\n    ]\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"node\", \"target\": {\"node\": 1}, \"confidence\": 0.9, \"image_geometry\": {\"point\": [0.1500, 0.5600]}},\n    {\"id\": \"E2\", \"kind\": \"node\", \"target\": {\"node\": 2}, \"confidence\": 0.9, \"image_geometry\": {\"point\": [0.8800, 0.5600]}},\n    {\"id\": \"E3\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.1500, 0.5600], [0.8800, 0.5600]]}},\n    {\"id\": \"E4\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}}, \"confidence\": 0.9, \"image_geometry\": {\"point\": [0.1500, 0.5600]}},\n    {\"id\": \"E5\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 2, \"name\": \"S2\"}}, \"confidence\": 0.9, \"image_geometry\": {\"point\": [0.8800, 0.5600]}}\n  ],\n  \"dimensions\": [],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"load_incomplete\", \"severity\": \"blocking\", \"entity_refs\": [\"member:1\"], \"message\": \"梁上分布荷载（蓝色向下箭头列）未标注数值和单位，无法确定荷载大小。\", \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"load_incomplete\", \"severity\": \"blocking\", \"entity_refs\": [\"member:1\"], \"message\": \"梁上集中荷载（蓝色斜向箭头）未标注数值和单位，无法确定荷载大小。\", \"status\": \"open\"},\n    {\"id\": \"I3\", \"category\": \"load_incomplete\", \"severity\": \"blocking\", \"entity_refs\": [\"node:2\"], \"message\": \"梁右端集中力矩（蓝色圆弧箭头）未标注数值和单位，无法确定力矩大小。\", \"status\": \"open\"},\n    {\"id\": \"I4\", \"category\": \"load_incomplete\", \"severity\": \"blocking\", \"entity_refs\": [\"node:1\"], \"message\": \"左端水平红色箭头未标注数值和单位，无法确定荷载大小。\", \"status\": \"open\"},\n    {\"id\": \"I5\", \"category\": \"load_incomplete\", \"severity\": \"blocking\", \"entity_refs\": [\"node:1\"], \"message\": \"左端支座处红色向上箭头未标注数值和单位，无法确定荷载大小。\", \"status\": \"open\"},\n    {\"id\": \"I6\", \"category\": \"load_incomplete\", \"severity\": \"blocking\", \"entity_refs\": [\"node:2\"], \"message\": \"右端支座处红色向上箭头未标注数值和单位，无法确定荷载大小。\", \"status\": \"open\"},\n    {\"id\": \"I7\", \"category\": \"missing_dimension\", \"severity\": \"blocking\", \"entity_refs\": [\"member:1\"], \"message\": \"图中无尺寸标注，无法确定梁的跨度。\", \"status\": \"open\"}\n  ]\n}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "content_characters": 2327,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 2298,
+      "completion_tokens": 925,
+      "total_tokens": 3223
+    }
+  ],
+  "position_refinements": [],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+    "derived_image_hash": "42aa3d64fe63b111b8f569b6ce585f1a859e17aefd017e4f2a2b3bfb7ae74610",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "408050abe284e344e377a2d24c64ad05d03b9e3047c697e4ea4de2b6c2482828"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      874,
+      433
+    ],
+    "crop": [
+      0,
+      0,
+      874,
+      433
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 7594.000000004598
+  }
+}

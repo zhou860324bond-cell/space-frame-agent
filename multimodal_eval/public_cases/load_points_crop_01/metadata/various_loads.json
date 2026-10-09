@@ -1,0 +1,38 @@
+{
+  "format": "space-frame-real-world-case/v1",
+  "image_id": "various_loads",
+  "source": "https://commons.wikimedia.org/wiki/File:ABeamWithVariousLoads.jpg",
+  "license": "CC-BY-SA-3.0",
+  "consent_to_evaluate": true,
+  "subset_labels": [
+    "development-crop",
+    "mixed-loads",
+    "symbolic-values"
+  ],
+  "work_plane": {
+    "status": "confirmed",
+    "plane": "XZ",
+    "offset": 0.0,
+    "axis_mapping": {
+      "first_axis": "X",
+      "second_axis": "Z",
+      "offset_axis": "Y",
+      "image_right_sign": 1,
+      "image_up_sign": 1
+    }
+  },
+  "preprocessing": {
+    "crop": [
+      60,
+      60,
+      840,
+      285
+    ]
+  },
+  "notes": "已知失败图的裁剪开发实验，不是新独立样本；不根据本轮响应修改裁剪框。",
+  "source_revision": "https://commons.wikimedia.org/w/index.php?title=File:ABeamWithVariousLoads.jpg&oldid=773915260",
+  "download_url": "https://upload.wikimedia.org/wikipedia/commons/9/92/ABeamWithVariousLoads.jpg",
+  "author": "Sjhan81 (source page attributes the author based on copyright claims)",
+  "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+  "changes": "原始 JPEG 未修改；使用现有裁剪预处理，裁剪框在本次调用前固定。"
+}

@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-09",
+  "scope": "5 张既有开发图；每图仅一次，验证新作用点提示是否影响旧样本。",
+  "source_round": "multimodal_eval\\public_cases",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "max_repairs": 0,
+  "request_options": {
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "extra_body": {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  },
+  "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+  "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+  "pipeline_hash": "408050abe284e344e377a2d24c64ad05d03b9e3047c697e4ea4de2b6c2482828",
+  "annotations_fixed_before_calls": {
+    "cantilever": "ef0c3a8d5e02a0a33e3d7f153567e8360fab886b1a937aad85823f35d6621b14",
+    "end_load": "2cfc90c560ccaf3b172b5993091bdc4600ecd17245dc1189ca4fa8530916bc56",
+    "overhang": "2970b97d9b2f1ee41f30d9783c73320ab5f37c9f4115eaf5b77677f094631faa",
+    "point_load": "a861c7469191cef65e7ea17bca5e7eb2487da3705e6e71c30efb8a701edd953f",
+    "udl": "fcf30bb9406c29ebaeb4d8efb88b6e656f1943d8456e08319e461b5aa4f4de7a"
+  }
+}

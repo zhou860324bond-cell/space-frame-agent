@@ -69,6 +69,42 @@ def confirm_questions(panel):
         panel.lst_questions.item(row).setCheckState(Qt.CheckState.Checked)
 
 
+def test_missing_action_node_can_be_inserted_and_selected_for_nodal_loads(qt_app):
+    """自动识别漏掉集中力矩作用点时，按钮应补节点、拆杆并选择新节点，不能直接提交。"""
+    from multimodal_workflow import migrate_v1_payload
+    panel = SketchPanel(Session(), IdleRunner())
+    draft = migrate_v1_payload(recognition_payload()["model"], image_hash="a" * 64)
+    draft["source"].update(width_px=501, height_px=301)
+    panel.set_v2_draft(draft)
+    panel.chk_confirm.setChecked(True)
+    old_revision = panel._v2_draft["revision"]
+    panel.spin_member_position.setValue(40)
+    panel.btn_insert_member_node.click()
+    model = panel._v2_draft["image_model"]
+    assert len(model["nodes"]) == 3 and len(model["members"]) == 2, panel.lbl_status.text()
+    assert model["nodes"][-1]["id"] == 3
+    assert panel.cmb_load_node.currentData() == 3
+    assert panel._v2_draft["revision"] > old_revision
+    assert not panel.chk_confirm.isChecked() and panel._v2_draft["confirmation"] is None
+    assert not panel.btn_load.isEnabled()
+
+
+def test_manual_axis_correction_moves_support_marker_without_confirming_type(qt_app):
+    """人工拖梁轴端点修正混合图时，支座覆盖不能留在旧位置或顺便确认支座类型。"""
+    from multimodal_workflow import migrate_v1_payload
+    panel = SketchPanel(Session(), IdleRunner())
+    model = recognition_payload()["model"]
+    model["supports"] = [{"node": 1, "fix": [1, 1, 1, 0, 0, 0], "name": "S"}]
+    draft = migrate_v1_payload(model, image_hash="a" * 64)
+    draft["source"].update(width_px=501, height_px=301)
+    panel.set_v2_draft(draft)
+    panel._move_v2_node_preview(1, 0.2, 0.6)
+    support = next(e for e in panel._v2_draft["entities"] if e["kind"] == "support")
+    assert support["image_geometry"] == {"point": [0.2, 0.6]}
+    assert support["original_observation"] and not support["verified"]
+    assert panel._v2_draft["image_model"]["supports"] == model["supports"]
+
+
 def test_recognized_model_requires_explicit_confirmation_before_loading(qt_app):
     session = Session()
     panel = SketchPanel(session, IdleRunner())

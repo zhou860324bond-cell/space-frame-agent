@@ -25,6 +25,7 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "补充作用节点": "Insert action node",
     "忽略符号": "Ignore symbols",
     "适应图片": "Fit image", "预览缩放": "Preview zoom",
     "建模设置": "Modeling settings", "停靠回工作区": "Dock to workspace",

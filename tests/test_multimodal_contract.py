@@ -61,6 +61,31 @@ def test_issue_scoring_counts_severity_mismatch_as_fp_and_fn():
     }
 
 
+def test_repeated_missing_load_issues_are_counted_once_and_extras_are_false_positives():
+    """真实混合荷载首响应在同一杆件上报告多条缺值，不能使整组评分中断或重复得分。"""
+    issue = {"category": "load_incomplete", "entity_refs": ["member:1"],
+             "severity": "blocking", "status": "open"}
+    assert score_open_issues([issue, issue, issue], [issue]) == {
+        "tp": 1, "fp": 2, "fn": 0, "recall": 1.0}
+
+
+def test_repeated_issue_severity_matching_does_not_depend_on_response_order():
+    """同对象有 warning 和 blocking 两条预测时，只配对一次，剩余预测仍计错误。"""
+    blocking = {"category": "load_incomplete", "entity_refs": ["node:2"],
+                "severity": "blocking", "status": "open"}
+    warning = {**blocking, "severity": "warning"}
+    expected = {"tp": 1, "fp": 1, "fn": 0, "recall": 1.0}
+    assert score_open_issues([warning, blocking], [blocking]) == expected
+    assert score_open_issues([blocking, warning], [blocking]) == expected
+
+
+def test_repeated_ground_truth_issues_still_require_annotation_correction():
+    """允许模型重复问题计分不能掩盖真值重复标注。"""
+    issue = {"category": "load_incomplete", "entity_refs": [], "severity": "blocking", "status": "open"}
+    with pytest.raises(ValueError, match="重复 open issue"):
+        score_open_issues([], [issue, issue])
+
+
 def test_seed_manifest_binds_thirty_authorized_cases():
     manifest = load_manifest(MANIFEST)
     assert len(manifest["cases"]) >= 30

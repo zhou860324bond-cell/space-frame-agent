@@ -122,7 +122,10 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
       "nodal_loads":[{"node": 7, "name": "P1", "value": 30, "unit": "kN",
                       "direction": [1, 0, 0]}],
       "member_loads":[{"member": 7, "name": "q1", "value": 18, "unit": "kN/m",
-                       "direction": [0, 0, -1]}]}]
+                       "direction": [0, 0, -1]}],
+      "member_spans":[{"member": 8, "name": "q2", "kind": "partial",
+                       "value": 12, "unit": "kN/m", "direction": [0, 0, -1],
+                       "range": {"start": 1000, "end": 3000, "unit": "mm"}}]}]
   },
   "entities":  [{"id": "E1", "kind": "member", "target": {"member": 1}, "confidence": 0.9,
                  "image_geometry": {"line": [[0.12,0.83],[0.12,0.18]]}}],
@@ -180,6 +183,23 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
     不能区分反力和外荷载时只报告待核实问题，不选择一个用于求解。
     外荷载只有符号而没有数值/单位时，以 load_incomplete 问题保留作用节点或杆件，
     不得写 value=null 的求解荷载，更不能补零或推算数值。
+14. **集中力和集中矩即使只有符号，也必须保留作用点。** 先逐个检查所有外加
+    直箭头的接触点及圆弧箭头的中心所在梁截面，将作用点投影到初始梁中轴，
+    在该处建立节点并拆分相邻杆件，再用 load_incomplete 引用 node:id。
+    不以箭头尾端、圆弧外缘或字母位置建节点；不要因数值未知只保留梁两端。
+    位置本身无法辨认时报告待核实问题，不推算位置。
+15. **分布荷载只施加在实际覆盖范围。** 看清箭头列的起止边界，不把局部
+    荷载扩大成整跨；数值可用且边界处确有荷载起止证据时可拆分杆件，只引用覆盖段。
+    member_loads 仅表示所引用杆件的整段均布荷载。范围在杆件内部且图上
+    明确标注距 i 端的长度时，使用 member_spans、kind=partial，range.start/end
+    照抄长度及 range.unit（m/mm/cm），代码换算为 a/b；不是像素、比例或米的猜测。
+    范围或数值/单位未知时保留 load_incomplete，引用覆盖杆件并记录可见起止
+    线段 image_geometry；符号分布范围不强制新建节点。不得补全跨范围、默认强度或零向量。
+16. 集中力 direction 是全局力方向；集中矩 direction 是右手定则的全局转轴，
+    unit 使用 N·m/kN·m，代码写入 [Fx,Fy,Fz,Mx,My,Mz] 的后三项。
+    例如 XZ 平面绕 +Y 的集中矩：{"node":3,"name":"M1","value":5,
+    "unit":"kN·m","direction":[0,1,0]}。顺逆时针与转轴关系须结合
+    工作平面；看不清旋向时仅报告问题。不能把力矩单位用于力或分布强度。
 """
 
 
@@ -289,6 +309,9 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
 _UNIT_FACTORS = {"n": 1.0, "kn": 1e3, "n/m": 1.0, "kn/m": 1e3,
                  "n·m": 1.0, "n.m": 1.0, "nm": 1.0,
                  "kn·m": 1e3, "kn.m": 1e3, "knm": 1e3}
+_FORCE_UNITS = {"n", "kn"}
+_DENSITY_UNITS = {"n/m", "kn/m"}
+_MOMENT_UNITS = set(_UNIT_FACTORS) - _FORCE_UNITS - _DENSITY_UNITS
 # 报错时给人看的写法。_UNIT_FACTORS 的键是归一化后的（小写、去空格、
 # 认几种点号写法），直接抖出去会让人以为要写 "knm" 才认。
 _UNIT_DISPLAY = "N、kN、N/m、kN/m、N·m、kN·m"
@@ -313,11 +336,9 @@ def _convert_case_loads(case: dict) -> list[dict]:
     原话（值、单位、方向）带上让人来判。闷掉的后果是整条荷载凭空消失，
     而模型照样算得出一个像模像样的结果。
     """
-    def factor(unit: Any) -> float | None:
-        return _UNIT_FACTORS.get(str(unit or "").strip().lower().replace(" ", ""))
-
-    def vector(item: dict, size: int) -> list[float] | None:
-        scale = factor(item.get("unit"))
+    def vector(item: dict, size: int, units: set[str]) -> list[float] | None:
+        unit = str(item.get("unit") or "").strip().lower().replace(" ", "")
+        scale = _UNIT_FACTORS.get(unit) if unit in units else None
         direction = item.get("direction")
         value = item.get("value")
         if scale is None or not isinstance(direction, (list, tuple)):
@@ -329,21 +350,27 @@ def _convert_case_loads(case: dict) -> list[dict]:
                 not isinstance(component, (int, float)) or isinstance(component, bool)
                 or not math.isfinite(float(component)) for component in direction):
             return None
+        offset = 3 if size == 6 and unit in _MOMENT_UNITS else 0
+        if size == 6 and len(direction) == 6 and any(
+                direction[index] != 0 for index in range(6) if not offset <= index < offset + 3):
+            return None
         out = [0.0] * size
-        for index in range(min(size, len(direction))):
-            component = direction[index]
+        for index in range(3):
+            source = index + offset if len(direction) == 6 else index
+            component = direction[source]
             if isinstance(component, (int, float)) and not isinstance(component, bool):
-                out[index] = float(value) * scale * float(component)
+                out[index + offset] = float(value) * scale * float(component)
         return out
 
     problems: list[dict] = []
 
-    def convert(items: Any, key: str, size: int, ref: str, label: str) -> None:
+    def convert(items: Any, key: str, size: int, ref: str, label: str,
+                units: set[str]) -> None:
         for item in items or []:
             if not isinstance(item, dict):
                 continue
             if not isinstance(item.get(key), (list, tuple)):
-                got = vector(item, size)
+                got = vector(item, size, units)
                 if got is None:
                     problems.append({
                         "category": "load_incomplete", "severity": "blocking",
@@ -360,8 +387,29 @@ def _convert_case_loads(case: dict) -> list[dict]:
             for scaffold in ("value", "unit", "direction"):
                 item.pop(scaffold, None)
 
-    convert(case.get("nodal_loads"), "load", 6, "node", "节点")
-    convert(case.get("member_loads"), "w", 3, "member", "杆件")
+    convert(case.get("nodal_loads"), "load", 6, "node", "节点", _FORCE_UNITS | _MOMENT_UNITS)
+    convert(case.get("member_loads"), "w", 3, "member", "杆件", _DENSITY_UNITS)
+    for item in case.get("member_spans") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        units = _FORCE_UNITS if kind == "point" else _MOMENT_UNITS if kind == "moment" else _DENSITY_UNITS
+        convert([item], "w1", 3, "member", "杆件", units)
+        observed_range = item.pop("range", None)
+        range_valid = observed_range is None
+        if isinstance(observed_range, dict) and kind == "partial":
+            factor = {"m": 1.0, "mm": 0.001, "cm": 0.01}.get(observed_range.get("unit"))
+            a, b = observed_range.get("start"), observed_range.get("end")
+            if (factor is not None and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                          and math.isfinite(v) for v in (a, b)) and 0 <= a < b):
+                item.update(a=a * factor, b=b * factor)
+                range_valid = True
+        if not range_valid or (kind == "partial" and (not all(isinstance(item.get(k), (int, float))
+                and not isinstance(item[k], bool) and math.isfinite(item[k]) for k in ("a", "b"))
+                or not 0 <= item["a"] < item["b"])):
+            problems.append({"category": "load_incomplete", "severity": "blocking",
+                "entity_refs": [f"member:{item.get('member')}"],
+                "message": f"局部分布荷载缺少有效作用范围：{observed_range!r}。请确认距杆件 i 端的起止长度和单位，不能按整跨施加。"})
     return problems
 
 

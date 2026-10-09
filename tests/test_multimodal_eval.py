@@ -255,7 +255,7 @@ def test_public_replay_fixes_frozen_responses_without_calling_provider(monkeypat
     assert all(path.read_bytes() == value for path, value in original.items())
 
 
-@pytest.mark.parametrize("round_name", ["round_02", "round_03", "round_04"])
+@pytest.mark.parametrize("round_name", ["round_02", "round_03", "round_04", "round_05"])
 def test_new_public_rounds_keep_original_pixels_and_independent_truth(round_name):
     """新轮次只能改变识别过程，不能偷偷改原图或评分真值来提高成绩。"""
     root = ROOT / "public_cases"
@@ -322,6 +322,32 @@ def test_independent_mixed_load_failure_is_preserved_in_the_score_denominator():
     assert report["metrics"]["node_f1"] == report["metrics"]["member_f1"] == 0
     assert report["metrics"]["load_numeric_unit_accuracy"] is None
     assert not report["passed"]
+
+
+@pytest.mark.parametrize("round_name", ["load_points_01", "load_points_crop_01"])
+def test_mixed_load_development_failures_and_precall_annotations_remain_frozen(round_name):
+    """全图或裁剪后的识别仍漏点时，保留首次失败、调用前参考标注和重复问题的错误计数。"""
+    from multimodal_contract import canonical_digest, file_digest
+    root = ROOT / "public_cases" / round_name
+    record = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
+    assert canonical_digest(snapshot) == record["pipeline_hash"]
+    assert file_digest(root / "ground_truth/various_loads.json") == record["annotations_fixed_before_calls"]["various_loads"]
+    raw_path = root / "responses/various_loads.json"
+    original = raw_path.read_bytes()
+    report = evaluate_real_world(root)
+    assert report["gate_cases"] == 1 and report["runtime"]["total_calls"] == 1
+    assert report["metrics"]["node_f1"] == report["metrics"]["member_f1"] == 0
+    assert report["metrics"]["issue_false_positives"] == 5
+    assert not report["passed"] and raw_path.read_bytes() == original
+    if round_name == "load_points_crop_01":
+        old = json.loads((ROOT / "public_cases/validation_01/ground_truth/various_loads.json").read_text(encoding="utf-8"))
+        truth = json.loads((root / "ground_truth/various_loads.json").read_text(encoding="utf-8"))
+        crop = record["crop_fixed_before_call"]
+        assert len(truth["nodes"]) == len(old["nodes"])
+        for new_node, old_node in zip(truth["nodes"], old["nodes"], strict=True):
+            assert new_node["point"][0] * truth["width_px"] + crop[0] == pytest.approx(old_node["point"][0] * old["width_px"])
+            assert new_node["point"][1] * truth["height_px"] + crop[1] == pytest.approx(old_node["point"][1] * old["height_px"])
 
 
 def test_duplicate_numeric_predictions_cannot_score_above_one(tmp_path):
