@@ -87,7 +87,9 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           MPLBACKEND: Agg
-        run: pytest -q
+          PYTHONFAULTHANDLER: "1"
+        # 原生 Qt 退出时没有机会回放 fd 捕获内容，保留 stderr 与当前用例名称。
+        run: pytest -vv --capture=tee-sys
 
       - name: 桌面端自检（顺带验证入口脚本本身没坏）
         shell: bash

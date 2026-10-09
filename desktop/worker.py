@@ -123,6 +123,7 @@ class Runner(QObject):
             return False
 
         thread = QThread()
+        thread.setObjectName("FrameLab后台任务")
         self._cancel_event = Event()
         job = _Job(fn, wants_report=on_progress is not None,
                    cancel_event=self._cancel_event)
