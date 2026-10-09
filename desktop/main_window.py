@@ -24,7 +24,7 @@ from agent import Session                          # noqa: E402
 from stress import StressUnavailable                # noqa: E402
 from . import scene, theme                         # noqa: E402
 from .chat_panel import ChatPanel                  # noqa: E402
-from .model_tree import ModelTree                  # noqa: E402
+from .model_tree import ModelTree, ModelTreePanel  # noqa: E402
 from .diagram_panel import DiagramPanel             # noqa: E402
 from .panels import ResultPanel, TimelinePanel      # noqa: E402
 from .sketch_panel import SketchPanel                # noqa: E402
@@ -151,7 +151,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
         self.tree = ModelTree(self)
         self.tree.activated_item.connect(self._on_tree_action)
-        self.tree_dock = self.left_drawer.add_page("tree", "模型树", self.tree)
+        self.tree_panel = ModelTreePanel(self.tree, self)
+        self.tree_dock = self.left_drawer.add_page("tree", "模型树", self.tree_panel)
         # 开局视作"自动收起"状态：第一次刷新时若已有模型，就把树展开
         self._tree_auto_hidden = True
         # 用户亲手收起过模型树，就别在下一次刷新时又自作主张地弹出来
@@ -178,6 +179,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.solid_panel.file_requested.connect(self._switch_solid_level)
         self.solid_panel.open_requested.connect(self.open_solid_result)
         self.solid_panel.model_requested.connect(self.show_model)
+        self.solid_panel.query_requested.connect(self.viewport.set_solid_query)
+        self.solid_panel.extreme_requested.connect(self.locate_solid_extreme)
+        self.solid_panel.clear_requested.connect(self.clear_solid_query)
         self.solid_dock = self.left_drawer.add_page("solid", "实体结果", self.solid_panel)
 
         # 边界条件定义的是**模型本身**，和模型树、属性是一类，放在左抽屉；
@@ -213,6 +217,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.section_opt_dock.prefer_floating = True
 
         self.viewport.picked.connect(self._on_picked)
+        self.viewport.solid_picked.connect(self.query_solid_cell)
         self.viewport.probed.connect(self.probe_member_result)
         self.viewport.node_created.connect(self._on_node_created)
         self.viewport.member_created.connect(self._on_member_created)
@@ -753,6 +758,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.case = None
         self.session.solution = None
         self._solid_grid = self._solid_binding = self._solid_info = None
+        self.clear_solid_query()
         self.solid_panel.caption.setText("实体结果已清除，请重新分析或打开已保存结果。")
         self.solid_panel.levels.clear()
         self.solid_panel.source.clear()
@@ -794,7 +800,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.actions_by_name["stop_task"].setEnabled(busy)
         self.btn_cancel_task.setVisible(busy)
         self.btn_cancel_task.setEnabled(busy)
-        for widget in (self.workflow_bar, self.quickbar, self.tree, self.properties,
+        for widget in (self.workflow_bar, self.quickbar, self.tree_panel, self.properties,
                        self.bc, self.timeline, self.sketch, self.section_opt,
                        self.diagram, self.results, self.empty_state, self.solid_panel):
             widget.setEnabled(idle)
@@ -861,7 +867,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if self.mode == "实体云图" and self._solid_grid is not None:
             self.viewport.show_solid_result(
                 self._solid_grid, self._solid_info[-1], **self.solid_panel.options(),
-                reset_camera=self._solid_reset_camera)
+                reset_camera=self._solid_reset_camera, query=self.solid_panel.query.isChecked())
             self._solid_reset_camera = False
             return
         frame = None
@@ -1006,6 +1012,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                 or self._solid_binding[1] != self.session.result_identity
                 or self.session.result_error()):
             self._solid_grid = self._solid_binding = self._solid_info = None
+            self.clear_solid_query()
             self.solid_panel.caption.setText("实体结果已失效，请重新求解并进行节点实体分析。")
             self.solid_panel.levels.clear()
             self.solid_panel.source.clear()
@@ -1362,6 +1369,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def cancel_interaction(self) -> None:
         """Esc：退出当前建模/拾取模式，回到浏览状态。"""
+        if self.viewport._solid_query_enabled:
+            self.solid_panel.query.setChecked(False)
+            self.statusBar().showMessage("已退出实体点选，可继续旋转和缩放。", 3000)
+            return
         changed = False
         for name in ("model_node", "model_member", "pick_node", "pick_member"):
             act = self.actions_by_name.get(name)
@@ -1536,6 +1547,17 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         用户在三维视图里找不到它们；有了这条路，报告里"每个数字可溯源"
         才在界面上真正兑现。
         """
+        if kind in {"solid_cell", "solid_point"}:
+            if self._solid_grid is not None:
+                if self.mode != "实体云图":
+                    self.set_mode("实体云图")
+                association = "cell" if kind == "solid_cell" else "point"
+                count = self._solid_grid.n_cells if association == "cell" else self._solid_grid.n_points
+                if 1 <= ident <= count:
+                    self.viewport.select_solid(association, ident - 1, focus=True)
+                    label = "单元" if association == "cell" else "节点"
+                    self.statusBar().showMessage(f"已定位实体{label}序号 {ident}，结果表保留原查询。", 4000)
+            return
         if self.mode == "实体云图":
             self.set_mode("模型")
         self.viewport.set_selection(kind, ident)
@@ -1580,6 +1602,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._viewport_context_menu().exec(global_pos)
 
     def _on_picked(self, kind: str, ident: int) -> None:
+        self.tree.select_object(kind, ident)
         self._selected_kind = kind
         self._selected_id = ident
         if self.viewport.selection != (kind, ident):
@@ -2731,6 +2754,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                                 f"结果文件读取失败：{exc}。请重新选择完整结果或重新进行节点实体分析。")
             return False
         self._solid_grid, self._solid_binding = grid, binding
+        self.clear_solid_query()
         self._solid_info = (summary, paths, index, caption)
         self.solid_panel.bind(paths, index, caption, saved=binding is None)
         if summary:
@@ -3152,7 +3176,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             # 抽屉是独立的 Tool 窗口，空模型引导卡片在视口上层；
             # VTK 画面贴回后必须把这些覆盖层再贴一次，否则导出图里会消失。
             for overlay in (self.empty_state, self.viewport.axis_indicator,
-                            self.viewport.result_overlay, self.left_drawer,
+                            self.viewport.result_overlay, self.viewport.mode_badge, self.left_drawer,
                             self.right_drawer, self.bottom_drawer):
                 if overlay.isVisible():
                     painter.drawPixmap(self.mapFromGlobal(overlay.mapToGlobal(overlay.rect().topLeft())),
@@ -3164,7 +3188,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     # --- 树的动作 ---
 
     def _on_tree_action(self, action: str, payload) -> None:
-        if action == "materials":
+        if action == "locate_object":
+            self.locate(*payload)
+            self.viewport.focus_selection()
+        elif action == "materials":
             self.create_material()
         elif action == "sections":
             self.create_section()

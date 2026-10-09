@@ -71,6 +71,8 @@ ZH_EN: dict[str, str] = {
     "屈曲": "Buckling", "模型检查": "Check", "分析网格": "Mesh",
     "节点实体": "Joint", "模型": "Model", "变形": "Deformed",
     "实体云图": "Solid contour", "打开实体结果": "Open solid results",
+    "点选实体单元": "Pick solid cell", "定位实体极值": "Locate solid maximum",
+    "清除实体查询": "Clear solid query", "搜索模型": "Search model",
     "实体结果": "Solid results", "返回整体模型": "Return to overall model",
     "梁内力云图": "Contour", "内力分量": "Component",
     "清除结果": "Clear", "内力图": "Diagram", "单杆内力图": "Member Chart",

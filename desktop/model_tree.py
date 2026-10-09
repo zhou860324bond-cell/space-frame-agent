@@ -11,10 +11,12 @@ Abaqus/CAE 的左侧树是它信息架构的骨干：模型有什么、算出了
 from __future__ import annotations
 
 from typing import Any
+import json
+import re
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PySide6.QtWidgets import QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from . import theme
 
@@ -33,9 +35,12 @@ class ModelTree(QTreeWidget):
     """模型 + 结果的树。"""
 
     activated_item = Signal(str, object)          # (action, payload)
+    rebuilt = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._signature = None
+        self._objects = {}
         self.setHeaderHidden(True)
         self.setIndentation(14)
         self.setAlternatingRowColors(False)
@@ -62,10 +67,26 @@ class ModelTree(QTreeWidget):
             }}
         """)
         self.itemDoubleClicked.connect(self._on_double_click)
+        self.itemClicked.connect(self._on_object_click)
+
+    def _on_object_click(self, item, _column):
+        if item.data(0, ACTION) == "locate_object":
+            self.activated_item.emit("locate_object", item.data(0, PAYLOAD))
+
+    def select_object(self, kind, ident, *, reveal=True):
+        item = self._objects.get((kind, ident))
+        if item is not None:
+            self.setCurrentItem(item)
+            if reveal and not item.isHidden():
+                ancestor = item.parent()
+                while ancestor is not None:
+                    ancestor.setExpanded(True)
+                    ancestor = ancestor.parent()
+                self.scrollToItem(item)
 
     def _on_double_click(self, item: QTreeWidgetItem, _column: int) -> None:
         action = item.data(0, ACTION)
-        if action:
+        if action and action != "locate_object":
             self.activated_item.emit(action, item.data(0, PAYLOAD))
 
     # --- 构树 ---
@@ -83,7 +104,7 @@ class ModelTree(QTreeWidget):
         return node
 
     def rebuild(self, session, result=None) -> None:
-        """整棵重建。刚架模型小，重建比增量维护简单可靠得多。
+        """内容未变时保留整棵树，模型、结果工况或历史变化时重建。
 
         重建会丢掉展开状态，所以先记下来再恢复——不然每求解一次
         树就全折起来，用起来很别扭。
@@ -93,10 +114,18 @@ class ModelTree(QTreeWidget):
         展开集合里"而默认收起——而它恰恰是用户此刻最想看的东西。
         新分支一律展开，只有用户亲手收起过的才保持收起。
         """
+        signature = (json.dumps(session.model, sort_keys=True, ensure_ascii=False),
+                     tuple(result.payload["cases"]) if result is not None and result.ok else (),
+                     len(session.history))
+        if signature == self._signature:
+            return
+        selected = self.currentItem()
+        selected_ref = selected.data(0, PAYLOAD) if selected else None
         collapsed = {_branch_key(self.topLevelItem(k).text(0))
                      for k in range(self.topLevelItemCount())
                      if not self.topLevelItem(k).isExpanded()}
         self.clear()
+        self._objects = {}
         model = session.model
 
         mats = self._child(self, f"材料（{len(model.get('materials') or [])}）",
@@ -124,11 +153,22 @@ class ModelTree(QTreeWidget):
                         tip=f"{s['name']}　{detail}")
 
         geo = self._child(self, "几何", "geometry")
-        self._child(geo, f"节点　{len(model.get('nodes') or [])}", "nodes")
+        nodes_branch = self._child(geo, f"节点　{len(model.get('nodes') or [])}", "nodes")
+        for node in model.get("nodes") or []:
+            ident = int(node["id"])
+            coordinates = "，".join(f"{node[axis]:g}" for axis in "xyz")
+            self._objects[("node", ident)] = self._child(
+                nodes_branch, f"节点 {ident} · ({coordinates})", "locate_object", ("node", ident))
         released = [m for m in model.get("members") or [] if m.get("releases")]
-        self._child(geo, f"杆件　{len(model.get('members') or [])}"
+        members_branch = self._child(geo, f"杆件　{len(model.get('members') or [])}"
                          + (f"（{len(released)} 根带端部释放）" if released else ""),
                     "members")
+        for member in model.get("members") or []:
+            ident = int(member["id"])
+            self._objects[("member", ident)] = self._child(
+                members_branch,
+                f"杆件 {ident} · {member['i']} → {member['j']} · {member.get('section', '')}",
+                "locate_object", ("member", ident))
 
         sup = self._child(self, f"约束（{len(model.get('supports') or [])}）",
                           "supports")
@@ -207,3 +247,85 @@ class ModelTree(QTreeWidget):
             item.setFont(0, font)
             item.setForeground(0, QColor(theme.INK))
             item.setExpanded(_branch_key(item.text(0)) not in collapsed)
+        self._signature = signature
+        if isinstance(selected_ref, tuple) and selected_ref in self._objects:
+            self.select_object(*selected_ref, reveal=False)
+        self.rebuilt.emit()
+
+
+class ModelTreePanel(QWidget):
+    """保留模型树结构，提供名称筛选和精确编号定位。"""
+
+    def __init__(self, tree, parent=None):
+        super().__init__(parent)
+        self.tree = tree
+        self._expanded_before_search = None
+        self.matches = []
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("搜索名称，或输入 节点 65 / 杆件 27")
+        self.search.setAccessibleName("搜索模型")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.filter)
+        self.search.returnPressed.connect(self.locate_match)
+        self.status = QLabel("单击节点或杆件定位；双击分类打开编辑。")
+        self.status.setWordWrap(True)
+        box.addWidget(self.search)
+        box.addWidget(self.status)
+        box.addWidget(tree)
+        tree.rebuilt.connect(lambda: self.filter(self.search.text()))
+
+    def _items(self):
+        def visit(item):
+            yield item
+            for index in range(item.childCount()):
+                yield from visit(item.child(index))
+        for index in range(self.tree.topLevelItemCount()):
+            yield from visit(self.tree.topLevelItem(index))
+
+    def filter(self, text):
+        text = text.strip().casefold()
+        if text and self._expanded_before_search is None:
+            self._expanded_before_search = {item.text(0) for item in self._items()
+                                            if item.isExpanded()}
+        exact = re.fullmatch(r"(节点|杆件|node|member)\s*[:：#]?\s*(\d+)", text)
+        target = (("node" if exact[1] in {"节点", "node"} else "member", int(exact[2]))
+                  if exact else None)
+        self.matches = []
+
+        def visit(item, inherited=False):
+            ref = item.data(0, PAYLOAD)
+            own = ((item.data(0, ACTION) == "locate_object" and ref == target)
+                   if target else bool(text and text in item.text(0).casefold()))
+            if own:
+                self.matches.append(item)
+            descendants = [visit(item.child(i), inherited or own)
+                           for i in range(item.childCount())]
+            visible = not text or own or inherited or any(descendants)
+            item.setHidden(not visible)
+            if text and any(descendants):
+                item.setExpanded(True)
+            elif not text and self._expanded_before_search is not None:
+                item.setExpanded(item.text(0) in self._expanded_before_search)
+            return visible
+
+        for index in range(self.tree.topLevelItemCount()):
+            visit(self.tree.topLevelItem(index))
+        if not text:
+            self._expanded_before_search = None
+            self.status.setText("单击节点或杆件定位；双击分类打开编辑。")
+        else:
+            self.status.setText(f"匹配 {len(self.matches)} 项。输入完整编号后按 Enter 定位。"
+                                if self.matches else "没有匹配项，请检查名称或节点、杆件编号。")
+
+    def locate_match(self):
+        if len(self.matches) == 1:
+            item = self.matches[0]
+            self.tree.setCurrentItem(item)
+            self.tree.scrollToItem(item)
+            action = item.data(0, ACTION)
+            if action == "locate_object":
+                self.tree.activated_item.emit(action, item.data(0, PAYLOAD))
+        elif self.matches:
+            self.status.setText("匹配多个对象，请输入 节点 编号 / 杆件 编号，或单击目标。")

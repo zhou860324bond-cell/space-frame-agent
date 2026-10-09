@@ -83,6 +83,27 @@ def read_result(path: str | Path):
     return grid, summary, paths, index, caption
 
 
+def query_cell(grid, index: int) -> dict:
+    """按原网格单元序号读取应力和连接节点，避免截色或变形改变查询值。"""
+    if not 0 <= index < grid.n_cells:
+        raise ValueError("单元序号超出当前网格范围，请重新选择单元。")
+    nodes = np.asarray(grid.get_cell(index).point_ids, dtype=int)
+    return {"index": index, "nodes": nodes,
+            "coordinates": np.asarray(grid.points[nodes]).copy(),
+            "displacement": np.asarray(grid.point_data["Displacement_mm"])[nodes].copy(),
+            "Mises_MPa": float(grid.cell_data["Mises_MPa"][index]),
+            "AbsPrincipal_MPa": float(grid.cell_data["AbsPrincipal_MPa"][index])}
+
+
+def result_extreme(grid, field: str) -> tuple[str, int, float]:
+    """从全部原始结果定位峰值；并列峰值取文件中第一个位置。"""
+    association = next(row[3] for row in FIELDS if row[0] == field)
+    values = np.asarray(grid.cell_data[field] if association == "cell"
+                        else grid.point_data[field])
+    index = int(np.argmax(values))
+    return association, index, float(values[index])
+
+
 class SolidResultPanel(QWidget):
     """只读实体结果控制；各档文件仍由原确定性分析提供。"""
 
@@ -90,6 +111,9 @@ class SolidResultPanel(QWidget):
     file_requested = Signal(str)
     open_requested = Signal()
     model_requested = Signal()
+    query_requested = Signal(bool)
+    extreme_requested = Signal()
+    clear_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -130,6 +154,18 @@ class SolidResultPanel(QWidget):
         note = QLabel("只读实体结果。旋转：拖动；缩放：滚轮。\n坐标和位移单位：mm；应力单位：MPa。")
         note.setWordWrap(True)
         box.addWidget(note)
+        self.query = QCheckBox("点选实体单元")
+        self.query.setToolTip("开启后左键选择表面单元；拖动仍可旋转，滚轮可缩放。")
+        self.query.toggled.connect(self.query_requested.emit)
+        box.addWidget(self.query)
+        self.query_status = QLabel("尚未选择单元。序号按当前结果文件排列，从 1 开始。")
+        self.query_status.setWordWrap(True)
+        box.addWidget(self.query_status)
+        for text, signal in (("定位实体极值", self.extreme_requested),
+                             ("清除实体查询", self.clear_requested)):
+            button = QPushButton(text)
+            button.clicked.connect(signal.emit)
+            box.addWidget(button)
         for text, signal in (("打开实体结果", self.open_requested),
                              ("返回整体模型", self.model_requested)):
             button = QPushButton(text)
