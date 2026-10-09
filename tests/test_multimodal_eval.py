@@ -159,6 +159,68 @@ def test_real_world_freeze_hash_binds_a_complete_case(tmp_path):
         evaluate_manifest(tmp_path / "manifest.json")
 
 
+@pytest.mark.parametrize("change", ["enabled", "prompt"])
+def test_action_review_mode_and_prompt_changes_prevent_reuse_or_new_paid_calls(tmp_path, monkeypatch, change):
+    """改变可选复核模式或其提示后不能复用旧响应，也不能静默覆盖冻结证据并重新付费。"""
+    from multimodal_eval.real_world_eval import ACTION_PROMPT_HASH, PIPELINE_HASH
+    from sketch_parser import SketchParser
+    _, _, _, response_path = _complete_real_case(tmp_path)
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    parser = SketchParser(api_key="test", model="test-model")
+    response["request_fingerprint"].update(
+        pipeline_hash=PIPELINE_HASH, request_options=parser.request_options(),
+        review_actions=change == "prompt", action_prompt_hash="old" if change == "prompt" else None)
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+    before = response_path.read_bytes()
+    monkeypatch.setattr(SketchParser, "_call_llm", lambda *args, **kwargs: pytest.fail("不应发起接口调用"))
+    result = recognize(tmp_path, provider="openai", model="test-model", review_actions=True)
+    assert result["results"][0]["status"] == "STALE_RESPONSE"
+    assert response_path.read_bytes() == before
+    assert ACTION_PROMPT_HASH
+
+
+def test_frozen_two_stage_development_round_keeps_raws_calls_and_inaccurate_moment():
+    """两个阶段的原文必须共同回放；错误力矩位置和支座类型不能因解析成功而从验收中消失。"""
+    root = ROOT / "public_cases/action_review_01"
+    info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
+    assert canonical_digest(snapshot) == info["pipeline_hash"]
+    assert "sketch_action_review.py" in snapshot
+    online, replay = evaluate_real_world(root), replay_real_world(root)
+    assert online["runtime"]["total_calls"] == 6
+    assert online["action_review"] == {"attempted_cases": 3, "completed_cases": 3, "failed_or_missing_cases": 0}
+    assert replay["new_api_calls"] == 0 and online["metrics"] == replay["metrics"]
+    assert not online["passed"] and not replay["passed"]
+    for case in online["case_reports"]:
+        name = case["image_id"]
+        source = ROOT / "public_cases" / ("validation_01" if name == "various_loads" else "")
+        assert (root / "ground_truth" / f"{name}.json").read_bytes() == (source / "ground_truth" / f"{name}.json").read_bytes()
+        response = json.loads((root / "responses" / f"{name}.json").read_text(encoding="utf-8"))
+        assert len(response["raw_responses"]) == len(response["call_metadata"]) == 2
+        assert [m["stage"] for m in response["call_metadata"]] == ["geometry", "action_review"]
+        if name == "various_loads":
+            assert len(json.loads(response["raw_responses"][0])["image_model"]["nodes"]) == 2
+            assert len(response["prediction"]["nodes"]) == 4
+            assert case["metrics"]["node_f1"] == .75
+            assert case["extra_nodes"] and case["missing_nodes"]
+
+
+def test_failed_optional_stage_is_reported_separately_from_usable_base_parse(tmp_path):
+    """基础草稿进入审核不能掩盖复核阶段失败，也不能把两次调用统计成一次。"""
+    _, _, _, response_path = _complete_real_case(tmp_path)
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    response["request_fingerprint"]["review_actions"] = True
+    response["action_review"] = {"status": "failed", "message": "请人工核对作用点。"}
+    response["runtime"]["attempts"] = 2
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+    freeze_manifest(tmp_path)
+    report = evaluate_real_world(tmp_path)
+    assert report["runtime"]["parse_successes"] == 1
+    assert report["runtime"]["total_calls"] == 2
+    assert report["action_review"]["completed_cases"] == 0
+    assert report["action_review"]["failed_or_missing_cases"] == 1
+
+
 @pytest.mark.parametrize("change", ["image", "crop", "rotation", "plane", "offset"])
 def test_real_world_input_changes_block_old_truth_and_network_calls(tmp_path, monkeypatch, change):
     """同名图片或输入参数变化必须重新标注，不能复用旧真值或继续付费调用。"""

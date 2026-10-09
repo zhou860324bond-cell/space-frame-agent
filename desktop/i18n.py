@@ -25,6 +25,7 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "作用点复核": "Review action points",
     "局部分布荷载": "Partial distributed loads",
     "局部均布": "Partial uniform load", "局部梯形": "Partial trapezoidal load",
     "应用局部荷载": "Apply partial load", "删除局部荷载": "Delete partial load",

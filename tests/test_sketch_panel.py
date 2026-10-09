@@ -462,15 +462,18 @@ def test_stale_recognition_uses_snapshot_and_cannot_replace_new_image(qt_app, tm
     captured = {}
 
     def parse(_parser, path, state, job_id, **kwargs):
-        captured.update(path=path, image_hash=state.image_hash)
+        captured.update(path=path, image_hash=state.image_hash, review_actions=kwargs["review_actions"])
         return V2ParseResult(success=False)
 
     monkeypatch.setattr(SketchParser, "parse_v2_with_retry", parse)
+    assert not panel.chk_review_actions.isChecked()
+    panel.chk_review_actions.setChecked(True)
     panel._recognize()
+    panel.chk_review_actions.setChecked(False)
     assert not panel.preprocess_widget.isEnabled()
     panel.preprocess_widget.set_source(str(second))
     runner.callbacks["on_done"](runner.job())
-    assert captured == {"path": expected_path, "image_hash": expected_hash}
+    assert captured == {"path": expected_path, "image_hash": expected_hash, "review_actions": True}
     assert panel._v2_draft is None and panel._v2_state is None
     assert panel._source_image_path == str(second)
     assert panel.preprocess_widget.isEnabled() and "舍弃" in panel.lbl_status.text()

@@ -138,6 +138,9 @@ class SketchPanel(QWidget):
         key_row.addWidget(QLabel("重试"))
         key_row.addWidget(self.spn_retries)
         settings_layout.addLayout(key_row)
+        self.chk_review_actions = QCheckBox("作用点复核")
+        self.chk_review_actions.setToolTip("基础识别后额外调用一次视觉接口，聚焦集中力和力矩的位置；可能增加耗时与费用，候选仍需人工审核。")
+        settings_layout.addWidget(self.chk_review_actions)
         self.settings_widget.setVisible(False)
         self.btn_settings.toggled.connect(self.settings_widget.setVisible)
         self.btn_settings.toggled.connect(
@@ -832,6 +835,7 @@ class SketchPanel(QWidget):
         model = self.txt_model.text().strip()
         key = self.txt_key.text().strip()
         retries = self.spn_retries.value()
+        review_actions = self.chk_review_actions.isChecked()
         image_path = self._image_path
         from copy import deepcopy
         work_plane = deepcopy(self._work_plane)
@@ -864,7 +868,7 @@ class SketchPanel(QWidget):
             if state is not None:
                 return parser.parse_v2_with_retry(
                     image_path, state, job_id, max_repairs=min(2, max(0, retries - 1)),
-                    is_cancelled=cancelled, work_plane=work_plane)
+                    is_cancelled=cancelled, work_plane=work_plane, review_actions=review_actions)
             return parser.parse_with_retry(image_path, max_retries=retries)
 
         def finish(callback, *args):

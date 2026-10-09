@@ -296,6 +296,78 @@ def running_state():
     return state, state.start_recognition("job")
 
 
+@pytest.mark.parametrize("enabled,expected_calls", [(False, 1), (True, 2)])
+def test_optional_action_review_counts_each_call_and_retains_stage_metadata(image_path, monkeypatch, enabled, expected_calls):
+    """默认不得增加收费调用；开启后两个阶段的原文、耗时计数和接口元数据必须保留。"""
+    parser = SketchParser(api_key="test")
+    state, job = running_state()
+    calls = []
+
+    def call(*args, **kwargs):
+        calls.append(kwargs["system_prompt"])
+        parser._last_call_metadata = {"total_tokens": 100, "finish_reason": "stop"}
+        return json.dumps(v2_draft() if len(calls) == 1 else {"actions": [], "warnings": []})
+
+    monkeypatch.setattr(parser, "_call_llm", call)
+    result = parser.parse_v2_with_retry(image_path, state, job, review_actions=enabled)
+    assert result.success and result.attempts == expected_calls
+    assert len(result.raw_responses) == len(calls) == len(result.call_metadata) == expected_calls
+    if enabled:
+        assert [m["stage"] for m in result.call_metadata] == ["geometry", "action_review"]
+        assert result.draft["action_review"]["status"] == "completed"
+    else:
+        assert "action_review" not in result.draft
+
+
+@pytest.mark.parametrize("failure", ["invalid", "numeric", "offline", "truncated"])
+def test_action_review_failure_retains_base_draft_without_paid_repair(image_path, monkeypatch, failure):
+    """可选复核的格式/网络失败不能丢失基础草稿或继续收费修复，更不能补造荷载。"""
+    parser = SketchParser(api_key="test")
+    state, job = running_state()
+    calls = []
+
+    def call(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return json.dumps(v2_draft())
+        if failure == "offline":
+            raise ConnectionError("offline")
+        if failure == "truncated":
+            parser._last_call_metadata = {"finish_reason": "length"}
+        return "invalid" if failure == "invalid" else json.dumps({"actions": [], "warnings": [], "force": 100})
+
+    monkeypatch.setattr(parser, "_call_llm", call)
+    result = parser.parse_v2_with_retry(image_path, state, job, review_actions=True)
+    assert result.success and result.attempts == 2 and len(calls) == 2
+    assert result.draft["action_review"]["status"] == "failed"
+    assert result.errors and result.draft["image_model"]["load_cases"] == []
+    assert any(i["id"] == "action-review-failed" and i["severity"] == "blocking" for i in result.draft["issues"])
+
+
+@pytest.mark.parametrize("cancel_stage", ["before_review", "after_review", "new_image"])
+def test_cancel_or_stale_image_during_action_review_cannot_commit_any_draft(image_path, monkeypatch, cancel_stage):
+    """取消应阻止额外复核；复核期间的新图片或取消不能被旧响应覆盖。"""
+    parser = SketchParser(api_key="test")
+    state, job = running_state()
+    calls, checks = [], 0
+
+    def cancelled():
+        nonlocal checks
+        checks += 1
+        return cancel_stage == "before_review" and checks >= 3 or cancel_stage == "after_review" and len(calls) >= 2
+
+    def call(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2 and cancel_stage == "new_image":
+            state.load_image("b" * 64)
+        return json.dumps(v2_draft() if len(calls) == 1 else {"actions": [], "warnings": []})
+
+    monkeypatch.setattr(parser, "_call_llm", call)
+    result = parser.parse_v2_with_retry(image_path, state, job, review_actions=True, is_cancelled=cancelled)
+    assert result.cancelled and not result.success and state.draft is None
+    assert len(calls) == (1 if cancel_stage == "before_review" else 2)
+
+
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "deepseek"])
 def test_all_providers_use_the_same_v2_contract_without_touching_session(
         provider, image_path, monkeypatch):

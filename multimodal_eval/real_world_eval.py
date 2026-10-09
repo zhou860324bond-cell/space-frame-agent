@@ -24,15 +24,17 @@ from multimodal_eval.evaluate import evaluate_manifest
 from multimodal_workflow import MultimodalControllerState, V2_DRAFT_FORMAT, validate_v2_draft
 from sketch_parser import (IMAGE_MIME_TYPES, V2_SKETCH_SYSTEM_PROMPT,
                            SketchParser, _fill_bookkeeping)
+from sketch_action_review import ACTION_REVIEW_PROMPT
 
 ROOT = Path(__file__).resolve().parent / "real_world_cases"
 FORMAT = "space-frame-real-world-case/v1"
 PROMPT_HASH = hashlib.sha256(V2_SKETCH_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+ACTION_PROMPT_HASH = hashlib.sha256(ACTION_REVIEW_PROMPT.encode("utf-8")).hexdigest()
 SCHEMA_HASH = hashlib.sha256(V2_DRAFT_FORMAT.encode("utf-8")).hexdigest()
 PIPELINE_HASH = canonical_digest({name: (Path(__file__).resolve().parents[1] / "src" / name)
                                  .read_text(encoding="utf-8") for name in (
     "sketch_parser.py", "multimodal_workflow.py", "sketch_axis_refinement.py",
-    "image_preprocess.py", "dimension_constraints.py", "sketch_topology.py")})
+    "image_preprocess.py", "dimension_constraints.py", "sketch_topology.py", "sketch_action_review.py")})
 PROVIDER_KEYS = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -228,7 +230,7 @@ def draft_to_prediction(draft: dict[str, Any], *, image_id: str,
 
 
 def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
-              max_repairs: int = 2) -> dict[str, Any]:
+              max_repairs: int = 2, review_actions: bool = False) -> dict[str, Any]:
     """冻结首轮成功或失败；授权、输入与真值校验必须在网络调用之前。"""
     if not isinstance(max_repairs, int) or isinstance(max_repairs, bool) or not 0 <= max_repairs <= 2:
         raise ValueError("max_repairs 必须在 0 到 2 之间")
@@ -261,6 +263,9 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
                 invalid.append("request_options_changed")
             if fingerprint.get("pipeline_hash") != PIPELINE_HASH:
                 invalid.append("pipeline_changed")
+            if (bool(fingerprint.get("review_actions", False)) != review_actions
+                    or (review_actions and fingerprint.get("action_prompt_hash") != ACTION_PROMPT_HASH)):
+                invalid.append("action_review_options_changed")
             results.append({"image_id": image_id,
                             "status": "STALE_RESPONSE" if invalid else "SKIPPED_EXISTS",
                             "reasons": invalid})
@@ -282,8 +287,9 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
         image_hash = prepared.image_hash
         state.load_image(image_hash)
         job = state.start_recognition(f"real-{provider}-{image_id}")
+        review_options = {"review_actions": True} if review_actions else {}
         parsed = parser.parse_v2_with_retry(
-            prepared.derived_path, state, job, max_repairs=max_repairs, work_plane=plane)
+            prepared.derived_path, state, job, max_repairs=max_repairs, work_plane=plane, **review_options)
         outcome = "PASS" if parsed.success else "FAIL"
         prediction = {"image_id": image_id, "width_px": prepared.width_px,
                       "height_px": prepared.height_px, "nodes": [], "members": [],
@@ -308,6 +314,7 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
             "errors": [error.replace(parser._api_key, "[REDACTED]") for error in parsed.errors],
             "raw_responses": [raw.replace(parser._api_key, "[REDACTED]") for raw in parsed.raw_responses],
             "call_metadata": deepcopy(parsed.call_metadata),
+            "action_review": deepcopy((parsed.draft or {}).get("action_review")),
             "position_refinements": [deepcopy(entity["position_refinement"])
                                      for entity in (parsed.draft or {}).get("entities", [])
                                      if "position_refinement" in entity],
@@ -320,6 +327,8 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
                 "input_context_hash": canonical_digest(input_context(metadata)),
                 "request_options": parser.request_options(),
                 "pipeline_hash": PIPELINE_HASH,
+                "review_actions": review_actions,
+                "action_prompt_hash": ACTION_PROMPT_HASH if review_actions else None,
             },
             "preprocessing": prepared.source_metadata()["preprocessing"],
             "runtime": {"attempts": parsed.attempts,
@@ -346,7 +355,9 @@ def evaluate_real_world(root: str | Path = ROOT) -> dict:
         response = _read(root / case["response_fixture_path"])
         outcomes.append({"image_id": case["image_id"], "outcome": response["outcome"],
                          **response["runtime"], "errors": response.get("errors", []),
-                         "call_metadata": response.get("call_metadata", [])})
+                         "call_metadata": response.get("call_metadata", []),
+                         "action_review": response.get("action_review"),
+                         "review_actions": response["request_fingerprint"].get("review_actions", False)})
         attempts.append(response["runtime"]["attempts"])
         durations.append(response["runtime"]["duration_ms"])
     report.update(sample_kind="external-real-world-pilot", case_outcomes=outcomes,
@@ -355,6 +366,11 @@ def evaluate_real_world(root: str | Path = ROOT) -> dict:
                            "parse_failures": sum(item["outcome"] == "FAIL" for item in outcomes),
                            "total_calls": sum(attempts), "median_duration_ms": statistics.median(durations)
                            if durations else None, "total_duration_ms": sum(durations)},
+                  action_review={"attempted_cases": sum(item["review_actions"] for item in outcomes),
+                                 "completed_cases": sum((item["action_review"] or {}).get("status") == "completed"
+                                                        for item in outcomes),
+                                 "failed_or_missing_cases": sum(item["review_actions"] and
+                                     (item["action_review"] or {}).get("status") != "completed" for item in outcomes)},
                   limitations=["小样本单次结果，不代表真实手绘、手机照片或所有提供商的准确率。",
                                "无参考对象的指标为 null，不补成 100%；失败输入不从分母移除。"])
     return report
@@ -391,6 +407,11 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
             draft["source"] = prepared.source_metadata()
             draft["work_plane"] = deepcopy(metadata["work_plane"])
             draft = refine_horizontal_axis(draft, prepared.derived_path)
+            if response["request_fingerprint"].get("review_actions"):
+                from sketch_action_review import apply_action_review
+                if len(raw) < 2:
+                    raise ValueError("作用点复核缺少冻结原文，不能伪造完整回放。")
+                draft = apply_action_review(draft, SketchParser._extract_json(raw[-1]))
             draft = detect_topology(apply_scale_to_draft(draft))
             predictions[image_id] = draft_to_prediction(draft, image_id=image_id,
                                                         width=prepared.width_px, height=prepared.height_px)
@@ -447,6 +468,8 @@ def freeze_manifest(root: str | Path = ROOT) -> dict[str, Any]:
             "schema_hash": fingerprint["schema_hash"],
             "request_options": fingerprint.get("request_options"),
             "pipeline_hash": fingerprint.get("pipeline_hash"),
+            "review_actions": fingerprint.get("review_actions", False),
+            "action_prompt_hash": fingerprint.get("action_prompt_hash"),
             "subset_labels": metadata["subset_labels"], "gate": True,
             "source": metadata["source"], "license": metadata["license"],
         })
@@ -462,6 +485,7 @@ def main() -> int:
     parser.add_argument("--provider", choices=tuple(PROVIDER_KEYS), default="openai")
     parser.add_argument("--model", default="")
     parser.add_argument("--max-repairs", type=int, default=2)
+    parser.add_argument("--review-actions", action="store_true", help="额外调用一次视觉接口复核作用点")
     parser.add_argument("--output", help="保存本次审计、识别或评分结果")
     args = parser.parse_args()
     root = Path(args.root)
@@ -471,7 +495,8 @@ def main() -> int:
         elif args.command == "status":
             result = audit_dataset(root)
         elif args.command == "recognize":
-            result = recognize(root, provider=args.provider, model=args.model, max_repairs=args.max_repairs)
+            result = recognize(root, provider=args.provider, model=args.model, max_repairs=args.max_repairs,
+                               review_actions=args.review_actions)
         elif args.command == "freeze":
             result = freeze_manifest(root)
         elif args.command == "replay":

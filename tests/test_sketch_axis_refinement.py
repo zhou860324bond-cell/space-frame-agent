@@ -20,6 +20,36 @@ def _draft():
     }, "a" * 64, "drawing.png")
 
 
+def test_black_solid_band_proposes_axis_without_claiming_verified_geometry(tmp_path):
+    """混合力/矩公开图的黑色实心梁曾漏过灰色检测，厚带候选须保留原观察和审核阻断。"""
+    path = tmp_path / "black.png"
+    image = Image.new("RGB", (400, 200), "white")
+    ImageDraw.Draw(image).rectangle((60, 84, 340, 92), fill="black")
+    image.save(path)
+    result = refine_horizontal_axis(_draft(), path)
+    assert result["image_model"]["nodes"][0]["v"] * 199 == pytest.approx(88)
+    assert result["entities"][0]["position_refinement"]["method"] == "solid-black-horizontal-band/v1"
+    assert not result["entities"][0]["verified"]
+
+
+@pytest.mark.parametrize("drawing", ["thin", "two_black", "sloping_black"])
+def test_black_dimension_line_multiple_bands_and_sloping_stroke_are_not_beams(tmp_path, drawing):
+    """黑色细尺寸线、多条厚带及倾斜笔画不能强制修正为唯一水平梁。"""
+    path = tmp_path / "ambiguous-black.png"
+    image = Image.new("RGB", (400, 200), "white")
+    paint = ImageDraw.Draw(image)
+    if drawing == "thin":
+        paint.line((60, 88, 340, 88), fill="black", width=1)
+    elif drawing == "two_black":
+        paint.rectangle((60, 80, 340, 88), fill="black")
+        paint.rectangle((60, 108, 340, 116), fill="black")
+    else:
+        paint.line((60, 120, 340, 70), fill="black", width=8)
+    image.save(path)
+    value = _draft()
+    assert refine_horizontal_axis(value, path) is value
+
+
 @pytest.mark.parametrize("size", [(400, 200), (640, 320)])
 def test_filled_band_corrects_axis_and_preserves_raw_observation_for_review(tmp_path, size):
     """公开图粗坐标偏离厚梁轴；像素候选应接近真实中心，保留原坐标且不得自动确认。"""

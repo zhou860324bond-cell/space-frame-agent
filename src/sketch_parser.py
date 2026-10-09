@@ -785,6 +785,7 @@ class SketchParser:
         job_id: str, *, max_repairs: int = 2,
         is_cancelled: Callable[[], bool] | None = None,
         work_plane: dict | None = None,
+        review_actions: bool = False,
     ) -> V2ParseResult:
         """Recognize a v2 draft and atomically deliver it to the controller.
 
@@ -836,6 +837,48 @@ class SketchParser:
                     raise ValueError("；".join(errors))
                 from sketch_axis_refinement import refine_horizontal_axis
                 payload = refine_horizontal_axis(payload, image_path)
+                if review_actions:
+                    from PIL import Image, ImageOps
+                    from sketch_action_review import ACTION_REVIEW_PROMPT, apply_action_review
+                    if self._last_call_metadata:
+                        result.call_metadata.append({"attempt": attempt, "stage": "geometry", **self._last_call_metadata})
+                    self._last_call_metadata = {}
+                    if cancelled():
+                        state.cancel_recognition(job_id)
+                        result.cancelled = True
+                        break
+                    try:
+                        with Image.open(image_path) as source_image:
+                            width, height = ImageOps.exif_transpose(source_image).size
+                        payload["source"].update(width_px=width, height_px=height)
+                        action_context = "待审核几何（只引用其中的杆件编号，不默认完整）：" + json.dumps(
+                            {"nodes": payload["image_model"]["nodes"], "members": payload["image_model"]["members"]},
+                            ensure_ascii=False)
+                        result.attempts += 1
+                        focused_raw = self._call_llm(image_data, action_context, system_prompt=ACTION_REVIEW_PROMPT)
+                        result.raw_responses.append(focused_raw)
+                        if cancelled():
+                            state.cancel_recognition(job_id)
+                            result.cancelled = True
+                            break
+                        if (not focused_raw.strip() or self._last_call_metadata.get("finish_reason") in ("length", "max_tokens")):
+                            raise ValueError("作用点复核内容为空或截断，请人工补充作用节点。")
+                        payload = apply_action_review(payload, self._extract_json(focused_raw))
+                    except Exception as exc:  # noqa: BLE001 - 单次可选视觉复核失败仍保留基础草稿
+                        message = f"作用点复核未完成：{type(exc).__name__}: {exc}。请人工核对并补充作用节点。"
+                        result.errors.append(message)
+                        payload["action_review"] = {"status": "failed", "message": message}
+                        payload.setdefault("issues", []).append({"id": "action-review-failed",
+                            "category": "load_incomplete", "severity": "blocking", "status": "open",
+                            "entity_refs": [], "message": message, "resolution": None, "resolved_by": None})
+                    finally:
+                        if self._last_call_metadata:
+                            result.call_metadata.append({"attempt": result.attempts, "stage": "action_review", **self._last_call_metadata})
+                        self._last_call_metadata = {}
+                    if cancelled():
+                        state.cancel_recognition(job_id)
+                        result.cancelled = True
+                        break
                 if not state.complete_recognition(job_id, payload):
                     result.cancelled = True
                     break

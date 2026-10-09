@@ -1,0 +1,459 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "point_load",
+    "width_px": 433,
+    "height_px": 400,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.10300925925925926,
+          0.2631578947368421
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.5,
+          0.2631578947368421
+        ]
+      },
+      {
+        "id": 3,
+        "point": [
+          0.8807870370370371,
+          0.2631578947368421
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 2
+      },
+      {
+        "id": 2,
+        "i": 2,
+        "j": 3
+      }
+    ],
+    "supports": [
+      {
+        "node": 1,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 3,
+        "fix": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:2"
+        ],
+        "message": "集中力 F 只有符号没有数值和单位，无法作为求解荷载，请补充数值与单位。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "dimension_unknown",
+        "severity": "blocking",
+        "entity_refs": [
+          "dimension:D1"
+        ],
+        "message": "跨度只标注为 L，没有具体数值和单位，请标定实际长度。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I3",
+        "category": "auxiliary_diagram",
+        "severity": "info",
+        "entity_refs": [],
+        "message": "图中下方的矩形图、三角形图和 RA、RB、MB 标注为剪力图/弯矩图等结果图，不是结构杆件或外加荷载，未纳入模型。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "pixel-axis-review",
+        "category": "low_confidence",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "node:1",
+          "node:2",
+          "node:3"
+        ],
+        "message": "已根据连续像素带提出水平梁轴候选位置，原始识别坐标已保留。请核对梁轴端点、支座附着点及中间节点，确认后再提交。",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "action-review-A1-position",
+        "category": "low_confidence",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "node:2"
+        ],
+        "message": "集中力作用点及分段为候选位置，请对照原图核对。此确认不补充荷载数值。",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "action-review-A1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "node:2"
+        ],
+        "message": "集中力作用位置候选待核对；请确认外荷载/反力含义、位置、方向、数值和单位。候选分段尚未经人工确认。",
+        "observations": [
+          {
+            "observation": {
+              "id": "A1",
+              "kind": "force",
+              "member": 1,
+              "point": [
+                0.5,
+                0.263
+              ],
+              "text": "图上集中力符号F，直箭头向下指向梁中部B点"
+            },
+            "node": 2,
+            "reason": null
+          }
+        ],
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 1,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": []
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.1000, \"v\": 0.7000},\n      {\"id\": 2, \"u\": 0.5000, \"v\": 0.7000},\n      {\"id\": 3, \"u\": 0.9000, \"v\": 0.7000}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2},\n      {\"id\": 2, \"i\": 2, \"j\": 3}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 3, \"kind\": \"roller\"}\n    ],\n    \"load_cases\": []\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"node\", \"target\": {\"node\": 1}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.1000, 0.7000]}},\n    {\"id\": \"E2\", \"kind\": \"node\", \"target\": {\"node\": 2}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.5000, 0.7000]}},\n    {\"id\": \"E3\", \"kind\": \"node\", \"target\": {\"node\": 3}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.9000, 0.7000]}},\n    {\"id\": \"E4\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.9,\n     \"image_geometry\": {\"line\": [[0.1000, 0.7000], [0.5000, 0.7000]]}},\n    {\"id\": \"E5\", \"kind\": \"member\", \"target\": {\"member\": 2}, \"confidence\": 0.9,\n     \"image_geometry\": {\"line\": [[0.5000, 0.7000], [0.9000, 0.7000]]}},\n    {\"id\": \"E6\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}}, \"confidence\": 0.8,\n     \"image_geometry\": {\"point\": [0.1000, 0.7000]}},\n    {\"id\": \"E7\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 3, \"name\": \"S2\"}}, \"confidence\": 0.8,\n     \"image_geometry\": {\"point\": [0.9000, 0.7000]}}\n  ],\n  \"dimensions\": [\n    {\"id\": \"D1\", \"text\": \"L\", \"unit\": null,\n     \"image_geometry\": {\"line\": [[0.1000, 0.9500], [0.9000, 0.9500]]}}\n  ],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"load_incomplete\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"node:2\"],\n     \"message\": \"集中力 F 只有符号没有数值和单位，无法作为求解荷载，请补充数值与单位。\",\n     \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"dimension_unknown\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"dimension:D1\"],\n     \"message\": \"跨度只标注为 L，没有具体数值和单位，请标定实际长度。\",\n     \"status\": \"open\"},\n    {\"id\": \"I3\", \"category\": \"auxiliary_diagram\", \"severity\": \"info\",\n     \"entity_refs\": [],\n     \"message\": \"图中下方的矩形图、三角形图和 RA、RB、MB 标注为剪力图/弯矩图等结果图，不是结构杆件或外加荷载，未纳入模型。\",\n     \"status\": \"open\"}\n  ]\n}",
+    "{\"actions\":[{\"id\":\"A1\",\"kind\":\"force\",\"member\":1,\"point\":[0.5,0.263],\"text\":\"图上集中力符号F，直箭头向下指向梁中部B点\"}],\"warnings\":[]}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "stage": "geometry",
+      "content_characters": 2124,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 2255,
+      "completion_tokens": 890,
+      "total_tokens": 3145
+    },
+    {
+      "attempt": 2,
+      "stage": "action_review",
+      "content_characters": 116,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 682,
+      "completion_tokens": 50,
+      "total_tokens": 732
+    }
+  ],
+  "action_review": {
+    "status": "completed",
+    "records": [
+      {
+        "observation": {
+          "id": "A1",
+          "kind": "force",
+          "member": 1,
+          "point": [
+            0.5,
+            0.263
+          ],
+          "text": "图上集中力符号F，直箭头向下指向梁中部B点"
+        },
+        "node": 2,
+        "reason": null
+      }
+    ],
+    "warnings": []
+  },
+  "position_refinements": [
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        40.0,
+        100,
+        386.0,
+        110
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.1,
+          "v": 0.7
+        },
+        {
+          "id": 2,
+          "u": 0.5,
+          "v": 0.7
+        },
+        {
+          "id": 3,
+          "u": 0.9,
+          "v": 0.7
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        40.0,
+        100,
+        386.0,
+        110
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.1,
+          "v": 0.7
+        },
+        {
+          "id": 2,
+          "u": 0.5,
+          "v": 0.7
+        },
+        {
+          "id": 3,
+          "u": 0.9,
+          "v": 0.7
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        40.0,
+        100,
+        386.0,
+        110
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.1,
+          "v": 0.7
+        },
+        {
+          "id": 2,
+          "u": 0.5,
+          "v": 0.7
+        },
+        {
+          "id": 3,
+          "u": 0.9,
+          "v": 0.7
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        40.0,
+        100,
+        386.0,
+        110
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.1,
+          "v": 0.7
+        },
+        {
+          "id": 2,
+          "u": 0.5,
+          "v": 0.7
+        },
+        {
+          "id": 3,
+          "u": 0.9,
+          "v": 0.7
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        40.0,
+        100,
+        386.0,
+        110
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.1,
+          "v": 0.7
+        },
+        {
+          "id": 2,
+          "u": 0.5,
+          "v": 0.7
+        },
+        {
+          "id": 3,
+          "u": 0.9,
+          "v": 0.7
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        40.0,
+        100,
+        386.0,
+        110
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.1,
+          "v": 0.7
+        },
+        {
+          "id": 2,
+          "u": 0.5,
+          "v": 0.7
+        },
+        {
+          "id": 3,
+          "u": 0.9,
+          "v": 0.7
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        40.0,
+        100,
+        386.0,
+        110
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.1,
+          "v": 0.7
+        },
+        {
+          "id": 2,
+          "u": 0.5,
+          "v": 0.7
+        },
+        {
+          "id": 3,
+          "u": 0.9,
+          "v": 0.7
+        }
+      ]
+    }
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+    "derived_image_hash": "a961bb4d7bd42ca206c50a1b7cde2a63b7e195b9e061ea7d72cb4502f849002d",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "5991d23b6bccdba7327635c2f90ca659103e78f409c9763d6fca13fd74edf3be",
+    "review_actions": true,
+    "action_prompt_hash": "0bf209f419d68cd4dbb9e8d063f31eafbabdf75e69c13f20a8246c103de232f7"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      433,
+      400
+    ],
+    "crop": [
+      0,
+      0,
+      433,
+      400
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 2,
+    "duration_ms": 4078.000000001339
+  }
+}

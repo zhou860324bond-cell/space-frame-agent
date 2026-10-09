@@ -84,6 +84,32 @@ def _outline_band(pixels: np.ndarray, x0: int, x1: int, span: float,
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _black_band(pixels: np.ndarray, x0: int, x1: int, span: float):
+    """黑色实心梁须有持续的厚带；细尺寸线和多个候选带不用于修正。"""
+    rows = []
+    for y, row in enumerate(pixels[:, x0:x1]):
+        edges = np.diff(np.r_[False, row < 50, False].astype(np.int8))
+        starts, stops = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+        if len(starts):
+            index = int(np.argmax(stops - starts))
+            if stops[index] - starts[index] >= span * 0.85:
+                rows.append((y, x0 + starts[index], x0 + stops[index] - 1))
+    groups = []
+    for row in rows:
+        if not groups or row[0] != groups[-1][-1][0] + 1:
+            groups.append([])
+        groups[-1].append(row)
+    groups = [g for g in groups if max(3, pixels.shape[0] * 0.012) <= len(g) <= pixels.shape[0] * 0.06]
+    if len(groups) != 1:
+        return None
+    top, bottom = groups[0][0][0], groups[0][-1][0]
+    persistent = np.flatnonzero((pixels[top:bottom + 1, x0:x1] < 50).mean(axis=0) >= 0.85)
+    if (not len(persistent) or len(persistent) < (persistent[-1] - persistent[0] + 1) * 0.95
+            or persistent[0] == 0 or persistent[-1] == x1 - x0 - 1):
+        return None
+    return float(x0 + persistent[0]), float(x0 + persistent[-1]), top, bottom
+
+
 def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
     """仅修正水平链的唯一填充带或闭合矩形，歧义、斜杆和多梁保持原样。"""
     model = draft["image_model"]
@@ -146,11 +172,14 @@ def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
             return draft
         left, right = float(x0 + persistent[0]), float(x0 + persistent[-1])
     else:
-        outline = _outline_band(pixels, x0, x1, span, sum(n["v"] for n in nodes) / len(nodes))
+        outline = _black_band(pixels, x0, x1, span)
+        method = "solid-black-horizontal-band/v1"
+        if outline is None:
+            outline = _outline_band(pixels, x0, x1, span, sum(n["v"] for n in nodes) / len(nodes))
+            method = "closed-horizontal-outline/v1"
         if outline is None:
             return draft
         left, right, top, bottom = outline
-        method = "closed-horizontal-outline/v1"
     if right - left < span * 0.85:
         return draft
     if abs(left - order[0]["u"] * (width - 1)) > width * 0.08 \
