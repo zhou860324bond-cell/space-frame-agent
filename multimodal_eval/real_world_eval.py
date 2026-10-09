@@ -34,7 +34,8 @@ SCHEMA_HASH = hashlib.sha256(V2_DRAFT_FORMAT.encode("utf-8")).hexdigest()
 PIPELINE_HASH = canonical_digest({name: (Path(__file__).resolve().parents[1] / "src" / name)
                                  .read_text(encoding="utf-8") for name in (
     "sketch_parser.py", "multimodal_workflow.py", "sketch_axis_refinement.py",
-    "image_preprocess.py", "dimension_constraints.py", "sketch_topology.py", "sketch_action_review.py")})
+    "image_preprocess.py", "dimension_constraints.py", "sketch_topology.py", "sketch_action_review.py",
+    "sketch_moment_refinement.py")})
 PROVIDER_KEYS = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -392,6 +393,8 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
         image_id = case["image_id"]
         response = _read(root / case["response_fixture_path"])
         metadata = _read(root / case["metadata_path"])
+        review_requested = bool(response["request_fingerprint"].get("review_actions"))
+        review_status = None
         try:
             raw = response.get("raw_responses") or []
             if not raw or not raw[0].strip():
@@ -407,26 +410,43 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
             draft["source"] = prepared.source_metadata()
             draft["work_plane"] = deepcopy(metadata["work_plane"])
             draft = refine_horizontal_axis(draft, prepared.derived_path)
-            if response["request_fingerprint"].get("review_actions"):
+            if review_requested:
                 from sketch_action_review import apply_action_review
-                if len(raw) < 2:
-                    raise ValueError("作用点复核缺少冻结原文，不能伪造完整回放。")
-                draft = apply_action_review(draft, SketchParser._extract_json(raw[-1]))
+                try:
+                    if len(raw) < 2:
+                        raise ValueError("作用点复核缺少冻结原文，不能伪造完整回放。")
+                    draft = apply_action_review(draft, SketchParser._extract_json(raw[-1]), image_path=prepared.derived_path)
+                    review_status = "completed"
+                except (KeyError, TypeError, ValueError) as exc:
+                    # 可选复核失败与桌面保持一致：基础草稿留在分母，单独记录复核失败。
+                    review_status = "failed"
+                    frozen_review = response.get("action_review") or {}
+                    message = frozen_review.get("message") or f"作用点复核不可完整回放：{exc}，请人工核对作用节点和支座。"
+                    draft["action_review"] = {"status": "failed", "message": message}
+                    draft.setdefault("issues", []).append({"id": "action-review-failed", "category": "load_incomplete",
+                        "severity": "blocking", "status": "open", "entity_refs": [], "message": message,
+                        "resolution": None, "resolved_by": None})
             draft = detect_topology(apply_scale_to_draft(draft))
             predictions[image_id] = draft_to_prediction(draft, image_id=image_id,
                                                         width=prepared.width_px, height=prepared.height_px)
-            outcomes.append({"image_id": image_id, "outcome": "PASS"})
+            outcomes.append({"image_id": image_id, "outcome": "PASS",
+                             **({"action_review_status": review_status} if review_requested else {})})
         except (KeyError, TypeError, ValueError) as exc:
             original = response["prediction"]
             predictions[image_id] = {"image_id": image_id, "width_px": original["width_px"],
                                      "height_px": original["height_px"], "nodes": [], "members": [],
                                      "supports": [], "loads": [], "intersections": [], "issues": [],
                                      "scale": {"status": "unknown"}}
-            outcomes.append({"image_id": image_id, "outcome": "FAIL", "error": str(exc)})
+            outcomes.append({"image_id": image_id, "outcome": "FAIL", "error": str(exc),
+                             **({"action_review_status": review_status or "missing"} if review_requested else {})})
     report = evaluate_manifest(root / "manifest.json", prediction_overrides=predictions)
     report.update(case_outcomes=outcomes, new_api_calls=0, replay_successes=sum(
         item["outcome"] == "PASS" for item in outcomes),
         pipeline_hash=PIPELINE_HASH,
+        action_review={"attempted_cases": sum("action_review_status" in item for item in outcomes),
+                       "completed_cases": sum(item.get("action_review_status") == "completed" for item in outcomes),
+                       "failed_or_missing_cases": sum(item.get("action_review_status") in {"failed", "missing"}
+                                                      for item in outcomes)},
         limitations=["修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
                      "输入与真值不变；失败保留在分母，无证据指标仍为 null。"])
     return report

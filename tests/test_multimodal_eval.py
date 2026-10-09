@@ -179,17 +179,22 @@ def test_action_review_mode_and_prompt_changes_prevent_reuse_or_new_paid_calls(t
     assert ACTION_PROMPT_HASH
 
 
-def test_frozen_two_stage_development_round_keeps_raws_calls_and_inaccurate_moment():
-    """两个阶段的原文必须共同回放；错误力矩位置和支座类型不能因解析成功而从验收中消失。"""
+def test_frozen_two_stage_development_round_keeps_raws_calls_and_inaccurate_moment(monkeypatch):
+    """旧在线力矩错误不能被新像素回放覆盖；回放提升要注明零新增调用，支座错误仍保留。"""
     root = ROOT / "public_cases/action_review_01"
     info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
     snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
     assert canonical_digest(snapshot) == info["pipeline_hash"]
     assert "sketch_action_review.py" in snapshot
+    monkeypatch.setattr("sketch_parser.SketchParser._call_llm",
+                        lambda *args, **kwargs: pytest.fail("历史回放不能新增调用"))
     online, replay = evaluate_real_world(root), replay_real_world(root)
     assert online["runtime"]["total_calls"] == 6
     assert online["action_review"] == {"attempted_cases": 3, "completed_cases": 3, "failed_or_missing_cases": 0}
-    assert replay["new_api_calls"] == 0 and online["metrics"] == replay["metrics"]
+    assert replay["new_api_calls"] == 0
+    assert online["metrics"]["node_f1"] == pytest.approx(8 / 9)
+    assert replay["metrics"]["node_f1"] == replay["metrics"]["member_f1"] == 1
+    assert online["metrics"]["support_f1"] == replay["metrics"]["support_f1"] == .8
     assert not online["passed"] and not replay["passed"]
     for case in online["case_reports"]:
         name = case["image_id"]
@@ -219,6 +224,66 @@ def test_failed_optional_stage_is_reported_separately_from_usable_base_parse(tmp
     assert report["runtime"]["total_calls"] == 2
     assert report["action_review"]["completed_cases"] == 0
     assert report["action_review"]["failed_or_missing_cases"] == 1
+
+
+@pytest.mark.parametrize("failure", ["malformed", "missing"])
+def test_optional_replay_failure_preserves_valid_base_without_network_calls(tmp_path, monkeypatch, failure):
+    """可选复核回放失败曾丢弃基础草稿，使回放与桌面失败处理不一致。"""
+    _, _, _, response_path = _complete_real_case(tmp_path)
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    prediction = response["prediction"]
+    base = {"image_model": {
+        "nodes": [{"id": n["id"], "u": n["point"][0], "v": n["point"][1]} for n in prediction["nodes"]],
+        "members": prediction["members"], "supports": prediction["supports"], "load_cases": []}, "entities": []}
+    response["raw_responses"] = [json.dumps(base)] + (["not-json"] if failure == "malformed" else [])
+    response["request_fingerprint"]["review_actions"] = True
+    response["action_review"] = {"status": "failed", "message": "冻结的可选复核失败，请人工核对。"}
+    response["runtime"]["attempts"] = 2
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+    freeze_manifest(tmp_path)
+    monkeypatch.setattr("sketch_parser.SketchParser._call_llm",
+                        lambda *args, **kwargs: pytest.fail("回放不应发起接口调用"))
+    replay = replay_real_world(tmp_path)
+    assert replay["new_api_calls"] == 0 and replay["replay_successes"] == 1
+    assert replay["action_review"] == {"attempted_cases": 1, "completed_cases": 0, "failed_or_missing_cases": 1}
+    assert replay["counts"]["nodes"]["tp"] == len(prediction["nodes"])
+
+
+def test_second_action_round_retains_online_optional_failure_and_current_replay_fix(monkeypatch):
+    """兼容空置信度的修复只能体现在新回放中，不能覆盖首次在线阶段失败和旧回放报告。"""
+    root = ROOT / "public_cases/action_review_02"
+    original = {p: p.read_bytes() for folder in ("responses", "ground_truth") for p in (root / folder).glob("*.json")}
+    info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
+    assert canonical_digest(snapshot) == info["pipeline_hash"]
+    assert "sketch_moment_refinement.py" in snapshot
+    online = evaluate_real_world(root)
+    assert online["runtime"]["total_calls"] == 6 and online["runtime"]["parse_successes"] == 3
+    assert online["action_review"]["completed_cases"] == 2 and online["action_review"]["failed_or_missing_cases"] == 1
+    assert online["metrics"]["node_f1"] == online["metrics"]["member_f1"] == online["metrics"]["support_f1"] == 1
+    assert not online["passed"] and online["metrics"]["load_f1"] == 0
+    old_replay = json.loads((root / "replay_report.json").read_text(encoding="utf-8"))
+    assert old_replay["metrics"]["node_f1"] == .8
+    monkeypatch.setattr("sketch_parser.SketchParser._call_llm",
+                        lambda *args, **kwargs: pytest.fail("修复回放不得新增调用"))
+    current = replay_real_world(root)
+    assert current["action_review"]["completed_cases"] == 3 and current["new_api_calls"] == 0
+    assert current["metrics"]["node_f1"] == current["metrics"]["member_f1"] == current["metrics"]["support_f1"] == 1
+    assert not current["passed"]
+    assert all(p.read_bytes() == data for p, data in original.items())
+
+
+def test_postcall_replay_snapshot_is_bound_separately_from_original_online_pipeline():
+    """响应暴露兼容问题后的源码与回放必须另行冻结，不能替换调用前快照或首次失败。"""
+    root = ROOT / "public_cases/action_review_02"
+    report = json.loads((root / "current_replay.json").read_text(encoding="utf-8"))
+    snapshot = json.loads((root / report["replay_snapshot"]).read_text(encoding="utf-8"))
+    assert canonical_digest(snapshot) == report["replay_implementation_hash"]
+    assert file_digest(root / "report.json") == report["original_report_hash"]
+    assert file_digest(root / "replay_report.json") == report["original_replay_hash"]
+    info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    assert info["pipeline_hash"] != report["pipeline_hash"]
+    assert report["new_api_calls"] == 0
 
 
 @pytest.mark.parametrize("change", ["image", "crop", "rotation", "plane", "offset"])

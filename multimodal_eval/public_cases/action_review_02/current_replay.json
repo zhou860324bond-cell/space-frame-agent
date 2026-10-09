@@ -1,0 +1,338 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "mode": "offline-replay",
+  "manifest": "manifest.json",
+  "gate_cases": 3,
+  "evaluated_image_ids": [
+    "cantilever",
+    "point_load",
+    "various_loads"
+  ],
+  "case_reports": [
+    {
+      "image_id": "cantilever",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": null,
+        "support_f1": 1.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 5
+      },
+      "counts": {
+        "nodes": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 5,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    },
+    {
+      "image_id": "point_load",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": null,
+        "support_f1": 1.0,
+        "load_f1": 0.0,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 8
+      },
+      "counts": {
+        "nodes": {
+          "tp": 3,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 3,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 2,
+          "fp": 8,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    },
+    {
+      "image_id": "various_loads",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": null,
+        "clear_member_f1": null,
+        "intersection_accuracy": null,
+        "support_f1": 1.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 0.75,
+        "issue_false_positives": 12
+      },
+      "counts": {
+        "nodes": {
+          "tp": 4,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 3,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 3,
+          "fp": 12,
+          "fn": 1
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    }
+  ],
+  "metrics": {
+    "node_f1": 1.0,
+    "member_f1": 1.0,
+    "clear_node_f1": 1.0,
+    "clear_member_f1": 1.0,
+    "intersection_accuracy": null,
+    "support_f1": 1.0,
+    "load_f1": 0.0,
+    "load_numeric_unit_accuracy": null,
+    "scale_accuracy": null,
+    "issue_recall": 0.8571428571428571,
+    "issue_false_positives": 25
+  },
+  "counts": {
+    "nodes": {
+      "tp": 9,
+      "fp": 0,
+      "fn": 0
+    },
+    "members": {
+      "tp": 6,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_nodes": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_members": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 0
+    },
+    "supports": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0
+    },
+    "loads": {
+      "tp": 0,
+      "fp": 1,
+      "fn": 0
+    },
+    "issues": {
+      "tp": 6,
+      "fp": 25,
+      "fn": 1
+    },
+    "intersections": {
+      "correct": 0,
+      "wrong": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "scale": {
+      "correct": 0,
+      "total": 0
+    },
+    "load_numeric": {
+      "correct": 0,
+      "total": 0
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [
+    "intersection_accuracy",
+    "load_f1"
+  ],
+  "passed": false,
+  "case_outcomes": [
+    {
+      "image_id": "cantilever",
+      "outcome": "PASS",
+      "action_review_status": "completed"
+    },
+    {
+      "image_id": "point_load",
+      "outcome": "PASS",
+      "action_review_status": "completed"
+    },
+    {
+      "image_id": "various_loads",
+      "outcome": "PASS",
+      "action_review_status": "completed"
+    }
+  ],
+  "new_api_calls": 0,
+  "replay_successes": 3,
+  "pipeline_hash": "d8047e8cdf75a213267bada6f32bdbf4ce98ddfce6c7c31b969f9f048451298f",
+  "action_review": {
+    "attempted_cases": 3,
+    "completed_cases": 3,
+    "failed_or_missing_cases": 0
+  },
+  "limitations": [
+    "修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
+    "输入与真值不变；失败保留在分母，无证据指标仍为 null。"
+  ],
+  "replay_implementation_hash": "37a5cec4705f9fdcb2f62666160f435d33789dff62de7d864b03d6d8f71b029a",
+  "replay_snapshot": "pipeline_snapshot_current_replay.json",
+  "original_report_hash": "db749a9b463f005811d9115ba1e4ef2734f5d265208cce8272f0510e2cc69218",
+  "original_replay_hash": "d3effc5302cb819fa8c2177f24437d7327cd236114248519a278b9ea75573c81",
+  "scope": "置信度元数据兼容及可选阶段失败保留基础草稿之后的零新增调用回放，非重新在线识别。"
+}

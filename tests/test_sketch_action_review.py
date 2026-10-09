@@ -126,3 +126,99 @@ def test_old_observations_and_nodal_values_are_preserved_with_new_warnings():
     assert result["image_model"]["load_cases"] == value["image_model"]["load_cases"]
     assert old in result["issues"]
     assert result["action_review"]["warnings"] == observation["warnings"]
+
+
+def support_draft():
+    value = draft()
+    value["image_model"]["supports"] = [{"name": "S1", "node": 1, "fix": [0, 1, 1, 0, 0, 0]}]
+    value["entities"].append({"id": "s1", "kind": "support", "source": "vision", "verified": False,
+        "confidence": .9, "target": {"support": {"node": 1, "name": "S1"}},
+        "image_geometry": {"point": [.1, .5]}})
+    return value
+
+
+def support_review(symbol="triangle"):
+    return {"actions": [], "supports": [{"node": 1, "symbol": symbol, "point": [.1, .5],
+                                        "text": "图上可见支座符号"}], "warnings": []}
+
+
+@pytest.mark.parametrize("symbol,mask", [
+    ("triangle", [1, 1, 1, 0, 0, 0]), ("triangle_on_rollers", [0, 1, 1, 0, 0, 0]),
+    ("circle", [0, 1, 1, 0, 0, 0]), ("wall", [1, 1, 1, 1, 1, 1]),
+])
+def test_visible_support_symbol_maps_to_unverified_candidate_with_original_mask(symbol, mask):
+    """不能按右端静定性默认滚动；可见符号由代码转掩码，原约束及待审核状态保留。"""
+    value = support_draft()
+    result = apply_action_review(value, support_review(symbol))
+    assert result["image_model"]["supports"][0]["fix"] == mask
+    record = result["action_review"]["support_records"][0]
+    assert record["applied"] and record["original_support"] == value["image_model"]["supports"][0]
+    entity = next(e for e in result["entities"] if e["kind"] == "support")
+    assert not entity["verified"] and entity["confidence"] is None
+    assert entity["symbol_review"]["observation"]["symbol"] == symbol
+    assert result["issues"][-1]["entity_refs"] == ["support:1:S1"]
+
+
+@pytest.mark.parametrize("reason", ["verified", "scale", "absent", "duplicate", "far", "unknown"])
+def test_unbound_unknown_or_reviewed_support_keeps_original_data(reason):
+    """未知支座、远离附着点、重复引用及已有人工审核不能被新的符号观察静默覆盖。"""
+    value, observation = support_draft(), support_review()
+    if reason == "verified":
+        value["entities"][0]["verified"] = True
+    elif reason == "scale":
+        value["scale"]["status"] = "confirmed"
+    elif reason == "absent":
+        value["image_model"]["supports"] = []
+    elif reason == "duplicate":
+        value["image_model"]["supports"].append({"node": 1, "name": "other", "fix": [1] * 6})
+    elif reason == "far":
+        observation["supports"][0]["point"] = [.8, .9]
+    else:
+        observation["supports"][0]["symbol"] = "unknown"
+    result = apply_action_review(value, observation)
+    assert result["image_model"] == value["image_model"]
+    assert not result["action_review"]["support_records"][0]["applied"]
+    assert result["issues"][-1]["category"] == "support_unknown"
+
+
+@pytest.mark.parametrize("invalid", ["fix", "duplicate", "boolean", "nan", "inferred_kind", "missing_evidence"])
+def test_invalid_support_observation_rejects_entire_phase_before_action_split(invalid):
+    """支座阶段的非法掩码、节点或坐标不能让前面的集中作用点先分段写入。"""
+    value, observation = support_draft(), support_review()
+    observation["actions"] = review((.4, .5))["actions"]
+    support = observation["supports"][0]
+    if invalid == "fix":
+        support["fix"] = [1] * 6
+    elif invalid == "duplicate":
+        observation["supports"].append(deepcopy(support))
+    elif invalid == "boolean":
+        support["node"] = True
+    elif invalid == "nan":
+        support["point"][0] = float("nan")
+    elif invalid == "inferred_kind":
+        support["symbol"] = "statically_determinate_roller"
+    else:
+        support["text"] = ""
+    before = deepcopy(value)
+    with pytest.raises(ValueError):
+        apply_action_review(value, observation)
+    assert value == before
+
+
+@pytest.mark.parametrize("confidence", [None, 0, .8, 1])
+def test_optional_support_confidence_is_observation_metadata_without_automatic_verification(confidence):
+    """真实复核返回 confidence:null 曾丢失全部有效观察；可接收元数据，但不能自动确认约束。"""
+    value, observation = support_draft(), support_review()
+    observation["supports"][0]["confidence"] = confidence
+    result = apply_action_review(value, observation)
+    assert result["action_review"]["support_records"][0]["applied"]
+    assert not next(e for e in result["entities"] if e["kind"] == "support")["verified"]
+
+
+@pytest.mark.parametrize("confidence", [True, "high", float("nan"), -1, 1.1])
+def test_invalid_optional_support_confidence_cannot_bypass_phase_validation(confidence):
+    """兼容可选置信度不能放行布尔、文字或非有限的元数据。"""
+    observation = support_review()
+    observation["supports"][0]["confidence"] = confidence
+    with pytest.raises(ValueError):
+        apply_action_review(support_draft(), observation)

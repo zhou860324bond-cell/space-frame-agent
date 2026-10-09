@@ -341,6 +341,7 @@ def test_action_review_failure_retains_base_draft_without_paid_repair(image_path
     assert result.success and result.attempts == 2 and len(calls) == 2
     assert result.draft["action_review"]["status"] == "failed"
     assert result.errors and result.draft["image_model"]["load_cases"] == []
+    assert "。。" not in result.errors[0]
     assert any(i["id"] == "action-review-failed" and i["severity"] == "blocking" for i in result.draft["issues"])
 
 

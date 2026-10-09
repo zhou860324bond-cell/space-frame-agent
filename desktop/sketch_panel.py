@@ -139,7 +139,7 @@ class SketchPanel(QWidget):
         key_row.addWidget(self.spn_retries)
         settings_layout.addLayout(key_row)
         self.chk_review_actions = QCheckBox("作用点复核")
-        self.chk_review_actions.setToolTip("基础识别后额外调用一次视觉接口，聚焦集中力和力矩的位置；可能增加耗时与费用，候选仍需人工审核。")
+        self.chk_review_actions.setToolTip("基础识别后额外调用一次视觉接口，聚焦集中力、力矩位置及支座可见符号；可能增加耗时与费用，候选仍需人工审核。")
         settings_layout.addWidget(self.chk_review_actions)
         self.settings_widget.setVisible(False)
         self.btn_settings.toggled.connect(self.settings_widget.setVisible)
@@ -1476,6 +1476,24 @@ class SketchPanel(QWidget):
             if keyword in item.text():
                 item.setCheckState(Qt.CheckState.Checked)
 
+    def _audit_v2_support_edit(self, draft, node_id, replacement=None):
+        """保留支座原观察，仅处理精确绑定的符号复核问题，改名后其他问题继续可定位。"""
+        from copy import deepcopy
+        previous = {"supports": [deepcopy(s) for s in draft["image_model"].get("supports", []) if s["node"] == node_id],
+                    "entities": [deepcopy(e) for e in draft.get("entities", []) if e.get("kind") == "support"
+                                 and (e.get("target", {}).get("support") or {}).get("node") == node_id]}
+        draft.setdefault("edit_history", []).append({"action": "set_support" if replacement else "delete_support",
+            "node": node_id, "previous": deepcopy(previous), "replacement": deepcopy(replacement)})
+        old_refs = {f"support:{node_id}:{s.get('name')}" for s in previous["supports"]}
+        for issue in draft.get("issues", []):
+            if issue.get("support_review_node") == node_id and issue.get("status") == "open":
+                issue.update(status="resolved", resolved_by="user",
+                             resolution="用户已重新设置支座" if replacement else "用户已明确删除支座")
+            if replacement:
+                issue["entity_refs"] = [f"support:{node_id}:{replacement['name']}" if ref in old_refs else ref
+                                        for ref in issue.get("entity_refs", [])]
+        return previous
+
     def _apply_support_edit(self):
         if self._v2_draft is not None:
             from copy import deepcopy
@@ -1483,9 +1501,10 @@ class SketchPanel(QWidget):
             node_id = int(self.cmb_support_node.currentData())
             name = self.txt_support_name.text().strip() or f"BC-Node-{node_id}"
             fix = list(self.cmb_support_type.currentData())
+            support = {"name": name, "node": node_id, "fix": fix}
+            observations = self._audit_v2_support_edit(draft, node_id, support)
             supports = [item for item in draft["image_model"].get("supports") or []
                         if int(item["node"]) != node_id]
-            support = {"name": name, "node": node_id, "fix": fix}
             supports.append(support)
             draft["image_model"]["supports"] = supports
             draft["entities"] = [item for item in draft.get("entities") or []
@@ -1501,6 +1520,7 @@ class SketchPanel(QWidget):
                 "image_geometry": {"point": [float(node["u"]), float(node["v"])]},
                 "target": {"support": {"node": node_id, "name": name}},
                 "payload": deepcopy(support),
+                "original_observation": observations,
             })
             self._apply_v2_edit(draft, f"已更新节点 {node_id} 的支座")
             return
@@ -1522,13 +1542,13 @@ class SketchPanel(QWidget):
             from copy import deepcopy
             draft = deepcopy(self._v2_draft)
             node_id = int(self.cmb_support_node.currentData())
-            before = len(draft["image_model"].get("supports") or [])
+            if not any(int(s["node"]) == node_id for s in draft["image_model"].get("supports", [])):
+                self._show_edit_error("删除支座失败", ValueError("该节点没有支座"))
+                return
+            self._audit_v2_support_edit(draft, node_id)
             draft["image_model"]["supports"] = [
                 item for item in draft["image_model"].get("supports") or []
                 if int(item["node"]) != node_id]
-            if len(draft["image_model"]["supports"]) == before:
-                self._show_edit_error("删除支座失败", ValueError("该节点没有支座"))
-                return
             draft["entities"] = [item for item in draft.get("entities") or []
                                  if not (item.get("kind") == "support" and
                                          int((item.get("target", {}).get("support") or {})

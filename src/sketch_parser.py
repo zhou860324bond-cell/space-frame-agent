@@ -852,7 +852,8 @@ class SketchParser:
                             width, height = ImageOps.exif_transpose(source_image).size
                         payload["source"].update(width_px=width, height_px=height)
                         action_context = "待审核几何（只引用其中的杆件编号，不默认完整）：" + json.dumps(
-                            {"nodes": payload["image_model"]["nodes"], "members": payload["image_model"]["members"]},
+                            {"nodes": payload["image_model"]["nodes"], "members": payload["image_model"]["members"],
+                             "support_nodes": [s["node"] for s in payload["image_model"].get("supports", [])]},
                             ensure_ascii=False)
                         result.attempts += 1
                         focused_raw = self._call_llm(image_data, action_context, system_prompt=ACTION_REVIEW_PROMPT)
@@ -863,9 +864,10 @@ class SketchParser:
                             break
                         if (not focused_raw.strip() or self._last_call_metadata.get("finish_reason") in ("length", "max_tokens")):
                             raise ValueError("作用点复核内容为空或截断，请人工补充作用节点。")
-                        payload = apply_action_review(payload, self._extract_json(focused_raw))
+                        payload = apply_action_review(payload, self._extract_json(focused_raw), image_path=image_path)
                     except Exception as exc:  # noqa: BLE001 - 单次可选视觉复核失败仍保留基础草稿
-                        message = f"作用点复核未完成：{type(exc).__name__}: {exc}。请人工核对并补充作用节点。"
+                        detail = str(exc).rstrip("。")
+                        message = f"作用点复核未完成：{type(exc).__name__}: {detail}。请人工核对并补充作用节点。"
                         result.errors.append(message)
                         payload["action_review"] = {"status": "failed", "message": message}
                         payload.setdefault("issues", []).append({"id": "action-review-failed",

@@ -49,6 +49,42 @@ def test_advanced_recognition_settings_are_collapsed_by_default(qt_app):
     assert not panel.settings_widget.isHidden()
 
 
+@pytest.mark.parametrize("action", ["edit", "delete"])
+def test_support_manual_change_retains_symbol_evidence_and_only_resolves_its_review(qt_app, action):
+    """人工支座编辑/删除不能丢复核原观察，或同时解除全局问题；改名后的其他问题仍能定位。"""
+    from sketch_action_review import apply_action_review
+    from test_sketch_action_review import support_draft, support_review
+    value = apply_action_review(support_draft(), support_review())
+    value["issues"].extend([
+        {"id": "global", "category": "load_incomplete", "severity": "blocking", "status": "open", "entity_refs": []},
+        {"id": "old-low", "category": "low_confidence", "severity": "blocking", "status": "open",
+         "entity_refs": ["support:1:S1", "node:1"]},
+    ])
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(value)
+    panel.cmb_support_node.setCurrentIndex(panel.cmb_support_node.findData(1))
+    if action == "edit":
+        panel.txt_support_name.setText("Reviewed")
+        panel._apply_support_edit()
+    else:
+        panel._remove_support_edit()
+    result = panel._v2_draft
+    by_id = {i["id"]: i for i in result["issues"]}
+    assert by_id["support-symbol-review-1"]["status"] == "resolved"
+    assert by_id["global"]["status"] == by_id["old-low"]["status"] == "open"
+    history = result["edit_history"][-1]
+    previous = next(e for e in history["previous"]["entities"] if e["kind"] == "support")
+    assert previous["symbol_review"]["observation"]["symbol"] == "triangle"
+    if action == "edit":
+        assert by_id["old-low"]["entity_refs"] == ["support:1:Reviewed", "node:1"]
+        entity = next(e for e in result["entities"] if e["kind"] == "support")
+        assert entity["original_observation"]["entities"][0]["symbol_review"]
+        assert entity["verified"] and result["confirmation"] is None
+    else:
+        assert result["image_model"]["supports"] == []
+        assert history["replacement"] is None
+
+
 def recognition_payload(scale="confirmed"):
     return {
         "format": DRAFT_FORMAT,

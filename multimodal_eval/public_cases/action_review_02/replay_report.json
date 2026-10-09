@@ -1,0 +1,338 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "mode": "offline-replay",
+  "manifest": "manifest.json",
+  "gate_cases": 3,
+  "evaluated_image_ids": [
+    "cantilever",
+    "point_load",
+    "various_loads"
+  ],
+  "case_reports": [
+    {
+      "image_id": "cantilever",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": null,
+        "support_f1": 1.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 5
+      },
+      "counts": {
+        "nodes": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 5,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    },
+    {
+      "image_id": "point_load",
+      "metrics": {
+        "node_f1": 0.0,
+        "member_f1": 0.0,
+        "clear_node_f1": 0.0,
+        "clear_member_f1": 0.0,
+        "intersection_accuracy": null,
+        "support_f1": 0.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 0.0,
+        "issue_false_positives": 0
+      },
+      "counts": {
+        "nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3
+        },
+        "members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 3
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2
+        },
+        "supports": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [
+        "1",
+        "2",
+        "3"
+      ],
+      "extra_nodes": [],
+      "missing_members": [
+        "1",
+        "2"
+      ],
+      "extra_members": []
+    },
+    {
+      "image_id": "various_loads",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": null,
+        "clear_member_f1": null,
+        "intersection_accuracy": null,
+        "support_f1": 1.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 0.75,
+        "issue_false_positives": 12
+      },
+      "counts": {
+        "nodes": {
+          "tp": 4,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 3,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 3,
+          "fp": 12,
+          "fn": 1
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    }
+  ],
+  "metrics": {
+    "node_f1": 0.8,
+    "member_f1": 0.8,
+    "clear_node_f1": 0.5714285714285714,
+    "clear_member_f1": 0.5,
+    "intersection_accuracy": null,
+    "support_f1": 0.75,
+    "load_f1": null,
+    "load_numeric_unit_accuracy": null,
+    "scale_accuracy": null,
+    "issue_recall": 0.5714285714285714,
+    "issue_false_positives": 17
+  },
+  "counts": {
+    "nodes": {
+      "tp": 6,
+      "fp": 0,
+      "fn": 3
+    },
+    "members": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 2
+    },
+    "clear_nodes": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 3
+    },
+    "clear_members": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 2
+    },
+    "supports": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 2
+    },
+    "loads": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "issues": {
+      "tp": 4,
+      "fp": 17,
+      "fn": 3
+    },
+    "intersections": {
+      "correct": 0,
+      "wrong": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "scale": {
+      "correct": 0,
+      "total": 0
+    },
+    "load_numeric": {
+      "correct": 0,
+      "total": 0
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [
+    "node_f1",
+    "member_f1",
+    "clear_node_f1",
+    "clear_member_f1",
+    "intersection_accuracy",
+    "support_f1",
+    "load_f1"
+  ],
+  "passed": false,
+  "case_outcomes": [
+    {
+      "image_id": "cantilever",
+      "outcome": "PASS"
+    },
+    {
+      "image_id": "point_load",
+      "outcome": "FAIL",
+      "error": "支座观察的节点、可见符号或附着坐标无效，不能输出数值约束。"
+    },
+    {
+      "image_id": "various_loads",
+      "outcome": "PASS"
+    }
+  ],
+  "new_api_calls": 0,
+  "replay_successes": 2,
+  "pipeline_hash": "eeb181da85d87e9b30d1d2ab1beb80030aa15bb121e20ef64c730a05021060d1",
+  "limitations": [
+    "修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
+    "输入与真值不变；失败保留在分母，无证据指标仍为 null。"
+  ]
+}
