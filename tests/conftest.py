@@ -76,7 +76,11 @@ def _close_windows():
     for widget in list(app.topLevelWidgets()):
         if widget.__class__.__name__ == "MainWindow" or (
                 widget.parentWidget() is None and ownedByPython(widget)):
-            widget.close()
+            closed = widget.close()
+            if widget.__class__.__name__ == "MainWindow" and not closed:
+                # 异步关闭拒绝立即销毁；等待取消与结果回调完成后才能删除父窗口。
+                assert widget.runner.wait(30000), "测试后台任务未停止，不能销毁所属窗口"
+                widget.close()
             widget.deleteLater()
     app.processEvents()
     # 没有持续事件循环时 processEvents 不处理 DeferredDelete；必须在主线程销毁。

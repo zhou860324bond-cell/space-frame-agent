@@ -34,7 +34,7 @@ from __future__ import annotations
 from typing import Any, Callable
 from threading import Event
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from task_control import checkpoint, task_scope
 
 
@@ -52,6 +52,7 @@ class _Job(QObject):
         self._wants_report = wants_report
         self._cancel_event = cancel_event
 
+    @Slot()
     def run(self) -> None:
         try:
             # 有 `report` 形参的可调用对象，就把进度出口交给它。
@@ -104,7 +105,8 @@ class Runner(QObject):
 
     @property
     def busy(self) -> bool:
-        return self._thread is not None and self._thread.isRunning()
+        # 线程停止后结果可能还在主线程事件队列里，投递完成前不能覆盖引用。
+        return self._thread is not None
 
     def submit(self, fn: Callable[..., Any],
                on_done: Callable[[Any], None] | None = None,
@@ -126,6 +128,8 @@ class Runner(QObject):
                    cancel_event=self._cancel_event)
         job.moveToThread(thread)
         thread.started.connect(job.run)
+        # finished 之后仍处理延迟删除；停止后再投递 deleteLater 已没有工作事件循环。
+        thread.finished.connect(job.deleteLater)
 
         # 接收者是 self —— 一个主线程里的 QObject，再显式指定 QueuedConnection。
         # 两者缺一不可：少了接收者上下文，Qt 判断不出线程归属；
@@ -144,16 +148,19 @@ class Runner(QObject):
 
     # --- 以下几个槽都在主线程里执行 ---
 
+    @Slot(str, object, bool)
     def _handle_progress(self, name: str, args: Any, ok: bool) -> None:
         if self._on_progress is not None:
             self._on_progress(name, args, ok)
 
+    @Slot(object)
     def _handle_done(self, result: Any) -> None:
         callback = self._on_done
         self._finish()                    # 先收尾：回调里可能接着提交下一件
         if callback is not None:
             callback(result)
 
+    @Slot(str, str)
     def _handle_failed(self, kind: str, message: str) -> None:
         callback = self._on_failed
         self._finish()
@@ -161,14 +168,14 @@ class Runner(QObject):
             callback(kind, message)
 
     def _finish(self) -> None:
-        thread, job = self._thread, self._job
-        self._thread = self._job = None
-        self._on_done = self._on_failed = self._on_progress = None
+        thread = self._thread
         if thread is not None:
             thread.quit()
-            thread.wait(5000)             # 主线程等工作线程，方向是对的
-        if job is not None:
-            job.deleteLater()
+            # 已收到任务结束信号；等待原生线程真正结束，不能超时后释放运行中的线程。
+            thread.wait()
+            thread.deleteLater()
+        self._thread = self._job = None
+        self._on_done = self._on_failed = self._on_progress = None
         self.busy_changed.emit(False)
 
     def wait(self, msec: int = 30000) -> bool:
