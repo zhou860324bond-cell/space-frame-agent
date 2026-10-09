@@ -483,6 +483,19 @@ def _recognized_draft(supports, member_loads):
         }}, "a" * 64, "drawing.png")
 
 
+@pytest.mark.parametrize(("value", "direction"), [
+    (float("inf"), [0, 0, -1]), (10, [0, float("nan"), -1]),
+    (10, [False, 0, -1]), (10, [0, -1]),
+])
+def test_invalid_load_components_are_reviewed_instead_of_silently_zeroed(value, direction):
+    """防止识别方向中的坏分量被换成零，或非有限荷载进入求解模型。"""
+    draft = _recognized_draft([], [{"member": 1, "value": value, "unit": "kN/m",
+                                    "direction": direction}])
+    assert "w" not in draft["image_model"]["load_cases"][0]["member_loads"][0]
+    assert any(issue["category"] == "load_incomplete" and issue["status"] == "open"
+               for issue in draft["issues"])
+
+
 def test_recognition_scaffolding_does_not_ride_into_the_model():
     """value/unit/direction 和 kind 是识别期的脚手架，翻译完必须拆掉。
 
@@ -504,7 +517,7 @@ def test_recognition_scaffolding_does_not_ride_into_the_model():
     draft["source"].update({"width_px": 601, "height_px": 401})
 
     item = draft["image_model"]["load_cases"][0]["member_loads"][0]
-    assert item == {"member": 1, "w": [0.0, 0.0, -18000.0]}
+    assert item == {"member": 1, "w": [0.0, 0.0, -18000.0], "name": "member_loads-1"}
     assert all("kind" not in s for s in draft["image_model"]["supports"])
 
     errors = validate_payload(materialize_geometry(draft)) or []

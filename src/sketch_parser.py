@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,7 +49,7 @@ from typing import Any, Callable
 
 from recognition_draft import DRAFT_FORMAT, RecognitionDraft
 from multimodal_workflow import (V2_DRAFT_FORMAT, MultimodalControllerState,
-                                 validate_v2_draft)
+                                 prepare_vision_entities, validate_v2_draft)
 
 
 IMAGE_MIME_TYPES = {
@@ -123,7 +124,7 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
       "member_loads":[{"member": 7, "name": "q1", "value": 18, "unit": "kN/m",
                        "direction": [0, 0, -1]}]}]
   },
-  "entities":  [{"id": "E1", "kind": "member", "member": 1, "confidence": 0.9,
+  "entities":  [{"id": "E1", "kind": "member", "target": {"member": 1}, "confidence": 0.9,
                  "image_geometry": {"line": [[0.12,0.83],[0.12,0.18]]}}],
   "dimensions":[{"id": "D1", "text": "6000", "unit": "mm",
                  "image_geometry": {"line": [[0.12,0.95],[0.5,0.95]]}}],
@@ -151,11 +152,20 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
 6. **荷载照抄图上的数字和单位，不要自己换算。** value 写图上标的数值、
    unit 写图上标的单位（kN、kN/m、kN·m）、direction 写箭头指向的单位向量
    （向下是 [0,0,-1]，向右是 [1,0,0]）。换算成求解器单位是代码的事。
+   以上方向示例适用于 XZ 平面；若调用方提供其他工作平面，向右沿 first_axis
+   正向、向下沿 second_axis 负向，必须按所提供的 axis_mapping 写全局方向。
    图上没写数值的荷载，只写进 issues，不要凭箭头长短猜大小。
 7. 只写图里有证据的东西。不得补材料、截面、默认支座、默认荷载或默认尺寸。
    看不清、拿不准的一律写进 issues，不要猜。
 8. 图上没有可靠尺寸时，坐标只保持相对比例，并在 issues 里要求用户标定；
    绝不能把相对坐标当成米。
+9. 每个节点、杆件、支座、荷载都要提供一条 entities 观察记录，confidence 为
+   0~1 的识别确定性；无法判断时写 null，不能用高分掩盖不确定性。
+   target 分别写 {"node":1}、{"member":1}、
+   {"support":{"node":1,"name":"S1"}}、
+   {"load":{"case":"D","collection":"nodal_loads","name":"P1"}}。
+   支座和荷载须有对应名称；image_geometry 仅写可见证据的归一化位置。
+   人工审核由用户完成，不得输出 verified 或 source=user，也不得将问题标为已解决。
 """
 
 
@@ -257,6 +267,7 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
     payload["issues"] = [
         _as_issue(item, index)
         for index, item in enumerate(list(payload["issues"]) + guessed, 1)]
+    prepare_vision_entities(payload)
     return payload
 
 
@@ -297,7 +308,12 @@ def _convert_case_loads(case: dict) -> list[dict]:
         value = item.get("value")
         if scale is None or not isinstance(direction, (list, tuple)):
             return None
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(float(value))):
+            return None
+        if len(direction) not in (3, size) or any(
+                not isinstance(component, (int, float)) or isinstance(component, bool)
+                or not math.isfinite(float(component)) for component in direction):
             return None
         out = [0.0] * size
         for index in range(min(size, len(direction))):
@@ -396,8 +412,8 @@ def _as_issue(item: Any, index: int) -> dict:
         got = {**skeleton, **item}
         got["entity_refs"] = list(got.get("entity_refs") or [])
         got["message"] = str(got.get("message") or "")
-        if got.get("status") not in ("open", "resolved"):
-            got["status"] = "open"
+        # 识别模型没有人工审核权限，不能替用户消除阻断问题。
+        got.update(status="open", resolution=None, resolved_by=None)
         return got
     return {**skeleton, "message": str(item)}
 
@@ -655,6 +671,7 @@ class SketchParser:
         self, image_path: str | Path, state: MultimodalControllerState,
         job_id: str, *, max_repairs: int = 2,
         is_cancelled: Callable[[], bool] | None = None,
+        work_plane: dict | None = None,
     ) -> V2ParseResult:
         """Recognize a v2 draft and atomically deliver it to the controller.
 
@@ -669,7 +686,12 @@ class SketchParser:
         start = time.monotonic()
         result = V2ParseResult()
         image_data = self._encode_image(image_path)
-        correction = f"当前派生图片的 SHA-256 是 {state.image_hash}。"
+        context = f"当前派生图片的 SHA-256 是 {state.image_hash}。"
+        if work_plane is not None:
+            from image_preprocess import work_plane_payload
+            plane = work_plane_payload(work_plane["plane"], offset=work_plane["offset"], confirmed=True)
+            context += "用户已确认的工作平面：" + json.dumps(plane, ensure_ascii=False) + "。"
+        correction = context
 
         def cancelled() -> bool:
             return bool((is_cancelled and is_cancelled())
@@ -703,8 +725,7 @@ class SketchParser:
             except (json.JSONDecodeError, ValueError) as exc:
                 message = f"第{attempt}次 v2 校验失败: {exc}"
                 result.errors.append(message)
-                correction = (f"当前派生图片的 SHA-256 是 {state.image_hash}。"
-                              f"上次输出错误：{exc}。严格修复为 v2 JSON。")
+                correction = context + f"上次输出错误：{exc}。严格修复为 v2 JSON。"
             except Exception as exc:  # noqa: BLE001 - provider/network boundary
                 result.errors.append(
                     f"第{attempt}次 API 调用失败: {type(exc).__name__}: {exc}")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QPushButton, QVBoxLayout, QWidget)
@@ -22,7 +24,8 @@ def confidence_band(entity: dict) -> str:
     if entity.get("verified") or entity.get("source") == "user":
         return "verified"
     value = entity.get("confidence")
-    if not isinstance(value, (int, float)):
+    if (not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(float(value)) or not 0 <= value <= 1):
         return "unknown"
     if float(value) >= 0.90:
         return "high"
@@ -86,6 +89,11 @@ class IssuePanel(QWidget):
                 ref = f"node:{target['node']}"
             elif "member" in target:
                 ref = f"member:{target['member']}"
+            elif "support" in target:
+                ref = f"support:{target['support'].get('node')}:{target['support'].get('name')}"
+            elif "load" in target:
+                load = target["load"]
+                ref = f"load:{load.get('case')}:{load.get('collection')}:{load.get('name')}"
             else:
                 continue
             entity_confidence[ref] = entity.get("confidence")
@@ -102,7 +110,8 @@ class IssuePanel(QWidget):
                 values = [entity_confidence.get(str(ref))
                           for ref in issue.get("entity_refs") or []]
                 confidence = next((value for value in values
-                                   if isinstance(value, (int, float))), None)
+                                   if isinstance(value, (int, float)) and not isinstance(value, bool)
+                                   and math.isfinite(float(value)) and 0 <= value <= 1), None)
                 badge = (f"[低 {float(confidence):.0%}] "
                          if confidence is not None else "[低/未知] ")
             item = QListWidgetItem(

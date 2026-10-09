@@ -83,6 +83,23 @@ def test_confidence_bands_distinguish_recognition_quality_from_user_review():
     assert confidence_band({"source": "user", "confidence": None}) == "verified"
 
 
+@pytest.mark.parametrize("confidence", [True, float("nan"), float("inf"), -1, 2])
+def test_invalid_display_confidence_is_unknown(confidence):
+    """防止导入旧草稿中的无效置信度导致徽标溢出或错误显示为高置信度。"""
+    assert confidence_band({"source": "vision", "confidence": confidence}) == "unknown"
+
+
+def test_existing_warning_cannot_downgrade_low_confidence_review(qt_app):
+    """防止模型把低置信度问题写成 warning，使界面跳过必须人工校核的对象。"""
+    value = base_draft()
+    value["issues"] = [issue("low", "low_confidence", severity="warning", refs=["node:1"])]
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._add_v2_review_issues(value)
+    matching = [i for i in value["issues"] if i["category"] == "low_confidence"
+                and i["entity_refs"] == ["node:1"]]
+    assert len(matching) == 1 and matching[0]["severity"] == "blocking"
+
+
 def test_intersection_issue_exposes_only_explicit_topology_actions(qt_app):
     panel = IssuePanel()
     emitted = []

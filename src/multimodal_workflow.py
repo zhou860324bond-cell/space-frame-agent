@@ -42,6 +42,110 @@ def _finite(value: Any) -> bool:
         and math.isfinite(float(value))
 
 
+def prepare_vision_entities(draft: dict) -> None:
+    """把识别观察绑定到审核对象；缺失置信度保持未知，模型不能替用户确认。"""
+    model = draft.get("image_model") or {}
+    if not isinstance(model, dict) or not isinstance(model.get("nodes"), list):
+        return
+    nodes = {item["id"]: item for item in model["nodes"]
+             if isinstance(item, dict) and isinstance(item.get("id"), int)
+             and not isinstance(item["id"], bool) and "u" in item and "v" in item}
+    expected = []
+    for ident, node in nodes.items():
+        expected.append(("node", {"node": ident}, {"point": [node["u"], node["v"]]}))
+    for member in model.get("members") or []:
+        if (not isinstance(member, dict) or "id" not in member
+                or not isinstance(member.get("i"), int) or not isinstance(member.get("j"), int)
+                or member["i"] not in nodes or member["j"] not in nodes):
+            continue
+        a, b = nodes[member["i"]], nodes[member["j"]]
+        expected.append(("member", {"member": member["id"]},
+                         {"line": [[a["u"], a["v"]], [b["u"], b["v"]]]}))
+    for index, support in enumerate(model.get("supports") or [], 1):
+        if (not isinstance(support, dict) or not isinstance(support.get("node"), int)
+                or support["node"] not in nodes):
+            continue
+        node = nodes[support["node"]]
+        if not support.get("name"):
+            support["name"] = f"S{support['node']}-{index}"
+        expected.append(("support", {"support": {"node": support["node"], "name": support.get("name")}},
+                         {"point": [node["u"], node["v"]]}))
+    for case in model.get("load_cases") or []:
+        if not isinstance(case, dict):
+            continue
+        for collection in ("nodal_loads", "member_loads", "member_spans", "settlements"):
+            for index, load in enumerate(case.get(collection) or [], 1):
+                if isinstance(load, dict):
+                    if not load.get("name"):
+                        load["name"] = f"{collection}-{index}"
+                    geometry = {}
+                    if isinstance(load.get("node"), int) and load["node"] in nodes:
+                        node = nodes[load["node"]]
+                        geometry = {"point": [node["u"], node["v"]]}
+                    elif "member" in load:
+                        geometry = next((g for k, t, g in expected if k == "member"
+                                         and t["member"] == load["member"]), {})
+                    expected.append(("load", {"load": {"case": case.get("name"),
+                                     "collection": collection, "name": load.get("name")}}, geometry))
+    entities = draft.get("entities")
+    if not isinstance(entities, list):
+        return
+    for entity in entities:
+        if not isinstance(entity, dict):
+            raise ValueError("识别实体必须是对象，请重新输出实体列表。")
+        confidence = entity.get("confidence")
+        if confidence is not None and (not _finite(confidence) or not 0 <= confidence <= 1):
+            raise ValueError("识别置信度必须为 0 到 1 的有限数或 null。")
+        geometry = entity.get("image_geometry") or {}
+        if not isinstance(geometry, dict):
+            raise ValueError("识别实体 image_geometry 必须为对象。")
+        for key, size in (("point", 2), ("bbox", 4), ("line", 2)):
+            if key not in geometry:
+                continue
+            values = geometry[key]
+            if not isinstance(values, (list, tuple)) or len(values) != size:
+                raise ValueError(f"识别位置 {key} 的分量数量无效。")
+            if key == "line":
+                if any(not isinstance(p, (list, tuple)) or len(p) != 2 for p in values):
+                    raise ValueError("识别线段必须包含两个二维端点。")
+                values = [component for point in values for component in point]
+            if any(not _finite(value) or not 0 <= value <= 1 for value in values):
+                raise ValueError("识别位置必须为 0 到 1 的有限归一化坐标。")
+        entity.update(source="vision", verified=False, recognition_confidence=confidence)
+        kind = entity.get("kind")
+        target = entity.get("target") or {}
+        if not isinstance(target, dict):
+            raise ValueError("识别实体 target 必须为对象。")
+        if kind in {"node", "member"}:
+            ident = target.get(kind, entity.get(kind, entity.get("id")))
+            target = {kind: ident}
+        elif kind == "support" and "support" not in target:
+            ident = target.get("node", entity.get("node"))
+            candidate = next((t for k, t, _ in expected if k == kind
+                              and t["support"]["node"] == ident), None)
+            target = candidate or target
+        elif kind == "load" and "load" not in target:
+            candidate = next((t for k, t, _ in expected if k == kind
+                              and t["load"]["case"] == target.get("case", entity.get("case"))
+                              and t["load"]["name"] == target.get("name", entity.get("name"))), None)
+            target = candidate or target
+        entity["target"] = deepcopy(target)
+        if not any(kind == k and target == t for k, t, _ in expected):
+            raise ValueError("识别实体必须引用 image_model 中存在的审核对象，请检查 target。")
+    for index, (kind, target, geometry) in enumerate(expected, 1):
+        match = next((entity for entity in entities if entity.get("kind") == kind
+                      and entity.get("target") == target), None)
+        if match is None:
+            ident = f"review-{kind}-{index}"
+            while any(entity.get("id") == ident for entity in entities):
+                ident += "-missing"
+            entities.append({"id": ident, "kind": kind, "target": deepcopy(target),
+                             "image_geometry": geometry, "confidence": None,
+                             "recognition_confidence": None, "verified": False, "source": "derived"})
+        elif not match.get("image_geometry"):
+            match["image_geometry"] = geometry
+
+
 def _work_plane_errors(work_plane: Any) -> list[str]:
     """按 v2 契约逐字检查 work_plane。
 

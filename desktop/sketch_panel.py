@@ -12,11 +12,11 @@ import math
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
                                QListWidget, QListWidgetItem, QPushButton, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QScrollArea, QVBoxLayout, QWidget)
 
 from . import theme
 from .image_preprocess_widget import ImagePreprocessWidget
@@ -68,6 +68,7 @@ class SketchPanel(QWidget):
         self._highlight_refs: set[str] = set()
         self._drag_node_id: int | None = None
         self._drag_changed = False
+        self._recognition_generation = 0
 
         self._build_ui()
 
@@ -162,6 +163,9 @@ class SketchPanel(QWidget):
         self.preprocess_widget.image_changed.connect(self._on_preprocessed_image)
         self.preprocess_widget.work_plane_confirmed.connect(
             self._on_work_plane_confirmed)
+        self.preprocess_widget.work_plane_changed.connect(self._on_work_plane_changed)
+        self.preprocess_widget.processing_failed.connect(
+            lambda message: self.lbl_status.setText(f"图片预处理失败：{message}"))
         self.preprocess_widget.setVisible(False)
         layout.addWidget(self.preprocess_widget)
 
@@ -172,7 +176,30 @@ class SketchPanel(QWidget):
             f"border:1px dashed {theme.BORDER}; color:{theme.INK_MUTED}; "
             f"background:{theme.PANEL_ALT};")
         self.lbl_image.installEventFilter(self)
-        layout.addWidget(self.lbl_image)
+        self._preview_pixmap = QPixmap()
+        self._source_preview_pixmap = QPixmap()
+        self._source_preview_path = None
+        self.preview_scroll = QScrollArea()
+        self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_scroll.setMinimumHeight(180)
+        self.preview_scroll.setMaximumHeight(320)
+        self.preview_scroll.setWidget(self.lbl_image)
+        self.preview_scroll.viewport().installEventFilter(self)
+        preview_row = QHBoxLayout()
+        self.preview_zoom = QSpinBox()
+        self.preview_zoom.setRange(25, 400)
+        self.preview_zoom.setValue(100)
+        self.preview_zoom.setSuffix("%")
+        self.preview_zoom.setToolTip("相对适应图片的缩放比例；放大后可滚动查看和校核节点")
+        self.preview_zoom.valueChanged.connect(self._refresh_image_preview)
+        self.btn_fit_image = QPushButton("适应图片")
+        self.btn_fit_image.clicked.connect(lambda: self.preview_zoom.setValue(100))
+        preview_row.addWidget(QLabel("预览缩放"))
+        preview_row.addWidget(self.preview_zoom)
+        preview_row.addWidget(self.btn_fit_image)
+        preview_row.addStretch()
+        layout.addLayout(preview_row)
+        layout.addWidget(self.preview_scroll)
 
         self.lbl_confidence_legend = QLabel(
             "识别置信度：高 ≥90% · 中 75–89% · 低 <75% · 紫色为当前审核对象\n"
@@ -379,33 +406,37 @@ class SketchPanel(QWidget):
             "图片文件 (*.png *.jpg *.jpeg *.webp)")
         if not path:
             return
-        self._source_image_path = path
         try:
             self.preprocess_widget.set_source(path)
         except (OSError, ValueError) as exc:
-            self.lbl_status.setText(f"图片预处理失败：{exc}")
+            self.lbl_status.setText(f"图片预处理失败：{exc}。请重新选择有效图片，原草稿仍保留。")
             return
         self.preprocess_widget.setVisible(True)
 
     def _on_preprocessed_image(self, metadata: dict) -> None:
         """Use only the derived image and invalidate every stale recognition result."""
         self._preprocess_metadata = dict(metadata)
+        self._source_image_path = str(metadata["original_path"])
+        self._recognition_generation += 1
         self._work_plane = None
         self._image_path = str(metadata["derived_path"])
         pixmap = QPixmap(self._image_path)
         if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                self.lbl_image.width(), 160,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
-            self.lbl_image.setPixmap(scaled)
-            self.lbl_image.setText("")
+            self._source_preview_pixmap = pixmap
+            self._source_preview_path = self._image_path
+            self._preview_pixmap = pixmap
+            self.preview_zoom.setValue(100)
+            self._refresh_image_preview()
         self.btn_recognize.setEnabled(False)
         self.btn_load.setEnabled(False)
         self._result_model = None
         self._result_draft = None
         self._v2_draft = None
         self._v2_state = None
+        self._highlight_refs.clear()
+        self._drag_node_id = None
+        self.issue_panel.set_draft({"issues": [], "entities": []})
+        self.issue_panel.hide()
         self._v2_node_reuse.clear()
         self.lbl_confidence_legend.setVisible(False)
         self.chk_confirm.setChecked(False)
@@ -426,10 +457,50 @@ class SketchPanel(QWidget):
 
     def _on_work_plane_confirmed(self, payload: dict) -> None:
         self._work_plane = dict(payload)
-        self.btn_recognize.setEnabled(True)
+        self.btn_recognize.setEnabled(bool(self._image_path) and not self.runner.busy)
+        if self._v2_draft is not None:
+            from copy import deepcopy
+            draft = deepcopy(self._v2_draft)
+            draft["work_plane"] = deepcopy(payload)
+            for issue in draft.get("issues") or []:
+                if issue.get("category") == "work_plane_unconfirmed" and issue.get("status") == "open":
+                    issue.update(status="resolved", resolved_by="user", resolution="confirmed")
+            self._apply_v2_edit(draft, "工作平面已重新确认，请继续审核并确认导入")
         self.lbl_status.setText(
             f"工作平面已确认：{payload['plane']}，可开始识别")
         self._set_stage(1, f"工作平面 {payload['plane']} 已确认；可以开始二维识别")
+
+    def _on_work_plane_changed(self):
+        """平面参数改变后必须重新确认，避免按界面已不再显示的旧平面导入。"""
+        self._work_plane = None
+        self._recognition_generation += 1
+        self.btn_recognize.setEnabled(False)
+        self.chk_confirm.setChecked(False)
+        self.btn_load.setEnabled(False)
+        if self._v2_draft is not None:
+            from copy import deepcopy
+            from image_preprocess import work_plane_payload
+            draft = deepcopy(self._v2_draft)
+            new_plane = self.preprocess_widget.plane.currentText()
+            cases = draft.get("image_model", {}).get("load_cases") or []
+            if (draft["work_plane"]["plane"] != new_plane and any(
+                    case.get(collection) for case in cases
+                    for collection in ("nodal_loads", "member_loads", "member_spans", "settlements"))):
+                issues = draft.setdefault("issues", [])
+                message = "工作平面已改变，原荷载方向需要重新解释。请确认新平面后重新识别图片。"
+                if not any(item.get("message") == message and item.get("status") == "open"
+                           for item in issues):
+                    ident = "ui-plane-loads"
+                    while any(item.get("id") == ident for item in issues):
+                        ident += "-edit"
+                    issues.append({"id": ident, "category": "load_incomplete",
+                                   "severity": "blocking", "entity_refs": [], "status": "open",
+                                   "message": message,
+                                   "resolution": None, "resolved_by": None})
+            draft["work_plane"] = work_plane_payload(
+                new_plane, offset=self.preprocess_widget.offset.value())
+            self._apply_v2_edit(draft, "工作平面已改变，请重新确认工作平面")
+        self.lbl_status.setText("工作平面已改变，请点击确认工作平面后继续。")
 
     def set_v2_draft(self, draft: dict) -> None:
         """Host the frozen v2 review APIs without changing the legacy v1 path."""
@@ -663,24 +734,55 @@ class SketchPanel(QWidget):
         key = self.txt_key.text().strip()
         retries = self.spn_retries.value()
         image_path = self._image_path
+        from copy import deepcopy
+        work_plane = deepcopy(self._work_plane)
+        generation = self._recognition_generation
+        from multimodal_workflow import MultimodalControllerState
+        state = None
+        job_id = None
+        if self._preprocess_metadata:
+            state = MultimodalControllerState()
+            state.load_image(str(self._preprocess_metadata["image_hash"]))
+            job_id = state.start_recognition()
+        self._v2_state = state
+        self.preprocess_widget.setEnabled(False)
 
         def _job():
             from sketch_parser import SketchParser
-            from multimodal_workflow import MultimodalControllerState
+            from task_control import TaskCancelled, checkpoint
+
+            def cancelled():
+                try:
+                    checkpoint()
+                except TaskCancelled:
+                    return True
+                return False
+
             if key:
                 parser = SketchParser(provider=provider, api_key=key, model=model)
             else:
                 parser = SketchParser.from_env(provider, model=model)
-            if self._preprocess_metadata:
-                state = MultimodalControllerState()
-                state.load_image(str(self._preprocess_metadata["image_hash"]))
-                job_id = state.start_recognition()
-                self._v2_state = state
+            if state is not None:
                 return parser.parse_v2_with_retry(
-                    image_path, state, job_id, max_repairs=min(2, max(0, retries - 1)))
+                    image_path, state, job_id, max_repairs=min(2, max(0, retries - 1)),
+                    is_cancelled=cancelled, work_plane=work_plane)
             return parser.parse_with_retry(image_path, max_retries=retries)
 
-        self.runner.submit(_job, on_done=self._on_recognized, on_failed=self._on_failed)
+        def finish(callback, *args):
+            self._stop_elapsed_ticker()
+            self.preprocess_widget.setEnabled(True)
+            self.btn_pick.setEnabled(True)
+            if generation != self._recognition_generation:
+                self.btn_recognize.setEnabled(bool(self._image_path and self._work_plane))
+                self.lbl_status.setText("图片或工作平面已改变，旧识别响应已舍弃。请重新确认后识别。")
+                return
+            callback(*args)
+
+        submitted = self.runner.submit(
+            _job, on_done=lambda result: finish(self._on_recognized, result),
+            on_failed=lambda kind, msg: finish(self._on_failed, kind, msg))
+        if submitted is False:
+            finish(self._on_failed, "任务忙碌", "请等待当前任务结束后重新识别。")
 
     def _start_elapsed_ticker(self) -> None:
         """识别期间每秒刷新已用时。
@@ -818,26 +920,33 @@ class SketchPanel(QWidget):
         if perspective != "accepted":
             additions.append(("perspective", [], "请确认图片近似正射或已经矫正"))
         for entity in draft.get("entities") or []:
-            confidence = entity.get("confidence")
-            if (not entity.get("verified") and
-                    (entity.get("source") == "migration" or
-                     entity.get("source") == "vision" and confidence is not None
-                     and float(confidence) < 0.75)):
+            if confidence_band(entity) in {"low", "unknown"}:
                 ref = self._v2_entity_ref(entity)
                 if ref:
-                    additions.append(("low_confidence", [ref], f"低置信度实体：{ref}"))
+                    message = ("识别置信度未知，请核对图中对象" if confidence_band(entity) == "unknown"
+                               else "识别置信度较低，请核对图中对象")
+                    additions.append(("low_confidence", [ref], f"{message}：{ref}"))
         for index, (category, refs, message) in enumerate(additions, 1):
             key = category, tuple(refs)
             if key in open_keys:
+                # 模型可以报告警告，低/未知置信度审核的阻断等级由界面规则决定。
+                for item in issues:
+                    if (item.get("category"), tuple(item.get("entity_refs") or [])) == key \
+                            and item.get("status") == "open":
+                        item["severity"] = "blocking"
                 continue
-            issues.append({"id": f"ui-{category}-{index}", "category": category,
+            ident = f"ui-{category}-{index}"
+            while any(item.get("id") == ident for item in issues):
+                ident += "-review"
+            issues.append({"id": ident, "category": category,
                            "severity": "blocking", "entity_refs": refs,
                            "message": message, "status": "open",
                            "resolution": None, "resolved_by": None})
             open_keys.add(key)
     def _on_failed(self, exc_type, msg):
         self._stop_elapsed_ticker()
-        self.btn_recognize.setEnabled(True)
+        self.btn_recognize.setEnabled(bool(self._image_path) and
+                                      (not self._preprocess_metadata or bool(self._work_plane)))
         self.btn_pick.setEnabled(True)
         self.lbl_status.setText(f"{glyphs.CROSS} 调用失败：{exc_type}: {msg}")
         self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
@@ -1298,11 +1407,18 @@ class SketchPanel(QWidget):
         """把模型给出的归一化实体位置叠到原图上，供人工核对。"""
         if not self._image_path:
             return
-        pixmap = QPixmap(self._image_path)
-        if pixmap.isNull():
+        if self._source_preview_path != self._image_path:
+            self._source_preview_pixmap = QPixmap(self._image_path)
+            self._source_preview_path = self._image_path
+        if self._source_preview_pixmap.isNull():
             return
+        # 只解码一次派生图片；每次审核与拖点在独立副本上绘制，避免累积旧标记。
+        pixmap = self._source_preview_pixmap.copy()
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont(self.font())
+        font.setPixelSize(max(8, pixmap.width() // 45))
+        painter.setFont(font)
 
         def point(values):
             if not isinstance(values, (list, tuple)) or len(values) != 2:
@@ -1318,6 +1434,12 @@ class SketchPanel(QWidget):
         entities = draft.get("entities", []) if isinstance(draft, dict) else draft.entities
         for entity in entities:
             geometry = entity.get("image_geometry") or {}
+            target = entity.get("target") or {}
+            kind = entity.get("kind")
+            identifier = target.get(kind, entity.get("id", ""))
+            if isinstance(identifier, dict):
+                identifier = identifier.get("name", "")
+            label = f"{ {'node': '节点', 'member': '杆件', 'support': '支座', 'load': '荷载'}.get(kind, '')} {identifier}".strip()
             band = confidence_band(entity)
             if self._v2_entity_ref(entity) in self._highlight_refs:
                 colour = QColor("#d946ef")
@@ -1340,14 +1462,18 @@ class SketchPanel(QWidget):
                 if start and end:
                     painter.drawLine(int(start[0]), int(start[1]),
                                      int(end[0]), int(end[1]))
+                    if kind == "member":
+                        painter.drawText(int((start[0] + end[0]) / 2),
+                                         int((start[1] + end[1]) / 2 - font.pixelSize() / 2), label)
             where = point(geometry.get("point"))
             if where:
                 radius = max(4, pixmap.width() // 150)
                 painter.setBrush(colour)
                 painter.drawEllipse(int(where[0] - radius), int(where[1] - radius),
                                     radius * 2, radius * 2)
-                painter.drawText(int(where[0] + radius + 2), int(where[1] - radius),
-                                 str(entity.get("id", "")))
+                label_y = (where[1] + radius + font.pixelSize() if kind in {"support", "load"}
+                           else where[1] - radius)
+                painter.drawText(int(where[0] + radius + 2), int(label_y), label)
             bounds = geometry.get("bbox")
             if isinstance(bounds, list) and len(bounds) == 4:
                 top_left = point(bounds[:2])
@@ -1357,16 +1483,25 @@ class SketchPanel(QWidget):
                     top, bottom = sorted((int(top_left[1]), int(bottom_right[1])))
                     painter.setBrush(Qt.BrushStyle.NoBrush)
                     painter.drawRect(left, top, right - left, bottom - top)
-                    label = f"{entity.get('kind', '')} {entity.get('id', '')}".strip()
                     painter.drawText(left + 2, max(12, top - 3), label)
         painter.end()
-        scaled = pixmap.scaled(
-            self.lbl_image.width(), 200,
+        self._preview_pixmap = pixmap
+        self._refresh_image_preview()
+        self.lbl_image.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def _refresh_image_preview(self, *_):
+        if self._preview_pixmap.isNull():
+            return
+        viewport = self.preview_scroll.viewport()
+        scale = self.preview_zoom.value() / 100.0
+        scaled = self._preview_pixmap.scaled(
+            max(1, int((viewport.width() - 16) * scale)),
+            max(1, int((viewport.height() - 16) * scale)),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation)
         self.lbl_image.setPixmap(scaled)
         self.lbl_image.setText("")
-        self.lbl_image.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.lbl_image.setFixedSize(scaled.size())
 
     def _image_position(self, event) -> tuple[float, float] | None:
         pixmap = self.lbl_image.pixmap()
@@ -1429,6 +1564,8 @@ class SketchPanel(QWidget):
         self.lbl_status.setText(f"已移动节点 {node_id}，尺寸与交点已重新计算。")
 
     def eventFilter(self, watched, event):
+        if watched is self.preview_scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self._refresh_image_preview()
         active = self._v2_draft is not None or self._result_draft is not None
         if watched is self.lbl_image and active:
             if (event.type() == QEvent.Type.MouseButtonPress

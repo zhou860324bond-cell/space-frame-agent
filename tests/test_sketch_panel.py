@@ -168,7 +168,9 @@ def test_member_editor_adds_and_removes_members(qt_app):
     assert all(member["id"] != added for member in draft.model["members"])
 
 
-def test_node_can_be_dragged_on_the_image_overlay(qt_app, tmp_path):
+@pytest.mark.parametrize("zoom", [100, 300])
+def test_node_can_be_dragged_on_the_image_overlay(qt_app, tmp_path, zoom):
+    """防止放大并滚动预览后，标签坐标与图片坐标错位，拖动修改错误位置。"""
     path = tmp_path / "drag.png"
     source = QPixmap(200, 120)
     source.fill(Qt.GlobalColor.white)
@@ -190,6 +192,11 @@ def test_node_can_be_dragged_on_the_image_overlay(qt_app, tmp_path):
         model=draft.model, draft=draft, success=True, attempts=1))
     panel.show()
     qt_app.processEvents()
+    panel.preview_zoom.setValue(zoom)
+    qt_app.processEvents()
+    if zoom > 100:
+        panel.preview_scroll.horizontalScrollBar().setValue(50)
+        panel.preview_scroll.verticalScrollBar().setValue(20)
 
     pixmap = panel.lbl_image.pixmap()
     left = (panel.lbl_image.width() - pixmap.width()) / 2
@@ -202,6 +209,150 @@ def test_node_can_be_dragged_on_the_image_overlay(qt_app, tmp_path):
 
     assert draft._image_point(draft._node_entity(2)) == pytest.approx((0.7, 0.3), abs=0.02)
     assert not panel.chk_confirm.isChecked()
+
+
+def test_work_plane_change_invalidates_and_reconfirmation_updates_draft(qt_app):
+    """防止用户改平面和偏移后，导入仍使用先前已确认的工作平面。"""
+    from image_preprocess import work_plane_payload
+    from multimodal_workflow import migrate_v1_payload
+    panel = SketchPanel(Session(), IdleRunner())
+    draft = migrate_v1_payload(recognition_payload()["model"], image_hash="a" * 64)
+    panel.set_v2_draft(draft)
+    panel._on_work_plane_confirmed(work_plane_payload("XZ", confirmed=True))
+    panel.preprocess_widget.plane.setCurrentText("YZ")
+    panel.preprocess_widget.offset.setValue(2.5)
+    assert panel._work_plane is None
+    assert panel._v2_draft["work_plane"]["status"] == "proposed"
+    assert not panel.btn_load.isEnabled() and not panel.chk_confirm.isChecked()
+    panel.preprocess_widget.confirm_plane.click()
+    assert panel._v2_draft["work_plane"] == work_plane_payload("YZ", offset=2.5, confirmed=True)
+    assert panel._v2_draft["confirmation"] is None
+
+
+def test_new_image_clears_previous_review_queue(qt_app, tmp_path):
+    """防止第二张图仍显示上一张图的问题及紫色定位引用。"""
+    from PIL import Image
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.issue_panel.set_draft({"issues": [{"id": "old", "status": "open",
+                                           "severity": "blocking", "category": "perspective"}]})
+    panel._highlight_refs = {"node:77"}
+    path = tmp_path / "new.png"
+    Image.new("RGB", (200, 120), "white").save(path)
+    panel.preprocess_widget.set_source(str(path))
+    assert panel._highlight_refs == set()
+    assert panel.issue_panel.list.count() == 0 and panel.issue_panel.isHidden()
+    assert not panel.btn_recognize.isEnabled()
+
+
+def test_plane_change_requires_new_recognition_of_load_directions(qt_app):
+    """防止确认新平面直接放行旧平面的荷载方向；偏移改变仍仅需重新确认。"""
+    from multimodal_workflow import migrate_v1_payload
+    panel = SketchPanel(Session(), IdleRunner())
+    model = recognition_payload()["model"]
+    model["load_cases"] = [{"name": "D", "nodal_loads": [
+        {"node": 1, "name": "P", "load": [0, 0, -100, 0, 0, 0]}]}]
+    panel.set_v2_draft(migrate_v1_payload(model, image_hash="a" * 64))
+    panel.preprocess_widget.offset.setValue(2.5)
+    assert not any(i["id"] == "ui-plane-loads" for i in panel._v2_draft["issues"])
+    panel._v2_draft["issues"].append({"id": "ui-plane-loads", "category": "low_confidence",
+                                      "severity": "warning", "status": "resolved", "message": "old"})
+    panel.preprocess_widget.plane.setCurrentText("XY")
+    panel.preprocess_widget.confirm_plane.click()
+    blocker = next(i for i in panel._v2_draft["issues"] if i["id"] == "ui-plane-loads-edit")
+    assert blocker["status"] == "open" and "重新识别" in blocker["message"]
+    assert not panel.btn_load.isEnabled()
+
+
+def test_overlay_redraw_does_not_accumulate_removed_markers(qt_app, tmp_path):
+    """防止复用已解码图片后，删除或移动对象仍留下上一轮的覆盖标记。"""
+    path = tmp_path / "image.png"
+    source = QPixmap(200, 120)
+    source.fill(Qt.GlobalColor.white)
+    source.save(str(path))
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._image_path = str(path)
+    panel._show_overlay({"entities": [{"kind": "node", "id": 1, "confidence": 0.9,
+                                     "image_geometry": {"point": [0.5, 0.5]}}]})
+    assert panel._preview_pixmap.toImage().pixelColor(100, 60) != QColor("white")
+    panel._show_overlay({"entities": []})
+    assert panel._preview_pixmap.toImage().pixelColor(100, 60) == QColor("white")
+
+
+def test_stale_recognition_uses_snapshot_and_cannot_replace_new_image(qt_app, tmp_path, monkeypatch):
+    """防止后台读取变化中的面板状态，旧响应覆盖后来选择的图片和审核草稿。"""
+    from PIL import Image
+    from sketch_parser import SketchParser, V2ParseResult
+    from image_preprocess import work_plane_payload
+
+    class QueuedRunner:
+        busy = False
+
+        def submit(self, job, **callbacks):
+            self.job, self.callbacks = job, callbacks
+            return True
+
+    runner = QueuedRunner()
+    panel = SketchPanel(Session(), runner)
+    panel.txt_key.setText("test-key")
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    Image.new("RGB", (200, 120), "white").save(first)
+    Image.new("RGB", (200, 120), "black").save(second)
+    panel.preprocess_widget.set_source(str(first))
+    panel._on_work_plane_confirmed(work_plane_payload("XZ", confirmed=True))
+    expected_hash = panel._preprocess_metadata["image_hash"]
+    expected_path = panel._image_path
+    captured = {}
+
+    def parse(_parser, path, state, job_id, **kwargs):
+        captured.update(path=path, image_hash=state.image_hash)
+        return V2ParseResult(success=False)
+
+    monkeypatch.setattr(SketchParser, "parse_v2_with_retry", parse)
+    panel._recognize()
+    assert not panel.preprocess_widget.isEnabled()
+    panel.preprocess_widget.set_source(str(second))
+    runner.callbacks["on_done"](runner.job())
+    assert captured == {"path": expected_path, "image_hash": expected_hash}
+    assert panel._v2_draft is None and panel._v2_state is None
+    assert panel._source_image_path == str(second)
+    assert panel.preprocess_widget.isEnabled() and "舍弃" in panel.lbl_status.text()
+
+
+def test_desktop_cancellation_stops_before_format_repair(qt_app, tmp_path, monkeypatch):
+    """防止桌面取消只舍弃最终结果，期间仍继续发起收费的格式修复请求。"""
+    from threading import Event
+    from PIL import Image
+    from image_preprocess import work_plane_payload
+    from sketch_parser import SketchParser
+    from task_control import task_scope
+
+    class QueuedRunner:
+        busy = False
+
+        def submit(self, job, **callbacks):
+            self.job = job
+            return True
+
+    event, calls = Event(), []
+    runner = QueuedRunner()
+    panel = SketchPanel(Session(), runner)
+    panel.txt_key.setText("test-key")
+    path = tmp_path / "image.png"
+    Image.new("RGB", (8, 6), "white").save(path)
+    panel.preprocess_widget.set_source(str(path))
+    panel._on_work_plane_confirmed(work_plane_payload("XZ", confirmed=True))
+
+    def call(*args, **kwargs):
+        calls.append(1)
+        event.set()
+        return "invalid JSON"
+
+    monkeypatch.setattr(SketchParser, "_call_llm", call)
+    panel._recognize()
+    with task_scope(event):
+        result = runner.job()
+    assert result.cancelled and calls == [1]
+    panel._stop_elapsed_ticker()
 
 
 def test_support_and_nodal_load_editor_updates_the_recognition_draft(qt_app):
