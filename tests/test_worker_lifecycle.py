@@ -120,3 +120,38 @@ def test_window_cleanup_does_not_destroy_a_running_child_thread():
                          cwd=Path(__file__).resolve().parents[1], env=env,
                          capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert got.returncode == 0, got.stdout + got.stderr
+
+
+def test_closing_window_cancels_deferred_utilization_check():
+    """防止切到应力比后立即关闭，零延迟回调在已关闭窗口上启动新线程并原生退出。"""
+    script = textwrap.dedent('''
+        import sys
+        sys.path[:0] = [".", "src", "tests"]
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+        from shiboken6 import isValid
+        from test_desktop_window import built, solved
+        from desktop.main_window import MainWindow
+
+        app = QApplication([])
+        window = solved(MainWindow(built()))
+        submissions = []
+        submit = window.runner.submit
+        def record(*args, **kwargs):
+            submissions.append(True)
+            return submit(*args, **kwargs)
+        window.runner.submit = record
+        window.set_mode("应力比")
+        assert window.close()
+        app.processEvents()
+        assert submissions == [], "关闭后仍启动了待执行的应力比验算"
+        assert not window.runner.busy
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(window)
+    ''')
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONUTF8="1")
+    got = subprocess.run([sys.executable, "-c", script],
+                         cwd=Path(__file__).resolve().parents[1], env=env,
+                         capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert got.returncode == 0, got.stdout + got.stderr

@@ -161,6 +161,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._utilization = None
         self._task_busy = False
         self._close_pending = False
+        self._utilization_timer = QTimer(self)
+        self._utilization_timer.setSingleShot(True)
+        self._utilization_timer.timeout.connect(
+            lambda: self.show_utilization(interactive=False))
         self._busy_action_states = {}
         self._displayed_solution = None
 
@@ -924,7 +928,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             else:
                 # 结果换过（重新求解）而验算还是上一次的：先画模型，后台重算
                 self.viewport.show_model(frame, self.case)
-                QTimer.singleShot(0, lambda: self.show_utilization(interactive=False))
+                self._utilization_timer.start(0)
         elif self.mode == "内力图":
             component = self.component
             if component == scene.STRESS:
@@ -2755,7 +2759,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         算不了只在状态栏说一声并退回模型显示，**不弹模态框**——模态框从后台
         回调里弹出来，会和正在跑的事件循环嵌套，实测在测试里直接把进程带崩
         （0xc0000374 堆损坏）；用户也没有主动点什么，不该被一个对话框打断。"""
-        if not self._needs_solution():
+        if self._close_pending or not self._needs_solution():
             return
         cached = self._utilization
         if cached is not None and cached[0] is self.session.solution:
@@ -3086,8 +3090,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         顺序要紧：先等后台线程停下，再关渲染窗口。反过来的话，
         工作线程可能正拿着一个已经被销毁的对象。
         """
+        self._close_pending = True
+        self._utilization_timer.stop()
         if self.runner.busy:
-            self._close_pending = True
             event.ignore()
             self.stop_task()
             return
