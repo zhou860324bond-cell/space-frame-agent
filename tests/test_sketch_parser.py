@@ -292,10 +292,8 @@ def test_from_env_deepseek(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
     parser = SketchParser.from_env("deepseek")
     assert parser._api_key == "deepseek-key"
-    # DeepSeek 平台上没有 deepseek-vl（那是开源权重名）。官方文档里可接收
-    # 图片的模型是 deepseek-v4-flash-vision-exp；用错名字报的是 model not
-    # found，很容易被误读成"多模态没跑通"。
-    assert parser._model == "deepseek-v4-flash-vision-exp"
+    # 默认模型必须对应当前官方视觉入口，避免已退役模型名导致接口报错。
+    assert parser._model == "deepseek-flash"
 
 
 def test_from_env_deepseek_falls_back_to_the_key_file(monkeypatch, tmp_path):
@@ -579,3 +577,46 @@ def test_model_reported_issues_keep_their_place_ahead_of_generated_ones():
     ids = [i["id"] for i in draft["issues"]]
     assert ids == ["I1", "I2", "I3"], draft["issues"]
     assert draft["issues"][0]["message"] == "模型自己报的一句话"
+
+
+def test_observed_support_name_binds_unnamed_image_model_support():
+    """公开悬臂图返回观察 S1 而支座未命名，旧默认名冲突曾拒收整份草稿。"""
+    from sketch_parser import _fill_bookkeeping
+    payload = {"image_model": {"nodes": [{"id": 1, "u": 0.2, "v": 0.5}],
+                                "members": [], "supports": [{"node": 1, "kind": "fixed"}]},
+               "entities": [{"id": "E1", "kind": "support", "confidence": 0.6,
+                             "target": {"support": {"node": 1, "name": "S1"}}}]}
+    draft = _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+    assert draft["image_model"]["supports"][0]["name"] == "S1"
+    assert draft["entities"][0]["verified"] is False
+
+
+def test_conflicting_explicit_support_name_is_not_silently_rebound():
+    """修复默认命名冲突不能把两个明确不同的支座名称偷偷合成一个。"""
+    from sketch_parser import _fill_bookkeeping
+    payload = {"image_model": {"nodes": [{"id": 1, "u": 0.2, "v": 0.5}],
+                                "members": [], "supports": [{"node": 1, "name": "S2", "kind": "fixed"}]},
+               "entities": [{"id": "E1", "kind": "support", "confidence": 0.6,
+                             "target": {"support": {"node": 1, "name": "S1"}}}]}
+    with pytest.raises(ValueError, match="审核对象"):
+        _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+
+
+@pytest.mark.parametrize("referenced", [True, False])
+def test_dimension_observation_preserves_evidence_without_becoming_structure(referenced):
+    """真实响应将尺寸放入 entities；已有尺寸的证据应保留，悬空标注仍须拒绝。"""
+    from sketch_parser import _fill_bookkeeping
+    payload = {"image_model": {"nodes": [{"id": 1, "u": 0.2, "v": 0.5}], "members": []},
+               "dimensions": [{"id": "D1", "text": "L", "value": None}] if referenced else [],
+               "entities": [{"id": "E1", "kind": "dimension", "confidence": None,
+                             "target": {"dimension": "D1"},
+                             "image_geometry": {"line": [[0.2, 0.6], [0.8, 0.6]]}}]}
+    if not referenced:
+        with pytest.raises(ValueError, match="尺寸观察"):
+            _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+        return
+    draft = _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+    dimension = draft["dimensions"][0]
+    assert dimension["value"] is None and dimension["recognition_confidence"] is None
+    assert dimension["verified"] is False and dimension["image_geometry"]["line"][0] == [0.2, 0.6]
+    assert all(entity["kind"] != "dimension" for entity in draft["entities"])

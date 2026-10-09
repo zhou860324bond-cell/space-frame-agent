@@ -1,0 +1,115 @@
+{
+  "format": "space-frame-multimodal-eval/v1",
+  "cases": [
+    {
+      "image_id": "cantilever",
+      "image_path": "images/cantilever.png",
+      "image_hash": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "metadata_path": "metadata/cantilever.json",
+      "metadata_hash": "f75e141a055f307661c3c43a114c3172b980ede9b39bfa1d7cbc7c16b0cef9d1",
+      "ground_truth_path": "ground_truth/cantilever.json",
+      "ground_truth_hash": "ef0c3a8d5e02a0a33e3d7f153567e8360fab886b1a937aad85823f35d6621b14",
+      "response_fixture_path": "responses/cantilever.json",
+      "response_hash": "48fe325c221d8dc79b292b5fa8ff9d80979de219ad91cafff0bb9cda4b2244e4",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:CantileverBeam.png",
+      "license": "Public domain"
+    },
+    {
+      "image_id": "end_load",
+      "image_path": "images/end_load.png",
+      "image_hash": "8c272e64c6e3844e2878ce9b00018545c6a8c8fd6858bd1846b277d001688140",
+      "metadata_path": "metadata/end_load.json",
+      "metadata_hash": "f6bd6e9eca1a361523efdd5525d00ee41eaeadbb387beb34a11ae61ac50f1a55",
+      "ground_truth_path": "ground_truth/end_load.json",
+      "ground_truth_hash": "2cfc90c560ccaf3b172b5993091bdc4600ecd17245dc1189ca4fa8530916bc56",
+      "response_fixture_path": "responses/end_load.json",
+      "response_hash": "0a923cc924334d25327de14a16758e19eb70fb487016ab177a4740a4185add72",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:Beam_Cantilevered_Load_end.png",
+      "license": "Public domain"
+    },
+    {
+      "image_id": "overhang",
+      "image_path": "images/overhang.png",
+      "image_hash": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+      "metadata_path": "metadata/overhang.json",
+      "metadata_hash": "57dda8165d6f9f9a379fdc7c2c24cfab5f31b6d3caacc400e2958b93e7e1da4a",
+      "ground_truth_path": "ground_truth/overhang.json",
+      "ground_truth_hash": "2970b97d9b2f1ee41f30d9783c73320ab5f37c9f4115eaf5b77677f094631faa",
+      "response_fixture_path": "responses/overhang.json",
+      "response_hash": "13c2bcf1b4ed74ca3e0108540c586d0c2a18010b10b612d28ab9a3a3b998e658",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:Beam_cantilever.png",
+      "license": "CC0-1.0"
+    },
+    {
+      "image_id": "point_load",
+      "image_path": "images/point_load.jpg",
+      "image_hash": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "metadata_path": "metadata/point_load.json",
+      "metadata_hash": "c606b5a28f230188defa719a921b189b2bb4ece5d6b7046319b972a047c1a3c7",
+      "ground_truth_path": "ground_truth/point_load.json",
+      "ground_truth_hash": "a861c7469191cef65e7ea17bca5e7eb2487da3705e6e71c30efb8a701edd953f",
+      "response_fixture_path": "responses/point_load.json",
+      "response_hash": "029ac685c6314a5c8c12a784a2ba0cf5feba044bb87bcac6b26e635a7b483754",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_central_point_load.jpg",
+      "license": "Public domain"
+    },
+    {
+      "image_id": "udl",
+      "image_path": "images/udl.jpg",
+      "image_hash": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+      "metadata_path": "metadata/udl.json",
+      "metadata_hash": "c88c60f23db5e75520f2b08e5d3469c22254759c9ff6c5829594d3fdd15b8a8e",
+      "ground_truth_path": "ground_truth/udl.json",
+      "ground_truth_hash": "fcf30bb9406c29ebaeb4d8efb88b6e656f1943d8456e08319e461b5aa4f4de7a",
+      "response_fixture_path": "responses/udl.json",
+      "response_hash": "8b638e3db26f26ae808511d0c383248cf6dd1710e9ec7229eea1d739ff3ed10c",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_universally_distributed_load.jpg",
+      "license": "Public domain"
+    }
+  ]
+}

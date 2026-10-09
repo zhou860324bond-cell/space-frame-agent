@@ -33,7 +33,7 @@ def qt_app():
     ("openai", "gpt-4o"),
     ("anthropic", "claude-3-5-sonnet-20241022"),
     # DeepSeek 平台上没有 deepseek-vl，那是开源权重名；能接收图片的是这个。
-    ("deepseek", "deepseek-v4-flash-vision-exp"),
+    ("deepseek", "deepseek-flash"),
 ])
 def test_provider_switch_sets_a_matching_vision_model(qt_app, provider, model):
     panel = SketchPanel(Session(), IdleRunner())

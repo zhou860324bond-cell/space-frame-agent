@@ -9,13 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from multimodal_contract import load_manifest
+from multimodal_contract import canonical_digest, file_digest, load_manifest
 from multimodal_eval.evaluate import _numeric_equal, evaluate_manifest
 from multimodal_eval.provider_smoke import PROVIDERS, run
 from multimodal_eval.real_world_eval import (FORMAT, PROMPT_HASH, SCHEMA_HASH,
                                               audit_dataset, create_templates,
                                               draft_to_prediction,
-                                              freeze_manifest)
+                                              evaluate_real_world, freeze_manifest,
+                                              input_context, recognize, replay_real_world)
 
 ROOT = Path(__file__).resolve().parents[1] / "multimodal_eval"
 
@@ -113,17 +114,20 @@ def test_real_world_templates_never_claim_consent_or_verified_truth(tmp_path):
             "missing_response"} <= set(status["cases"][0]["reasons"])
 
 
-def test_real_world_freeze_hash_binds_a_complete_case(tmp_path):
+def _complete_real_case(tmp_path):
     image = _real_image(tmp_path)
     create_templates(tmp_path)
     metadata_path = tmp_path / "metadata" / "site_photo.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(consent_to_evaluate=True, subset_labels=["clear"])
+    metadata["work_plane"]["status"] = "confirmed"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     truth_path = tmp_path / "ground_truth" / "site_photo.json"
     fixture_truth = json.loads((ROOT / "ground_truth" / "seed_01_portal.json")
                                .read_text(encoding="utf-8"))
     fixture_truth.update(image_id="site_photo", annotation_status="verified")
+    fixture_truth.update(image_hash=file_digest(image),
+                         input_context_hash=canonical_digest(input_context(metadata)))
     truth_path.write_text(json.dumps(fixture_truth), encoding="utf-8")
     response_path = tmp_path / "responses" / "site_photo.json"
     fixture = json.loads((ROOT / "responses" / "seed_01_portal.json")
@@ -132,9 +136,18 @@ def test_real_world_freeze_hash_binds_a_complete_case(tmp_path):
     fixture["request_fingerprint"] = {
         "provider": "openai", "model": "test-model",
         "prompt_hash": PROMPT_HASH, "schema_hash": SCHEMA_HASH,
+        "image_hash": file_digest(image),
+        "input_context_hash": canonical_digest(input_context(metadata)),
     }
+    fixture.update(outcome="PASS", runtime={"attempts": 1, "duration_ms": 125.0})
     response_path.parent.mkdir()
     response_path.write_text(json.dumps(fixture), encoding="utf-8")
+    return image, metadata_path, truth_path, response_path
+
+
+def test_real_world_freeze_hash_binds_a_complete_case(tmp_path):
+    """防止修改冻结响应后仍能报告旧样本的识别成绩。"""
+    image, _, _, response_path = _complete_real_case(tmp_path)
 
     manifest = freeze_manifest(tmp_path)
     case = manifest["cases"][0]
@@ -144,6 +157,141 @@ def test_real_world_freeze_hash_binds_a_complete_case(tmp_path):
     response_path.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="哈希漂移"):
         evaluate_manifest(tmp_path / "manifest.json")
+
+
+@pytest.mark.parametrize("change", ["image", "crop", "rotation", "plane", "offset"])
+def test_real_world_input_changes_block_old_truth_and_network_calls(tmp_path, monkeypatch, change):
+    """同名图片或输入参数变化必须重新标注，不能复用旧真值或继续付费调用。"""
+    from PIL import Image
+    image, metadata_path, _, response_path = _complete_real_case(tmp_path)
+    response_path.unlink()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if change == "image":
+        with Image.open(image) as pixels:
+            pixels.putpixel((0, 0), (0, 0, 0))
+            pixels.save(image)
+    elif change in ("crop", "rotation"):
+        metadata["preprocessing"] = {"crop": [0, 0, 100, 80]} if change == "crop" else {"rotation_quarters_cw": 2}
+    elif change == "plane":
+        metadata["work_plane"]["plane"] = "XY"
+    else:
+        metadata["work_plane"]["offset"] = 1
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    monkeypatch.setattr("sketch_parser.SketchParser.from_env",
+                        lambda *a, **k: pytest.fail("失效真值不允许调用接口"))
+    assert recognize(tmp_path, provider="openai")["results"][0]["status"] == "SKIPPED_NOT_READY"
+    with pytest.raises(ValueError, match="尚未完整冻结"):
+        freeze_manifest(tmp_path)
+
+
+@pytest.mark.parametrize("field", ["consent_to_evaluate", "annotation_status"])
+def test_real_world_missing_authorization_or_annotation_never_calls_provider(tmp_path, monkeypatch, field):
+    """防止评测命令在未授权或未独立标注时发送原图。"""
+    _, metadata_path, truth_path, response_path = _complete_real_case(tmp_path)
+    response_path.unlink()
+    path = metadata_path if field == "consent_to_evaluate" else truth_path
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value[field] = False if field == "consent_to_evaluate" else "pending"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setattr("sketch_parser.SketchParser.from_env",
+                        lambda *a, **k: pytest.fail("未确认输入不允许调用接口"))
+    assert recognize(tmp_path, provider="openai")["results"][0]["status"] == "SKIPPED_NOT_READY"
+
+
+def test_real_world_failure_is_frozen_scored_and_never_automatically_retried(tmp_path, monkeypatch):
+    """接口失败必须保存到同一评分分母，再次执行不应重复收费。"""
+    from sketch_parser import SketchParser, V2ParseResult
+    _, _, _, response_path = _complete_real_case(tmp_path)
+    response_path.unlink()
+    parser = SketchParser(provider="openai", api_key="private-test-key", model="test-model")
+    monkeypatch.setattr(SketchParser, "from_env", lambda *a, **k: parser)
+    calls = []
+
+    def fail_parse(*args, **kwargs):
+        calls.append(kwargs)
+        return V2ParseResult(attempts=1, duration_ms=240.0,
+                             errors=["接口失败 private-test-key"], raw_responses=["private-test-key"])
+
+    monkeypatch.setattr(parser, "parse_v2_with_retry", fail_parse)
+    first = recognize(tmp_path, provider="openai", model="test-model", max_repairs=0)
+    assert first["results"][0]["status"] == "FAIL"
+    assert calls[0]["max_repairs"] == 0
+    assert "private-test-key" not in response_path.read_text(encoding="utf-8")
+    frozen_bytes = response_path.read_bytes()
+    assert recognize(tmp_path, provider="openai", model="test-model")["results"][0]["status"] == "SKIPPED_EXISTS"
+    assert len(calls) == 1 and response_path.read_bytes() == frozen_bytes
+    freeze_manifest(tmp_path)
+    report = evaluate_real_world(tmp_path)
+    assert report["metrics"]["node_f1"] == 0
+    assert report["runtime"] == {"attempted_cases": 1, "parse_successes": 0,
+                                 "parse_failures": 1, "total_calls": 1,
+                                 "median_duration_ms": 240.0, "total_duration_ms": 240.0}
+
+
+def test_real_world_metadata_drift_rejects_frozen_score(tmp_path):
+    """冻结后修改授权说明或工作平面不能沿用旧评分。"""
+    _, metadata_path, _, _ = _complete_real_case(tmp_path)
+    freeze_manifest(tmp_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["consent_to_evaluate"] = False
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="授权或输入参数哈希漂移"):
+        evaluate_real_world(tmp_path)
+
+
+def test_public_replay_fixes_frozen_responses_without_calling_provider(monkeypatch):
+    """真实公开响应复现支座默认名冲突；修复回放不能覆盖首轮失败或新增接口调用。"""
+    monkeypatch.setattr("sketch_parser.SketchParser._call_llm",
+                        lambda *a, **k: pytest.fail("离线回放禁止调用接口"))
+    root = ROOT / "public_cases"
+    original = {path: path.read_bytes() for path in (root / "responses").glob("*.json")}
+    baseline = evaluate_real_world(root)
+    replay = replay_real_world(root)
+    assert baseline["runtime"]["parse_failures"] == 5
+    assert replay["new_api_calls"] == 0 and replay["replay_successes"] == 4
+    assert replay["mode"] == "offline-replay"
+    assert replay["gate_cases"] == 5
+    assert replay["metrics"]["load_numeric_unit_accuracy"] is None
+    assert all(path.read_bytes() == value for path, value in original.items())
+
+
+def test_duplicate_numeric_predictions_cannot_score_above_one(tmp_path):
+    """相同荷载重复输出曾使正确数大于真值数，数值准确率超过 100%。"""
+    _, _, truth_path, response_path = _complete_real_case(tmp_path)
+    load = {"collection": "nodal_loads", "node": 1, "load": [0, -1000, 0, 0, 0, 0]}
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    truth["loads"] = [load]
+    truth_path.write_text(json.dumps(truth), encoding="utf-8")
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    response["prediction"]["loads"] = [load, load]
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+    freeze_manifest(tmp_path)
+    report = evaluate_real_world(tmp_path)
+    assert report["metrics"]["load_numeric_unit_accuracy"] == 1
+    assert report["counts"]["loads"]["fp"] == 1
+    assert report["case_reports"][0]["metrics"] == report["metrics"]
+
+
+def test_real_world_templates_bind_exif_and_transformed_image_dimensions(tmp_path):
+    """横置照片和裁剪旋转输入必须用与桌面一致的衍生图尺寸标注。"""
+    from PIL import Image
+    image = tmp_path / "images" / "rotated.jpg"
+    image.parent.mkdir()
+    exif = Image.Exif()
+    exif[274] = 6
+    Image.new("RGB", (80, 120), "white").save(image, exif=exif)
+    create_templates(tmp_path)
+    truth_path = tmp_path / "ground_truth" / "rotated.json"
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    assert (truth["width_px"], truth["height_px"]) == (120, 80)
+    truth_path.unlink()
+    metadata_path = tmp_path / "metadata" / "rotated.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["preprocessing"] = {"crop": [10, 20, 100, 70], "rotation_quarters_cw": 1}
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    create_templates(tmp_path)
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    assert (truth["width_px"], truth["height_px"]) == (50, 90)
 
 
 def test_v2_draft_converts_to_metric_prediction_without_model_coordinates():

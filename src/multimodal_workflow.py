@@ -51,6 +51,7 @@ def prepare_vision_entities(draft: dict) -> None:
              if isinstance(item, dict) and isinstance(item.get("id"), int)
              and not isinstance(item["id"], bool) and "u" in item and "v" in item}
     expected = []
+    observations = draft.get("entities") or []
     for ident, node in nodes.items():
         expected.append(("node", {"node": ident}, {"point": [node["u"], node["v"]]}))
     for member in model.get("members") or []:
@@ -67,7 +68,16 @@ def prepare_vision_entities(draft: dict) -> None:
             continue
         node = nodes[support["node"]]
         if not support.get("name"):
-            support["name"] = f"S{support['node']}-{index}"
+            observed_names = {
+                target["name"] for entity in observations if isinstance(entity, dict)
+                and entity.get("kind") == "support"
+                and isinstance(entity.get("target"), dict)
+                and isinstance(target := (entity.get("target") or {}).get("support"), dict)
+                and target.get("node") == support["node"]
+                and isinstance(target.get("name"), str) and target["name"].strip()
+            }
+            # 同一节点只有一个观察名称时沿用它，防止默认命名与真实响应冲突。
+            support["name"] = next(iter(observed_names)) if len(observed_names) == 1 else f"S{support['node']}-{index}"
         expected.append(("support", {"support": {"node": support["node"], "name": support.get("name")}},
                          {"point": [node["u"], node["v"]]}))
     for case in model.get("load_cases") or []:
@@ -116,6 +126,16 @@ def prepare_vision_entities(draft: dict) -> None:
         target = entity.get("target") or {}
         if not isinstance(target, dict):
             raise ValueError("识别实体 target 必须为对象。")
+        if kind == "dimension":
+            dimension = next((item for item in draft.get("dimensions") or []
+                              if isinstance(item, dict) and item.get("id") == target.get("dimension")), None)
+            if dimension is None:
+                raise ValueError("尺寸观察必须引用 dimensions 中存在的标注。")
+            # 尺寸证据属于尺寸审核，不作为结构对象；保留观察位置与未知置信度。
+            dimension.update(recognition_confidence=confidence, source="vision", verified=False)
+            if geometry:
+                dimension["image_geometry"] = deepcopy(geometry)
+            continue
         if kind in {"node", "member"}:
             ident = target.get(kind, entity.get(kind, entity.get("id")))
             target = {kind: ident}
@@ -132,6 +152,7 @@ def prepare_vision_entities(draft: dict) -> None:
         entity["target"] = deepcopy(target)
         if not any(kind == k and target == t for k, t, _ in expected):
             raise ValueError("识别实体必须引用 image_model 中存在的审核对象，请检查 target。")
+    entities[:] = [entity for entity in entities if entity.get("kind") != "dimension"]
     for index, (kind, target, geometry) in enumerate(expected, 1):
         match = next((entity for entity in entities if entity.get("kind") == kind
                       and entity.get("target") == target), None)

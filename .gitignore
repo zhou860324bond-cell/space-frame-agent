@@ -24,6 +24,8 @@ multimodal_eval/real_world_cases/metadata/*
 multimodal_eval/real_world_cases/responses/*
 !multimodal_eval/real_world_cases/responses/.gitkeep
 multimodal_eval/real_world_cases/manifest.json
+multimodal_eval/real_world_cases/derived/
+multimodal_eval/public_cases/derived/
 
 # Pytest scratch screenshots at repo root
 .pytest-*.png

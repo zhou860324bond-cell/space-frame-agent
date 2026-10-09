@@ -30,3 +30,18 @@ complete consent metadata and independently verified ground truth, run
 cases and binds the image, annotation, and response hashes, so a later edit
 cannot silently change a reported result. See `real_world_cases/README.md` for
 the exact commands and privacy rules.
+
+## Licensed public pilot (2026-10-09)
+
+`public_cases/` contains five unchanged Wikimedia engineering diagrams with
+per-file license, author and source records, independent annotations fixed
+before the first provider call, and every first response including failures.
+See [the measured report](public_cases/REPORT.md); it separates failed initial
+online parsing from offline replay after the parser fix. Replay never calls a
+provider or overwrites the initial score. This small pilot does not establish
+accuracy on drawings, photos or other providers generally.
+
+```text
+python -m multimodal_eval.real_world_eval evaluate --root multimodal_eval/public_cases
+python -m multimodal_eval.real_world_eval replay --root multimodal_eval/public_cases --output results/public-replay.json
+```

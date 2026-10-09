@@ -1,0 +1,26 @@
+{
+  "format": "space-frame-real-world-case/v1",
+  "image_id": "cantilever",
+  "source": "https://commons.wikimedia.org/wiki/File:CantileverBeam.png",
+  "license": "Public domain",
+  "author": "Ben pcc",
+  "consent_to_evaluate": true,
+  "subset_labels": [
+    "clear",
+    "missing_dimension"
+  ],
+  "work_plane": {
+    "status": "confirmed",
+    "plane": "XZ",
+    "offset": 0.0,
+    "axis_mapping": {
+      "first_axis": "X",
+      "second_axis": "Z",
+      "offset_axis": "Y",
+      "image_right_sign": 1,
+      "image_up_sign": 1
+    }
+  },
+  "preprocessing": {},
+  "notes": "用户选择许可明确的公开工程图评测。标注灰色水平初始梁轴，排除曲线变形轮廓和倾斜示意；左端墙体为固接。"
+}

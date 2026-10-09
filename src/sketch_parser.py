@@ -461,14 +461,15 @@ class SketchParser:
     @staticmethod
     def _default_model(provider: str) -> str:
         # DeepSeek 平台上**没有** deepseek-vl（那是开源权重的名字，不是 API 上的
-        # 模型）。官方文档列出的可接收图片的模型是 deepseek-v4-flash-vision-exp，
+        # 模型）。2026-10-09 核对官方 Vision 文档及 /models，当前入口为 deepseek-flash；
+        # 旧视觉实验名称仍是别名，但不再作为默认值。
         # 走标准 OpenAI 兼容的 chat/completions，content 用块数组 + base64 data URL。
         # 用错名字的表现是 model not found，而不是识别不准，很容易被误读成
         # "多模态没跑通"。
         return {
             "openai": "gpt-4o",
             "anthropic": "claude-3-5-sonnet-20241022",
-            "deepseek": "deepseek-v4-flash-vision-exp",
+            "deepseek": "deepseek-flash",
         }.get(provider, "gpt-4o")
 
     @staticmethod

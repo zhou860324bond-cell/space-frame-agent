@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from copy import deepcopy
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
@@ -118,7 +119,23 @@ def _numeric_equal(prediction: dict[str, Any], truth: dict[str, Any]) -> bool:
         for (got, _), (wanted, tolerance) in zip(actual, expected, strict=True))
 
 
-def evaluate_manifest(path: str | Path = DEFAULT_MANIFEST) -> dict[str, Any]:
+def _metrics(counts: dict) -> dict:
+    intersection, scale, numeric = counts["intersections"], counts["scale"], counts["load_numeric"]
+    issue_total = counts["issues"]["tp"] + counts["issues"]["fn"]
+    denominator = sum(intersection.values())
+    return {"node_f1": _f1(counts["nodes"]), "member_f1": _f1(counts["members"]),
+            "clear_node_f1": _f1(counts["clear_nodes"]),
+            "clear_member_f1": _f1(counts["clear_members"]),
+            "intersection_accuracy": intersection["correct"] / denominator if denominator else None,
+            "support_f1": _f1(counts["supports"]), "load_f1": _f1(counts["loads"]),
+            "load_numeric_unit_accuracy": numeric["correct"] / numeric["total"] if numeric["total"] else None,
+            "scale_accuracy": scale["correct"] / scale["total"] if scale["total"] else None,
+            "issue_recall": counts["issues"]["tp"] / issue_total if issue_total else None,
+            "issue_false_positives": counts["issues"]["fp"]}
+
+
+def evaluate_manifest(path: str | Path = DEFAULT_MANIFEST, *,
+                      prediction_overrides: dict[str, dict] | None = None) -> dict[str, Any]:
     manifest_path = Path(path)
     manifest = load_manifest(manifest_path)
     totals = {name: {"tp": 0, "fp": 0, "fn": 0}
@@ -128,15 +145,19 @@ def evaluate_manifest(path: str | Path = DEFAULT_MANIFEST) -> dict[str, Any]:
     scale = {"correct": 0, "total": 0}
     load_numeric = {"correct": 0, "total": 0}
     evaluated = []
+    case_reports = []
 
     for case in manifest["cases"]:
         if not case["gate"]:
             continue
+        before = deepcopy({**totals, "intersections": intersection,
+                           "scale": scale, "load_numeric": load_numeric})
         truth = json.loads((manifest_path.parent / case["ground_truth_path"])
                            .read_text(encoding="utf-8"))
         fixture = json.loads((manifest_path.parent / case["response_fixture_path"])
                              .read_text(encoding="utf-8"))
-        prediction = fixture["prediction"]
+        prediction = (prediction_overrides[case["image_id"]] if prediction_overrides is not None
+                      else fixture["prediction"])
         width, height = int(truth["width_px"]), int(truth["height_px"])
         nodes = match_points(prediction.get("nodes", ()), truth.get("nodes", ()),
                              width, height)
@@ -173,13 +194,15 @@ def evaluate_manifest(path: str | Path = DEFAULT_MANIFEST) -> dict[str, Any]:
             (_load_key(item, node_map, member_map) for item in pred_loads),
             (_load_key(item) for item in truth_loads))
         _add(totals["loads"], **load_counts)
-        truth_by_key = {_load_key(item): item for item in truth_loads}
+        truth_by_key = {}
+        for item in truth_loads:
+            truth_by_key.setdefault(_load_key(item), []).append(item)
         load_numeric["total"] += len(truth_loads)
         for item in pred_loads:
             mapped_key = _load_key(item, node_map, member_map)
-            if mapped_key in truth_by_key:
+            if truth_by_key.get(mapped_key):
                 load_numeric["correct"] += _numeric_equal(
-                    item, truth_by_key[mapped_key])
+                    item, truth_by_key[mapped_key].pop(0))
 
         issue_counts = score_open_issues(prediction.get("issues", ()),
                                          truth.get("issues", ()))
@@ -194,32 +217,23 @@ def evaluate_manifest(path: str | Path = DEFAULT_MANIFEST) -> dict[str, Any]:
             if predicted_scale.get("status") == "confirmed" and isinstance(actual, (int, float)):
                 scale["correct"] += abs(float(actual) - expected_value) / expected_value <= 0.02
         evaluated.append(case["image_id"])
-
-    metrics = {
-        "node_f1": _f1(totals["nodes"]),
-        "member_f1": _f1(totals["members"]),
-        "clear_node_f1": _f1(totals["clear_nodes"]),
-        "clear_member_f1": _f1(totals["clear_members"]),
-        "intersection_accuracy": None,
-        "support_f1": _f1(totals["supports"]),
-        "load_f1": _f1(totals["loads"]),
-        "load_numeric_unit_accuracy": (None if not load_numeric["total"] else
-                                       load_numeric["correct"] / load_numeric["total"]),
-        "scale_accuracy": None if not scale["total"] else scale["correct"] / scale["total"],
-        "issue_recall": (None if totals["issues"]["tp"] + totals["issues"]["fn"] == 0
-                         else totals["issues"]["tp"] /
-                         (totals["issues"]["tp"] + totals["issues"]["fn"])),
-        "issue_false_positives": totals["issues"]["fp"],
-    }
-    intersection_denominator = sum(intersection.values())
-    if intersection_denominator:
-        metrics["intersection_accuracy"] = intersection["correct"] / intersection_denominator
+        current = {**totals, "intersections": intersection, "scale": scale, "load_numeric": load_numeric}
+        counts = {group: {key: value - before[group][key] for key, value in values.items()}
+                  for group, values in current.items()}
+        case_reports.append({"image_id": case["image_id"], "metrics": _metrics(counts), "counts": counts,
+                             "missing_nodes": list(nodes.unmatched_truths),
+                             "extra_nodes": list(nodes.unmatched_predictions),
+                             "missing_members": list(members.unmatched_truths),
+                             "extra_members": list(members.unmatched_predictions)})
+    metrics = _metrics({**totals, "intersections": intersection, "scale": scale, "load_numeric": load_numeric})
     failures = [name for name, threshold in THRESHOLDS.items()
                 if metrics[name] is None or metrics[name] < threshold]
     return {
         "format": "space-frame-multimodal-eval-report/v1",
+        "mode": "offline-replay" if prediction_overrides is not None else "frozen-response",
         "manifest": manifest_path.name,
         "gate_cases": len(evaluated), "evaluated_image_ids": evaluated,
+        "case_reports": case_reports,
         "metrics": metrics, "counts": {**totals, "intersections": intersection,
                                          "scale": scale, "load_numeric": load_numeric},
         "thresholds": THRESHOLDS, "failures": failures, "passed": not failures,

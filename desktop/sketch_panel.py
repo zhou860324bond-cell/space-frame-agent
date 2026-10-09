@@ -109,7 +109,7 @@ class SketchPanel(QWidget):
         self.txt_model.setPlaceholderText("模型名")
         self.txt_model.setToolTip(
             "多模态模型名称，如 gpt-4o / claude-3-5-sonnet-20241022 / "
-            "deepseek-v4-flash-vision-exp")
+            "deepseek-flash")
         self.txt_key = QLineEdit()
         self.txt_key.setPlaceholderText("API 密钥（不填读环境变量）")
         self.txt_key.setEchoMode(QLineEdit.EchoMode.Password)

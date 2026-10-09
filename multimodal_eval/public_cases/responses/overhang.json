@@ -1,0 +1,56 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "FAIL",
+  "prediction": {
+    "image_id": "overhang",
+    "width_px": 959,
+    "height_px": 311,
+    "nodes": [],
+    "members": [],
+    "intersections": [],
+    "supports": [],
+    "loads": [],
+    "issues": [],
+    "scale": {
+      "status": "unknown"
+    }
+  },
+  "errors": [
+    "第1次 v2 校验失败: 识别实体必须引用 image_model 中存在的审核对象，请检查 target。"
+  ],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.020, \"v\": 0.480},\n      {\"id\": 2, \"u\": 0.700, \"v\": 0.480},\n      {\"id\": 3, \"u\": 0.970, \"v\": 0.480}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2},\n      {\"id\": 2, \"i\": 2, \"j\": 3}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 2, \"kind\": \"pinned\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [\n          {\"node\": 1, \"name\": \"RA\", \"value\": null, \"unit\": null, \"direction\": [0, 0, -1]},\n          {\"node\": 2, \"name\": \"RB\", \"value\": null, \"unit\": null, \"direction\": [0, 0, 1]},\n          {\"node\": 3, \"name\": \"F\", \"value\": null, \"unit\": null, \"direction\": [0, 0, -1]}\n        ],\n        \"member_loads\": []\n      }\n    ]\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"node\", \"target\": {\"node\": 1}, \"confidence\": 0.95,\n     \"image_geometry\": {\"point\": [0.020, 0.480]}},\n    {\"id\": \"E2\", \"kind\": \"node\", \"target\": {\"node\": 2}, \"confidence\": 0.95,\n     \"image_geometry\": {\"point\": [0.700, 0.480]}},\n    {\"id\": \"E3\", \"kind\": \"node\", \"target\": {\"node\": 3}, \"confidence\": 0.95,\n     \"image_geometry\": {\"point\": [0.970, 0.480]}},\n    {\"id\": \"E4\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.92,\n     \"image_geometry\": {\"line\": [[0.020, 0.480], [0.700, 0.480]]}},\n    {\"id\": \"E5\", \"kind\": \"member\", \"target\": {\"member\": 2}, \"confidence\": 0.92,\n     \"image_geometry\": {\"line\": [[0.700, 0.480], [0.970, 0.480]]}},\n    {\"id\": \"E6\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}}, \"confidence\": 0.6,\n     \"image_geometry\": {\"point\": [0.030, 0.560]}},\n    {\"id\": \"E7\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 2, \"name\": \"S2\"}}, \"confidence\": 0.55,\n     \"image_geometry\": {\"point\": [0.700, 0.560]}},\n    {\"id\": \"E8\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"RA\"}}, \"confidence\": 0.85,\n     \"image_geometry\": {\"line\": [[0.030, 0.100], [0.030, 0.440]]}},\n    {\"id\": \"E9\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"RB\"}}, \"confidence\": 0.85,\n     \"image_geometry\": {\"line\": [[0.700, 0.440], [0.700, 0.140]]}},\n    {\"id\": \"E10\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"F\"}}, \"confidence\": 0.85,\n     \"image_geometry\": {\"line\": [[0.960, 0.100], [0.960, 0.440]]}},\n    {\"id\": \"E11\", \"kind\": \"dimension\", \"target\": {\"dimension\": \"D1\"}, \"confidence\": 0.9,\n     \"image_geometry\": {\"line\": [[0.030, 0.870], [0.700, 0.870]]}},\n    {\"id\": \"E12\", \"kind\": \"dimension\", \"target\": {\"dimension\": \"D2\"}, \"confidence\": 0.9,\n     \"image_geometry\": {\"line\": [[0.700, 0.870], [0.970, 0.870]]}}\n  ],\n  \"dimensions\": [\n    {\"id\": \"D1\", \"text\": \"L1\", \"unit\": null,\n     \"image_geometry\": {\"line\": [[0.030, 0.870], [0.700, 0.870]]}},\n    {\"id\": \"D2\", \"text\": \"L2\", \"unit\": null,\n     \"image_geometry\": {\"line\": [[0.700, 0.870], [0.970, 0.870]]}}\n  ],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"missing_data\", \"severity\": \"blocking\", \"entity_refs\": [\"dimension:D1\", \"dimension:D2\"],\n     \"message\": \"支座间距只标注了符号 L1、L2，没有具体数值和单位；请补充实际跨度或给出标定长度后按比例换算。\",\n     \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"missing_data\", \"severity\": \"blocking\", \"entity_refs\": [\"load:D.RA\", \"load:D.RB\", \"load:D.F\"],\n     \"message\": \"三个竖向集中力（A 点向下的 R_A、B 点向上的 R_B、C 点向下的 F）均只有符号没有数值和单位，无法确定荷载大小；R_A、R_B 标注形式像支座反力而非外荷载，请确认它们是否应作为荷载输入。\",\n     \"status\": \"open\"},\n    {\"id\": \"I3\", \"category\": \"ambiguous_support\", \"severity\": \"blocking\", \"entity_refs\": [\"support:S1\", \"support:S2\"],\n     \"message\": \"A 点与 B 点下方均为三角形支座符号，未画出滚轴小圆；本图按两个铰支座（pinned）录入，但实际很可能是铰支座+滚动支座，请确认 B 点是否为滚动支座。\",\n     \"status\": \"open\"},\n    {\"id\": \"I4\", \"category\": \"calibration_required\", \"severity\": \"warning\", \"entity_refs\": [\"node:1\", \"node:2\", \"node:3\"],\n     \"message\": \"所有节点坐标仅为归一化图像坐标，保持相对比例，未做尺度标定，不得当作实际米制尺寸使用。\",\n     \"status\": \"open\"}\n  ]\n}"
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+    "derived_image_hash": "24cbdfcd97e51b2e5f20c744614e4a8c18a14e2d0ab18f04eb2000720f56d87e",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      959,
+      311
+    ],
+    "crop": [
+      0,
+      0,
+      959,
+      311
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 12000.0
+  }
+}
