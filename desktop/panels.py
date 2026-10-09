@@ -119,7 +119,7 @@ class ResultPanel(QWidget):
         self.summary.setObjectName("resultSummary")
         self.summary_grid = QGridLayout(self.summary)
         self.summary_grid.setContentsMargins(0, 4, 0, 4)
-        self.summary_grid.setSpacing(8)
+        self.summary_grid.setSpacing(6)
         self.summary_cards = []
         self.summary.hide()
         box.addWidget(self.summary)
@@ -344,8 +344,8 @@ class ResultPanel(QWidget):
             card = QFrame(self.summary)
             card.setProperty("resultCard", data.get("state", "metric"))
             layout = QVBoxLayout(card)
-            layout.setContentsMargins(12, 8, 12, 8)
-            layout.setSpacing(4)
+            layout.setContentsMargins(6, 3, 6, 3)
+            layout.setSpacing(1)
             label = ElidedLabel(str(data["label"]), card)
             label.setProperty("result", "label")
             value = ElidedLabel(str(data["value"]), card)
@@ -368,7 +368,7 @@ class ResultPanel(QWidget):
                 detail.setEnabled(False)
             layout.addWidget(detail)
             card.ensurePolished()
-            card.setMinimumHeight(92)
+            card.setMinimumHeight(60)
             self.summary_cards.append(card)
         self.summary.setVisible(bool(cards))
         self._layout_overview()
@@ -377,7 +377,7 @@ class ResultPanel(QWidget):
         columns = 4 if self.width() >= 480 else 2
         for index, card in enumerate(self.summary_cards):
             self.summary_grid.addWidget(card, index // columns, index % columns)
-        self.summary.setMinimumHeight(((len(self.summary_cards) + columns - 1) // columns) * 100)
+        self.summary.setMinimumHeight(((len(self.summary_cards) + columns - 1) // columns) * 66)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

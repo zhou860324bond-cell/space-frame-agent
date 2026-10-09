@@ -24,7 +24,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from . import scene, theme
+from . import i18n, scene, theme
+from .result_overlay import ResultOverlay
 
 # 无头环境（QT_QPA_PLATFORM=offscreen）里没有可用的 OpenGL：VTK 建不出
 # shader，一渲染就在 C++ 层 abort——**Python 抓不住这种崩溃**。
@@ -208,6 +209,7 @@ class Viewport(QWidget):
             f"QLabel{{background:{theme.ACCENT_DIM}; color:#ffffff; "
             f"border:1px solid {theme.ACCENT}; border-radius:3px; "
             f"padding:4px 10px; font-size:9pt; font-weight:600;}}")
+        self.result_overlay = ResultOverlay(self)
 
     # --- 视口外观 ---
 
@@ -315,6 +317,7 @@ class Viewport(QWidget):
         # 背景变了，坐标轴和网格地面颜色要跟着变，浅色底上画白轴看不见
         self._refresh_axes_color()
         self._refresh_grid_floor()
+        self.result_overlay.set_light(self._is_light_bg())
         self.plotter.render()
 
     def _apply_bg_value(self, value) -> None:
@@ -380,7 +383,7 @@ class Viewport(QWidget):
 
     def _refresh_grid_floor(self) -> None:
         """按当前状态和背景重画网格地面。"""
-        if not CAN_RENDER or not self.show_grid_floor:
+        if not CAN_RENDER or not self.show_grid_floor or getattr(self, "_solid_active", False):
             return
         try:
             import pyvista as pv
@@ -463,10 +466,7 @@ class Viewport(QWidget):
         title = lookup("_contour_bar_title")
         if hasattr(title, "SetPosition"):
             title.SetPosition(x_right - 0.19, y_bottom + bar_height + 0.015)
-        caption = lookup("_contour_definition")
-        if hasattr(caption, "SetPosition"):
-            # 模式提示占着左上角约 36 px，说明从它下面开始
-            caption.SetPosition(left / width + 0.01, 1.0 - 44.0 / height)
+        self._place_overlays()
 
     def _inset_camera(self) -> bool:
         """让模型落在**没被抽屉盖住**的那一块里，而不是躲在抽屉后面。
@@ -486,10 +486,13 @@ class Viewport(QWidget):
             return False
         width, height = max(1, self.width()), max(1, self.height())
         left, right, bottom = self._insets
+        top = (self.result_overlay.geometry().bottom() + 12
+               if getattr(self, "_solid_active", False) and self.result_overlay.isVisible()
+               else 0)
         free_w = max(1, width - left - right)
-        free_h = max(1, height - bottom)
+        free_h = max(1, height - bottom - top)
         center_x = left + free_w / 2.0
-        center_y = free_h / 2.0                      # 从上沿量起
+        center_y = top + free_h / 2.0               # 从上沿量起
         nx = (center_x - width / 2.0) / (width / 2.0)
         ny = (height / 2.0 - center_y) / (height / 2.0)
         camera = self.plotter.renderer.GetActiveCamera()
@@ -512,6 +515,19 @@ class Viewport(QWidget):
                 self.height() - self.axis_indicator.height() - 10 - self._insets[2]
             )
             self.axis_indicator.raise_()
+        if hasattr(self, "result_overlay") and self.result_overlay.active:
+            left, right, bottom = self._insets
+            limit = 300 if getattr(self, "_solid_active", False) else 370
+            self.result_overlay.setFixedWidth(max(100, min(limit, self.width() - left - right - 24)))
+            self.result_overlay.adjustSize()
+            y = self.mode_badge.geometry().bottom() + 8 if self.mode_badge.isVisible() else 12
+            self.result_overlay.move(left + 12, y)
+            self.result_overlay.setVisible(y + self.result_overlay.height() <= self.height() - bottom - 8)
+            self.result_overlay.raise_()
+
+    def _show_result_summary(self, summary: dict) -> None:
+        self.result_overlay.set_content(**summary, light=self._is_light_bg())
+        self._place_overlays()
 
     def resizeEvent(self, event):
         """窗口大小变化时，更新坐标系指示器位置。"""
@@ -523,6 +539,10 @@ class Viewport(QWidget):
     @_batched
     def clear(self) -> None:
         self._annotation_context = None
+        if getattr(self, "_solid_active", False):
+            self._first_render = True
+        self._solid_active = False
+        self.result_overlay.reset()
         if not CAN_RENDER:
             return
         self.plotter.clear()
@@ -728,6 +748,7 @@ class Viewport(QWidget):
             name = {"node": "选择节点", "member": "选择杆件"}.get(self.pick_mode, "")
         else:
             self.mode_badge.setVisible(False)
+            self._place_overlays()
             return
         ax_char = {"XY": "z", "XZ": "y", "YZ": "x"}[self.work_plane]
         bits = [name,
@@ -740,6 +761,7 @@ class Viewport(QWidget):
         self.mode_badge.move(12 + self._insets[0], 12)
         self.mode_badge.setVisible(True)
         self.mode_badge.raise_()
+        self._place_overlays()
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -947,7 +969,8 @@ class Viewport(QWidget):
             return
         points, texts, owners, priorities = [], [], [], []
         if supports:
-            support_points, support_texts = scene.support_labels(frame, owners=owners)
+            support_points, support_texts = scene.support_labels(
+                frame, owners=owners, compact=True, selection=self.selection)
             points.extend(support_points)
             texts.extend(support_texts)
             priorities.extend([2.0] * len(support_texts))
@@ -974,7 +997,7 @@ class Viewport(QWidget):
         hierarchy = mapper.GetInputAlgorithm()
         hierarchy.SetPriorityArrayName("annotation_priority")
         mapper.SetPlaceAllLabels(False)
-        mapper.SetMaximumLabelFraction(0.35)
+        mapper.SetMaximumLabelFraction(0.22)
 
     @_batched
     def show_model(self, frame, case: str | None = None,
@@ -1156,16 +1179,15 @@ class Viewport(QWidget):
         self.plotter.add_text("utilization", position=(0.795, 0.735),
                               viewport=True, color=theme.VIEWPORT_INK,
                               font_size=10, name="_contour_bar_title")
-        head = (f"MEMBER UTILIZATION - {total} members, {failed} over 1.0"
-                + (f", {unclear} inconclusive (grey)" if unclear else ""))
-        tail = ("max of strength / combined stress (GB 50017) / stability"
-                + (f" - worst M{worst['member']} = {worst['ratio']:.2f}"
-                   if worst["member"] is not None else ""))
-        caption = self.plotter.add_text(
-            head + "\n" + tail, position=(0.01, 0.97), viewport=True,
-            color=theme.VIEWPORT_INK, font_size=9, name="_contour_definition")
-        if caption is not None:
-            caption.GetTextProperty().SetVerticalJustificationToTop()
+        english = i18n.language() == "en"
+        peak = (f"{worst['ratio']:.4g} · " + (f"Member {worst['member']}" if english else f"杆件 {worst['member']}")) if worst["member"] is not None else "—"
+        self._show_result_summary({
+            "title": "Member utilization" if english else "杆件应力比",
+            "peak": ("Maximum ratio: " if english else "最大比值：") + peak,
+            "range_text": f"{total} members · {failed} exceeded · {unclear} inconclusive" if english else f"{total} 根杆件 · 超限 {failed} · 无法判定 {unclear}",
+            "status": "Strength / combined stress / stability" if english else "取强度、折算应力与稳定比的最大值",
+            "details": ("Grey means inconclusive, not passed." if english else "灰色表示无法判定，不能作为通过结论。")
+            + "\n\n" + str(payload.get("limitation") or "").replace("**", "")})
         self._contour_actors = True
         self._place_contour_overlays()
         self._decorate(frame)
@@ -1228,16 +1250,14 @@ class Viewport(QWidget):
                               viewport=True, color=theme.VIEWPORT_INK,
                               font_size=10, name="_contour_bar_title")
         bending = component in {"M", "Mz", "My"}
-        caption = self.plotter.add_text(
-            "BEAM INTERNAL-FORCE DIAGRAM\n"
-            + f"{label} [{unit}] - "
-            + ("drawn on the tension side" if bending
-               else "drawn toward + local axis")
-            + " - one scale for all members",
-            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
-            font_size=9, name="_contour_definition")
-        if caption is not None:
-            caption.GetTextProperty().SetVerticalJustificationToTop()
+        english = i18n.language() == "en"
+        convention = ("Drawn on the tension side" if bending else "Drawn toward + local axis") if english else ("弯矩图绘于受拉侧" if bending else "沿局部坐标正向绘制")
+        self._show_result_summary({
+            "title": f"Internal-force diagram {component} · {unit}" if english else f"三维内力图 {component} · {unit}",
+            "peak": ("Peak: " if english else "峰值：") + f"{shown['value']:+.4g} {unit}",
+            "range_text": (f"Member {shown['member']} · x={shown['x']:.4g}" if english else f"杆件 {shown['member']} · x={shown['x']:.4g}") if shown["member"] is not None else "—",
+            "status": convention,
+            "details": convention + (". One scale for all members." if english else "。各杆件采用同一比例尺；内力图表示梁内力，不是截面应力。")})
         if shown["member"] is not None and shown["point"] is not None:
             self.plotter.add_point_labels(
                 [shown["point"]],
@@ -1354,24 +1374,15 @@ class Viewport(QWidget):
         # 中文字形（实测中文渲染成方块）。写成方块等于没披露。
         label = (scene.STRESS_LABEL_ASCII if component == scene.STRESS
                  else component)
-        bar_title = f"{label}  [{unit}]" + ("" if continuous else f"\n{n} bands")
-        if clipped:
-            bar_title += (f"\nclip p{scene.CONTOUR_PERCENTILE:.0f}"
-                          + ("\nabove: top color" if continuous
-                             else "\noff scale: orange"))
+        bar_title = f"{label}  [{unit}]"
         self.plotter.add_text(
             bar_title, position=(0.795, 0.735), viewport=True,
             color=theme.VIEWPORT_INK, font_size=10, name="_contour_bar_title")
-        caption = self.plotter.add_text(
-            scene.contour_caption(
-                component, unit, clipped, sign_filter, n or None,
-                scale_max=max(abs(clim[0]), abs(clim[1])),
-                true_peak=float(np.abs(np.asarray(line[component])).max())
-                if line.n_points else None),
-            position=(0.01, 0.97), viewport=True, color=theme.VIEWPORT_INK,
-            font_size=9, name="_contour_definition")
-        if caption is not None:                     # 无头环境下 add_text 不给 actor
-            caption.GetTextProperty().SetVerticalJustificationToTop()
+        self._show_result_summary(scene.contour_summary(
+            component, unit, clim,
+            float(np.abs(np.asarray(line["unfiltered_values"])).max()) if line.n_points else None,
+            clipped=clipped, sign_filter=sign_filter, levels=n,
+            percentile=percentile, language=i18n.language()))
         self._contour_actors = True
         self._place_contour_overlays()
         if overlay_deformed:
@@ -1403,6 +1414,74 @@ class Viewport(QWidget):
         self._fit()
         self.plotter.render()
         return clim
+
+    @_batched
+    def show_solid_result(self, grid, caption: str, *, field="Mises_MPa",
+                          percentile=99, scale=0.0, show_edges=False,
+                          reset_camera=False) -> dict:
+        """在主视口绘制真实实体单元结果，保留单元应力与节点位移的关联。"""
+        from .solid_result import FIELDS
+
+        _key, label, unit, association = next(item for item in FIELDS if item[0] == field)
+        array = grid.cell_data[field] if association == "cell" else grid.point_data[field]
+        values = np.asarray(array)
+        peak = float(values.max())
+        high = float(np.percentile(values, percentile)) if percentile else peak
+        high = max(high, np.finfo(float).eps)
+        displayed = grid.copy(deep=True)
+        displayed.points += float(scale) * np.asarray(grid.point_data["Displacement_mm"])
+        current_camera = self.plotter.camera_position
+        self.clear()
+        self._frame = None
+        self._solid_active = True
+        self._first_render = False
+        self._solid_last = dict(field=field, association=association, peak=peak,
+                                clim=(0.0, high), scale=float(scale),
+                                show_edges=bool(show_edges), mesh=displayed)
+        clipped = peak > high
+        self.result_overlay.set_content(
+            title=f"实体云图 · {label}", peak=f"真实峰值：{peak:.6g} {unit}",
+            range_text=f"色标范围：0 ～ {high:.6g} {unit}",
+            status=f"{caption} · {'P99 截色' if clipped else '完整范围'} · 变形 ×{scale:g}",
+            details=(f"{grid.n_points} 个节点，{grid.n_cells} 个 C3D10 单元。"
+                     "应力按单元保存，不进行跨单元平均；位移按节点保存。"
+                     "色标截断仅影响颜色，真实峰值取全部结果。坐标单位为 mm。"),
+            light=self._is_light_bg())
+        self._place_overlays()
+        if not CAN_RENDER:
+            return self._solid_last
+        self.plotter.remove_actor("_grid_floor", reset_camera=False, render=False)
+        self.plotter.add_mesh(
+            displayed, scalars=field, preference=association,
+            cmap=theme.palette_cmap(self.contour_palette, "M"), clim=(0.0, high),
+            show_edges=show_edges, edge_color=theme.VIEWPORT_INK_MUTED,
+            line_width=0.5, show_scalar_bar=False, smooth_shading=False,
+            interpolate_before_map=association == "point", lighting=self.contour_shading,
+            ambient=0.42, diffuse=0.58, name="_solid_result")
+        self.plotter.add_scalar_bar(
+            title="", n_labels=7, vertical=True, fmt="%.3g",
+            color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
+            width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+        bar_label = {"Mises_MPa": "Mises [MPa]", "AbsPrincipal_MPa": "|Principal| [MPa]",
+                     "DisplacementMagnitude_mm": "Displacement [mm]"}[field]
+        self.plotter.add_text(bar_label, position=(0.795, 0.735), viewport=True,
+                              color=theme.VIEWPORT_INK, font_size=10,
+                              name="_contour_bar_title")
+        index = int(np.argmax(values))
+        point = (displayed.cell_centers().points[index] if association == "cell"
+                 else displayed.points[index])
+        self.plotter.add_point_labels(
+            [point], [f"MAX {peak:.6g} {unit}"], name="_solid_peak", font_size=9,
+            text_color=theme.VIEWPORT_INK, shape=None, always_visible=True,
+            show_points=True, point_color=theme.HIGHLIGHT, point_size=8)
+        if reset_camera or current_camera is None:
+            self._apply_view("isometric")
+        else:
+            self.plotter.camera_position = current_camera
+        self._contour_actors = True
+        self._place_contour_overlays()
+        self._inset_camera()
+        return self._solid_last
 
     @_batched
     def show_mode(self, frame, shapes: np.ndarray, mode: int,

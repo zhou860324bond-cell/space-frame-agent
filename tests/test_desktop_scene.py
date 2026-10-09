@@ -20,6 +20,50 @@ pv.OFF_SCREEN = True
 from agent import Session                                   # noqa: E402
 from desktop import scene                                   # noqa: E402
 
+
+def test_filtered_contour_keeps_complete_result_for_true_peak():
+    """仅正值着色时，全受压杆件的真实峰值不能误报为零。"""
+    s = portal()
+    line = scene.contour_line(s.frame, s.solution, "D", "N", value_scale=1e-3,
+                              sign_filter="positive")
+    unit = "kN"
+    raw = np.asarray(line["unfiltered_values"])
+    assert raw.min() < 0
+    np.testing.assert_allclose(line["N"], np.maximum(raw, 0))
+    summary = scene.contour_summary("N", unit, scene.contour_clim(line, "N"),
+                                    float(np.abs(raw).max()), sign_filter="positive")
+    assert "仅正值" in summary["status"]
+    assert "完整结果" in summary["details"]
+    assert f"{np.abs(raw).max():.4g}" in summary["peak"]
+
+
+def test_summary_custom_percentile_and_stress_limits_are_explicit():
+    """自选 99% 量程不能仍说明为 95%，应力摘要也必须保留非完整验算的限制。"""
+    summary = scene.contour_summary(scene.STRESS, "MPa", (-40, 40), 69.2,
+                                    clipped=True, percentile=99, levels=12, language="en")
+    assert "p99" in summary["status"] and "p99" in summary["details"]
+    assert "p95" not in summary["details"]
+    assert "no shear/torsion" in summary["details"]
+    zh = scene.contour_summary(scene.STRESS, "MPa", (-1, 1), 0)
+    assert "完整承载力验算" in zh["details"]
+    assert "全零" in zh["details"]
+    assert "0 MPa" in zh["peak"]
+
+
+def test_compact_supports_preserve_partial_constraints_and_selected_details():
+    """标准支座可简写，部分约束和选中支座仍须准确列出自由度以免误读。"""
+    s = portal()
+    frame = s.frame
+    ids = list(frame.nodes)[:3]
+    frame.supports = {ids[0]: [1]*6, ids[1]: [1, 1, 1, 0, 0, 0],
+                      ids[2]: [1, 1, 0, 0, 1, 0]}
+    owners = []
+    _, labels = scene.support_labels(frame, compact=True, selection=("node", ids[0]), owners=owners)
+    assert labels[0] == f"N{ids[0]} BC: U1 U2 U3 UR1 UR2 UR3"
+    assert labels[1] == f"N{ids[1]}: pinned"
+    assert labels[2] == f"N{ids[2]} BC: U1 U2 UR2"
+    assert owners == [("node", nid) for nid in ids]
+
 MATERIALS = [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0}]
 SECTIONS = [{"name": "COLUMN", "A": 0.0147, "Iy": 4.2e-5, "Iz": 1.18e-3, "J": 9e-7},
             {"name": "RAFTER", "A": 0.0186, "Iy": 5.2e-5, "Iz": 2.47e-3, "J": 1.4e-6}]

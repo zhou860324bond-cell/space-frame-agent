@@ -126,6 +126,166 @@ def test_narrow_summary_keeps_metrics_above_readable_table(app):
     panel.show()
     app.processEvents()
     assert panel.summary_grid.getItemPosition(2)[:2] == (1, 0), (panel.width(), panel.minimumSizeHint().width())
-    assert all(card.height() >= 92 for card in panel.summary_cards)
+    assert all(60 <= card.height() < 92 for card in panel.summary_cards)
     assert panel.table.height() >= 60
     panel.close()
+
+
+def test_result_overlay_follows_mode_badge_and_clears_with_scene(app):
+    """拾取提示出现时不能压住云图摘要，切回模型也不能留下旧的峰值卡片。"""
+    from desktop.viewport import Viewport
+    v = Viewport()
+    v.resize(800, 500)
+    v.show()
+    v._show_result_summary(dict(title="弯矩合量 M · kN·m", peak="真实峰值：69.2",
+                               range_text="色标范围：0 ～ 40.4", status="95% 裁剪",
+                               details="峰值来自完整结果。"))
+    v.set_overlay_insets(240, 80, 180)
+    v.pick_mode = "member"
+    v._update_mode_badge()
+    app.processEvents()
+    assert v.result_overlay.x() >= 240
+    assert v.result_overlay.geometry().right() < v.width() - 80
+    assert v.result_overlay.y() > v.mode_badge.geometry().bottom()
+    assert v.result_overlay.geometry().bottom() < v.height() - 180
+    v.clear()
+    assert v.result_overlay.isHidden()
+    assert not v.result_overlay.active
+    v.close()
+
+
+@pytest.mark.parametrize("scale", [1.25, 1.5, 2.0])
+def test_vector_icons_have_dpi_padding_and_a_distinct_disabled_state(app, scale):
+    """分数缩放时不能复用模糊位图，支座剖面线与屈曲箭头也不能贴边被截断。"""
+    from math import ceil
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QIcon
+    from desktop import icons
+
+    for name in icons.names():
+        original = icons.icon(name)
+        copy = QIcon(original)
+        copy.setIsMask(True)       # 强制 Qt 分离并复制引擎，不能留下 Python 临时对象指针。
+        rendered = copy.pixmap(QSize(24, 24), scale)
+        assert not original.isMask(), name
+        assert rendered.toImage() == original.pixmap(QSize(24, 24), scale).toImage(), name
+        assert rendered.width() == ceil(24 * scale), name
+        assert rendered.devicePixelRatioF() == scale, name
+        picture = rendered.toImage()
+        edge = picture.width() - 1
+        assert all(picture.pixelColor(x, y).alpha() == 0
+                   for i in range(picture.width())
+                   for x, y in ((0, i), (edge, i), (i, 0), (i, edge))), name
+        disabled = icons.icon(name).pixmap(QSize(24, 24), scale, QIcon.Mode.Disabled).toImage()
+        assert disabled != picture, name
+
+
+def test_creation_and_selection_commands_have_distinct_semantic_icons(app):
+    """草图、识别、空间框架、材料及创建/选择不能继续复用同一图案。"""
+    from desktop import commands, icons
+    by_name = {command.name: command for command in commands.COMMANDS}
+    for group in (("sketch", "sketch_ai", "frame"),
+                  ("material", "beam_section", "assign_section"),
+                  ("model_node", "pick_node"), ("model_member", "pick_member"),
+                  ("hinge", "create_bc"), ("analysis_mesh", "model_member")):
+        images = [icons.icon(by_name[name].icon).pixmap(32, 32).toImage() for name in group]
+        assert all(images[i] != images[j] for i in range(len(images))
+                   for j in range(i)), group
+
+
+def test_tooltips_wait_before_appearing_and_include_shortcut(app):
+    """经过工具栏时提示不应立即闪现，工具名称与快捷键应同时可见。"""
+    from PySide6.QtWidgets import QStyle, QStyleFactory
+    from desktop.qt_style import FrameStyle
+    from desktop.window_commands import WindowCommandsMixin
+    from desktop.commands import COMMANDS
+    from PySide6.QtWidgets import QWidget
+    from types import SimpleNamespace
+    style = FrameStyle(QStyleFactory.create("Fusion"))
+    assert style.styleHint(QStyle.StyleHint.SH_ToolTip_WakeUpDelay) == 500
+    class CommandsWindow(WindowCommandsMixin, QWidget):
+        def _sync_selection_actions(self):
+            pass
+
+        def cancel_interaction(self):
+            pass
+
+    window = CommandsWindow()
+    window.viewport = SimpleNamespace(load_labels=True)
+    window.mode = "模型"
+    window._build_actions()
+    command = next(command for command in COMMANDS if command.name == "solve")
+    assert window.actions_by_name["solve"].toolTip() == f"求解（F5）\n{command.tip}"
+    assert window.actions_by_name["solve"].statusTip() == command.tip
+    window.close()
+
+
+def test_detaching_and_redocking_preserve_widget_input_and_page_order(app):
+    """独立窗口必须搬动同一面板；往返不能丢失输入、乱页序或留下空抽屉。"""
+    from PySide6.QtWidgets import QWidget, QLineEdit
+    from desktop.drawers import DrawerHost, LEFT
+    window = QWidget()
+    window.resize(1000, 700)
+    viewport = QWidget(window)
+    viewport.setGeometry(40, 100, 900, 550)
+    host = DrawerHost(window, viewport)
+    drawer = host.drawer(LEFT, 300)
+    field = QLineEdit("未提交的属性")
+    handle = drawer.add_page("props", "属性", field)
+    other = drawer.add_page("tree", "模型树", QWidget())
+    window.show()
+    handle.show()
+    app.processEvents()
+    container = drawer.stack.widget(0)
+    handle.float_panel()
+    app.processEvents()
+    assert handle.isVisible() and not drawer.is_open()
+    assert field.isVisibleTo(handle._window), "移出的原页面不能仍处于隐藏状态"
+    assert container.height() > 100
+    window.activateWindow()
+    app.processEvents()
+    handle.show()
+    app.processEvents()
+    assert app.activeWindow() is window, "已可见面板的属性刷新不能抢走视口焦点"
+    assert field.text() == "未提交的属性"
+    field.setText("保留修改")
+    other.show()
+    assert other.isVisible() and handle.isVisible()
+    handle._window.close()
+    assert not handle.isVisible()
+    drawer.toggle_page("props")
+    assert handle.isVisible() and other.isVisible()
+    handle._window.dock_button.click()
+    app.processEvents()
+    assert handle.isVisible() and not other.isVisible()
+    assert drawer.stack.widget(0) is container
+    assert drawer.keys() == ["props", "tree"]
+    assert field.text() == "保留修改"
+    drawer.close()
+    assert not handle.isVisible()
+    window.close()
+
+
+def test_resize_grip_can_restore_default_and_ignores_unchanged_extent(app):
+    """误拖动面板边缘后应能双击恢复，重复鼠标位置不能反复触发布局。"""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QWidget
+    from desktop.drawers import DrawerHost, LEFT, _EdgeGrip
+    window = QWidget()
+    window.resize(1000, 700)
+    viewport = QWidget(window)
+    viewport.resize(900, 550)
+    host = DrawerHost(window, viewport)
+    drawer = host.drawer(LEFT, 300)
+    drawer.add_page("tree", "模型树", QWidget()).show()
+    window.show()
+    app.processEvents()
+    drawer.set_extent(360)
+    calls = []
+    host.on_insets = lambda *args: calls.append(args)
+    drawer.set_extent(360)
+    assert not calls
+    QTest.mouseDClick(drawer.findChild(_EdgeGrip), Qt.MouseButton.LeftButton, pos=QPoint(3, 100))
+    assert drawer.extent == 300
+    window.close()

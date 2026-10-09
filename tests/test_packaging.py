@@ -51,7 +51,7 @@ def test_the_packaging_metadata_is_readable_and_declares_a_python_floor():
 
 
 def test_the_wheel_contains_every_core_module(tmp_path):
-    """防止 wheel 遗漏内核模块，并验证 CI 已安装离线构建所需的后端。"""
+    """防止 wheel 遗漏内核模块或放开已触发 Python 3.11 原生退出的 Qt 版本。"""
     source = tmp_path / "source"
     source.mkdir()
     for name in ("pyproject.toml", "setup.py", "README.md"):
@@ -70,6 +70,15 @@ def test_the_wheel_contains_every_core_module(tmp_path):
     assert built.returncode == 0, built.stdout + built.stderr
     with zipfile.ZipFile(next(wheels.glob("*.whl"))) as wheel:
         shipped = set(wheel.namelist())
+        from packaging.requirements import Requirement
+
+        metadata = wheel.read(next(name for name in shipped
+                                   if name.endswith(".dist-info/METADATA"))).decode("utf-8")
+        dependencies = [Requirement(value.strip()) for value in
+                        re.findall(r"^Requires-Dist: (.+)$", metadata, re.MULTILINE)]
+        qt = next(dep for dep in dependencies if dep.name.lower() == "pyside6")
+        assert qt.specifier.contains("6.11.2")
+        assert not qt.specifier.contains("6.12.0"), "wheel 放开了已复现原生退出的 Qt 版本"
     expected = {path.name for path in (ROOT / "src").glob("*.py")}
     expected.discard("__init__.py")
     assert expected <= shipped

@@ -25,6 +25,8 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "建模设置": "Modeling settings", "停靠回工作区": "Dock to workspace",
+    "高级参数": "Advanced parameters", "说明": "Details",
     # --- 功能区页签 ---
     "项目": "File", "建模": "Model", "属性": "Property", "载荷": "Load",
     "分析": "Step", "结果": "Results", "视图": "View", "主菜单": "Menu",
@@ -68,6 +70,8 @@ ZH_EN: dict[str, str] = {
     "规范与导荷": "Code & Tributary",
     "屈曲": "Buckling", "模型检查": "Check", "分析网格": "Mesh",
     "节点实体": "Joint", "模型": "Model", "变形": "Deformed",
+    "实体云图": "Solid contour", "打开实体结果": "Open solid results",
+    "实体结果": "Solid results", "返回整体模型": "Return to overall model",
     "梁内力云图": "Contour", "内力分量": "Component",
     "清除结果": "Clear", "内力图": "Diagram", "单杆内力图": "Member Chart",
     "应力比": "Utilization",

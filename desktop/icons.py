@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from typing import Callable
+from math import ceil
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QIcon, QPainter, QPainterPath,
@@ -27,14 +28,14 @@ from . import theme
 
 BOX = 32.0                      # 设计画布边长，所有坐标按它来写
 
-_LINE = QColor(theme.INK)
-_DIM = QColor(theme.INK_MUTED)
+_LINE = QColor("#344c63")
+_DIM = QColor("#7b8d9e")
 _HOT = QColor(theme.ACCENT)
-_WARM = QColor("#e0a458")
+_WARM = QColor("#b56a32")
 
 
 def _pen(color: QColor, width: float = 2.0, cap=Qt.PenCapStyle.RoundCap) -> QPen:
-    p = QPen(color, width)
+    p = QPen(color, width * 0.92)
     p.setCapStyle(cap)
     p.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     return p
@@ -81,13 +82,23 @@ def _curve(g: QPainter, pts: list[tuple[float, float]], color: QColor,
 # 每个函数在 32×32 的画布上画一个图标
 
 def _frame(g: QPainter) -> None:
-    """多层多跨框架：两层两跨的骨架。"""
-    g.setPen(_pen(_LINE, 2.0))
-    for x in (6, 16, 26):
-        g.drawLine(QPointF(x, 7), QPointF(x, 26))
-    for y in (7, 16.5, 26):
-        g.drawLine(QPointF(6, y), QPointF(26, y))
-    _pin(g, 6, 26); _pin(g, 16, 26); _pin(g, 26, 26)
+    """空间框架：前后两榀由进深梁连接。"""
+    g.setPen(_pen(_DIM, 1.6))
+    for y in (6, 14, 22):
+        g.drawLine(QPointF(11, y), QPointF(27, y))
+    for x in (11, 19, 27):
+        g.drawLine(QPointF(x, 6), QPointF(x, 22))
+    g.setPen(_pen(_LINE, 1.9))
+    for y in (10, 18, 26):
+        g.drawLine(QPointF(5, y), QPointF(21, y))
+        for x in (5, 13, 21):
+            g.drawLine(QPointF(x, y), QPointF(x + 6, y - 4))
+    for x in (5, 13, 21):
+        g.drawLine(QPointF(x, 10), QPointF(x, 26))
+    g.setBrush(_HOT)
+    g.setPen(Qt.PenStyle.NoPen)
+    for x in (5, 13, 21):
+        g.drawEllipse(QPointF(x, 26), 1.5, 1.5)
 
 
 def _portal(g: QPainter) -> None:
@@ -129,7 +140,7 @@ def _remove(g: QPainter) -> None:
 def _section(g: QPainter) -> None:
     """工字钢截面——材料与截面这一组的标志。"""
     g.setPen(Qt.PenStyle.NoPen)
-    g.setBrush(QBrush(_LINE))
+    g.setBrush(QBrush(_HOT))
     g.drawRect(QRectF(7, 7, 18, 3.5))       # 上翼缘
     g.drawRect(QRectF(14.2, 10.5, 3.6, 11)) # 腹板
     g.drawRect(QRectF(7, 21.5, 18, 3.5))    # 下翼缘
@@ -142,7 +153,7 @@ def _support(g: QPainter) -> None:
     g.setPen(_pen(_DIM, 1.6))
     g.drawLine(QPointF(6, 29), QPointF(26, 29))
     for x in range(8, 26, 4):               # 地面剖面线
-        g.drawLine(QPointF(x, 29), QPointF(x - 2.5, 32))
+        g.drawLine(QPointF(x, 29), QPointF(x - 2.5, 31))
 
 
 def _load(g: QPainter) -> None:
@@ -217,7 +228,7 @@ def _buckling(g: QPainter) -> None:
     g.drawLine(QPointF(13, 9), QPointF(13, 25))     # 原始位置（细线）
     _curve(g, [(13, 9), (21, 17), (13, 25)], _HOT, 2.6)
     _arrow(g, 13, 2, 7)
-    _arrow(g, 13, 32, 27)
+    _arrow(g, 13, 30, 27)
 
 
 def _sweep(g: QPainter) -> None:
@@ -574,7 +585,9 @@ def _bandwidth(g: QPainter) -> None:
     heights = (2, 3, 3, 5, 4, 6, 6)                  # 各列列高，故意不等
     for i, h in enumerate(heights):
         x = 6.0 + i * 3.0
-        g.drawRect(QRectF(x, 6.0 + i * 3.0 - h * 3.0 + 3.0, 2.4, h * 3.0))
+        bottom = 9.0 + i * 3.0
+        top = max(6.0, bottom - h * 3.0)
+        g.drawRect(QRectF(x, top, 2.4, bottom - top))
     g.setPen(_pen(_LINE, 1.6))
     g.setBrush(Qt.BrushStyle.NoBrush)
     g.drawRect(QRectF(5, 5, 22, 22))
@@ -582,7 +595,110 @@ def _bandwidth(g: QPainter) -> None:
     g.drawLine(QPointF(5, 5), QPointF(27, 27))       # 对角线
 
 
+def _material(g: QPainter) -> None:
+    """材料用带纹理的试样块，避免与工字截面混淆。"""
+    for points, color in (([(6, 11), (18, 11), (18, 26), (6, 26)], _LINE),
+                          ([(18, 11), (26, 6), (26, 21), (18, 26)], _HOT),
+                          ([(6, 11), (14, 6), (26, 6), (18, 11)], _DIM)):
+        g.setPen(_pen(color, 1.6))
+        g.setBrush(QColor(color.red(), color.green(), color.blue(), 45))
+        g.drawPolygon(QPolygonF([QPointF(*p) for p in points]))
+    g.setPen(_pen(_DIM, 1.2))
+    for y in (15, 19, 23):
+        g.drawLine(QPointF(8, y), QPointF(15, y))
+
+
+def _sketch(g: QPainter) -> None:
+    """平面草图与绘制笔，区别于空间框架生成器。"""
+    g.setPen(_pen(_DIM, 1.2))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawRect(QRectF(4, 5, 20, 22))
+    g.setPen(_pen(_LINE, 1.8))
+    g.drawPolyline(QPolygonF([QPointF(7, 23), QPointF(7, 11),
+                              QPointF(17, 11), QPointF(17, 23)]))
+    g.setPen(_pen(_HOT, 3.0))
+    g.drawLine(QPointF(19, 23), QPointF(27, 9))
+    g.setPen(_pen(_WARM, 1.8))
+    g.drawLine(QPointF(19, 23), QPointF(17, 27))
+
+
+def _sketch_ai(g: QPainter) -> None:
+    """四角识别框中的草图，不使用装饰性的通用星形。"""
+    _fit(g)
+    g.setPen(_pen(_HOT, 1.8))
+    g.drawPolyline(QPolygonF([QPointF(10, 23), QPointF(10, 10),
+                              QPointF(22, 10), QPointF(22, 23)]))
+    g.setPen(Qt.PenStyle.NoPen)
+    g.setBrush(_WARM)
+    for x in (10, 22):
+        g.drawEllipse(QPointF(x, 10), 2, 2)
+
+
+def _assign(g: QPainter) -> None:
+    """属性指派：截面和指向杆件的箭头。"""
+    g.save()
+    g.translate(-1, -1)
+    g.scale(0.7, 0.7)
+    _section(g)
+    g.restore()
+    g.setPen(_pen(_LINE, 2.5))
+    g.drawLine(QPointF(20, 27), QPointF(28, 16))
+    g.setPen(_pen(_HOT, 1.8))
+    g.drawPolyline(QPolygonF([QPointF(12, 20), QPointF(21, 20), QPointF(18, 17)]))
+    g.drawLine(QPointF(21, 20), QPointF(18, 23))
+
+
+def _creation(draw):
+    """创建操作以小加号标识，选择操作保留拾取指针。"""
+    def paint(g):
+        g.save()
+        g.translate(-2, -2)
+        g.scale(0.85, 0.85)
+        draw(g)
+        g.restore()
+        g.setPen(_pen(_HOT, 2.1))
+        g.drawLine(QPointF(20, 25), QPointF(30, 25))
+        g.drawLine(QPointF(25, 20), QPointF(25, 30))
+    return paint
+
+
+def _mesh(g: QPainter) -> None:
+    g.setPen(_pen(_LINE, 1.6))
+    g.drawLine(QPointF(5, 25), QPointF(27, 7))
+    g.setBrush(_HOT)
+    for i in range(5):
+        g.drawRect(QRectF(3.5 + i * 5.5, 23.5 - i * 4.5, 3, 3))
+
+
+def _hinge(g: QPainter) -> None:
+    g.setPen(_pen(_LINE, 2.0))
+    g.drawLine(QPointF(4, 16), QPointF(12, 16))
+    g.drawLine(QPointF(20, 16), QPointF(28, 16))
+    g.setPen(_pen(_HOT, 1.8))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawEllipse(QPointF(16, 16), 4, 4)
+
+
+def _window_control(kind: str):
+    def paint(g):
+        g.setPen(_pen(_LINE, 1.8))
+        g.setBrush(Qt.BrushStyle.NoBrush)
+        if kind == "close":
+            g.drawLine(QPointF(9, 9), QPointF(23, 23))
+            g.drawLine(QPointF(23, 9), QPointF(9, 23))
+        else:
+            g.drawRect(QRectF(5, 10, 17, 17))
+            g.setPen(_pen(_HOT, 1.8))
+            g.drawPolyline(QPolygonF([QPointF(17, 5), QPointF(27, 5), QPointF(27, 15)]))
+            g.drawLine(QPointF(16, 16), QPointF(27, 5))
+    return paint
+
+
 DRAWERS: dict[str, Callable[[QPainter], None]] = {
+    "material": _material, "sketch": _sketch, "sketch_ai": _sketch_ai,
+    "assign_section": _assign, "create_node": _creation(_node),
+    "create_member": _creation(_member), "mesh": _mesh, "hinge": _hinge,
+    "float": _window_control("float"), "close": _window_control("close"),
     "strength": _strength, "symmetry": _symmetry, "bandwidth": _bandwidth,
     "new": _new, "open": _open, "save": _save, "units": _units,
     "frame": _frame, "portal": _portal, "node": _node, "member": _member,
@@ -602,26 +718,67 @@ DRAWERS: dict[str, Callable[[QPainter], None]] = {
 }
 
 
-def icon(name: str, size: int = 32) -> QIcon:
-    """按名字取图标。名字不认识就返回空图标——**不要因为少一个图标就崩**，
-    工具栏少个图案是小事，开不了窗是大事。"""
-    draw = DRAWERS.get(name)
-    result = QIcon()
-    if draw is None:
-        return result
-    for px in (size, size * 2):            # 备一份 2 倍图，高 DPI 下不糊
-        pixmap = QPixmap(px, px)
+class _VectorIcon:
+    """绘制标准尺寸与 DPI 缓存，交给 Qt 原生 QIcon 持有像素数据。"""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def paint(self, painter, rect, mode, state):
+        if mode == QIcon.Mode.Disabled:
+            pixmap = self.scaledPixmap(rect.size(), mode, state,
+                                       painter.device().devicePixelRatioF())
+            painter.drawPixmap(rect.topLeft(), pixmap)
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        side = min(rect.width(), rect.height())
+        painter.translate(rect.x() + (rect.width() - side) / 2,
+                          rect.y() + (rect.height() - side) / 2)
+        painter.scale(side / BOX, side / BOX)
+        # 各图标共享光学留白，支座剖面线与屈曲箭头不会贴边或被切断。
+        painter.translate(2, 2)
+        painter.scale(0.875, 0.875)
+        DRAWERS[self.name](painter)
+        painter.restore()
+
+    def pixmap(self, size, mode, state):
+        return self.scaledPixmap(size, mode, state, 1.0)
+
+    def scaledPixmap(self, size, mode, state, scale):  # noqa: N802
+        pixmap = QPixmap(ceil(size.width() * scale), ceil(size.height() * scale))
+        pixmap.setDevicePixelRatio(scale)
         pixmap.fill(Qt.GlobalColor.transparent)
-        g = QPainter(pixmap)
-        g.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        g.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        g.scale(px / BOX, px / BOX)
+        painter = QPainter(pixmap)
         try:
-            draw(g)
+            rect = QRectF(0, 0, size.width(), size.height())
+            self.paint(painter, rect, QIcon.Mode.Normal, state)
+            if mode == QIcon.Mode.Disabled:
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                painter.fillRect(rect, QColor("#98a4af"))
         finally:
-            g.end()
-        result.addPixmap(pixmap)
-    return result
+            painter.end()
+        return pixmap
+
+
+_ICON_CACHE: dict[str, QIcon] = {}
+
+
+def icon(name: str, size: int = 32) -> QIcon:
+    """标准工具尺寸逐一绘制并标记 DPI，避免缩放发虚和引擎生命周期风险。"""
+    if name not in DRAWERS:
+        return QIcon()
+    if name not in _ICON_CACHE:
+        result = QIcon()
+        renderer = _VectorIcon(name)
+        from PySide6.QtCore import QSize
+        for logical in (16, 18, 20, 24, 30, 32):
+            for scale in (1.0, 1.25, 1.5, 2.0, 3.0):
+                for mode in (QIcon.Mode.Normal, QIcon.Mode.Disabled):
+                    result.addPixmap(renderer.scaledPixmap(QSize(logical, logical), mode,
+                                                           QIcon.State.Off, scale), mode)
+        _ICON_CACHE[name] = result
+    return QIcon(_ICON_CACHE[name])
 
 
 def names() -> list[str]:

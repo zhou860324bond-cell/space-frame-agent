@@ -65,17 +65,26 @@ def _close_windows():
     """每个用例跑完，关掉它开出来的所有顶层窗口。"""
     yield
     try:
+        from PySide6.QtCore import QCoreApplication, QEvent
         from PySide6.QtWidgets import QApplication
+        from shiboken6 import ownedByPython
     except ImportError:
         return                                  # 没装 Qt 的环境不需要收尾
     app = QApplication.instance()
     if app is None:
         return
     for widget in list(app.topLevelWidgets()):
-        if widget.__class__.__name__ == "MainWindow":
-            widget.close()
+        if widget.__class__.__name__ == "MainWindow" or (
+                widget.parentWidget() is None and ownedByPython(widget)):
+            closed = widget.close()
+            if widget.__class__.__name__ == "MainWindow" and not closed:
+                # 异步关闭拒绝立即销毁；等待取消与结果回调完成后才能删除父窗口。
+                assert widget.runner.wait(30000), "测试后台任务未停止，不能销毁所属窗口"
+                widget.close()
             widget.deleteLater()
     app.processEvents()
+    # 没有持续事件循环时 processEvents 不处理 DeferredDelete；必须在主线程销毁。
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(autouse=True, scope="session")

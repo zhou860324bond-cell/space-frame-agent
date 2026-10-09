@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QToolButton, QWidget
 
 from workflow import WorkflowPhase, inspect_workflow
 from . import glyphs
+from .qt_style import ElidedLabel
 
 
 def draft_target(status) -> tuple[str, str, str]:
@@ -85,10 +86,11 @@ class WorkflowBar(QWidget):
                 lambda _=False, value=stage: self.stage_requested.emit(value))
             row.addWidget(button)
             self.buttons[stage] = button
-        self.guidance = QLabel("", self)
+        self.guidance = ElidedLabel("", self)
         self.guidance.setProperty("i18nSelfManaged", True)
         self.guidance.setProperty("workflow", "guidance")
-        self.guidance.setMinimumWidth(260)
+        self.guidance.setMinimumWidth(0)
+        self.guidance.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self.guidance, 1)
         self.next_button = QPushButton("开始建模", self)
         self.next_button.setProperty("i18nSelfManaged", True)

@@ -31,7 +31,8 @@ class WindowCommandsMixin:
         for cmd in commands.COMMANDS:
             act = QAction(icons.icon(cmd.icon), cmd.label, self)
             act.setObjectName(cmd.name)
-            act.setToolTip(cmd.tip)
+            act.setToolTip(f"{cmd.label}（{cmd.shortcut}）\n{cmd.tip}" if cmd.shortcut
+                           else f"{cmd.label}\n{cmd.tip}")
             act.setStatusTip(cmd.tip)
             if cmd.shortcut:
                 act.setShortcut(cmd.shortcut)
@@ -59,6 +60,7 @@ class WindowCommandsMixin:
                              "分析网格": self.actions_by_name["analysis_mesh"],
                              "变形": self.actions_by_name["deformed"],
                              "云图": self.actions_by_name["contour"],
+                             "实体云图": self.actions_by_name["solid_contour"],
                              "内力图": self.actions_by_name["force_diagram"],
                              "应力比": self.actions_by_name["utilization"],
                              "模态": self.actions_by_name["modal"]}

@@ -246,3 +246,86 @@ def test_a_nonsense_effective_length_factor_is_refused_and_rolled_back(app):
     assert "计算长度系数" in p.status.text()
     entry = next(m for m in s.model["members"] if m["id"] == mid)
     assert "mu_z" not in entry
+
+
+@needs_qt
+def test_advanced_fields_remain_accessible_and_refresh_preserves_expansion(app):
+    """常用截面编辑不应被高级参数淹没，同一对象刷新也不能关掉正在编辑的分组。"""
+    s = build()
+    p = panel(s)
+    mid = s.model["members"][0]["id"]
+    p.show_object("member", mid)
+    assert p.advanced_host.isHidden()
+    assert p.form.indexOf(p._widgets["section"]) >= 0
+    assert p.advanced_host.isAncestorOf(p._widgets["release_j"])
+    p.advanced_button.click()
+    p.refresh()
+    assert p.advanced_button.isChecked()
+    assert not p.advanced_host.isHidden()
+    p.show_object("node", s.model["nodes"][0]["id"])
+    assert p.advanced_button.isHidden()
+    assert p.advanced_host.isHidden()
+
+
+@needs_qt
+@pytest.mark.parametrize("key,value", [
+    ("mu_y", "nan"), ("mu_z", "inf"), ("mu_y", "0"),
+    ("ref_vector", "0, nan, 1"), ("offset_i", "inf, 0, 0"),
+    ("offset_j", "1, 2")])
+def test_invalid_advanced_input_keeps_solution_and_reports_beside_field(app, key, value):
+    """非法高级输入不能污染模型或使有效结果失效，原因应显示在恢复原值的输入旁。"""
+    s = build()
+    p = panel(s)
+    p.show_object("member", s.model["members"][0]["id"])
+    before = len(s.history.steps)
+    solution = s.solution
+    original = p._widgets[key].text()
+    p._commit(key, value)
+    assert s.solution is solution
+    assert len(s.history.steps) == before
+    assert p._widgets[key].text() == original
+    assert p._widgets[key].property("invalid")
+    assert not p._errors[key].isHidden()
+    assert "已恢复原值" in p._errors[key].text()
+    assert p.advanced_button.isChecked()
+    p._commit(key, original)
+    assert not p._widgets[key].property("invalid")
+    assert p._errors[key].isHidden()
+    assert not p.status.text()
+
+
+@needs_qt
+def test_failed_edit_rebuilds_without_stale_rows_and_scrolls_to_error(app):
+    """窄屏拒绝提交后旧标签不能叠在新字段上，折叠区域的错误必须滚入可见范围。"""
+    from PySide6.QtWidgets import QScrollArea
+    from PySide6.QtTest import QTest
+    from PySide6.QtCore import Qt
+    from desktop import theme
+    s = build()
+    p = panel(s)
+    p.setStyleSheet(theme.STYLESHEET)
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setWidget(p)
+    area.resize(300, 360)
+    p.show_object("member", s.model["members"][0]["id"])
+    rows = (p.form.rowCount(), p.advanced_form.rowCount())
+    area.show()
+    for _ in range(3):
+        field = p._widgets["mu_y"]
+        field.setFocus()
+        field.selectAll()
+        QTest.keyClicks(field, "nan")
+        QTest.keyClick(field, Qt.Key.Key_Return)
+        for _ in range(5):
+            app.processEvents()
+        QTest.qWait(100)
+        assert (p.form.rowCount(), p.advanced_form.rowCount()) == rows
+        error = p._errors["mu_y"]
+        position = error.mapTo(area.viewport(), error.rect().center())
+        assert area.viewport().rect().contains(position), (position, p.size(), area.verticalScrollBar().value(), p._error_key, p._error_timer.isActive(), p.isVisible(), error.isHidden())
+    fields = [p._widgets[k].parentWidget() for k in ("ref_vector", "offset_i", "offset_j", "mu_y")]
+    assert all(a.geometry().bottom() < b.y() for a, b in zip(fields, fields[1:], strict=False))
+    QTest.qWait(100)
+    assert not p._error_timer.isActive(), "错误已可见后，定位不能继续反复改变表单高度"
+    area.close()

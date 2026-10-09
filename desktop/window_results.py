@@ -17,6 +17,8 @@ class WindowResultsMixin:
         self.viewport.set_contour_shading(options.get("shading", True))
         if not self.runner.busy and self.mode == "云图" and self.session.solution is not None:
             self.redraw()
+        elif not self.runner.busy and self.mode == "实体云图":
+            self.redraw()
 
     def probe_member_result(self, member_id: int, point) -> None:
         """将视口点击位置变成可审查的杆件截面结果表。"""

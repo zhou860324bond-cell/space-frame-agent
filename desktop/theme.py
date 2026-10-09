@@ -20,12 +20,12 @@ import viz_theme as V                                    # noqa: E402
 # 浅色 CAD chrome：三层表面明确区分工作区、面板和浮层。
 #
 # 浅灰承载工作区，白色突出结果与编辑表面，蓝色用于当前状态与主操作。
-PANEL = "#f1f4f7"
-PANEL_ALT = "#ffffff"
-PANEL_RAISED = "#e8eef4"
-PANEL_HOVER = "#e5edf5"
-BORDER = "#d7dfe7"
-BORDER_LIGHT = "#b4c1ce"
+PANEL = "#e6ebf0"
+PANEL_ALT = "#f5f8fa"
+PANEL_RAISED = "#d9e1e9"
+PANEL_HOVER = "#cbd6e0"
+BORDER = "#b9c4d0"
+BORDER_LIGHT = "#9dabbb"
 INK = "#17212b"
 INK_MUTED = "#55626f"
 INK_DIM = "#6f7c88"
@@ -181,7 +181,7 @@ STYLESHEET = f"""
 QMainWindow, QWidget {{
     background: {PANEL};
     color: {INK};
-    font-size: 10.5pt;
+    font-size: 9pt;
     font-family: "Microsoft YaHei UI", "DengXian", "Source Han Sans SC", sans-serif;
 }}
 QMenuBar {{
@@ -656,6 +656,10 @@ QToolButton[ribbon="large"], QToolButton[ribbon="small"] {{
 QToolButton[ribbon="large"] {{
     padding: 6px 7px 4px 7px;
 }}
+QToolButton[ribbon="small"] {{
+    min-height: 16px;
+    padding: 1px 5px;
+}}
 QToolButton[ribbon="large"]:hover, QToolButton[ribbon="small"]:hover {{
     background: {PANEL_HOVER};
     border: 1px solid {BORDER};
@@ -671,7 +675,7 @@ QToolButton[ribbon="large"]:disabled, QToolButton[ribbon="small"]:disabled {{
 
 QLabel[ribbon="caption"] {{
     color: {INK_DIM};
-    font-size: 9pt;
+    font-size: 8pt;
     font-weight: 600;
     padding-top: 3px;
 }}
@@ -769,19 +773,34 @@ STYLESHEET = STYLESHEET + DRAWER_QSS
 
 STYLESHEET += f"""
 QToolBar#workspaceTools {{
-    background: {PANEL_ALT}; border: none; border-bottom: 1px solid {BORDER};
-    padding: 4px 8px; spacing: 4px;
+    background: {PANEL}; border: none; border-bottom: 1px solid {BORDER};
+    padding: 2px 4px; spacing: 2px;
 }}
-QToolBar#workspaceTools QToolButton {{ padding: 5px 8px; }}
-QLabel[result="title"] {{ font-weight: 600; font-size: 11pt; }}
+QToolBar#workspaceTools QToolButton {{ padding: 3px 4px; }}
+QLabel[result="title"] {{ font-weight: 600; font-size: 9pt; }}
 QWidget#resultSummary {{ background: transparent; }}
-QFrame[resultCard] {{ background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: 6px; }}
-QFrame[resultCard="fail"] {{ border-color: {ERROR}; }}
-QFrame[resultCard="unclear"] {{ border-color: {WARN}; }}
+QFrame[resultCard] {{ background: transparent; border: none; border-bottom: 1px solid {BORDER}; }}
+QFrame[resultCard="fail"] QLabel[result="value"] {{ color: {ERROR}; }}
+QFrame[resultCard="unclear"] QLabel[result="value"] {{ color: {WARN}; }}
 QWidget#resultSummary QLabel {{ background: transparent; border: none; }}
 QLabel[result="label"] {{ color: {INK_MUTED}; font-size: 9pt; }}
-QLabel[result="value"] {{ color: {INK}; font-size: 16pt; font-weight: 600; }}
+QLabel[result="value"] {{ color: {INK}; font-size: 11pt; font-weight: 600; }}
 QToolButton[result="detail"] {{ background: transparent; color: {ACCENT_DIM}; padding: 0px; font-size: 9pt; }}
 QToolButton[result="detail"]:hover {{ color: {ACCENT}; text-decoration: underline; }}
 QToolButton[result="detail"]:disabled {{ color: {INK_DIM}; }}
+QLineEdit[invalid="true"], QComboBox[invalid="true"], QDoubleSpinBox[invalid="true"] {{
+    border: 1px solid {ERROR};
+}}
+QLabel[fieldError="true"] {{
+    color: {ERROR}; background: transparent; font-size: 9pt;
+}}
+QToolButton[ribbon][role="primary"] {{
+    background: {SELECTION}; color: {INK}; border: 1px solid {BORDER_LIGHT};
+}}
+QToolButton[ribbon][role="primary"]:hover {{ background: {PANEL_HOVER}; }}
+QToolButton#railButton:focus {{ border-color: {ACCENT}; }}
+QToolButton#drawerFloat, QToolButton#drawerClose {{
+    min-width: 22px; min-height: 22px; padding: 2px; border-radius: 2px;
+}}
+QToolButton#drawerFloat:hover {{ background: {PANEL_HOVER}; }}
 """

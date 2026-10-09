@@ -62,7 +62,8 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
     local_size = size if hotspot_size_mm is None else float(hotspot_size_mm)
     if not math.isfinite(local_size) or local_size <= 0.0 or local_size > size:
         raise SolidJointError("热点局部网格尺寸必须为正数且不大于全局尺寸")
-    gmsh.initialize()
+    # 桌面分析在后台线程执行；由应用处理取消，Gmsh 不注册主线程专用的信号。
+    gmsh.initialize(interruptible=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.model.add(f"native_joint_{spec.node_id}")
