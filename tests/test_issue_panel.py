@@ -391,6 +391,7 @@ def test_v2_support_editor_updates_image_model_and_trace_entity(qt_app):
 
 
 def test_v2_named_nodal_load_editor_keeps_traceable_units(qt_app):
+    """人工荷载的单位需留审核证据，不能写入求解条目后被 schema 以多余属性拒收。"""
     value = ready_v2_draft()
     state = MultimodalControllerState(
         workflow_instance_id="workflow", image_hash="a" * 64,
@@ -408,9 +409,14 @@ def test_v2_named_nodal_load_editor_keeps_traceable_units(qt_app):
     load = state.draft["image_model"]["load_cases"][0]["nodal_loads"][0]
     assert load["name"] == "P-top" and load["node"] == 2
     assert load["load"][1] == -1200.0
-    assert load["units"] == ["N", "N", "N", "N*m", "N*m", "N*m"]
+    assert "units" not in load
     entity = next(item for item in state.draft["entities"] if item["kind"] == "load")
+    assert entity["units"] == ["N", "N", "N", "N*m", "N*m", "N*m"]
     assert entity["target"]["load"]["name"] == "P-top"
+    from model_io import validate_payload
+    from sketch_topology import materialize_geometry
+    errors = validate_payload(materialize_geometry(state.draft))
+    assert not [e for e in errors if "Additional properties" in e], errors
 
     panel._remove_nodal_load_edit()
     assert state.draft["image_model"]["load_cases"][0]["nodal_loads"] == []

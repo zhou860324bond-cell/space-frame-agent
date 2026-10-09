@@ -69,6 +69,7 @@ class SketchPanel(QWidget):
         self._drag_node_id: int | None = None
         self._drag_changed = False
         self._recognition_generation = 0
+        self._missing_span_values: set[QDoubleSpinBox] = set()
 
         self._build_ui()
 
@@ -334,6 +335,80 @@ class SketchPanel(QWidget):
                 else f"支座与节点荷载 {glyphs.DISCLOSE_CLOSED}"))
         layout.addWidget(self.boundary_widget)
 
+        self.btn_partial_loads = QPushButton(f"局部分布荷载 {glyphs.DISCLOSE_CLOSED}")
+        self.btn_partial_loads.setCheckable(True)
+        self.btn_partial_loads.setVisible(False)
+        layout.addWidget(self.btn_partial_loads)
+        self.partial_widget = QWidget(self)
+        partial_grid = QGridLayout(self.partial_widget)
+        partial_grid.setContentsMargins(0, 0, 0, 0)
+        self.cmb_span_case = QComboBox()
+        self.cmb_span_case.currentTextChanged.connect(self._refresh_span_names)
+        self.cmb_span_member = QComboBox()
+        self.cmb_span_member.currentIndexChanged.connect(self._update_span_length)
+        self.cmb_span_name = QComboBox()
+        self.cmb_span_name.setEditable(True)
+        self.cmb_span_name.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cmb_span_name.currentTextChanged.connect(self._fill_span_values)
+        self.cmb_span_kind = QComboBox()
+        self.cmb_span_kind.addItem("局部均布", "partial")
+        self.cmb_span_kind.addItem("局部梯形", "partial_trapezoid")
+        self.cmb_span_kind.currentIndexChanged.connect(self._update_span_kind)
+        partial_grid.addWidget(QLabel("工况"), 0, 0)
+        partial_grid.addWidget(self.cmb_span_case, 0, 1, 1, 3)
+        partial_grid.addWidget(self.cmb_span_member, 1, 0, 1, 2)
+        partial_grid.addWidget(self.cmb_span_name, 1, 2, 1, 2)
+        partial_grid.addWidget(QLabel("分布形式"), 2, 0)
+        partial_grid.addWidget(self.cmb_span_kind, 2, 1, 1, 3)
+        self.span_a, self.span_b = QDoubleSpinBox(), QDoubleSpinBox()
+        for spin, label in ((self.span_a, "a "), (self.span_b, "b ")):
+            spin.setRange(0, 1e9)
+            spin.setDecimals(6)
+            spin.setPrefix(label)
+            spin.setSuffix(" m")
+            spin.lineEdit().setPlaceholderText("必填")
+            spin.valueChanged.connect(lambda _, s=spin: self._missing_span_values.discard(s))
+            spin.lineEdit().textEdited.connect(lambda _, s=spin: self._span_text_edited(s))
+            spin.setToolTip("从杆件 i 端沿杆件量起的实际距离，单位为米；必须先确认尺度。")
+        partial_grid.addWidget(self.span_a, 3, 0, 1, 2)
+        partial_grid.addWidget(self.span_b, 3, 2, 1, 2)
+        self.lbl_span_length = QLabel()
+        self.lbl_span_length.setWordWrap(True)
+        partial_grid.addWidget(self.lbl_span_length, 4, 0, 1, 4)
+        self.span_w1, self.span_w2 = [], []
+        for row, vector in enumerate((self.span_w1, self.span_w2), 5):
+            label = QLabel("起点强度" if row == 5 else "终点强度")
+            if row == 6:
+                self.lbl_span_w2 = label
+            partial_grid.addWidget(label, row, 0)
+            for column, axis in enumerate("XYZ", 1):
+                spin = QDoubleSpinBox()
+                spin.setDecimals(3)
+                spin.setRange(-1e12, 1e12)
+                spin.setPrefix(f"q{axis} ")
+                spin.setSuffix(" N/m")
+                spin.lineEdit().setPlaceholderText("必填")
+                spin.valueChanged.connect(lambda _, s=spin: self._missing_span_values.discard(s))
+                spin.lineEdit().textEdited.connect(lambda _, s=spin: self._span_text_edited(s))
+                spin.setToolTip("全局坐标分量；正负号表示全局轴方向，不按图片的上下方向自动转换。")
+                vector.append(spin)
+                partial_grid.addWidget(spin, row, column)
+        self.lbl_span_hint = QLabel("请明确填写范围和强度；未知值不得用默认零值代替。新工况在支座与节点荷载中创建。")
+        self.lbl_span_hint.setWordWrap(True)
+        partial_grid.addWidget(self.lbl_span_hint, 7, 0, 1, 4)
+        self.btn_apply_span = QPushButton("应用局部荷载")
+        self.btn_remove_span = QPushButton("删除局部荷载")
+        self.btn_apply_span.clicked.connect(self._apply_partial_load_edit)
+        self.btn_remove_span.clicked.connect(self._remove_partial_load_edit)
+        partial_grid.addWidget(self.btn_apply_span, 8, 0, 1, 2)
+        partial_grid.addWidget(self.btn_remove_span, 8, 2, 1, 2)
+        self.partial_widget.setVisible(False)
+        self.btn_partial_loads.toggled.connect(self.partial_widget.setVisible)
+        self.btn_partial_loads.toggled.connect(lambda checked: self.btn_partial_loads.setText(
+            f"局部分布荷载 {glyphs.DISCLOSE_OPEN if checked else glyphs.DISCLOSE_CLOSED}"))
+        layout.addWidget(self.partial_widget)
+        self._update_span_kind()
+
         # 状态标签
         self.lbl_status = QLabel("")
         self.lbl_status.setWordWrap(True)
@@ -463,6 +538,7 @@ class SketchPanel(QWidget):
         self.edit_widget.setVisible(False)
         self.btn_boundaries.setChecked(False)
         self.btn_boundaries.setVisible(False)
+        self._refresh_partial_controls()
         self.lst_questions.clear()
         self.lst_questions.setVisible(False)
         self.lbl_questions.setVisible(False)
@@ -522,8 +598,8 @@ class SketchPanel(QWidget):
 
     def set_v2_draft(self, draft: dict) -> None:
         """Host the frozen v2 review APIs without changing the legacy v1 path."""
-        from copy import deepcopy
-        self._v2_draft = deepcopy(draft)
+        from sketch_load_edit import refresh_partial_geometry
+        self._v2_draft = refresh_partial_geometry(draft)
         self._v2_node_reuse.clear()
         self._result_draft = None
         self.chk_confirm.setChecked(False)
@@ -742,6 +818,7 @@ class SketchPanel(QWidget):
         self.edit_widget.setVisible(False)
         self.btn_boundaries.setChecked(False)
         self.btn_boundaries.setVisible(False)
+        self._refresh_partial_controls()
         self.lst_questions.clear()
         self.lst_questions.setVisible(False)
         self.lbl_questions.setVisible(False)
@@ -1134,6 +1211,8 @@ class SketchPanel(QWidget):
         self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
 
     def _apply_v2_edit(self, draft: dict, message: str) -> None:
+        from sketch_load_edit import refresh_partial_geometry
+        draft = refresh_partial_geometry(draft)
         self._v2_node_reuse.clear()
         draft["model"] = draft["merge_plan"] = draft["confirmation"] = None
         if self._v2_state is not None and self._v2_state.draft is not None:
@@ -1185,6 +1264,144 @@ class SketchPanel(QWidget):
         self.cmb_load_name.setEnabled(has_case)
         self.btn_apply_load.setEnabled(has_case)
         self.btn_remove_load.setEnabled(has_case)
+        self._refresh_partial_controls()
+
+    def _refresh_partial_controls(self):
+        active = self._v2_draft is not None
+        self.btn_partial_loads.setVisible(active)
+        if not active:
+            self.btn_partial_loads.setChecked(False)
+            self.partial_widget.setVisible(False)
+            return
+        model = self._v2_draft["image_model"]
+        for combo, entries in ((self.cmb_span_case, model.get("load_cases") or []),
+                               (self.cmb_span_member, model.get("members") or [])):
+            current = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for entry in entries:
+                if combo is self.cmb_span_case:
+                    combo.addItem(entry["name"], entry["name"])
+                else:
+                    combo.addItem(f"杆件 {entry['id']}（{entry['i']} → {entry['j']}）", entry["id"])
+            index = combo.findData(current)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+        self._refresh_span_names()
+        self._update_span_length()
+
+    def _selected_span(self):
+        model = (self._v2_draft or {}).get("image_model") or {}
+        case = next((c for c in model.get("load_cases") or []
+                     if c.get("name") == self.cmb_span_case.currentText()), {})
+        return next((s for s in case.get("member_spans") or []
+                     if s.get("name") == self.cmb_span_name.currentText().strip()), None)
+
+    def _refresh_span_names(self, *_):
+        from sketch_load_edit import PARTIAL_KINDS
+        model = (self._v2_draft or {}).get("image_model") or {}
+        case = next((c for c in model.get("load_cases") or []
+                     if c.get("name") == self.cmb_span_case.currentText()), {})
+        current = self.cmb_span_name.currentText()
+        self.cmb_span_name.blockSignals(True)
+        self.cmb_span_name.clear()
+        for load in case.get("member_spans") or []:
+            if load.get("kind") in PARTIAL_KINDS:
+                self.cmb_span_name.addItem(str(load.get("name", "")))
+        if self.cmb_span_name.findText(current) >= 0:
+            self.cmb_span_name.setCurrentText(current)
+        elif not self.cmb_span_name.count():
+            self.cmb_span_name.setEditText("Q-1")
+        self.cmb_span_name.blockSignals(False)
+        self._fill_span_values()
+
+    def _fill_span_values(self, *_):
+        entry = self._selected_span() or {}
+        index = self.cmb_span_member.findData(entry.get("member"))
+        if index >= 0:
+            self.cmb_span_member.setCurrentIndex(index)
+        self.cmb_span_kind.setCurrentIndex(max(0, self.cmb_span_kind.findData(entry.get("kind"))))
+        for spin, value in [(self.span_a, entry.get("a")), (self.span_b, entry.get("b"))]:
+            self._set_span_value(spin, value)
+        for key, spins in (("w1", self.span_w1), ("w2", self.span_w2)):
+            values = entry.get(key)
+            for i, spin in enumerate(spins):
+                value = values[i] if isinstance(values, list) and len(values) == 3 else None
+                self._set_span_value(spin, value)
+        self.btn_remove_span.setEnabled(bool(entry))
+        self._update_span_length()
+
+    def _set_span_value(self, spin, value):
+        valid = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                 and math.isfinite(value) and spin.minimum() <= value <= spin.maximum())
+        spin.blockSignals(True)
+        spin.setValue(float(value) if valid else 0)
+        if not valid:
+            spin.clear()
+            self._missing_span_values.add(spin)
+        else:
+            self._missing_span_values.discard(spin)
+        spin.blockSignals(False)
+
+    def _span_text_edited(self, spin):
+        if spin.hasAcceptableInput() and spin.cleanText().strip():
+            self._missing_span_values.discard(spin)
+        else:
+            self._missing_span_values.add(spin)
+
+    def _update_span_kind(self, *_):
+        trapezoid = self.cmb_span_kind.currentData() == "partial_trapezoid"
+        self.lbl_span_w2.setVisible(trapezoid)
+        for spin in self.span_w2:
+            spin.setEnabled(trapezoid)
+            spin.setVisible(trapezoid)
+
+    def _update_span_length(self, *_):
+        from sketch_load_edit import member_length
+        has_inputs = (self._v2_draft is not None and self.cmb_span_case.count() > 0
+                      and self.cmb_span_member.currentData() is not None)
+        self.btn_apply_span.setEnabled(has_inputs)
+        if not has_inputs:
+            self.lbl_span_length.setText("请先创建工况并选择杆件。")
+            return
+        try:
+            length = member_length(self._v2_draft, self.cmb_span_member.currentData())
+            self.lbl_span_length.setText(f"从 i 端量起：0 ≤ a < b ≤ {length:g} m；强度按全局 X/Y/Z 填写。")
+        except (ValueError, KeyError, TypeError) as exc:
+            self.lbl_span_length.setText(f"实际范围尚不能校核：{exc}。请先确认工作平面及尺度。")
+            self.btn_apply_span.setEnabled(False)
+
+    def _apply_partial_load_edit(self):
+        if self._v2_draft is None:
+            return
+        from sketch_load_edit import set_partial_load
+        try:
+            required = [self.span_a, self.span_b, *self.span_w1]
+            if self.cmb_span_kind.currentData() == "partial_trapezoid":
+                required.extend(self.span_w2)
+            if any(spin in self._missing_span_values or not spin.cleanText().strip() for spin in required):
+                raise ValueError("范围或强度尚未填写，请补齐必填项；确认该分量为零时请明确输入 0。")
+            draft = set_partial_load(self._v2_draft, self.cmb_span_case.currentText(),
+                self.cmb_span_name.currentText(), self.cmb_span_member.currentData(),
+                self.span_a.value(), self.span_b.value(), [s.value() for s in self.span_w1],
+                kind=self.cmb_span_kind.currentData(), w2=[s.value() for s in self.span_w2])
+        except (ValueError, KeyError, TypeError) as exc:
+            self._show_edit_error("局部荷载设置失败", exc)
+            return
+        self._apply_v2_edit(draft, "已更新局部荷载，请核对图像中的作用区段")
+
+    def _remove_partial_load_edit(self):
+        if self._v2_draft is None:
+            return
+        from sketch_load_edit import remove_partial_load
+        try:
+            draft = remove_partial_load(self._v2_draft, self.cmb_span_case.currentText(),
+                                        self.cmb_span_name.currentText())
+        except ValueError as exc:
+            self._show_edit_error("删除局部荷载失败", exc)
+            return
+        self._apply_v2_edit(draft, "已删除所选局部荷载，原观察保留在审核记录")
 
     def _fill_support_values(self, *_):
         if ((self._result_draft is None and self._v2_draft is None)
@@ -1370,8 +1587,7 @@ class SketchPanel(QWidget):
             values = [spin.value() for spin in self.load_spins]
             loads = [item for item in case.get("nodal_loads") or []
                      if str(item.get("name")) != load_name]
-            payload = {"name": load_name, "node": node_id, "load": values,
-                       "units": ["N", "N", "N", "N*m", "N*m", "N*m"]}
+            payload = {"name": load_name, "node": node_id, "load": values}
             loads.append(payload)
             case["nodal_loads"] = loads
             draft["entities"] = [item for item in draft.get("entities") or []
@@ -1384,6 +1600,7 @@ class SketchPanel(QWidget):
             draft["entities"].append({
                 "kind": "load", "id": f"load-{case_name}-{load_name}", "source": "user",
                 "confidence": None, "recognition_confidence": None, "verified": True,
+                "units": ["N", "N", "N", "N*m", "N*m", "N*m"],
                 "image_geometry": {"point": [float(node["u"]), float(node["v"])]},
                 "target": {"load": {"case": case_name, "collection": "nodal_loads",
                                       "name": load_name}}, "payload": deepcopy(payload),
@@ -1505,6 +1722,20 @@ class SketchPanel(QWidget):
                     if kind == "member":
                         painter.drawText(int((start[0] + end[0]) / 2),
                                          int((start[1] + end[1]) / 2 - font.pixelSize() / 2), label)
+                    elif kind == "load" and (entity.get("payload") or {}).get("kind") in {"partial", "partial_trapezoid"}:
+                        # 用平行括线标明实际区间，避免荷载覆盖与梁轴线重合而不可辨。
+                        dx, dy = end[0] - start[0], end[1] - start[1]
+                        length = math.hypot(dx, dy)
+                        if length > 0:
+                            nx, ny = -dy / length, dx / length
+                            offset = font.pixelSize() + 2
+                            a = (start[0] + nx * offset, start[1] + ny * offset)
+                            b = (end[0] + nx * offset, end[1] + ny * offset)
+                            painter.drawLine(int(a[0]), int(a[1]), int(b[0]), int(b[1]))
+                            for x, y in (a, b):
+                                painter.drawLine(int(x - nx * 4), int(y - ny * 4),
+                                                 int(x + nx * 4), int(y + ny * 4))
+                            painter.drawText(int(a[0] + nx * 6), int(a[1] + ny * 6 + font.pixelSize()), label)
             where = point(geometry.get("point"))
             if where:
                 radius = max(4, pixmap.width() // 150)
@@ -1593,8 +1824,9 @@ class SketchPanel(QWidget):
     def _finish_v2_node_move(self, node_id: int) -> None:
         from dimension_constraints import apply_scale_to_draft
         from sketch_topology import detect_topology
+        from sketch_load_edit import refresh_partial_geometry
 
-        draft = apply_scale_to_draft(detect_topology(self._v2_draft))
+        draft = refresh_partial_geometry(apply_scale_to_draft(detect_topology(self._v2_draft)))
         self._v2_node_reuse.clear()
         if self._v2_state is not None and self._v2_state.draft is not None:
             draft["revision"] = int(self._v2_state.draft.get("revision", 0))
@@ -1606,6 +1838,7 @@ class SketchPanel(QWidget):
         self.issue_panel.set_draft(draft)
         self._show_overlay(draft)
         self._refresh_v2_scale_controls()
+        self._refresh_partial_controls()
         self._refresh_v2_commit_state()
         self.lbl_status.setText(f"已移动节点 {node_id}，尺寸与交点已重新计算。")
 

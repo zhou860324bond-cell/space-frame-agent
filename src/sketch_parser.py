@@ -364,6 +364,12 @@ def _convert_case_loads(case: dict) -> list[dict]:
 
     problems: list[dict] = []
 
+    def span_target(item: dict) -> dict:
+        if case.get("name") and item.get("name"):
+            return {"load_target": {"case": case["name"], "collection": "member_spans",
+                                    "name": item["name"]}}
+        return {}
+
     def convert(items: Any, key: str, size: int, ref: str, label: str,
                 units: set[str]) -> None:
         for item in items or []:
@@ -374,6 +380,7 @@ def _convert_case_loads(case: dict) -> list[dict]:
                 if got is None:
                     problems.append({
                         "category": "load_incomplete", "severity": "blocking",
+                        **(span_target(item) if key == "w1" else {}),
                         "entity_refs": [f"{ref}:{item.get(ref)}"],
                         "message": (
                             f"{label} {item.get(ref)} 上这条荷载没能换算："
@@ -389,9 +396,11 @@ def _convert_case_loads(case: dict) -> list[dict]:
 
     convert(case.get("nodal_loads"), "load", 6, "node", "节点", _FORCE_UNITS | _MOMENT_UNITS)
     convert(case.get("member_loads"), "w", 3, "member", "杆件", _DENSITY_UNITS)
-    for item in case.get("member_spans") or []:
+    for index, item in enumerate(case.get("member_spans") or [], 1):
         if not isinstance(item, dict):
             continue
+        if not item.get("name"):
+            item["name"] = f"member_spans-{index}"
         kind = item.get("kind")
         units = _FORCE_UNITS if kind == "point" else _MOMENT_UNITS if kind == "moment" else _DENSITY_UNITS
         convert([item], "w1", 3, "member", "杆件", units)
@@ -408,6 +417,7 @@ def _convert_case_loads(case: dict) -> list[dict]:
                 and not isinstance(item[k], bool) and math.isfinite(item[k]) for k in ("a", "b"))
                 or not 0 <= item["a"] < item["b"])):
             problems.append({"category": "load_incomplete", "severity": "blocking",
+                **span_target(item),
                 "entity_refs": [f"member:{item.get('member')}"],
                 "message": f"局部分布荷载缺少有效作用范围：{observed_range!r}。请确认距杆件 i 端的起止长度和单位，不能按整跨施加。"})
     return problems

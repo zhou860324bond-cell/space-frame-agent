@@ -69,6 +69,128 @@ def confirm_questions(panel):
         panel.lst_questions.item(row).setCheckState(Qt.CheckState.Checked)
 
 
+def partial_panel(qt_app):
+    from test_sketch_load_edit import beam_draft
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(beam_draft())
+    return panel
+
+
+def fill_partial_inputs(panel):
+    panel.span_a.setValue(1)
+    panel.span_b.setValue(3)
+    for spin, value in zip(panel.span_w1, [0, -1000, 0], strict=True):
+        spin.lineEdit().selectAll()
+        QTest.keyClicks(spin.lineEdit(), str(value))
+
+
+def test_partial_editor_stays_collapsed_and_requires_explicit_missing_values(qt_app):
+    """新增局部编辑不能挤占原布局，缺失强度也不能由默认零值自动补齐。"""
+    panel = partial_panel(qt_app)
+    assert panel.partial_widget.isHidden() and not panel.btn_partial_loads.isHidden()
+    panel.btn_partial_loads.setChecked(True)
+    assert not panel.partial_widget.isHidden()
+    panel.span_a.setValue(1)
+    panel.span_b.setValue(3)
+    panel.btn_apply_span.click()
+    assert "必填" in panel.lbl_status.text()
+    assert panel._v2_draft["image_model"]["load_cases"][0]["member_spans"] == []
+    fill_partial_inputs(panel)
+    panel.btn_apply_span.click()
+    load = panel._v2_draft["image_model"]["load_cases"][0]["member_spans"][0]
+    assert load["a"] == 1 and load["b"] == 3 and load["w1"] == [0, -1000, 0]
+    assert not panel.chk_confirm.isChecked()
+    panel.btn_remove_span.click()
+    assert panel._v2_draft["image_model"]["load_cases"][0]["member_spans"] == []
+
+
+def test_partial_editor_does_not_clamp_end_to_member_length(qt_app):
+    """越界输入必须报原因，不得自动把终点截成杆长后提交另一种荷载。"""
+    panel = partial_panel(qt_app)
+    fill_partial_inputs(panel)
+    panel.span_b.setValue(9)
+    revision = panel._v2_draft["revision"]
+    panel.btn_apply_span.click()
+    assert "杆长" in panel.lbl_status.text() and "8" in panel.lbl_status.text()
+    assert panel.span_b.value() == 9 and panel._v2_draft["revision"] == revision
+
+
+def test_partial_editor_case_switch_clears_other_case_values(qt_app):
+    """切换工况不能把前一工况的荷载强度和范围继续作为新工况默认值。"""
+    panel = partial_panel(qt_app)
+    fill_partial_inputs(panel)
+    panel.btn_apply_span.click()
+    panel.cmb_span_case.setCurrentText("W")
+    assert not panel.span_a.cleanText() and not panel.span_w1[1].cleanText()
+    assert not panel.btn_remove_span.isEnabled()
+    assert panel._v2_draft["image_model"]["load_cases"][1]["member_spans"] == []
+
+
+def test_partial_editor_waits_for_confirmed_scale(qt_app):
+    """尺度未知时只允许查看、删除已识别荷载，不能把图像距离当米应用。"""
+    panel = partial_panel(qt_app)
+    panel._v2_draft["scale"].update(status="unknown", length_per_pixel=None)
+    panel._refresh_partial_controls()
+    assert not panel.btn_apply_span.isEnabled() and "尺度" in panel.lbl_span_length.text()
+
+
+def test_partial_editor_trapezoid_requires_end_intensity(qt_app):
+    """梯形末端强度缺失时不能默认成三角形，均布模式也不应启用末端编辑。"""
+    panel = partial_panel(qt_app)
+    assert not any(s.isEnabled() for s in panel.span_w2)
+    panel.cmb_span_kind.setCurrentIndex(1)
+    fill_partial_inputs(panel)
+    panel.btn_apply_span.click()
+    assert "必填" in panel.lbl_status.text()
+    for spin, value in zip(panel.span_w2, [0, -2000, 0], strict=True):
+        spin.lineEdit().selectAll()
+        QTest.keyClicks(spin.lineEdit(), str(value))
+    panel.btn_apply_span.click()
+    load = panel._v2_draft["image_model"]["load_cases"][0]["member_spans"][0]
+    assert load["kind"] == "partial_trapezoid" and load["w2"] == [0, -2000, 0]
+
+
+def test_partial_empty_field_remains_missing_after_qt_focus_fixup(qt_app):
+    """Qt 离开空数值框会显示零，不能把这种自动修复当作用户已确认的零强度。"""
+    panel = partial_panel(qt_app)
+    panel.span_a.setValue(1)
+    panel.span_b.setValue(3)
+    for spin in panel.span_w1:
+        spin.interpretText()
+    panel._apply_partial_load_edit()
+    assert "必填" in panel.lbl_status.text()
+    assert panel._v2_draft["image_model"]["load_cases"][0]["member_spans"] == []
+
+
+def test_partial_range_overlay_is_visible_and_does_not_mark_full_member(qt_app, tmp_path):
+    """局部范围与梁轴重叠时应有可辨括线，且不能把无荷载的后半段标成受载。"""
+    from sketch_load_edit import set_partial_load
+    panel = partial_panel(qt_app)
+    path = tmp_path / "range.png"
+    source = QPixmap(101, 201)
+    source.fill(Qt.GlobalColor.white)
+    source.save(str(path))
+    panel._image_path = str(path)
+    draft = set_partial_load(panel._v2_draft, "D", "q", 7, 1, 3, [0, -1, 0])
+    panel.set_v2_draft(draft)
+    image = panel._preview_pixmap.toImage()
+    assert image.pixelColor(30, 110) != QColor("white")
+    assert image.pixelColor(75, 110) == QColor("white")
+
+
+def test_manual_v2_nodal_load_materializes_without_schema_extra_units(qt_app):
+    """防止人工集中力矩在 image_model 中带入 units 后物化被模型 schema 拒收。"""
+    from model_io import validate_payload
+    from sketch_topology import materialize_geometry
+    panel = partial_panel(qt_app)
+    panel.load_spins[4].setValue(-5000)
+    panel.btn_apply_load.click()
+    load = panel._v2_draft["image_model"]["load_cases"][0]["nodal_loads"][0]
+    assert load["load"][4] == -5000 and "units" not in load
+    errors = validate_payload(materialize_geometry(panel._v2_draft))
+    assert not [e for e in errors if "Additional properties" in e], errors
+
+
 def test_missing_action_node_can_be_inserted_and_selected_for_nodal_loads(qt_app):
     """自动识别漏掉集中力矩作用点时，按钮应补节点、拆杆并选择新节点，不能直接提交。"""
     from multimodal_workflow import migrate_v1_payload
