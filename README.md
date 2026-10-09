@@ -4,6 +4,7 @@
 
 当前回归基线为 **2316 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
 后台线程收尾修复与三平台验收记录见 [工作进度](docs/PROGRESS.md) 和 [PR #25](https://github.com/zhou860324bond-cell/space-frame-agent/pull/25)。
+桌面安装使用已验收的 PySide6 6.11.2；CI 与 `.[desktop]` 共用版本声明。
 核心原则只有一条：
 **大模型只产结构，不产数值**——报告里每个数字都能溯源到某次工具调用。
 

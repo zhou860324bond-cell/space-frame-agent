@@ -31,7 +31,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # 桌面端（PySide6 + PyVista 的 CAE 式界面）
-desktop = ["PySide6>=6.6", "pyvista>=0.44", "pyvistaqt>=0.11", "vtk>=9.3"]
+# 6.12.0 在 Python 3.11 出现 none_dealloc；使用三平台回归验收的 Qt 版本。
+desktop = ["PySide6==6.11.2", "pyvista>=0.44", "pyvistaqt>=0.11", "vtk>=9.3"]
 # 网页端
 web = ["streamlit>=1.40", "plotly>=5.20"]
 # 节点局部实体子模型：Gmsh 只生成二次四面体网格，刚度与求解均为自研

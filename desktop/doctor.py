@@ -124,7 +124,7 @@ def _qt() -> tuple[bool, str]:
     try:
         import PySide6
     except ImportError:
-        return False, "没装　→　pip install PySide6 pyvista pyvistaqt"
+        return False, '未安装 Qt；请在项目目录运行 python -m pip install ".[desktop]"。'
     except Exception as exc:                      # noqa: BLE001
         return False, (f"装了但加载不了：{type(exc).__name__}: {str(exc)[:140]}　"
                        "常见于缺 VC++ 运行库，装一个 "
