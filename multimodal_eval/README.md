@@ -49,6 +49,12 @@ pixel tolerance were not relaxed; these development results are not held-out
 accuracy. Request options and pipeline fingerprints prevent stale recognition
 reuse; replay always uses current code while evaluate scores frozen predictions.
 
+The subsequent [outline and small-support report](public_cases/OUTLINE_REPORT.md)
+records five fresh development calls and one new independent mixed-load diagram.
+Development geometry F1 is 1.000 while independent geometry F1 is 0; both results
+and all first responses are retained separately. Symbolic placeholders still block
+commit, and neither group passes the full gate. This is not a general accuracy claim.
+
 ```text
 python -m multimodal_eval.real_world_eval evaluate --root multimodal_eval/public_cases
 python -m multimodal_eval.real_world_eval replay --root multimodal_eval/public_cases --output results/public-replay.json

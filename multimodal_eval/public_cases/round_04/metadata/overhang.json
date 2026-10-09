@@ -1,0 +1,26 @@
+{
+  "format": "space-frame-real-world-case/v1",
+  "image_id": "overhang",
+  "source": "https://commons.wikimedia.org/wiki/File:Beam_cantilever.png",
+  "license": "CC0-1.0",
+  "author": "Davius",
+  "consent_to_evaluate": true,
+  "subset_labels": [
+    "clear",
+    "missing_dimension"
+  ],
+  "work_plane": {
+    "status": "confirmed",
+    "plane": "XZ",
+    "offset": 0.0,
+    "axis_mapping": {
+      "first_axis": "X",
+      "second_axis": "Z",
+      "offset_axis": "Y",
+      "image_right_sign": 1,
+      "image_up_sign": 1
+    }
+  },
+  "preprocessing": {},
+  "notes": "用户选择许可明确的公开工程图评测。仅标注水平梁轴；RA、RB 为反力，F 为无数值外荷载；L1/L2 无数值。三角支座按契约标为铰接，原图未明确区分滑动。"
+}

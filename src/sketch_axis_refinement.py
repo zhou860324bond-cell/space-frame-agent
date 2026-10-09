@@ -1,4 +1,4 @@
-"""从清晰水平梁的连续像素带提取梁轴候选；不读取人工真值或求解数值。"""
+"""从清晰水平梁的填充或闭合轮廓提取梁轴候选；不读取真值或求解数值。"""
 
 from __future__ import annotations
 
@@ -10,29 +10,82 @@ from PIL import Image, ImageOps
 from scipy.ndimage import find_objects, label
 
 
-def _support_anchor(pixels: np.ndarray, node: dict, band_bottom: int) -> float | None:
+def _support_anchor(pixels: np.ndarray, node: dict, band_bottom: int,
+                    beam_left: float, beam_right: float) -> float | None:
     """只使用紧邻梁下方的唯一小支座轮廓，文字和长图线不作为附着点。"""
     height, width = pixels.shape
     centre = node["u"] * (width - 1)
     low, high = max(0, int(centre - width * 0.04)), min(width, int(centre + width * 0.04) + 1)
     bottom = min(height, band_bottom + max(12, int(min(height * 0.16, width * 0.06))))
-    # 灰色填充外侧常有黑色梁边线，不能让它与支座轮廓合并成贯穿裁片的图线。
-    labels, _ = label(pixels[band_bottom + 3:bottom, low:high] < 50,
+    # 用梁身范围检查黑色边线，避免固定裁去三行时同时丢失小支座的顶端。
+    start = band_bottom + 1
+    for y in range(start, min(bottom, start + max(4, int(height * 0.015)))):
+        if (pixels[y, int(beam_left):int(beam_right) + 1] < 100).mean() >= 0.85:
+            start = y + 1
+    # 支座边缘的抗锯齿/JPEG 灰度也保留，防止只剩一侧轮廓时偏移附着点。
+    labels, _ = label(pixels[start:bottom, low:high] < 200,
                       structure=np.ones((3, 3), dtype=int))
     candidates = []
-    for bounds in find_objects(labels):
+    for index, bounds in enumerate(find_objects(labels), 1):
         if bounds is None:
             continue
         y, x = bounds
         if (y.start <= max(4, height * 0.015) and y.stop - y.start >= 3
                 and 3 <= x.stop - x.start <= width * 0.08
                 and x.start > 0 and x.stop < high - low):
-            candidates.append(low + (x.start + x.stop - 1) / 2)
+            component = labels[y, x] == index
+            spans = []
+            centres = []
+            for row in component:
+                points = np.flatnonzero(row)
+                if len(points):
+                    spans.append(points[-1] - points[0] + 1)
+                    centres.append((points[-1] + points[0]) / 2)
+            # 三角支座从顶端向下展开；排除细杆、文字引线和向下的箭头。
+            if (spans[-1] >= max(3, spans[0] * 1.5)
+                    and max(centres) - min(centres) <= max(1, (x.stop - x.start) * 0.2)):
+                candidates.append(low + x.start + centres[0])
     return float(candidates[0]) if len(candidates) == 1 else None
 
 
+def _outline_band(pixels: np.ndarray, x0: int, x1: int, span: float,
+                  rough_v: float) -> tuple[float, float, int, int] | None:
+    """闭合矩形须有两条长水平边与两端竖边；曲线和未闭合尺寸线不提出候选。"""
+    height, width = pixels.shape
+    rows = []
+    for y in range(height):
+        edges = np.diff(np.r_[False, pixels[y, x0:x1] < 230, False].astype(np.int8))
+        starts, stops = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+        if len(starts) and max(stops - starts) >= span * 0.9:
+            rows.append(y)
+    groups = []
+    for y in rows:
+        if not groups or y != groups[-1][-1] + 1:
+            groups.append([])
+        groups[-1].append(y)
+    groups = [g for g in groups if len(g) <= max(4, height * 0.02)]
+    candidates = []
+    for first, second in zip(groups, groups[1:], strict=False):
+        top, bottom = first[-1], second[0]
+        if not 3 <= bottom - top <= height * 0.2:
+            continue
+        if abs((top + bottom) / 2 / (height - 1) - rough_v) > 0.15:
+            continue
+        body = pixels[top:bottom + 1, x0:x1] < 230
+        vertical = body.mean(axis=0) >= 0.85
+        boundaries = np.diff(np.r_[False, vertical, False].astype(np.int8))
+        starts, stops = np.flatnonzero(boundaries == 1), np.flatnonzero(boundaries == -1)
+        if len(starts) != 2 or any(stops - starts > width * 0.08):
+            continue
+        left, right = x0 + stops[0] - 1, x0 + starts[1]
+        if right - left < span * 0.9 or body[:, stops[0]:starts[1]].mean() > 0.3:
+            continue
+        candidates.append((float(left), float(right), top, bottom))
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
-    """仅修正单条水平链及唯一连续像素带，模糊、斜杆、多梁和轮廓图保持原样。"""
+    """仅修正水平链的唯一填充带或闭合矩形，歧义、斜杆和多梁保持原样。"""
     model = draft["image_model"]
     nodes = model.get("nodes") or []
     members = model.get("members") or []
@@ -81,14 +134,23 @@ def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
             bands.append([])
         bands[-1].append(row)
     bands = [band for band in bands if 3 <= len(band) <= height * 0.12]
-    if len(bands) != 1:
+    if len(bands) > 1:
         return draft
-    band = bands[0]
-    body = pixels[band[0][0]:band[-1][0] + 1, x0:x1]
-    persistent = np.flatnonzero(((body > 50) & (body < 230)).mean(axis=0) >= 0.75)
-    if not len(persistent) or len(persistent) < (persistent[-1] - persistent[0] + 1) * 0.85:
-        return draft
-    left, right = float(x0 + persistent[0]), float(x0 + persistent[-1])
+    method = "filled-horizontal-pixel-band/v2"
+    if bands:
+        band = bands[0]
+        top, bottom = band[0][0], band[-1][0]
+        body = pixels[top:bottom + 1, x0:x1]
+        persistent = np.flatnonzero(((body > 50) & (body < 230)).mean(axis=0) >= 0.75)
+        if not len(persistent) or len(persistent) < (persistent[-1] - persistent[0] + 1) * 0.85:
+            return draft
+        left, right = float(x0 + persistent[0]), float(x0 + persistent[-1])
+    else:
+        outline = _outline_band(pixels, x0, x1, span, sum(n["v"] for n in nodes) / len(nodes))
+        if outline is None:
+            return draft
+        left, right, top, bottom = outline
+        method = "closed-horizontal-outline/v1"
     if right - left < span * 0.85:
         return draft
     if abs(left - order[0]["u"] * (width - 1)) > width * 0.08 \
@@ -96,7 +158,7 @@ def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
         return draft
     result = deepcopy(draft)
     target_nodes = {node["id"]: node for node in result["image_model"]["nodes"]}
-    axis_v = (band[0][0] + band[-1][0]) / 2 / (height - 1)
+    axis_v = (top + bottom) / 2 / (height - 1)
     for node in target_nodes.values():
         node["v"] = axis_v
     target_nodes[order[0]["id"]]["u"] = left / (width - 1)
@@ -105,7 +167,7 @@ def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
     for node in order[1:-1]:
         anchor_x = node["u"] * (width - 1)
         low, high = max(int(left), int(anchor_x - width * 0.04)), min(int(right) + 1, int(anchor_x + width * 0.04) + 1)
-        interior = pixels[band[0][0] + 1:band[-1][0], low:high]
+        interior = pixels[top + 1:bottom, low:high]
         if not interior.size:
             continue
         strong = (interior < 50).sum(axis=0) >= max(3, interior.shape[0] * 0.6)
@@ -118,15 +180,15 @@ def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
             continue
         node = next((n for n in nodes if n["id"] == support.get("node")), None)
         if node is not None:
-            anchor = _support_anchor(pixels, target_nodes[node["id"]], band[-1][0])
+            anchor = _support_anchor(pixels, target_nodes[node["id"]], bottom, left, right)
             if anchor is not None:
                 target_nodes[node["id"]]["u"] = anchor / (width - 1)
-    evidence = {"method": "filled-horizontal-pixel-band/v1",
-                "band_px": [left, band[0][0], right, band[-1][0]],
+    evidence = {"method": method,
+                "band_px": [left, top, right, bottom],
                 "original_nodes": [{"id": n["id"], "u": n["u"], "v": n["v"]} for n in nodes]}
     for entity in result.get("entities") or []:
         kind, target = entity.get("kind"), entity.get("target") or {}
-        if kind not in ("node", "member"):
+        if kind not in ("node", "member", "support"):
             continue
         entity["original_observation"] = {"image_geometry": deepcopy(entity.get("image_geometry")),
                                            "confidence": entity.get("confidence")}
@@ -134,6 +196,9 @@ def refine_horizontal_axis(draft: dict, image_path: str | Path) -> dict:
                       position_refinement=deepcopy(evidence))
         if kind == "node" and target.get("node") in target_nodes:
             node = target_nodes[target["node"]]
+            entity["image_geometry"] = {"point": [node["u"], node["v"]]}
+        elif kind == "support":
+            node = target_nodes[target["support"]["node"]]
             entity["image_geometry"] = {"point": [node["u"], node["v"]]}
         elif kind == "member":
             member = next(m for m in members if m["id"] == target["member"])

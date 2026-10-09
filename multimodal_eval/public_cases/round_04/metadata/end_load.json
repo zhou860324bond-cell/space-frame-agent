@@ -1,0 +1,26 @@
+{
+  "format": "space-frame-real-world-case/v1",
+  "image_id": "end_load",
+  "source": "https://commons.wikimedia.org/wiki/File:Beam_Cantilevered_Load_end.png",
+  "license": "Public domain",
+  "author": "Daniel De Leon Martinez; modified by Natus37",
+  "consent_to_evaluate": true,
+  "subset_labels": [
+    "clear",
+    "missing_dimension"
+  ],
+  "work_plane": {
+    "status": "confirmed",
+    "plane": "XZ",
+    "offset": 0.0,
+    "axis_mapping": {
+      "first_axis": "X",
+      "second_axis": "Z",
+      "offset_axis": "Y",
+      "image_right_sign": 1,
+      "image_up_sign": 1
+    }
+  },
+  "preprocessing": {},
+  "notes": "用户选择许可明确的公开工程图评测。标注灰色梁轴和左端固接；P 与 L 为符号，无实际荷载或长度值。"
+}

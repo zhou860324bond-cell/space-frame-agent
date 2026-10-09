@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-09",
+  "scope": "1 张未用于提示/像素算法调试的混合符号荷载图首次在线试点；样本过少，不证明通用准确率。",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "max_repairs": 0,
+  "request_options": {
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "extra_body": {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  },
+  "prompt_hash": "077f8a9e079434865f7fecfdbf06475be7377e0231c5d51dd67ac69f4fa49a9c",
+  "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+  "pipeline_hash": "4713cb7e89d08530adcb55f8ac5a23cd00736729a5668eb7c4aba8b5193059a0",
+  "annotations_fixed_before_calls": {
+    "various_loads": "793ebc521aa961d56da12302cf9e50d011dadc061cc944c882f8a931468c0152"
+  }
+}

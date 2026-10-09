@@ -1,0 +1,90 @@
+{
+  "image_id": "point_load",
+  "width_px": 433,
+  "height_px": 400,
+  "image_hash": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+  "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+  "annotation_status": "verified",
+  "annotation_method": "人工独立查看原图后标注，在首次接口调用之前固定；未使用识别输出生成真值。",
+  "annotation_notes": "仅标注上方梁轴，在集中荷载作用点分段；排除下方剪力、弯矩图；三角支座按契约铰接，原图未明确区分滑动。",
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.10161662817551963,
+        0.265
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.5057736720554272,
+        0.265
+      ]
+    },
+    {
+      "id": 3,
+      "point": [
+        0.8822170900692841,
+        0.265
+      ]
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2
+    },
+    {
+      "id": 2,
+      "i": 2,
+      "j": 3
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "node": 3,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "loads": [],
+  "intersections": [],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    },
+    {
+      "category": "load_incomplete",
+      "entity_refs": [
+        "node:2"
+      ],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "scale": {
+    "status": "unknown"
+  }
+}
