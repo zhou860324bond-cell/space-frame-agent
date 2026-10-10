@@ -212,3 +212,169 @@ def test_antialiased_support_apex_requires_a_unique_upward_expanding_contour(tmp
     refined = refine_horizontal_axis(draft, path)
     endpoint = refined["image_model"]["nodes"][1]["u"] * 399
     assert abs(endpoint - (335 if symbol == "triangle" else 339)) <= 2
+
+
+
+def _joint_picture(tmp_path, scale=1):
+    """独立绘制三个灰色杆身/节点圆点，不使用公开图坐标调测试图。"""
+    image = Image.new("RGB", (360 * scale, 220 * scale), "white")
+    paint = ImageDraw.Draw(image)
+    points = [(50 * scale, 170 * scale), (180 * scale, 65 * scale), (310 * scale, 170 * scale)]
+    for a, b in ((0, 1), (1, 2), (0, 2)):
+        paint.line((*points[a], *points[b]), fill=(210, 210, 210), width=12 * scale)
+    for x, y in points:
+        paint.ellipse((x-7*scale, y-7*scale, x+7*scale, y+7*scale), fill=(220, 220, 220), outline="black")
+        paint.ellipse((x-2*scale, y-2*scale, x+2*scale, y+2*scale), fill="black")
+    path = tmp_path / "joints.png"
+    image.save(path)
+    w, h = image.size
+    value = _fill_bookkeeping({"image_model": {
+        "nodes": [{"id": i, "u": (x + 5*scale)/(w-1), "v": (y + 8*scale)/(h-1)}
+                  for i, (x, y) in enumerate(points, 1)],
+        "members": [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}, {"id": 3, "i": 1, "j": 3}],
+        "supports": [{"node": 1, "kind": "pinned"}],
+        "load_cases": [{"name": "D", "nodal_loads": [{"node": 2, "name": "P1", "load": [0, -6000, 0, 0, 0, 0]}]}]},
+        "entities": [{"id": "load", "kind": "load", "target": {"load": {"case": "D", "collection": "nodal_loads", "name": "P1"}},
+                      "confidence": .9, "image_geometry": {"point": [.5, .5]}}]}, "a" * 64, str(path))
+    return path, image, value, points
+
+
+@pytest.mark.parametrize("scale", [1, 2])
+def test_joint_dots_and_member_strokes_propose_positions_without_numeric_changes(tmp_path, scale):
+    """多杆图不能跳过位置候选，候选须有圆点/连线证据，荷载大小、单位、拓扑和人工审核边界保持。"""
+    from sketch_axis_refinement import refine_joint_nodes
+    path, image, draft, points = _joint_picture(tmp_path, scale)
+    before = deepcopy(draft)
+    result = refine_joint_nodes(draft, path)
+    assert result is not draft and draft == before
+    w, h = image.size
+    for node, (x, y) in zip(result["image_model"]["nodes"], points, strict=True):
+        assert node["u"] * (w - 1) == pytest.approx(x, abs=.5)
+        assert node["v"] * (h - 1) == pytest.approx(y, abs=.5)
+    for field in ("members", "supports", "load_cases"):
+        assert result["image_model"][field] == before["image_model"][field]
+    assert result["scale"] == before["scale"] and result["dimensions"] == before["dimensions"]
+    load = next(e for e in result["entities"] if e["kind"] == "load")
+    node = result["image_model"]["nodes"][1]
+    assert load["image_geometry"] == {"point": [node["u"], node["v"]]}
+    assert load["original_observation"] == {"image_geometry": {"point": [.5, .5]}, "confidence": .9}
+    assert load["position_refinement"]["original_nodes"] == before["image_model"]["nodes"]
+    assert load["confidence"] is None and not load["verified"]
+    assert result["issues"][-1]["severity"] == "blocking" and result["issues"][-1]["status"] == "open"
+    assert refine_joint_nodes(result, path) is result
+
+
+@pytest.mark.parametrize("protection", ["scale", "verified", "entity", "dimension", "confirmed_dimension", "intersection", "node", "member"])
+def test_joint_candidate_does_not_move_user_or_confirmed_geometry(tmp_path, protection):
+    """像素位置校正不能覆盖已确认尺度、人工对象/尺寸/交点或已审核实体。"""
+    from sketch_axis_refinement import refine_joint_nodes
+    _, _, draft, _ = _joint_picture(tmp_path)
+    if protection == "scale":
+        draft["scale"]["status"] = "confirmed"
+    elif protection == "verified":
+        draft["entities"][0]["verified"] = True
+    elif protection == "entity":
+        draft["entities"][0]["source"] = "user"
+    elif protection in ("dimension", "confirmed_dimension"):
+        draft["dimensions"] = [{"source": "user"}] if protection == "dimension" else [{"status": "confirmed"}]
+    elif protection == "intersection":
+        draft["intersections"] = [{"source": "user"}]
+    else:
+        draft["image_model"]["nodes" if protection == "node" else "members"][0]["source"] = "user"
+    assert refine_joint_nodes(draft, tmp_path / "not-read.png") is draft
+
+
+@pytest.mark.parametrize("ambiguity", ["missing_dot", "no_link", "duplicate_dot", "shared_dot", "far_node", "colour_dot", "thin_link", "line_chain", "tiny_image"])
+def test_joint_ambiguity_keeps_all_original_positions(tmp_path, ambiguity):
+    """缺圆点/杆线、重叠候选、彩色符号、细尺寸线及远点不能部分移动图纸节点或猜连接。"""
+    from sketch_axis_refinement import refine_joint_nodes
+    path, image, draft, points = _joint_picture(tmp_path)
+    paint = ImageDraw.Draw(image)
+    x, y = points[0]
+    if ambiguity in ("missing_dot", "colour_dot"):
+        paint.ellipse((x-2, y-2, x+2, y+2), fill="white" if ambiguity == "missing_dot" else "blue")
+    elif ambiguity == "duplicate_dot":
+        paint.ellipse((x+4, y-13, x+18, y+1), fill=(220, 220, 220))
+        paint.ellipse((x+9, y-8, x+13, y-4), fill="black")
+    elif ambiguity in ("no_link", "thin_link"):
+        paint.rectangle((85, 160, 140, 181), fill="white")
+        if ambiguity == "thin_link":
+            paint.line((85, 170, 140, 170), fill=(210, 210, 210), width=1)
+    elif ambiguity == "shared_dot":
+        draft["image_model"]["nodes"][1].update(u=draft["image_model"]["nodes"][0]["u"], v=draft["image_model"]["nodes"][0]["v"])
+    elif ambiguity == "far_node":
+        draft["image_model"]["nodes"][0]["u"] += .3
+    elif ambiguity == "line_chain":
+        draft["image_model"]["members"].pop()
+    else:
+        image = image.resize((10, 10))
+    image.save(path)
+    original = deepcopy(draft)
+    assert refine_joint_nodes(draft, path) is draft and draft == original
+
+
+@pytest.mark.parametrize("image_id", ["moj_labels", "moj_bridge"])
+def test_frozen_truss_replay_matches_positions_and_preserves_raw_values(image_id):
+    """真实桁架首测位置偏差须由像素证据修正，运行时不读取参考；旧标注/响应及原工程向量不改。"""
+    import json
+    from pathlib import Path
+    from sketch_axis_refinement import refine_joint_nodes
+    from sketch_parser import SketchParser
+    root = Path(__file__).resolve().parents[1] / "multimodal_eval/public_cases/numeric_01"
+    response = json.loads((root / "responses" / f"{image_id}.json").read_text(encoding="utf-8"))
+    draft = _fill_bookkeeping(SketchParser._extract_json(response["raw_responses"][0]), "a"*64, "")
+    original = deepcopy(draft)
+    path = root / "images" / f"{image_id}.png"
+    refined = refine_joint_nodes(draft, path)
+    assert refined is not draft and draft == original
+    truth = json.loads((root / "ground_truth" / f"{image_id}.json").read_text(encoding="utf-8"))
+    from multimodal_contract import match_points
+    predicted = [{"id": n["id"], "point": [n["u"], n["v"]]} for n in refined["image_model"]["nodes"]]
+    matched = match_points(predicted, truth["nodes"], truth["width_px"], truth["height_px"])
+    assert not matched.unmatched_truths and not matched.unmatched_predictions
+    assert refined["image_model"]["load_cases"] == original["image_model"]["load_cases"]
+    for e in refined["entities"]:
+        if e["kind"] in ("node", "member", "support", "load"):
+            assert e["confidence"] is None and not e["verified"]
+
+
+
+@pytest.mark.parametrize("image_id", ["moj_labels", "moj_bridge"])
+def test_parser_joint_refinement_uses_one_frozen_response_without_extra_request(monkeypatch, image_id):
+    """节点位置候选接入真实解析路径，不增加付费请求，结果与直接像素校正保持一致。"""
+    import json
+    from pathlib import Path
+    from multimodal_workflow import MultimodalControllerState, validate_v2_draft
+    from sketch_axis_refinement import refine_joint_nodes
+    from sketch_parser import SketchParser
+    from image_preprocess import work_plane_payload
+    root = Path(__file__).resolve().parents[1] / "multimodal_eval/public_cases/numeric_01"
+    raw = json.loads((root / "responses" / f"{image_id}.json").read_text(encoding="utf-8"))["raw_responses"][0]
+    parser = SketchParser(api_key="offline")
+    calls = []
+    def frozen_response(*args, **kwargs):
+        calls.append(1)
+        return raw
+    monkeypatch.setattr(parser, "_call_llm", frozen_response)
+    state = MultimodalControllerState()
+    state.load_image("a" * 64)
+    path = root / "images" / f"{image_id}.png"
+    result = parser.parse_v2_with_retry(str(path), state, state.start_recognition("offline"),
+                                       max_repairs=0, work_plane=work_plane_payload("XY", confirmed=True))
+    direct = refine_joint_nodes(_fill_bookkeeping(SketchParser._extract_json(raw), "a"*64, str(path)), path)
+    assert result.success and calls == [1] and result.attempts == 1
+    assert validate_v2_draft(result.draft) == []
+    assert result.draft["image_model"] == direct["image_model"]
+    assert any(i["id"] == "pixel-joint-review" and i["status"] == "open" for i in result.draft["issues"])
+
+
+def test_joint_review_appends_without_resolving_existing_issue(tmp_path):
+    """已有同名或全局问题不能被像素候选覆盖或解除，重复回放不能叠加候选历史。"""
+    from sketch_axis_refinement import refine_joint_nodes
+    path, _, draft, _ = _joint_picture(tmp_path)
+    original_issue = {"id": "pixel-joint-review", "category": "load_incomplete", "severity": "blocking", "status": "open"}
+    draft["issues"].append(original_issue)
+    result = refine_joint_nodes(draft, path)
+    assert original_issue in result["issues"]
+    assert result["issues"][-1]["id"] == "pixel-joint-review-new"
+    assert refine_joint_nodes(result, path) is result

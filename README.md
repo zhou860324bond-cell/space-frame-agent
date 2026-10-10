@@ -2,11 +2,12 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **2626 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
+当前回归基线为 **2653 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
 后台线程收尾修复与三平台验收记录见 [工作进度](docs/PROGRESS.md) 和 [PR #25](https://github.com/zhou860324bond-cell/space-frame-agent/pull/25)。
 桌面安装使用已验收的 PySide6 6.11.2；CI 与 `.[desktop]` 共用版本声明。
 多模态新增 [闭合梁轴、小图支座与独立试点实测](multimodal_eval/public_cases/OUTLINE_REPORT.md)：原 5 张开发图本轮几何全匹配，新增独立混合荷载图仍失败。未知位置、符号荷载和尺度必须人工校核，不能据开发图成绩声明通用准确率。
 新增 [真实数值桁架首测与尺度填写](multimodal_eval/public_cases/NUMERIC_REPORT.md)：参考长度不再默认 1 m，尺寸原文可见并保持待核对。两张新许可图首测仍有明显位置误差，完整验收未通过。
+新增 [多杆节点圆点与作用点绑定](multimodal_eval/public_cases/JOINT_NODES_REPORT.md)：清晰圆点和灰色杆线可提出未审核位置候选；两张已知开发图零调用回放几何匹配参考，完整验收仍失败，原在线成绩保留。
 此前增加 [作用节点人工修正、力矩与局部荷载范围](multimodal_eval/public_cases/LOAD_POINTS_REPORT.md)：可在杆件内补作用节点，力矩换算写入正确分量，未知局部范围保持阻断；当轮全图及裁剪的混合图自动识别仍失败。
 
 审核面板新增局部分布荷载的人工范围与强度编辑：明确 SI 单位、显示实际作用区段，

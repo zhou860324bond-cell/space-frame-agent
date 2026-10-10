@@ -589,3 +589,23 @@ def test_new_numeric_first_results_remain_frozen_failed_and_auditable():
     assert report["counts"] == frozen["counts"]
     assert not report["passed"] and report["metrics"]["load_numeric_unit_accuracy"] == 0
     assert frozen["runtime"]["total_calls"] == 2
+
+
+
+def test_joint_node_replay_is_separate_from_failed_online_results():
+    """开发图像素位置改善只能记作绑定源码的零调用回放，原在线失败及参考契约缺口不能重写。"""
+    root = ROOT / "public_cases" / "joint_nodes_01"
+    original = ROOT / "public_cases" / "numeric_01"
+    report = json.loads((root / "report.json").read_text(encoding="utf-8"))
+    snapshot = json.loads((root / report["replay_snapshot"]).read_text(encoding="utf-8"))
+    assert len(snapshot) == 15 and canonical_digest(snapshot) == report["replay_implementation_hash"]
+    assert report["original_online_report_hash"] == file_digest(original / "report.json")
+    assert report["original_ui_review_hash"] == file_digest(original / "ui_review.json")
+    online = json.loads((original / "report.json").read_text(encoding="utf-8"))
+    assert online["metrics"]["node_f1"] == .3 and not online["passed"]
+    assert report["new_api_calls"] == 0 and report["mode"] == "offline-replay"
+    assert not report["passed"] and report["metrics"]["load_f1"] < 1
+    assert report["metrics"]["scale_accuracy"] is None
+    assert len(report["native_ui"]) == 4 and all(x["commit_blocked"] for x in report["native_ui"])
+    old = json.loads((ROOT / "public_cases" / "review_edit_01" / "report.json").read_text(encoding="utf-8"))
+    assert report["legacy_replay_metrics"] == old["metrics"]

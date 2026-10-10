@@ -843,8 +843,9 @@ class SketchParser:
                 errors = validate_v2_draft(payload)
                 if errors:
                     raise ValueError("；".join(errors))
-                from sketch_axis_refinement import refine_horizontal_axis
+                from sketch_axis_refinement import refine_horizontal_axis, refine_joint_nodes
                 payload = refine_horizontal_axis(payload, image_path)
+                payload = refine_joint_nodes(payload, image_path)
                 if review_actions:
                     from PIL import Image, ImageOps
                     from sketch_action_review import ACTION_REVIEW_PROMPT, apply_action_review

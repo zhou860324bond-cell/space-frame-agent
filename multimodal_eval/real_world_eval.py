@@ -381,7 +381,7 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
     """只回放冻结的首次原文；不调用接口，也不改写首次成绩或耗时。"""
     from dimension_constraints import apply_scale_to_draft
     from sketch_topology import detect_topology
-    from sketch_axis_refinement import refine_horizontal_axis
+    from sketch_axis_refinement import refine_horizontal_axis, refine_joint_nodes
 
     root = Path(root)
     evaluate_real_world(root)  # 先验证所有原始证据，禁止回放已被修改的样本。
@@ -410,6 +410,7 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
             draft["source"] = prepared.source_metadata()
             draft["work_plane"] = deepcopy(metadata["work_plane"])
             draft = refine_horizontal_axis(draft, prepared.derived_path)
+            draft = refine_joint_nodes(draft, prepared.derived_path)
             if review_requested:
                 from sketch_action_review import apply_action_review
                 try:
