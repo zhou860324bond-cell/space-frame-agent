@@ -1,0 +1,2024 @@
+{
+  "applied_force_N": [
+    10000.0,
+    2000.0,
+    0.0
+  ],
+  "applied_moment_Nm": [
+    -7000,
+    25000,
+    0
+  ],
+  "results": {
+    "原题五杆": {
+      "node_displacements_m_rad": {
+        "1": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "2": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "4": [
+          0.004107042696689496,
+          -0.00028785675761828995,
+          -5.54789531684486e-06,
+          0.00213040322463301,
+          0.001069374948138091,
+          -0.0013922546095791737
+        ],
+        "5": [
+          0.004112738323718029,
+          0.0014993367321009079,
+          7.328708077728477e-06,
+          -0.0005252759003158981,
+          0.0019023791575737401,
+          -0.0017860166537225419
+        ],
+        "6": [
+          0.009596820612259551,
+          0.0014973422162448127,
+          -1.780812760883617e-06,
+          -0.00043360042632730985,
+          0.008377599045760522,
+          -0.0016836629607207576
+        ],
+        "7": [
+          0.004109890510203763,
+          0.0009115025062801218,
+          -0.0002073606459784706,
+          0.000802563662158556,
+          -0.0007332810738820278,
+          -0.0005458273014639697
+        ],
+        "8": [
+          0.007284570921313891,
+          0.0014983394741728603,
+          -2.0144920838724637e-05,
+          0.0002328869410318429,
+          0.005139989101667131,
+          -0.0032456418127953177
+        ]
+      },
+      "reactions_N_Nm": {
+        "1": [
+          -4697.0017579877485,
+          -2849.0423282366423,
+          4575.172132199821,
+          1750.995128912326,
+          -5248.176368152401,
+          551.9941942367166
+        ],
+        "2": [
+          -3417.7736831538045,
+          2493.8558729923666,
+          -6043.75155754019,
+          443.5472085207375,
+          -4398.29327769518,
+          708.1110142367731
+        ],
+        "3": [
+          -1885.2245588588303,
+          -1644.8135447565696,
+          1468.579425340369,
+          1868.2988118878889,
+          -6203.186089753552,
+          667.5303302821698
+        ]
+      },
+      "force_residual_N": [
+        -3.838067641481757e-10,
+        -8.453753252979368e-10,
+        -2.2737367544323206e-13
+      ],
+      "moment_residual_Nm": [
+        1.6898411558941007e-09,
+        -7.748894859105349e-10,
+        3.54702933691442e-11
+      ],
+      "calls": [
+        {
+          "tool": "set_model",
+          "args": {
+            "model": {
+              "units": "N-m-Pa",
+              "nodes": [
+                {
+                  "id": 1,
+                  "x": 2,
+                  "y": 0,
+                  "z": 0
+                },
+                {
+                  "id": 2,
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                },
+                {
+                  "id": 3,
+                  "x": 0,
+                  "y": 2,
+                  "z": 0
+                },
+                {
+                  "id": 4,
+                  "x": 2,
+                  "y": 0,
+                  "z": 2
+                },
+                {
+                  "id": 5,
+                  "x": 0,
+                  "y": 0,
+                  "z": 2
+                },
+                {
+                  "id": 6,
+                  "x": 0,
+                  "y": 2,
+                  "z": 2
+                }
+              ],
+              "members": [
+                {
+                  "id": 1,
+                  "i": 1,
+                  "j": 4,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 2,
+                  "i": 4,
+                  "j": 5,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 3,
+                  "i": 2,
+                  "j": 5,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 4,
+                  "i": 5,
+                  "j": 6,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 5,
+                  "i": 3,
+                  "j": 6,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                }
+              ],
+              "materials": [
+                {
+                  "name": "题设材料E210GPa",
+                  "E": 210000000000.0,
+                  "nu": 0.3
+                }
+              ],
+              "sections": [
+                {
+                  "name": "实心圆D100",
+                  "A": 0.007853981633974483,
+                  "Iy": 4.9087385212340526e-06,
+                  "Iz": 4.9087385212340526e-06,
+                  "J": 9.817477042468105e-06,
+                  "cy": 0.05,
+                  "cz": 0.05,
+                  "Sz": 8.333333333333336e-05,
+                  "bz": 0.1,
+                  "Sy": 8.333333333333336e-05,
+                  "by": 0.1,
+                  "circular": true
+                }
+              ],
+              "supports": [
+                {
+                  "name": "节点1固定支座",
+                  "node": 1,
+                  "fix": [
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                {
+                  "name": "节点2固定支座",
+                  "node": 2,
+                  "fix": [
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                {
+                  "name": "节点3固定支座",
+                  "node": 3,
+                  "fix": [
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1
+                  ]
+                }
+              ],
+              "load_cases": [
+                {
+                  "name": "图IV6",
+                  "nodal_loads": [
+                    {
+                      "name": "节点4绕正X力矩5kNm",
+                      "node": 4,
+                      "load": [
+                        0,
+                        0,
+                        0,
+                        5000,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "name": "节点6绕正Y力矩5kNm",
+                      "node": 6,
+                      "load": [
+                        0,
+                        0,
+                        0,
+                        0,
+                        5000,
+                        0
+                      ]
+                    }
+                  ],
+                  "member_loads": [
+                    {
+                      "name": "杆件3沿负Y均布4kN每米",
+                      "member": 3,
+                      "w": [
+                        0,
+                        -4000,
+                        0
+                      ]
+                    }
+                  ],
+                  "member_spans": [
+                    {
+                      "name": "杆件2中点沿正Y集中力10kN",
+                      "member": 2,
+                      "kind": "point",
+                      "w1": [
+                        0,
+                        10000,
+                        0
+                      ],
+                      "a": 1
+                    },
+                    {
+                      "name": "杆件4中点沿正X集中力10kN",
+                      "member": 4,
+                      "kind": "point",
+                      "w1": [
+                        10000,
+                        0,
+                        0
+                      ],
+                      "a": 1
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1,
+            "migrated_from": 0
+          }
+        },
+        {
+          "tool": "validate_model",
+          "args": {},
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "args": {},
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 9.71293,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 6.759e-14,
+                "max_deflection_mm": 9.71293,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/102，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 5,
+              "analysis_elements": 7,
+              "generated_nodes": 2,
+              "diagnostics": [
+                "物理构件 2 因集中荷载编译为 2 个分析单元",
+                "物理构件 4 因集中荷载编译为 2 个分析单元"
+              ]
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 9.7129 mm，结构尺寸 3464 mm，占比 0.280%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979827533,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\教材图IV6\\capsules\\20261010_231132_6724a2d6.json",
+            "result_identity": {
+              "solve_id": "169916a9114a4283bf4c5c03eaedbc4b",
+              "model_fingerprint": "4ad6296e8998ec1173d0ed6f25ac36ff",
+              "solved_at": "2026-10-10T15:11:32.847483+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 1,
+            "component": "N",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 1,
+            "component": "N",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": -4.575172,
+            "at_x_m": 0.0,
+            "at_i_end": -4.575172,
+            "at_j_end": -4.575172,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -4.575172,
+              -4.575172,
+              -4.575172
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 1,
+            "component": "Vy",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 1,
+            "component": "Vy",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 4.697002,
+            "at_x_m": 0.0,
+            "at_i_end": 4.697002,
+            "at_j_end": 4.697002,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              4.697002,
+              4.697002,
+              4.697002
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 1,
+            "component": "Vz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 1,
+            "component": "Vz",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 2.849042,
+            "at_x_m": 0.0,
+            "at_i_end": 2.849042,
+            "at_j_end": 2.849042,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              2.849042,
+              2.849042,
+              2.849042
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 1,
+            "component": "T",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 1,
+            "component": "T",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": -0.551994,
+            "at_x_m": 0.0,
+            "at_i_end": -0.551994,
+            "at_j_end": -0.551994,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -0.551994,
+              -0.551994,
+              -0.551994
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 1,
+            "component": "My",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 1,
+            "component": "My",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 3.94709,
+            "at_x_m": 2.0,
+            "at_i_end": -1.750995,
+            "at_j_end": 3.94709,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -1.750995,
+              1.098047,
+              3.94709
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 1,
+            "component": "Mz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 1,
+            "component": "Mz",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 5.248176,
+            "at_x_m": 0.0,
+            "at_i_end": 5.248176,
+            "at_j_end": -4.145827,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              5.248176,
+              0.551175,
+              -4.145827
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 2,
+            "component": "N",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 2,
+            "component": "N",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": -4.697002,
+            "at_x_m": 0.0,
+            "at_i_end": -4.697002,
+            "at_j_end": -4.697002,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              -4.697002,
+              -4.697002,
+              -4.697002,
+              -4.697002,
+              -4.697002,
+              -4.697002
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 2,
+            "component": "Vy",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 2,
+            "component": "Vy",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": -4.575172,
+            "at_x_m": 0.0,
+            "at_i_end": -4.575172,
+            "at_j_end": -4.575172,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              -4.575172,
+              -4.575172,
+              -4.575172,
+              -4.575172,
+              -4.575172,
+              -4.575172
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 2,
+            "component": "Vz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 2,
+            "component": "Vz",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": -7.150958,
+            "at_x_m": 1.0,
+            "at_i_end": 2.849042,
+            "at_j_end": -7.150958,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              2.849042,
+              2.849042,
+              2.849042,
+              -7.150958,
+              -7.150958,
+              -7.150958
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 2,
+            "component": "T",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 2,
+            "component": "T",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 1.05291,
+            "at_x_m": 0.0,
+            "at_i_end": 1.05291,
+            "at_j_end": 1.05291,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              1.05291,
+              1.05291,
+              1.05291,
+              1.05291,
+              1.05291,
+              1.05291
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 2,
+            "component": "My",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 2,
+            "component": "My",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": -4.85391,
+            "at_x_m": 2.0,
+            "at_i_end": -0.551994,
+            "at_j_end": -4.85391,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              -0.551994,
+              0.872527,
+              2.297048,
+              2.297048,
+              -1.278431,
+              -4.85391
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 2,
+            "component": "Mz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 2,
+            "component": "Mz",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 5.004517,
+            "at_x_m": 2.0,
+            "at_i_end": -4.145827,
+            "at_j_end": 5.004517,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              -4.145827,
+              -1.858241,
+              0.429345,
+              0.429345,
+              2.716931,
+              5.004517
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 3,
+            "component": "N",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 3,
+            "component": "N",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 6.043752,
+            "at_x_m": 0.0,
+            "at_i_end": 6.043752,
+            "at_j_end": 6.043752,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              6.043752,
+              6.043752,
+              6.043752
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 3,
+            "component": "Vy",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 3,
+            "component": "Vy",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 3.417774,
+            "at_x_m": 0.0,
+            "at_i_end": 3.417774,
+            "at_j_end": 3.417774,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              3.417774,
+              3.417774,
+              3.417774
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 3,
+            "component": "Vz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 3,
+            "component": "Vz",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 5.506144,
+            "at_x_m": 2.0,
+            "at_i_end": -2.493856,
+            "at_j_end": 5.506144,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -2.493856,
+              1.506144,
+              5.506144
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 3,
+            "component": "T",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 3,
+            "component": "T",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": -0.708111,
+            "at_x_m": 0.0,
+            "at_i_end": -0.708111,
+            "at_j_end": -0.708111,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -0.708111,
+              -0.708111,
+              -0.708111
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 3,
+            "component": "My",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 3,
+            "component": "My",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 2.568741,
+            "at_x_m": 2.0,
+            "at_i_end": -0.443547,
+            "at_j_end": 2.568741,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -0.443547,
+              -0.937403,
+              2.568741
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 3,
+            "component": "Mz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 3,
+            "component": "Mz",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 4.398293,
+            "at_x_m": 0.0,
+            "at_i_end": 4.398293,
+            "at_j_end": -2.437254,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              4.398293,
+              0.98052,
+              -2.437254
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 4,
+            "component": "N",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 4,
+            "component": "N",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": -1.644814,
+            "at_x_m": 0.0,
+            "at_i_end": -1.644814,
+            "at_j_end": -1.644814,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              -1.644814,
+              -1.644814,
+              -1.644814,
+              -1.644814,
+              -1.644814,
+              -1.644814
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 4,
+            "component": "Vy",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 4,
+            "component": "Vy",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 1.468579,
+            "at_x_m": 0.0,
+            "at_i_end": 1.468579,
+            "at_j_end": 1.468579,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              1.468579,
+              1.468579,
+              1.468579,
+              1.468579,
+              1.468579,
+              1.468579
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 4,
+            "component": "Vz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 4,
+            "component": "Vz",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 8.114775,
+            "at_x_m": 0.0,
+            "at_i_end": 8.114775,
+            "at_j_end": -1.885225,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              8.114775,
+              8.114775,
+              8.114775,
+              -1.885225,
+              -1.885225,
+              -1.885225
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 4,
+            "component": "T",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 4,
+            "component": "T",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 2.567263,
+            "at_x_m": 0.0,
+            "at_i_end": 2.567263,
+            "at_j_end": 2.567263,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              2.567263,
+              2.567263,
+              2.567263,
+              2.567263,
+              2.567263,
+              2.567263
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 4,
+            "component": "My",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 4,
+            "component": "My",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": -5.562021,
+            "at_x_m": 0.0,
+            "at_i_end": -5.562021,
+            "at_j_end": 0.66753,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              -5.562021,
+              -1.504633,
+              2.552755,
+              2.552755,
+              1.610143,
+              0.66753
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 4,
+            "component": "Mz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 4,
+            "component": "Mz",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 1.515831,
+            "at_x_m": 0.0,
+            "at_i_end": 1.515831,
+            "at_j_end": -1.421328,
+            "x_m": [
+              0.0,
+              0.5,
+              1.0,
+              1.0,
+              1.5,
+              2.0
+            ],
+            "values": [
+              1.515831,
+              0.781541,
+              0.047251,
+              0.047251,
+              -0.687039,
+              -1.421328
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 5,
+            "component": "N",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 5,
+            "component": "N",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": -1.468579,
+            "at_x_m": 0.0,
+            "at_i_end": -1.468579,
+            "at_j_end": -1.468579,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -1.468579,
+              -1.468579,
+              -1.468579
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 5,
+            "component": "Vy",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 5,
+            "component": "Vy",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 1.885225,
+            "at_x_m": 0.0,
+            "at_i_end": 1.885225,
+            "at_j_end": 1.885225,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              1.885225,
+              1.885225,
+              1.885225
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 5,
+            "component": "Vz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 5,
+            "component": "Vz",
+            "unit": "kN",
+            "length_m": 2.0,
+            "peak": 1.644814,
+            "at_x_m": 0.0,
+            "at_i_end": 1.644814,
+            "at_j_end": 1.644814,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              1.644814,
+              1.644814,
+              1.644814
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 5,
+            "component": "T",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 5,
+            "component": "T",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": -0.66753,
+            "at_x_m": 0.0,
+            "at_i_end": -0.66753,
+            "at_j_end": -0.66753,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -0.66753,
+              -0.66753,
+              -0.66753
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 5,
+            "component": "My",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 5,
+            "component": "My",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": -1.868299,
+            "at_x_m": 0.0,
+            "at_i_end": -1.868299,
+            "at_j_end": 1.421328,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              -1.868299,
+              -0.223485,
+              1.421328
+            ]
+          }
+        },
+        {
+          "tool": "query_diagram",
+          "args": {
+            "member": 5,
+            "component": "Mz",
+            "case": "图IV6",
+            "stations": 3
+          },
+          "ok": true,
+          "payload": {
+            "case": "图IV6",
+            "member": 5,
+            "component": "Mz",
+            "unit": "kN·m",
+            "length_m": 2.0,
+            "peak": 6.203186,
+            "at_x_m": 0.0,
+            "at_i_end": 6.203186,
+            "at_j_end": 2.432737,
+            "x_m": [
+              0.0,
+              1.0,
+              2.0
+            ],
+            "values": [
+              6.203186,
+              4.317962,
+              2.432737
+            ]
+          }
+        }
+      ]
+    },
+    "表格七杆": {
+      "node_displacements_m_rad": {
+        "1": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "2": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "4": [
+          0.004107042696690148,
+          -0.0002878567576182081,
+          -5.547895316845591e-06,
+          0.002130403224632959,
+          0.001069374948138287,
+          -0.0013922546095791594
+        ],
+        "5": [
+          0.004112738323718682,
+          0.0014993367321008892,
+          7.328708077729196e-06,
+          -0.000525275900315898,
+          0.0019023791575739368,
+          -0.0017860166537224254
+        ],
+        "6": [
+          0.00959682061225983,
+          0.001497342216244794,
+          -1.7808127608836028e-06,
+          -0.0004336004263273031,
+          0.008377599045760728,
+          -0.0016836629607205687
+        ],
+        "7": [
+          0.004109890510204416,
+          0.000911502506280179,
+          -0.00020736064597847063,
+          0.0008025636621585303,
+          -0.0007332810738821249,
+          -0.0005458273014639271
+        ],
+        "8": [
+          0.007284570921314375,
+          0.0014983394741728414,
+          -2.014492083872593e-05,
+          0.00023288694103184071,
+          0.005139989101667333,
+          -0.003245641812795113
+        ]
+      },
+      "reactions_N_Nm": {
+        "1": [
+          -4697.001757988453,
+          -2849.04232823669,
+          4575.172132200423,
+          1750.9951289123999,
+          -5248.176368153207,
+          551.9941942367109
+        ],
+        "2": [
+          -3417.77368315451,
+          2493.8558729923952,
+          -6043.751557540782,
+          443.5472085207091,
+          -4398.293277695987,
+          708.111014236727
+        ],
+        "3": [
+          -1885.224558858943,
+          -1644.8135447565514,
+          1468.5794253403571,
+          1868.298811887867,
+          -6203.186089753772,
+          667.530330282095
+        ]
+      },
+      "force_residual_N": [
+        -1.9063008949160576e-09,
+        -8.462848199997097e-10,
+        -2.0463630789890885e-12
+      ],
+      "moment_residual_Nm": [
+        1.6898411558941007e-09,
+        -3.812601789832115e-09,
+        3.9108272176235914e-11
+      ],
+      "calls": [
+        {
+          "tool": "set_model",
+          "args": {
+            "model": {
+              "units": "N-m-Pa",
+              "nodes": [
+                {
+                  "id": 1,
+                  "x": 2,
+                  "y": 0,
+                  "z": 0
+                },
+                {
+                  "id": 2,
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                },
+                {
+                  "id": 3,
+                  "x": 0,
+                  "y": 2,
+                  "z": 0
+                },
+                {
+                  "id": 4,
+                  "x": 2,
+                  "y": 0,
+                  "z": 2
+                },
+                {
+                  "id": 5,
+                  "x": 0,
+                  "y": 0,
+                  "z": 2
+                },
+                {
+                  "id": 6,
+                  "x": 0,
+                  "y": 2,
+                  "z": 2
+                },
+                {
+                  "id": 7,
+                  "x": 1,
+                  "y": 0,
+                  "z": 2
+                },
+                {
+                  "id": 8,
+                  "x": 0,
+                  "y": 1,
+                  "z": 2
+                }
+              ],
+              "members": [
+                {
+                  "id": 1,
+                  "i": 1,
+                  "j": 4,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 2,
+                  "i": 4,
+                  "j": 7,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 3,
+                  "i": 2,
+                  "j": 5,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 4,
+                  "i": 5,
+                  "j": 8,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 5,
+                  "i": 3,
+                  "j": 6,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 6,
+                  "i": 7,
+                  "j": 5,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                },
+                {
+                  "id": 7,
+                  "i": 8,
+                  "j": 6,
+                  "section": "实心圆D100",
+                  "material": "题设材料E210GPa"
+                }
+              ],
+              "materials": [
+                {
+                  "name": "题设材料E210GPa",
+                  "E": 210000000000.0,
+                  "nu": 0.3
+                }
+              ],
+              "sections": [
+                {
+                  "name": "实心圆D100",
+                  "A": 0.007853981633974483,
+                  "Iy": 4.9087385212340526e-06,
+                  "Iz": 4.9087385212340526e-06,
+                  "J": 9.817477042468105e-06,
+                  "cy": 0.05,
+                  "cz": 0.05,
+                  "Sz": 8.333333333333336e-05,
+                  "bz": 0.1,
+                  "Sy": 8.333333333333336e-05,
+                  "by": 0.1,
+                  "circular": true
+                }
+              ],
+              "supports": [
+                {
+                  "name": "节点1固定支座",
+                  "node": 1,
+                  "fix": [
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                {
+                  "name": "节点2固定支座",
+                  "node": 2,
+                  "fix": [
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                {
+                  "name": "节点3固定支座",
+                  "node": 3,
+                  "fix": [
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    1
+                  ]
+                }
+              ],
+              "load_cases": [
+                {
+                  "name": "图IV6",
+                  "nodal_loads": [
+                    {
+                      "name": "节点4绕正X力矩5kNm",
+                      "node": 4,
+                      "load": [
+                        0,
+                        0,
+                        0,
+                        5000,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "name": "节点6绕正Y力矩5kNm",
+                      "node": 6,
+                      "load": [
+                        0,
+                        0,
+                        0,
+                        0,
+                        5000,
+                        0
+                      ]
+                    },
+                    {
+                      "name": "节点7沿正Y集中力10kN",
+                      "node": 7,
+                      "load": [
+                        0,
+                        10000,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "name": "节点8沿正X集中力10kN",
+                      "node": 8,
+                      "load": [
+                        10000,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    }
+                  ],
+                  "member_loads": [
+                    {
+                      "name": "杆件3沿负Y均布4kN每米",
+                      "member": 3,
+                      "w": [
+                        0,
+                        -4000,
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 8,
+              "members": 7,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1,
+            "migrated_from": 0
+          }
+        },
+        {
+          "tool": "validate_model",
+          "args": {},
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 8,
+              "members": 7,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "args": {},
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 9.71293,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 1.525e-13,
+                "max_deflection_mm": 9.71293,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/102，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 7,
+              "analysis_elements": 7,
+              "generated_nodes": 0,
+              "diagnostics": []
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 9.7129 mm，结构尺寸 3464 mm，占比 0.280%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979829694,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\教材图IV6\\capsules\\20261010_231132_074fe76f.json",
+            "result_identity": {
+              "solve_id": "bcde61d7d5b64671afd7c0a345f3ea81",
+              "model_fingerprint": "80fc6fd5b226ba0cdc060528c0e92230",
+              "solved_at": "2026-10-10T15:11:32.889418+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "interpretation": "③号杆单一全长 -Y 均布 4kN/m；两个横杆中点集中力及节点4/6力矩；未加自重。",
+  "verification": "两模型真实求解、原六节点位移和支座反力等价、独立整体外力与力矩平衡通过。",
+  "limitation": "尚未取得教材标准答案；求解通过不表示荷载释图已获得教材答案确认。"
+}
