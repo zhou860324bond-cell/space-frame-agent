@@ -811,6 +811,110 @@ def test_new_numeric_first_results_remain_frozen_failed_and_auditable():
     assert frozen["runtime"]["total_calls"] == 2
 
 
+@pytest.mark.parametrize(("image_id", "node_count", "member_count", "joint_count"),
+                         [("wall_truss", 5, 7, 14), ("tower_truss", 12, 21, 59)])
+def test_holdout_reference_is_complete_and_bound_before_first_call(
+        image_id, node_count, member_count, joint_count):
+    """新独立图样不能重用历史图片、漏共线接头或在首响应后修改参考来提高分数。"""
+    from PIL import Image, ImageOps
+
+    root = ROOT / "public_cases" / "holdout_01"
+    info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    truth_path = root / "ground_truth" / f"{image_id}.json"
+    image_path = root / "images" / f"{image_id}.png"
+    meta_path = root / "metadata" / f"{image_id}.json"
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    response = json.loads((root / "responses" / f"{image_id}.json").read_text(encoding="utf-8"))
+    assert check_reference_topology(truth)["valid"]
+    assert (len(truth["nodes"]), len(truth["members"]), len(truth["intersections"])) == (
+        node_count, member_count, joint_count)
+    assert info["annotations_fixed_before_calls"][image_id] == file_digest(truth_path)
+    assert info["metadata_fixed_before_calls"][image_id] == file_digest(meta_path)
+    assert info["images_fixed_before_calls"][image_id] == file_digest(image_path)
+    with Image.open(image_path) as image:
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        decoded = canonical_digest({"size": list(image.size), "rgb": hashlib.sha256(image.tobytes()).hexdigest()})
+    assert decoded == info["decoded_pixels_fixed_before_calls"][image_id]
+    assert decoded not in {p["pixels"] for p in info["prior_project_images"].values()}
+    assert file_digest(image_path) not in {p["bytes"] for p in info["prior_project_images"].values()}
+    assert meta["consent_to_evaluate"] and meta["license"] == "CC BY-SA 4.0"
+    assert meta["reference_contract"] == truth["topology_reference"]["format"] == REFERENCE_FORMAT
+    assert truth["input_context_hash"] == canonical_digest(input_context(meta))
+    fingerprint = response["request_fingerprint"]
+    assert fingerprint["ground_truth_hash"] == info["annotations_fixed_before_calls"][image_id]
+    for key in ("provider", "model", "prompt_hash", "schema_hash", "pipeline_hash", "request_options"):
+        assert fingerprint[key] == info[key]
+    snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
+    assert len(snapshot) == 8 and canonical_digest(snapshot) == info["pipeline_hash"]
+    assert info["max_repairs"] == 0 and not info["review_actions"]
+    assert len(response["raw_responses"]) == len(response["call_metadata"]) == response["runtime"]["attempts"] == 1
+
+
+def test_holdout_failed_inputs_stay_in_score_and_full_reference_denominator():
+    """截断及重复杆件的首测失败不能被丢弃，也不能把完整参考删除成无可评分项。"""
+    root = ROOT / "public_cases" / "holdout_01"
+    frozen = json.loads((root / "report.json").read_text(encoding="utf-8"))
+    report = evaluate_real_world(root)
+    assert report["metrics"] == frozen["metrics"] and report["counts"] == frozen["counts"]
+    assert report["runtime"]["total_calls"] == report["runtime"]["parse_failures"] == 2
+    assert report["runtime"]["parse_successes"] == 0 and not report["passed"]
+    assert report["reference_contract"]["legacy_cases"] == []
+    assert report["reference_contract"]["checked_cases"] == 2
+    assert report["counts"]["nodes"]["fn"] == 17
+    assert report["counts"]["members"]["fn"] == 28
+    assert report["counts"]["intersections"]["fn"] == 73
+    assert report["metrics"]["intersection_accuracy"] == report["metrics"]["load_numeric_unit_accuracy"] == 0
+    assert report["metrics"]["scale_accuracy"] is None
+
+
+def test_holdout_reference_vectors_use_explicit_original_units_and_angles():
+    """墙面滚动方向、磅力换算及斜荷载竖直夹角不能被预测的错误轴向或默认单位改写。"""
+    import math
+
+    root = ROOT / "public_cases" / "holdout_01" / "ground_truth"
+    wall = json.loads((root / "wall_truss.json").read_text(encoding="utf-8"))
+    tower = json.loads((root / "tower_truss.json").read_text(encoding="utf-8"))
+    assert wall["supports"][1]["fix"] == [True, False, True, False, False, False]
+    assert wall["loads"][0]["load"] == pytest.approx([0, -500*0.45359237*9.80665, 0, 0, 0, 0])
+    for item, force in zip(tower["loads"], (40000, 50000), strict=True):
+        assert item["load"] == pytest.approx([
+            force*math.sin(math.radians(15)), -force*math.cos(math.radians(15)), 0, 0, 0, 0])
+    assert wall["scale"]["status"] == tower["scale"]["status"] == "unknown"
+
+
+def test_holdout_failure_keeps_original_truncation_and_reversed_duplicate_evidence():
+    """冻结原文须保留塔架截断与墙上桁架反向重复杆件，不能用补全或删除覆盖首次失败。"""
+    from sketch_parser import SketchParser
+
+    root = ROOT / "public_cases" / "holdout_01" / "responses"
+    tower = json.loads((root / "tower_truss.json").read_text(encoding="utf-8"))
+    wall = json.loads((root / "wall_truss.json").read_text(encoding="utf-8"))
+    assert tower["outcome"] == wall["outcome"] == "FAIL"
+    assert tower["call_metadata"][0]["finish_reason"] == "length"
+    assert tower["call_metadata"][0]["completion_tokens"] == 4000
+    with pytest.raises(ValueError):
+        SketchParser._extract_json(tower["raw_responses"][0])
+    raw = SketchParser._extract_json(wall["raw_responses"][0])
+    members = {m["id"]: m for m in raw["image_model"]["members"]}
+    assert (members[5]["i"], members[5]["j"]) == (members[6]["j"], members[6]["i"])
+    assert "重复" in wall["errors"][0]
+    assert wall["call_metadata"][0]["finish_reason"] == "stop"
+    assert tower["prediction"]["nodes"] == wall["prediction"]["nodes"] == []
+
+
+def test_holdout_existing_failure_never_triggers_a_second_provider_call(monkeypatch):
+    """再次执行识别只能提示首响应存在或过期，不能自动付费重试挑选新独立成绩。"""
+    root = ROOT / "public_cases" / "holdout_01"
+    original = {p: p.read_bytes() for p in (root / "responses").glob("*.json")}
+    monkeypatch.setattr("sketch_parser.SketchParser.from_env",
+                        lambda *a, **k: pytest.fail("已有首响应不能创建视觉客户端"))
+    result = recognize(root, provider="deepseek", model="deepseek-flash", max_repairs=0)
+    assert len(result["results"]) == 2
+    assert all(item["status"] in {"SKIPPED_EXISTS", "STALE_RESPONSE"} for item in result["results"])
+    assert all(p.read_bytes() == data for p, data in original.items())
+
+
 
 def test_joint_node_replay_is_separate_from_failed_online_results():
     """开发图像素位置改善只能记作绑定源码的零调用回放，原在线失败及参考契约缺口不能重写。"""

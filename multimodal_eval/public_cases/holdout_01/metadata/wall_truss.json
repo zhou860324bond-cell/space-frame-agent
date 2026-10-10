@@ -1,0 +1,34 @@
+{
+  "format": "space-frame-real-world-case/v1",
+  "image_id": "wall_truss",
+  "source": "https://eng.libretexts.org/Bookshelves/Mechanical_Engineering/Mechanics_Map_(Moore_2nd_Edition)/05:_Engineering_Structures/5.04:_Method_of_Joints",
+  "image_url": "https://eng.libretexts.org/@api/deki/files/42251/P2.png?revision=1",
+  "license": "CC BY-SA 4.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "author": "Jacob Moore and Contributors / Mechanics Map",
+  "retrieved_on": "2026-10-10",
+  "license_verified_at": "2026-10-10T06:28:54.555567+00:00",
+  "source_page_modified": "2024-08-18T17:30:10Z",
+  "consent_to_evaluate": true,
+  "reference_contract": "space-frame-reference-topology/v1",
+  "subset_labels": [
+    "clear",
+    "numeric_load",
+    "dimensioned_truss",
+    "project_holdout"
+  ],
+  "work_plane": {
+    "status": "confirmed",
+    "plane": "XZ",
+    "offset": 0.0,
+    "axis_mapping": {
+      "first_axis": "X",
+      "second_axis": "Z",
+      "offset_axis": "Y",
+      "image_right_sign": 1,
+      "image_up_sign": 1
+    }
+  },
+  "preprocessing": {},
+  "notes": "用户授权明确许可的公开工程图评测；保存原PNG，不裁剪/旋转/改绘。仅本项目此前未使用，不保证模型训练数据未见过；同作者同画风两图不代表广泛泛化。"
+}
