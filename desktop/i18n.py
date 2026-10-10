@@ -25,6 +25,9 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "工况与荷载名称": "Review case and load names",
+    "修改工况名称": "Rename load case", "修改荷载名称": "Rename load",
+    "整段均布荷载": "Full member uniform load", "跨间荷载": "Member span load",
     "图中尺寸（待核对）": "Observed dimensions (review required)",
     "填写原图实际长度": "Enter actual length from drawing",
     "作用点复核": "Review action points",

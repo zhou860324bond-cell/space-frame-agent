@@ -6,7 +6,8 @@ import pytest
 
 from model_io import from_dict, validate_payload
 from sketch_load_edit import (member_length, refresh_partial_geometry,
-                              remove_partial_load, set_partial_load)
+                              remove_partial_load, rename_load, rename_load_case, set_partial_load,
+                              LOAD_COLLECTIONS)
 from sketch_parser import _fill_bookkeeping
 from sketch_topology import materialize_geometry
 
@@ -21,6 +22,115 @@ def beam_draft():
     draft["work_plane"].update(status="confirmed", plane="XY")
     draft["scale"].update(status="confirmed", length_per_pixel=0.1, anchor_node=1)
     return draft
+
+
+def named_load_draft():
+    draft = beam_draft()
+    case = draft["image_model"]["load_cases"][0]
+    for group in LOAD_COLLECTIONS:
+        load = {"name": "F", "node": 2, "load": [0, -6000, 0, 0, 0, 0]}
+        if group in {"member_loads", "member_spans"}:
+            load = {"name": "F", "member": 7, "w": [0, -1000, 0]}
+        case[group] = [load]
+        target = {"case": "D", "collection": group, "name": "F"}
+        draft["entities"].append({"id": group, "kind": "load", "target": {"load": target},
+            "payload": deepcopy(load), "verified": False, "source": "vision", "confidence": .7,
+            "image_geometry": {"point": [.9, .5]}, "original_observation": {"target": deepcopy(target)}})
+        draft["issues"].append({"id": group, "category": "load_incomplete", "status": "open",
+            "severity": "blocking", "entity_refs": [f"load:D:{group}:F", "node:2"],
+            "load_target": deepcopy(target), "observations": [deepcopy(load)]})
+    draft["image_model"]["load_cases"][1]["nodal_loads"] = [{"name": "F", "node": 1, "load": [0] * 6}]
+    draft["confirmation"] = {"confirmed": True}
+    draft["model"] = {"old": True}
+    draft["merge_plan"] = {"old": True}
+    return draft
+
+
+@pytest.mark.parametrize("collection", LOAD_COLLECTIONS)
+def test_rename_load_preserves_values_and_exact_review_binding(collection):
+    """工况 F/P1 命名差异需人工改名，不能新增另一荷载、改变数值或解除原问题。"""
+    draft = named_load_draft()
+    original = deepcopy(draft)
+    updated = rename_load(draft, "D", collection, "F", " P1 ")
+    assert draft == original
+    case = updated["image_model"]["load_cases"][0]
+    expected = deepcopy(original["image_model"]["load_cases"][0][collection])
+    expected[0]["name"] = "P1"
+    assert case[collection] == expected
+    for group in LOAD_COLLECTIONS:
+        if group != collection:
+            assert case[group] == original["image_model"]["load_cases"][0][group]
+    assert updated["image_model"]["load_cases"][1] == original["image_model"]["load_cases"][1]
+    entity = next(e for e in updated["entities"] if e["id"] == collection)
+    prior = next(e for e in original["entities"] if e["id"] == collection)
+    assert entity["target"]["load"]["name"] == entity["payload"]["name"] == "P1"
+    for key in ("verified", "source", "confidence", "image_geometry", "original_observation"):
+        assert entity[key] == prior[key]
+    issue = next(i for i in updated["issues"] if i["id"] == collection)
+    assert issue["entity_refs"] == [f"load:D:{collection}:P1", "node:2"]
+    assert issue["load_target"]["name"] == "P1" and issue["status"] == "open"
+    assert issue["observations"][0]["name"] == "F"
+    assert updated["model"] is updated["merge_plan"] is updated["confirmation"] is None
+    assert updated["edit_history"][-1]["old_name"] == "F"
+
+
+def test_rename_case_updates_all_targets_but_leaves_raw_and_history_intact():
+    """工况改名不能令整段、跨间荷载或支座位移的审核引用失效，也不能重写历史观察。"""
+    draft = named_load_draft()
+    draft["edit_history"] = [{"action": "old", "target": {"case": "D"}}]
+    updated = rename_load_case(draft, "D", "Live")
+    assert updated["image_model"]["load_cases"][0] == {**draft["image_model"]["load_cases"][0], "name": "Live"}
+    for group in LOAD_COLLECTIONS:
+        entity = next(e for e in updated["entities"] if e["id"] == group)
+        assert entity["target"]["load"]["case"] == "Live"
+        assert entity["original_observation"]["target"]["case"] == "D"
+        issue = next(i for i in updated["issues"] if i["id"] == group)
+        assert issue["load_target"]["case"] == "Live" and issue["status"] == "open"
+        assert issue["entity_refs"] == [f"load:Live:{group}:F", "node:2"]
+    assert updated["edit_history"][0] == draft["edit_history"][0]
+    assert updated["scale"] == draft["scale"]
+    assert updated["confirmation"] is None
+
+
+@pytest.mark.parametrize("name", ["", " ", "Bad:Name", "Bad\nName", None])
+@pytest.mark.parametrize("kind", ["case", "load"])
+def test_rename_rejects_blank_and_reference_delimiters_without_mutation(name, kind):
+    """空名与引用分隔符不能破坏引用解析，失败改名必须保留原草稿和导入确认。"""
+    draft = named_load_draft()
+    original = deepcopy(draft)
+    with pytest.raises(ValueError, match="名称"):
+        if kind == "case":
+            rename_load_case(draft, "D", name)
+        else:
+            rename_load(draft, "D", "nodal_loads", "F", name)
+    assert draft == original
+
+
+@pytest.mark.parametrize("problem", ["duplicate_case", "missing_case", "duplicate_load", "missing_load", "collision", "bad_collection"])
+def test_rename_ambiguity_never_merges_or_deletes_objects(problem):
+    """名称冲突或重复原条目时必须拒绝，不能合并两条荷载或猜测用户指向。"""
+    draft = named_load_draft()
+    loads = draft["image_model"]["load_cases"][0]["nodal_loads"]
+    if problem == "duplicate_load":
+        loads.append(deepcopy(loads[0]))
+    if problem == "collision":
+        loads.append({"name": "P1", "node": 1, "load": [0] * 6})
+    original = deepcopy(draft)
+    with pytest.raises(ValueError):
+        if problem == "duplicate_case":
+            rename_load_case(draft, "D", "W")
+        else:
+            rename_load(draft, "X" if problem == "missing_case" else "D",
+                        "wrong" if problem == "bad_collection" else "nodal_loads",
+                        "X" if problem == "missing_load" else "F", "P1")
+    assert draft == original
+
+
+def test_rename_noop_does_not_invalidate_confirmation_or_duplicate_history():
+    """重复应用相同名称不应产生假编辑或清除已经完成的导入确认。"""
+    draft = named_load_draft()
+    assert rename_load_case(draft, "D", " D ") == draft
+    assert rename_load(draft, "D", "nodal_loads", "F", "F") == draft
 
 
 def test_partial_load_reaches_solver_with_exact_si_range_and_intensity():

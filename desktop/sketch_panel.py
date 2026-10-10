@@ -311,6 +311,7 @@ class SketchPanel(QWidget):
         self.cmb_load_name = QComboBox()
         self.cmb_load_name.setEditable(True)
         self.cmb_load_name.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cmb_load_name.setToolTip("这里填写新荷载或更新同名荷载；修改已有名称请使用工况与荷载名称。")
         self.cmb_load_name.currentTextChanged.connect(self._fill_load_values)
         boundary_layout.addWidget(QLabel("节点荷载"), 3, 0)
         boundary_layout.addWidget(self.cmb_load_node, 3, 1)
@@ -347,6 +348,41 @@ class SketchPanel(QWidget):
                 else f"支座与节点荷载 {glyphs.DISCLOSE_CLOSED}"))
         layout.addWidget(self.boundary_widget)
 
+        self.btn_names = QPushButton(f"工况与荷载名称 {glyphs.DISCLOSE_CLOSED}")
+        self.btn_names.setCheckable(True)
+        self.btn_names.setVisible(False)
+        layout.addWidget(self.btn_names)
+        self.names_widget = QWidget(self)
+        names_grid = QGridLayout(self.names_widget)
+        names_grid.setContentsMargins(0, 0, 0, 0)
+        self.cmb_name_case = QComboBox()
+        self.cmb_name_case.currentTextChanged.connect(self._refresh_name_loads)
+        self.txt_case_rename = QLineEdit()
+        self.txt_case_rename.setPlaceholderText("新的工况名称")
+        self.btn_rename_case = QPushButton("修改工况名称")
+        self.btn_rename_case.clicked.connect(self._rename_case_edit)
+        names_grid.addWidget(self.cmb_name_case, 0, 0, 1, 3)
+        names_grid.addWidget(self.txt_case_rename, 1, 0, 1, 2)
+        names_grid.addWidget(self.btn_rename_case, 1, 2)
+        self.cmb_name_load = QComboBox()
+        self.cmb_name_load.currentIndexChanged.connect(lambda _: self.txt_load_rename.clear())
+        self.txt_load_rename = QLineEdit()
+        self.txt_load_rename.setPlaceholderText("新的荷载名称")
+        self.btn_rename_load = QPushButton("修改荷载名称")
+        self.btn_rename_load.clicked.connect(self._rename_load_edit)
+        names_grid.addWidget(self.cmb_name_load, 2, 0, 1, 3)
+        names_grid.addWidget(self.txt_load_rename, 3, 0, 1, 2)
+        names_grid.addWidget(self.btn_rename_load, 3, 2)
+        names_hint = QLabel("先选择原工况和荷载，再填写新名称；仅修改名称，数值、作用点和待核对问题仍需分别审核。")
+        names_hint.setWordWrap(True)
+        names_grid.addWidget(names_hint, 4, 0, 1, 3)
+        self.names_widget.setVisible(False)
+        self.btn_names.toggled.connect(self.names_widget.setVisible)
+        self.btn_names.toggled.connect(lambda checked: self.btn_names.setText(
+            f"工况与荷载名称 {glyphs.DISCLOSE_OPEN}" if checked
+            else f"工况与荷载名称 {glyphs.DISCLOSE_CLOSED}"))
+        layout.addWidget(self.names_widget)
+
         self.btn_partial_loads = QPushButton(f"局部分布荷载 {glyphs.DISCLOSE_CLOSED}")
         self.btn_partial_loads.setCheckable(True)
         self.btn_partial_loads.setVisible(False)
@@ -361,6 +397,7 @@ class SketchPanel(QWidget):
         self.cmb_span_name = QComboBox()
         self.cmb_span_name.setEditable(True)
         self.cmb_span_name.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cmb_span_name.setToolTip("这里填写新荷载或更新同名荷载；修改已有名称请使用工况与荷载名称。")
         self.cmb_span_name.currentTextChanged.connect(self._fill_span_values)
         self.cmb_span_kind = QComboBox()
         self.cmb_span_kind.addItem("局部均布", "partial")
@@ -1327,6 +1364,7 @@ class SketchPanel(QWidget):
         self._refresh_partial_controls()
 
     def _refresh_partial_controls(self):
+        self._refresh_name_controls()
         active = self._v2_draft is not None
         self.btn_partial_loads.setVisible(active)
         if not active:
@@ -1350,6 +1388,93 @@ class SketchPanel(QWidget):
             combo.blockSignals(False)
         self._refresh_span_names()
         self._update_span_length()
+
+    def _refresh_name_controls(self):
+        active = self._v2_draft is not None
+        self.btn_names.setVisible(active)
+        if not active:
+            self.btn_names.setChecked(False)
+            self.names_widget.hide()
+        current = self.cmb_name_case.currentText()
+        self.cmb_name_case.blockSignals(True)
+        self.cmb_name_case.clear()
+        for case in (self._v2_draft or {}).get("image_model", {}).get("load_cases") or []:
+            self.cmb_name_case.addItem(case["name"])
+        if self.cmb_name_case.findText(current) >= 0:
+            self.cmb_name_case.setCurrentText(current)
+        self.cmb_name_case.blockSignals(False)
+        self._refresh_name_loads()
+
+    def _refresh_name_loads(self, *_):
+        from sketch_load_edit import LOAD_COLLECTIONS
+        self.txt_case_rename.clear()
+        self.txt_load_rename.clear()
+        current = self.cmb_name_load.currentData()
+        self.cmb_name_load.blockSignals(True)
+        self.cmb_name_load.clear()
+        model = (self._v2_draft or {}).get("image_model") or {}
+        case = next((c for c in model.get("load_cases") or []
+                     if c.get("name") == self.cmb_name_case.currentText()), {})
+        labels = ("节点荷载", "整段均布荷载", "跨间荷载", "支座位移")
+        for collection, label in zip(LOAD_COLLECTIONS, labels, strict=True):
+            for load in case.get(collection) or []:
+                at = f"节点 {load.get('node')}" if "node" in load else f"杆件 {load.get('member')}"
+                self.cmb_name_load.addItem(f"{load.get('name')} · {label} · {at}",
+                                          {"collection": collection, "name": load.get("name")})
+        index = self.cmb_name_load.findData(current)
+        if index >= 0:
+            self.cmb_name_load.setCurrentIndex(index)
+        self.cmb_name_load.blockSignals(False)
+        self.btn_rename_case.setEnabled(bool(case))
+        self.btn_rename_load.setEnabled(self.cmb_name_load.count() > 0)
+
+    def _rename_case_edit(self):
+        if self._v2_draft is None:
+            return
+        from sketch_load_edit import rename_load_case
+        old, new = self.cmb_name_case.currentText(), self.txt_case_rename.text().strip()
+        try:
+            draft = rename_load_case(self._v2_draft, old, new)
+        except ValueError as exc:
+            self._show_edit_error("名称修改失败", exc)
+            return
+        if new == old:
+            return
+        boundary_selected = self.cmb_load_case.currentText() == old
+        span_selected = self.cmb_span_case.currentText() == old
+        selected_load = self.cmb_name_load.currentData()
+        nodal_name, span_name = self.cmb_load_name.currentText(), self.cmb_span_name.currentText()
+        self._apply_v2_edit(draft, f"已修改工况名称：{old} → {new}")
+        self.cmb_name_case.setCurrentText(new)
+        self.cmb_name_load.setCurrentIndex(self.cmb_name_load.findData(selected_load))
+        if boundary_selected:
+            self.cmb_load_case.setCurrentText(new)
+            self.cmb_load_name.setCurrentText(nodal_name)
+        if span_selected:
+            self.cmb_span_case.setCurrentText(new)
+            if self.cmb_span_name.findText(span_name) >= 0:
+                self.cmb_span_name.setCurrentText(span_name)
+
+    def _rename_load_edit(self):
+        target = self.cmb_name_load.currentData()
+        if self._v2_draft is None or not target:
+            return
+        from sketch_load_edit import rename_load
+        case, new = self.cmb_name_case.currentText(), self.txt_load_rename.text().strip()
+        try:
+            draft = rename_load(self._v2_draft, case, target["collection"], target["name"], new)
+        except ValueError as exc:
+            self._show_edit_error("名称修改失败", exc)
+            return
+        if new == target["name"]:
+            return
+        self._apply_v2_edit(draft, f"已修改荷载名称：{target['name']} → {new}")
+        self.cmb_name_load.setCurrentIndex(self.cmb_name_load.findData({**target, "name": new}))
+        if target["collection"] == "nodal_loads" and self.cmb_load_case.currentText() == case:
+            self.cmb_load_name.setCurrentText(new)
+        if (target["collection"] == "member_spans" and self.cmb_span_case.currentText() == case
+                and self.cmb_span_name.findText(new) >= 0):
+            self.cmb_span_name.setCurrentText(new)
 
     def _selected_span(self):
         model = (self._v2_draft or {}).get("image_model") or {}

@@ -140,6 +140,94 @@ def missing_nodal_panel(qt_app):
     return panel
 
 
+def test_name_review_renames_placeholder_then_resolves_only_its_new_binding(qt_app):
+    """无值 F 改名为 P1 后仍须填写，后续应用只能处理该条更新后的引用而非另一占位。"""
+    panel = missing_nodal_panel(qt_app)
+    assert panel.names_widget.isHidden()
+    panel.btn_names.setChecked(True)
+    panel.txt_load_rename.setText("P1")
+    panel.btn_rename_load.click()
+    case = panel._v2_draft["image_model"]["load_cases"][0]
+    assert [i["name"] for i in case["nodal_loads"]] == ["P1", "G"]
+    assert panel.cmb_load_name.currentText() == "P1"
+    assert all(not s.cleanText().strip() for s in panel.load_spins)
+    assert all(i["status"] == "open" for i in panel._v2_draft["issues"])
+    assert not panel.btn_load.isEnabled()
+    for spin, value in zip(panel.load_spins, [0, -6000, 0, 0, 0, 0], strict=True):
+        spin.lineEdit().selectAll()
+        QTest.keyClicks(spin.lineEdit(), str(value))
+    panel.btn_apply_load.click()
+    issues = {i["id"]: i for i in panel._v2_draft["issues"]}
+    assert issues["missing-0"]["status"] == "resolved"
+    assert issues["missing-1"]["status"] == issues["global"]["status"] == "open"
+    history = panel._v2_draft["edit_history"]
+    assert history[0]["old_name"] == "F" and history[0]["new_name"] == "P1"
+    assert history[-1]["previous"]["entities"][0]["target"]["load"]["name"] == "P1"
+
+
+def test_case_rename_keeps_other_editors_on_same_case_and_clears_pending_name(qt_app):
+    """工况改名后节点/局部荷载编辑器不能跳到另一工况；切换工况不能复用未提交名称。"""
+    panel = missing_nodal_panel(qt_app)
+    from copy import deepcopy
+    draft = deepcopy(panel._v2_draft)
+    draft["image_model"]["load_cases"].reverse()
+    panel.set_v2_draft(draft)
+    for combo in (panel.cmb_name_case, panel.cmb_load_case, panel.cmb_span_case):
+        combo.setCurrentText("D")
+    panel.cmb_name_load.setCurrentIndex(1)
+    panel.cmb_load_name.setCurrentText("G")
+    panel.txt_case_rename.setText("Live")
+    panel.btn_rename_case.click()
+    assert panel.cmb_name_case.currentText() == panel.cmb_load_case.currentText() == panel.cmb_span_case.currentText() == "Live"
+    assert [c["name"] for c in panel._v2_draft["image_model"]["load_cases"]] == ["W", "Live"]
+    assert panel.cmb_load_name.currentText() == panel.cmb_name_load.currentData()["name"] == "G"
+    assert panel.txt_case_rename.text() == panel.txt_load_rename.text() == ""
+    assert panel._v2_draft["issues"][0]["load_target"]["case"] == "Live"
+    panel.txt_load_rename.setText("Unsubmitted")
+    panel.cmb_name_case.setCurrentText("W")
+    assert panel.txt_load_rename.text() == "" and not panel.btn_rename_load.isEnabled()
+
+
+def test_name_review_collision_preserves_draft_and_shows_next_step(qt_app):
+    """F 改成已有 G 不得覆盖另一荷载，必须解释重名并让用户换名。"""
+    from copy import deepcopy
+    panel = missing_nodal_panel(qt_app)
+    old = deepcopy(panel._v2_draft)
+    panel.txt_load_rename.setText("G")
+    panel.btn_rename_load.click()
+    assert panel._v2_draft == old
+    assert "请使用不同名称" in panel.lbl_status.text()
+
+
+def test_partial_rename_keeps_manual_geometry_and_selects_new_entry(qt_app):
+    """局部荷载改名不能删除人工范围、跳到新建零值项或自动确认其他问题。"""
+    from sketch_load_edit import set_partial_load
+    panel = partial_panel(qt_app)
+    panel.set_v2_draft(set_partial_load(panel._v2_draft, "D", "q", 7, 1, 3, [0, -1000, 0]))
+    entity = next(e for e in panel._v2_draft["entities"] if e.get("kind") == "load")
+    geometry = entity["image_geometry"]
+    panel.txt_load_rename.setText("q-live")
+    panel.btn_rename_load.click()
+    assert panel.cmb_span_name.currentText() == "q-live"
+    assert panel.span_a.value() == 1 and panel.span_b.value() == 3
+    updated = next(e for e in panel._v2_draft["entities"] if e.get("kind") == "load")
+    assert updated["image_geometry"] == geometry and updated["verified"]
+    assert panel._v2_draft["confirmation"] is None
+
+
+def test_name_review_is_hidden_when_v2_is_cleared(qt_app):
+    """换图清除 v2 草稿后不能留下可改旧图名称的入口或旧名称输入。"""
+    panel = missing_nodal_panel(qt_app)
+    panel.btn_names.setChecked(True)
+    panel.txt_case_rename.setText("Pending")
+    panel._v2_draft = None
+    panel._refresh_partial_controls()
+    assert panel.btn_names.isHidden() and panel.names_widget.isHidden()
+    assert panel.cmb_name_case.count() == panel.cmb_name_load.count() == 0
+    assert panel.txt_case_rename.text() == ""
+    assert not panel.btn_rename_case.isEnabled() and not panel.btn_rename_load.isEnabled()
+
+
 def test_nodal_placeholder_stays_blank_and_cannot_apply_after_qt_fixup(qt_app):
     """真实无数值占位不能显示六个零，Qt 失焦自动显示零也不能被应用为工程荷载。"""
     from copy import deepcopy

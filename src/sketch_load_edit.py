@@ -1,4 +1,4 @@
-"""识别草稿中局部分布荷载的人工编辑与几何校核。"""
+"""识别草稿中荷载名称、局部分布荷载的人工编辑与几何校核。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,85 @@ from sketch_topology import materialize_geometry
 
 
 PARTIAL_KINDS = {"partial", "partial_trapezoid"}
+LOAD_COLLECTIONS = ("nodal_loads", "member_loads", "member_spans", "settlements")
+
+
+def rename_load(draft: Mapping[str, Any], case_name: str, collection: str,
+                old_name: str, new_name: str) -> dict:
+    """名称审核只改唯一对象及活动引用，不确认数值，也不重写原观察。"""
+    return _rename(draft, case_name, new_name, collection=collection, old_name=old_name)
+
+
+def rename_load_case(draft: Mapping[str, Any], case_name: str, new_name: str) -> dict:
+    """工况改名保留全部荷载与证据，并使旧装配和导入确认失效。"""
+    return _rename(draft, case_name, new_name)
+
+
+def _rename(draft, case_name, new_name, *, collection=None, old_name=None):
+    if not isinstance(new_name, str) or not new_name.strip():
+        raise ValueError("名称不能为空，请填写新的名称。")
+    new_name = new_name.strip()
+    # 引用以冒号分隔，名称不能引入无法精确解析的分隔符或换行。
+    if ":" in new_name or any(ord(c) < 32 for c in new_name):
+        raise ValueError("名称不能包含冒号或控制字符，请使用文字、数字或连字符。")
+    updated = deepcopy(dict(draft))
+    case = _case(updated, case_name)
+    if collection is None:
+        if new_name != case_name and any(c.get("name") == new_name for c in updated["image_model"]["load_cases"]):
+            raise ValueError("工况名称已存在，请使用不同名称。")
+    else:
+        if collection not in LOAD_COLLECTIONS:
+            raise ValueError("荷载类型无效，请重新选择原荷载。")
+        matches = [s for s in case.get(collection) or [] if s.get("name") == old_name]
+        if len(matches) != 1:
+            raise ValueError("原荷载不存在或名称重复，请重新选择唯一荷载。")
+        if new_name != old_name and any(s.get("name") == new_name for s in case.get(collection) or []):
+            raise ValueError("同类型荷载名称已存在，请使用不同名称。")
+    if new_name == (case_name if collection is None else old_name):
+        return updated
+    targets = {}
+    for group in LOAD_COLLECTIONS:
+        for load in case.get(group) or []:
+            if collection is not None and (group != collection or load.get("name") != old_name):
+                continue
+            old = {"case": case_name, "collection": group, "name": load.get("name")}
+            new = {**old, "case": new_name} if collection is None else {**old, "name": new_name}
+            targets[(old["case"], group, old["name"])] = new
+            if collection is not None:
+                load["name"] = new_name
+    if collection is None:
+        case["name"] = new_name
+
+    def replace_target(target):
+        if not isinstance(target, dict):
+            return target
+        key = (target.get("case"), target.get("collection"), target.get("name"))
+        replacement = targets.get(key)
+        return {**target, **replacement} if replacement else target
+
+    refs = {f"load:{c}:{g}:{n}": f"load:{t['case']}:{t['collection']}:{t['name']}"
+            for (c, g, n), t in targets.items()}
+    for entity in updated.get("entities") or []:
+        target = (entity.get("target") or {}).get("load")
+        replacement = replace_target(target)
+        if replacement != target:
+            entity["target"]["load"] = replacement
+            if (collection is not None and isinstance(entity.get("payload"), dict)
+                    and entity["payload"].get("name") == old_name):
+                entity["payload"]["name"] = new_name
+    for issue in updated.get("issues") or []:
+        if "entity_refs" in issue:
+            issue["entity_refs"] = [refs.get(ref, ref) for ref in issue["entity_refs"] or []]
+        if "load_target" in issue:
+            issue["load_target"] = replace_target(issue["load_target"])
+    updated.setdefault("edit_history", []).append({
+        "action": "rename_load_case" if collection is None else "rename_load",
+        "source": "user", "case": case_name, "collection": collection,
+        "old_name": case_name if collection is None else old_name, "new_name": new_name,
+        "reference_changes": refs,
+    })
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
+    return updated
 
 
 def _finite(value: Any) -> bool:
