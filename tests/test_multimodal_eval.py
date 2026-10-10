@@ -550,3 +550,42 @@ def test_v2_draft_converts_to_metric_prediction_without_model_coordinates():
     assert prediction["members"] == [{"id": 1, "i": 1, "j": 2}]
     assert prediction["loads"][0]["case"] == "DL"
     assert prediction["loads"][0]["collection"] == "nodal_loads"
+
+
+@pytest.mark.parametrize("image_id", ["moj_labels", "moj_bridge"])
+def test_new_numeric_public_case_is_bound_before_single_call(image_id):
+    """新数值图首测不能换图、改真值或重复付费挑结果，授权与输入须独立哈希绑定。"""
+    root = ROOT / "public_cases" / "numeric_01"
+    info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    truth_path = root / "ground_truth" / f"{image_id}.json"
+    image_path = root / "images" / f"{image_id}.png"
+    meta = json.loads((root / "metadata" / f"{image_id}.json").read_text(encoding="utf-8"))
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    response = json.loads((root / "responses" / f"{image_id}.json").read_text(encoding="utf-8"))
+    assert info["annotations_fixed_before_calls"][image_id] == file_digest(truth_path)
+    assert info["images_fixed_before_calls"][image_id] == file_digest(image_path)
+    assert truth["input_context_hash"] == canonical_digest(input_context(meta))
+    assert meta["consent_to_evaluate"] and meta["license"] == "CC BY-SA 4.0"
+    assert meta["author"] and meta["image_url"] and meta["license_url"]
+    assert len(response["raw_responses"]) == response["runtime"]["attempts"] == 1
+    assert info["max_repairs"] == 0 and not info["review_actions"]
+    assert response["request_fingerprint"]["pipeline_hash"] == info["pipeline_hash"]
+    assert response["request_fingerprint"]["prompt_hash"] == info["prompt_hash"]
+    snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
+    assert canonical_digest(snapshot) == info["pipeline_hash"]
+    assert truth["dimension_observations"] and truth["scale"]["status"] == "unknown"
+    assert response["prediction"]["scale"]["status"] == "unknown"
+    assert all("load" in item for item in response["prediction"]["loads"])
+    assert len(response["prediction"]["loads"]) == len(truth["loads"])
+
+
+def test_new_numeric_first_results_remain_frozen_failed_and_auditable():
+    """节点错位导致真实荷载首测失败时不能改标注/容差，也不能把换算成功报告为完整识别成功。"""
+    root = ROOT / "public_cases" / "numeric_01"
+    assert audit_dataset(root)["ready_count"] == 2
+    frozen = json.loads((root / "report.json").read_text(encoding="utf-8"))
+    report = evaluate_real_world(root)
+    assert report["metrics"] == frozen["metrics"]
+    assert report["counts"] == frozen["counts"]
+    assert not report["passed"] and report["metrics"]["load_numeric_unit_accuracy"] == 0
+    assert frozen["runtime"]["total_calls"] == 2

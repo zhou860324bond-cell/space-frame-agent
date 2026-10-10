@@ -460,10 +460,20 @@ class SketchPanel(QWidget):
         scale_row.setContentsMargins(0, 0, 0, 0)
         self.cmb_reference_member = QComboBox()
         self.spn_reference_length = QDoubleSpinBox()
-        self.spn_reference_length.setRange(0.001, 1_000_000.0)
+        self.spn_reference_length.setRange(0.0, 1_000_000.0)
         self.spn_reference_length.setDecimals(4)
-        self.spn_reference_length.setValue(1.0)
+        self.spn_reference_length.setSpecialValueText(" ")
         self.spn_reference_length.setSuffix(" m")
+        self.spn_reference_length.valueChanged.connect(
+            lambda value: setattr(self, "_reference_length_missing", value <= 0))
+        self.spn_reference_length.lineEdit().textEdited.connect(
+            lambda _: setattr(self, "_reference_length_missing",
+                              not self.spn_reference_length.cleanText().strip()
+                              or not self.spn_reference_length.hasAcceptableInput()))
+        self.spn_reference_length.lineEdit().setPlaceholderText("填写原图实际长度")
+        self.spn_reference_length.setToolTip("核对原图尺寸和所选杆件后填写实际长度；未填写时不能应用尺度。")
+        self.cmb_reference_member.currentIndexChanged.connect(self._clear_reference_length)
+        self._clear_reference_length()
         self.btn_scale = QPushButton("应用尺度")
         self.btn_scale.clicked.connect(self._apply_scale)
         scale_row.addWidget(QLabel("参考杆件"))
@@ -473,6 +483,13 @@ class SketchPanel(QWidget):
         scale_row.addWidget(self.btn_scale)
         self.scale_widget.setVisible(False)
         layout.addWidget(self.scale_widget)
+        self.txt_dimension_observations = QPlainTextEdit()
+        self.txt_dimension_observations.setReadOnly(True)
+        self.txt_dimension_observations.setMaximumHeight(95)
+        self.txt_dimension_observations.setPlaceholderText("图中尺寸（待核对）")
+        self.txt_dimension_observations.setToolTip("原始尺寸观察，尚未绑定并确认实际长度；请在原图核对，不能自动确定比例尺。")
+        self.txt_dimension_observations.hide()
+        layout.addWidget(self.txt_dimension_observations)
 
         self.chk_confirm = QCheckBox("我已核对二维覆盖、结构拓扑和装配预演")
         self.chk_confirm.setEnabled(False)
@@ -547,6 +564,9 @@ class SketchPanel(QWidget):
         self.chk_confirm.setChecked(False)
         self.chk_confirm.setEnabled(False)
         self.scale_widget.setVisible(False)
+        self._clear_reference_length()
+        self.txt_dimension_observations.clear()
+        self.txt_dimension_observations.hide()
         self.edit_widget.setVisible(False)
         self.btn_boundaries.setChecked(False)
         self.btn_boundaries.setVisible(False)
@@ -612,6 +632,7 @@ class SketchPanel(QWidget):
         """Host the frozen v2 review APIs without changing the legacy v1 path."""
         from sketch_load_edit import refresh_partial_geometry
         self._v2_draft = refresh_partial_geometry(draft)
+        self._clear_reference_length()
         self._v2_node_reuse.clear()
         self._result_draft = None
         self.chk_confirm.setChecked(False)
@@ -702,10 +723,17 @@ class SketchPanel(QWidget):
         self._refresh_v2_scale_controls()
         self._refresh_v2_commit_state()
 
+    def _clear_reference_length(self) -> None:
+        """新图或参考杆件改变时不沿用默认/上一对象的实际长度。"""
+        self.spn_reference_length.setValue(0.0)
+        self.spn_reference_length.lineEdit().clear()
+        self._reference_length_missing = True
+
     def _refresh_v2_scale_controls(self) -> None:
         if self._v2_draft is None:
             return
         current = self.cmb_reference_member.currentData()
+        previous_block = self.cmb_reference_member.blockSignals(True)
         self.cmb_reference_member.clear()
         for member in sorted(self._v2_draft.get("image_model", {}).get("members") or [],
                              key=lambda item: int(item["id"])):
@@ -713,6 +741,17 @@ class SketchPanel(QWidget):
         index = self.cmb_reference_member.findData(current)
         if index >= 0:
             self.cmb_reference_member.setCurrentIndex(index)
+        self.cmb_reference_member.blockSignals(previous_block)
+        if self.cmb_reference_member.currentData() != current:
+            self._clear_reference_length()
+        observations = []
+        for item in self._v2_draft.get("dimensions") or []:
+            text = item.get("text")
+            if text is None or not str(text).strip():
+                text = "原图文字缺失"
+            observations.append(f"{item.get('id', '')}：{text}；单位：{item.get('unit') or '未识别'}；待核对")
+        self.txt_dimension_observations.setPlainText("\n".join(observations))
+        self.txt_dimension_observations.setVisible(bool(observations))
         self.scale_widget.setVisible(
             self._v2_draft.get("scale", {}).get("status") != "confirmed")
 
@@ -962,6 +1001,9 @@ class SketchPanel(QWidget):
             draft = result.draft or RecognitionDraft.from_payload(
                 result.model, source_image=self._image_path or "")
             self._result_draft = draft
+            self._clear_reference_length()
+            self.txt_dimension_observations.clear()
+            self.txt_dimension_observations.hide()
             self._result_model = draft.model
             n_nodes = len(draft.model.get("nodes", []))
             n_members = len(draft.model.get("members", []))
@@ -1993,6 +2035,12 @@ class SketchPanel(QWidget):
         return super().eventFilter(watched, event)
 
     def _apply_scale(self):
+        if (self._reference_length_missing
+                or not self.spn_reference_length.cleanText().strip()
+                or not self.spn_reference_length.hasAcceptableInput()
+                or self.spn_reference_length.value() <= 0):
+            self._show_edit_error("尺度标定失败", ValueError("实际长度尚未填写或无效，请核对原图尺寸并填写大于零的米值。"))
+            return
         if self._v2_draft is not None:
             from copy import deepcopy
             from dimension_constraints import (add_member_length_dimension,

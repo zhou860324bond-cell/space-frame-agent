@@ -771,3 +771,89 @@ def test_panel_opens_with_a_model_name_matching_the_preselected_provider(qt_app,
     provider = panel.cmb_provider.currentText()
     assert provider == "deepseek"
     assert panel.txt_model.text() == SketchParser._default_model(provider)
+
+
+@pytest.mark.parametrize("automatic_interpret", [False, True])
+def test_reference_length_blank_cannot_apply_default_scale(qt_app, automatic_interpret):
+    """未填参考长度及 Qt 失焦补零不能把默认 1 m 写成已确认尺度。"""
+    from copy import deepcopy
+    panel = SketchPanel(Session(), IdleRunner())
+    draft = RecognitionDraft.from_payload(recognition_payload("unknown"))
+    panel._on_recognized(ParseResult(model=draft.model, draft=draft, success=True, attempts=1))
+    before = deepcopy(draft.model)
+    assert not panel.spn_reference_length.cleanText().strip()
+    if automatic_interpret:
+        panel.spn_reference_length.interpretText()
+    panel._apply_scale()
+    assert panel._result_draft.scale_status == "unknown"
+    assert panel._result_draft.model == before
+    assert "实际长度尚未填写" in panel.lbl_status.text()
+    assert not panel.btn_load.isEnabled()
+
+
+@pytest.mark.parametrize("transition", ["new_draft", "new_member", "erase"])
+def test_reference_length_cannot_leak_to_another_draft_or_member(qt_app, transition):
+    """上一图/上一参考杆件的实际长度，以及清空后的自动补零，都不能被确认使用。"""
+    from multimodal_workflow import migrate_v1_payload
+    model = recognition_payload()["model"]
+    model["members"].append({"id": 8, "i": 2, "j": 1})
+    draft = migrate_v1_payload(model, image_hash="a" * 64)
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(draft)
+    panel.spn_reference_length.setValue(10.0)
+    if transition == "new_draft":
+        panel.set_v2_draft(draft)
+    elif transition == "new_member":
+        panel.cmb_reference_member.setCurrentIndex(1)
+    else:
+        panel.spn_reference_length.lineEdit().selectAll()
+        QTest.keyClick(panel.spn_reference_length.lineEdit(), Qt.Key.Key_Backspace)
+        panel.spn_reference_length.interpretText()
+    previous = panel._v2_draft
+    panel._apply_scale()
+    assert panel._v2_draft is previous
+    assert "实际长度尚未填写" in panel.lbl_status.text()
+
+
+def test_dimension_observations_visible_literal_and_not_automatic_scale(qt_app):
+    """真实新图有 10 m 标注但无已确认尺寸绑定，原观察需可见且不能自动套到参考杆件。"""
+    from copy import deepcopy
+    from multimodal_workflow import migrate_v1_payload
+    draft = migrate_v1_payload(recognition_payload()["model"], image_hash="a" * 64)
+    draft["dimensions"] = [{"id": "D1", "text": "10 m <span>", "unit": "m"},
+                           {"id": "D2", "text": "20°", "unit": "deg"}]
+    before = deepcopy(draft["dimensions"])
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(draft)
+    assert not panel.txt_dimension_observations.isHidden()
+    assert panel.txt_dimension_observations.isReadOnly()
+    assert "10 m <span>" in panel.txt_dimension_observations.toPlainText()
+    assert "20°" in panel.txt_dimension_observations.toPlainText()
+    assert "待核对" in panel.txt_dimension_observations.toPlainText()
+    assert not panel.spn_reference_length.cleanText().strip()
+    assert panel._v2_draft["dimensions"] == before
+    panel._v2_draft["dimensions"] = []
+    panel._refresh_v2_scale_controls()
+    assert panel.txt_dimension_observations.isHidden()
+
+
+
+def test_explicit_reference_length_creates_only_user_scale_evidence(qt_app):
+    """实际长度明确填写后应正常标定，并保留原尺寸观察；不能把模型文字改成自动确认。"""
+    from multimodal_workflow import migrate_v1_payload
+    draft = migrate_v1_payload(recognition_payload()["model"], image_hash="a" * 64)
+    draft["source"].update(width_px=201, height_px=101)
+    draft["image_model"]["nodes"] = [{"id": 1, "u": .1, "v": .5}, {"id": 2, "u": .9, "v": .5}]
+    original = {"id": "observed", "text": "10 m", "unit": "m", "status": "proposed"}
+    draft["dimensions"] = [original]
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(draft)
+    panel.spn_reference_length.setValue(10.0)
+    panel._refresh_v2_scale_controls()
+    assert panel.spn_reference_length.value() == 10.0
+    panel._apply_scale()
+    assert panel._v2_draft["scale"]["status"] == "confirmed"
+    assert panel._v2_draft["scale"]["length_per_pixel"] == pytest.approx(10 / 160)
+    assert panel._v2_draft["dimensions"][0] == original
+    assert panel._v2_draft["dimensions"][-1]["source"] == "user"
+    assert not panel.btn_load.isEnabled()

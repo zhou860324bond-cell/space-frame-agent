@@ -25,6 +25,8 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "图中尺寸（待核对）": "Observed dimensions (review required)",
+    "填写原图实际长度": "Enter actual length from drawing",
     "作用点复核": "Review action points",
     "局部分布荷载": "Partial distributed loads",
     "局部均布": "Partial uniform load", "局部梯形": "Partial trapezoidal load",
