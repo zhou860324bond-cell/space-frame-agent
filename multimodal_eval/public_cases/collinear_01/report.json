@@ -1,0 +1,629 @@
+{
+  "format": "space-frame-development-replay-bundle/v1",
+  "date": "2026-10-10",
+  "new_api_calls": 0,
+  "pipeline_hash": "78e9ccf839e6893946ff95c88910345e1a73b90503c19f358f52c27eaa5f9cf4",
+  "input_manifest_hashes": {
+    "numeric_01": "e5391d42aa5419b58e07d2760779fb1436e0736e094c0d938aba589aae00fe03",
+    "action_review_02": "8ccfbcf053602cbcd24aac946090922e003f6c2fb460a52e3a5fab2595ae8b61"
+  },
+  "historical_report_hashes": {
+    "joint_nodes_01": "f1d1752f5801981b3fb93cd9bc9499bec8b76b117ce87dcda79aafd20e0f451e",
+    "review_edit_01": "5dc299c0a5b524c2ace6e4247cce3b1127d37a550df2dca3d0c7a2f2412a26f6",
+    "numeric_01": "b8765deffeeb3a686e37af404cfc6b41f9710d20fe6967fa3344f8cb4fa78122"
+  },
+  "reports": {
+    "numeric_01": {
+      "format": "space-frame-multimodal-eval-report/v1",
+      "mode": "offline-replay",
+      "manifest": "manifest.json",
+      "gate_cases": 2,
+      "evaluated_image_ids": [
+        "moj_bridge",
+        "moj_labels"
+      ],
+      "case_reports": [
+        {
+          "image_id": "moj_bridge",
+          "metrics": {
+            "node_f1": 1.0,
+            "member_f1": 1.0,
+            "clear_node_f1": 1.0,
+            "clear_member_f1": 1.0,
+            "intersection_accuracy": 0.0,
+            "support_f1": 1.0,
+            "load_f1": 1.0,
+            "load_numeric_unit_accuracy": 1.0,
+            "scale_accuracy": null,
+            "issue_recall": 1.0,
+            "issue_false_positives": 3
+          },
+          "counts": {
+            "nodes": {
+              "tp": 6,
+              "fp": 0,
+              "fn": 0
+            },
+            "members": {
+              "tp": 9,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_nodes": {
+              "tp": 6,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_members": {
+              "tp": 9,
+              "fp": 0,
+              "fn": 0
+            },
+            "supports": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "loads": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "issues": {
+              "tp": 1,
+              "fp": 3,
+              "fn": 0
+            },
+            "intersections": {
+              "correct": 0,
+              "wrong": 0,
+              "fp": 20,
+              "fn": 0
+            },
+            "scale": {
+              "correct": 0,
+              "total": 0
+            },
+            "load_numeric": {
+              "correct": 2,
+              "total": 2
+            }
+          },
+          "missing_nodes": [],
+          "extra_nodes": [],
+          "missing_members": [],
+          "extra_members": []
+        },
+        {
+          "image_id": "moj_labels",
+          "metrics": {
+            "node_f1": 1.0,
+            "member_f1": 1.0,
+            "clear_node_f1": 1.0,
+            "clear_member_f1": 1.0,
+            "intersection_accuracy": 0.0,
+            "support_f1": 1.0,
+            "load_f1": 0.0,
+            "load_numeric_unit_accuracy": 0.0,
+            "scale_accuracy": null,
+            "issue_recall": 1.0,
+            "issue_false_positives": 1
+          },
+          "counts": {
+            "nodes": {
+              "tp": 4,
+              "fp": 0,
+              "fn": 0
+            },
+            "members": {
+              "tp": 5,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_nodes": {
+              "tp": 4,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_members": {
+              "tp": 5,
+              "fp": 0,
+              "fn": 0
+            },
+            "supports": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "loads": {
+              "tp": 0,
+              "fp": 1,
+              "fn": 1
+            },
+            "issues": {
+              "tp": 1,
+              "fp": 1,
+              "fn": 0
+            },
+            "intersections": {
+              "correct": 0,
+              "wrong": 0,
+              "fp": 8,
+              "fn": 0
+            },
+            "scale": {
+              "correct": 0,
+              "total": 0
+            },
+            "load_numeric": {
+              "correct": 0,
+              "total": 1
+            }
+          },
+          "missing_nodes": [],
+          "extra_nodes": [],
+          "missing_members": [],
+          "extra_members": []
+        }
+      ],
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 1.0,
+        "load_f1": 0.6666666666666666,
+        "load_numeric_unit_accuracy": 0.6666666666666666,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 4
+      },
+      "counts": {
+        "nodes": {
+          "tp": 10,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 14,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 10,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 14,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 4,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 2,
+          "fp": 1,
+          "fn": 1
+        },
+        "issues": {
+          "tp": 2,
+          "fp": 4,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 28,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 2,
+          "total": 3
+        }
+      },
+      "thresholds": {
+        "node_f1": 0.85,
+        "member_f1": 0.85,
+        "clear_node_f1": 0.95,
+        "clear_member_f1": 0.95,
+        "intersection_accuracy": 0.9,
+        "support_f1": 0.8,
+        "load_f1": 0.8
+      },
+      "failures": [
+        "intersection_accuracy",
+        "load_f1"
+      ],
+      "passed": false,
+      "case_outcomes": [
+        {
+          "image_id": "moj_bridge",
+          "outcome": "PASS"
+        },
+        {
+          "image_id": "moj_labels",
+          "outcome": "PASS"
+        }
+      ],
+      "new_api_calls": 0,
+      "replay_successes": 2,
+      "reference_contract": {
+        "format": "space-frame-reference-topology/v1",
+        "legacy_cases": [
+          "moj_bridge",
+          "moj_labels"
+        ],
+        "checked_cases": 0
+      },
+      "pipeline_hash": "78e9ccf839e6893946ff95c88910345e1a73b90503c19f358f52c27eaa5f9cf4",
+      "action_review": {
+        "attempted_cases": 0,
+        "completed_cases": 0,
+        "failed_or_missing_cases": 0
+      },
+      "limitations": [
+        "修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
+        "输入与真值不变；失败保留在分母，无证据指标仍为 null。",
+        "历史样本未验证完整拓扑参考或未绑定调用前参考哈希，回放不能替代新契约的独立验证。"
+      ]
+    },
+    "action_review_02": {
+      "format": "space-frame-multimodal-eval-report/v1",
+      "mode": "offline-replay",
+      "manifest": "manifest.json",
+      "gate_cases": 3,
+      "evaluated_image_ids": [
+        "cantilever",
+        "point_load",
+        "various_loads"
+      ],
+      "case_reports": [
+        {
+          "image_id": "cantilever",
+          "metrics": {
+            "node_f1": 1.0,
+            "member_f1": 1.0,
+            "clear_node_f1": 1.0,
+            "clear_member_f1": 1.0,
+            "intersection_accuracy": null,
+            "support_f1": 1.0,
+            "load_f1": null,
+            "load_numeric_unit_accuracy": null,
+            "scale_accuracy": null,
+            "issue_recall": 1.0,
+            "issue_false_positives": 5
+          },
+          "counts": {
+            "nodes": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "members": {
+              "tp": 1,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_nodes": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_members": {
+              "tp": 1,
+              "fp": 0,
+              "fn": 0
+            },
+            "supports": {
+              "tp": 1,
+              "fp": 0,
+              "fn": 0
+            },
+            "loads": {
+              "tp": 0,
+              "fp": 0,
+              "fn": 0
+            },
+            "issues": {
+              "tp": 1,
+              "fp": 5,
+              "fn": 0
+            },
+            "intersections": {
+              "correct": 0,
+              "wrong": 0,
+              "fp": 0,
+              "fn": 0
+            },
+            "scale": {
+              "correct": 0,
+              "total": 0
+            },
+            "load_numeric": {
+              "correct": 0,
+              "total": 0
+            }
+          },
+          "missing_nodes": [],
+          "extra_nodes": [],
+          "missing_members": [],
+          "extra_members": []
+        },
+        {
+          "image_id": "point_load",
+          "metrics": {
+            "node_f1": 1.0,
+            "member_f1": 1.0,
+            "clear_node_f1": 1.0,
+            "clear_member_f1": 1.0,
+            "intersection_accuracy": 0.0,
+            "support_f1": 1.0,
+            "load_f1": 0.0,
+            "load_numeric_unit_accuracy": null,
+            "scale_accuracy": null,
+            "issue_recall": 1.0,
+            "issue_false_positives": 8
+          },
+          "counts": {
+            "nodes": {
+              "tp": 3,
+              "fp": 0,
+              "fn": 0
+            },
+            "members": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_nodes": {
+              "tp": 3,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_members": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "supports": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "loads": {
+              "tp": 0,
+              "fp": 1,
+              "fn": 0
+            },
+            "issues": {
+              "tp": 2,
+              "fp": 8,
+              "fn": 0
+            },
+            "intersections": {
+              "correct": 0,
+              "wrong": 0,
+              "fp": 1,
+              "fn": 0
+            },
+            "scale": {
+              "correct": 0,
+              "total": 0
+            },
+            "load_numeric": {
+              "correct": 0,
+              "total": 0
+            }
+          },
+          "missing_nodes": [],
+          "extra_nodes": [],
+          "missing_members": [],
+          "extra_members": []
+        },
+        {
+          "image_id": "various_loads",
+          "metrics": {
+            "node_f1": 1.0,
+            "member_f1": 1.0,
+            "clear_node_f1": null,
+            "clear_member_f1": null,
+            "intersection_accuracy": 0.0,
+            "support_f1": 1.0,
+            "load_f1": null,
+            "load_numeric_unit_accuracy": null,
+            "scale_accuracy": null,
+            "issue_recall": 0.75,
+            "issue_false_positives": 12
+          },
+          "counts": {
+            "nodes": {
+              "tp": 4,
+              "fp": 0,
+              "fn": 0
+            },
+            "members": {
+              "tp": 3,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_nodes": {
+              "tp": 0,
+              "fp": 0,
+              "fn": 0
+            },
+            "clear_members": {
+              "tp": 0,
+              "fp": 0,
+              "fn": 0
+            },
+            "supports": {
+              "tp": 2,
+              "fp": 0,
+              "fn": 0
+            },
+            "loads": {
+              "tp": 0,
+              "fp": 0,
+              "fn": 0
+            },
+            "issues": {
+              "tp": 3,
+              "fp": 12,
+              "fn": 1
+            },
+            "intersections": {
+              "correct": 0,
+              "wrong": 0,
+              "fp": 2,
+              "fn": 0
+            },
+            "scale": {
+              "correct": 0,
+              "total": 0
+            },
+            "load_numeric": {
+              "correct": 0,
+              "total": 0
+            }
+          },
+          "missing_nodes": [],
+          "extra_nodes": [],
+          "missing_members": [],
+          "extra_members": []
+        }
+      ],
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 1.0,
+        "load_f1": 0.0,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 0.8571428571428571,
+        "issue_false_positives": 25
+      },
+      "counts": {
+        "nodes": {
+          "tp": 9,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 6,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 3,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 6,
+          "fp": 25,
+          "fn": 1
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 3,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "thresholds": {
+        "node_f1": 0.85,
+        "member_f1": 0.85,
+        "clear_node_f1": 0.95,
+        "clear_member_f1": 0.95,
+        "intersection_accuracy": 0.9,
+        "support_f1": 0.8,
+        "load_f1": 0.8
+      },
+      "failures": [
+        "intersection_accuracy",
+        "load_f1"
+      ],
+      "passed": false,
+      "case_outcomes": [
+        {
+          "image_id": "cantilever",
+          "outcome": "PASS",
+          "action_review_status": "completed"
+        },
+        {
+          "image_id": "point_load",
+          "outcome": "PASS",
+          "action_review_status": "completed"
+        },
+        {
+          "image_id": "various_loads",
+          "outcome": "PASS",
+          "action_review_status": "completed"
+        }
+      ],
+      "new_api_calls": 0,
+      "replay_successes": 3,
+      "reference_contract": {
+        "format": "space-frame-reference-topology/v1",
+        "legacy_cases": [
+          "cantilever",
+          "point_load",
+          "various_loads"
+        ],
+        "checked_cases": 0
+      },
+      "pipeline_hash": "78e9ccf839e6893946ff95c88910345e1a73b90503c19f358f52c27eaa5f9cf4",
+      "action_review": {
+        "attempted_cases": 3,
+        "completed_cases": 3,
+        "failed_or_missing_cases": 0
+      },
+      "limitations": [
+        "修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
+        "输入与真值不变；失败保留在分母，无证据指标仍为 null。",
+        "历史样本未验证完整拓扑参考或未绑定调用前参考哈希，回放不能替代新契约的独立验证。"
+      ]
+    }
+  },
+  "limitations": [
+    "已有开发图片；非新独立验证",
+    "旧参考未满足调用前完整拓扑契约",
+    "旧梁参考缺少共线共享端点，新交点没有匹配项",
+    "历史文件、容差及评分阈值未改"
+  ]
+}

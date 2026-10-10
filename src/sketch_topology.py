@@ -94,6 +94,7 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
             bi, bj = int(second["i"]), int(second["j"])
             c, d = nodes[bi], nodes[bj]
             pair = [aid, bid]
+            shared_endpoints = {ai, aj} & {bi, bj}
             if {ai, aj} == {bi, bj}:
                 generated_issues.append(_issue(
                     f"duplicate-member-{aid}-{bid}", "topology",
@@ -101,14 +102,19 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
                 continue
             hit = _intersection(a, b, c, d)
             if hit is None:
-                # Parallel collinear overlap is blocking rather than guessed.
+                # 共线重叠仍需处理，不能以共享端点掩盖重叠。
                 r = (b[0] - a[0], b[1] - a[1])
                 if (abs(_cross(r, (c[0] - a[0], c[1] - a[1]))) <= 1e-12
                         and _collinear_overlap(a, b, c, d)):
                     generated_issues.append(_issue(
                         f"overlap-{aid}-{bid}", "topology",
                         [f"member:{aid}", f"member:{bid}"], "共线杆件重叠"))
-                continue
+                    continue
+                if not shared_endpoints or a == b or c == d:
+                    continue
+                shared = min(shared_endpoints)
+                hit = (0.0 if ai == shared else 1.0,
+                       0.0 if bi == shared else 1.0, nodes[shared])
             sa, sb, point = hit
             la = math.hypot((b[0] - a[0]) * (width - 1),
                             (b[1] - a[1]) * (height - 1))
@@ -117,9 +123,12 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
             sa, sb = (_snap_parameter(sa, la, tolerance),
                       _snap_parameter(sb, lb, tolerance))
             previous = old.get(tuple(pair), {})
-            shared_endpoints = {ai, aj} & {bi, bj}
             if shared_endpoints:
                 decision, node_id = "connect", min(shared_endpoints)
+                # 已有节点编号明确端点；短杆的像素吸附不能改变这一关系。
+                sa = 0.0 if ai == node_id else 1.0
+                sb = 0.0 if bi == node_id else 1.0
+                point = nodes[node_id]
             else:
                 decision = previous.get("decision", "unknown")
                 node_id = previous.get("node_id") if decision == "connect" else None

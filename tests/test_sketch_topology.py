@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 
+from copy import deepcopy
+
 import pytest
 
 from agent import Session
@@ -167,6 +169,119 @@ def test_separate_collinear_members_are_not_reported_as_overlapping():
     detected = detect_topology(value)
     assert detected["intersections"] == []
     assert detected["issues"] == []
+
+
+@pytest.mark.parametrize("points", [
+    [(0, 0.5), (0.5, 0.5), (1, 0.5)],
+    [(0.5, 0), (0.5, 0.5), (0.5, 1)],
+    [(0, 0), (0.5, 0.5), (1, 1)],
+])
+@pytest.mark.parametrize("ends", [((1, 2), (2, 3)), ((2, 1), (2, 3)),
+                                  ((1, 2), (3, 2)), ((2, 1), (3, 2))])
+def test_collinear_shared_endpoint_is_recorded_in_either_member_direction(points, ends):
+    """防止水平、竖直或斜向共线接头被平行分支跳过，反向杆件也须引用同一节点。"""
+    value = draft([{"id": n, "u": p[0], "v": p[1]} for n, p in enumerate(points, 1)],
+                  [{"id": n, "i": e[0], "j": e[1]} for n, e in enumerate(ends, 1)])
+    original = deepcopy(value)
+    detected = detect_topology(value)
+    assert detected["intersections"] == [{
+        "id": "I-1-2", "members": [1, 2], "point": list(points[1]),
+        "decision": "connect", "node_id": 2,
+        "member_s": {str(n): 0.0 if e[0] == 2 else 1.0 for n, e in enumerate(ends, 1)},
+    }]
+    assert detected["issues"] == []
+    assert value == original
+    assert detect_topology(detected) == detected
+
+
+@pytest.mark.parametrize("last", [(0.52, 0.5), (0.51, 0.51)])
+def test_short_shared_members_keep_exact_endpoint_parameters(last):
+    """防止两端均在像素吸附范围内时，把已共享的 j 端错误改记为 i 端。"""
+    value = draft([{"id": 1, "u": 0.5, "v": 0.5}, {"id": 2, "u": 0.51, "v": 0.5},
+                   {"id": 3, "u": last[0], "v": last[1]}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}])
+    detected = detect_topology(value)
+    assert detected["intersections"][0]["member_s"] == {"1": 1.0, "2": 0.0}
+    assert detected["intersections"][0]["point"] == [0.51, 0.5]
+    resolved = resolve_intersection(detected, "I-1-2", "connect")
+    assert resolved["image_model"]["nodes"] == value["image_model"]["nodes"]
+
+
+def test_collinear_shared_endpoint_does_not_hide_overlap():
+    """共线杆件同向重叠仍须阻断，不能因具有同一端节点被当成正常接头。"""
+    value = draft([{"id": 1, "u": 0, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 1, "j": 3}])
+    detected = detect_topology(value)
+    assert detected["intersections"] == []
+    assert [(i["id"], i["severity"]) for i in detected["issues"]] == [("overlap-1-2", "blocking")]
+
+
+def test_coincident_distinct_collinear_endpoints_are_not_merged():
+    """防止仅坐标重合的两个不同节点被新增共享端点逻辑擅自合并。"""
+    value = draft([{"id": 1, "u": 0, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 0.5, "v": 0.5}, {"id": 4, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 3, "j": 4}])
+    assert detect_topology(value)["intersections"] == []
+    assert detect_topology(value)["image_model"] == value["image_model"]
+
+
+def test_degenerate_shared_member_does_not_gain_a_valid_joint():
+    """防止零长杆件从新增共线端点分支获得看似有效的连接记录。"""
+    value = draft([{"id": 1, "u": 0.5, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}])
+    assert detect_topology(value)["intersections"] == []
+
+
+def test_inserted_collinear_action_node_compiles_without_extra_segments():
+    """用户补作用点后须留下连接记录，导入求解仍只有原两段，不产生零长单元。"""
+    detected = insert_member_node(_single_beam(), 1, 0.25)
+    assert detected["intersections"][0]["node_id"] == 3
+    assert detected["intersections"][0]["member_s"] == {"1": 1.0, "2": 0.0}
+    model = materialize_geometry(detected)
+    session = Session()
+    assert session.add_nodes([[n["x"], n["y"], n["z"]] for n in model["nodes"]]).ok
+    assert session.add_members([[m["i"], m["j"]] for m in model["members"]]).ok
+    assert session.define_materials_and_sections(
+        [{"name": "Steel", "E": 2e11, "nu": 0.3}],
+        [{"name": "S", "A": 0.01, "Iy": 1e-5, "Iz": 1e-5, "J": 5e-6}],
+    ).ok
+    assert session.assign_properties([1, 2], "S", "Steel").ok
+    assert session.set_supports([1], [1, 1, 1, 1, 1, 1]).ok
+    compiled = compile_model(session.model)
+    assert [len(compiled.mapping.element_ids(n)) for n in (1, 2)] == [1, 1]
+    assert {(m.i, m.j) for m in compiled.analysis_model.members.values()} == {(1, 3), (3, 2)}
+
+
+def test_collinear_generated_joints_do_not_block_further_split_or_delete():
+    """补作用点产生的共线共享端点记录可自动重建，不能误阻止再次分段或删除杆件。"""
+    first = insert_member_node(_single_beam(), 1, 0.5)
+    second = insert_member_node(first, 2, 0.5)
+    assert [(i["members"], i["node_id"]) for i in second["intersections"]] == [([1, 2], 3), ([2, 3], 4)]
+    deleted = delete_member(second, 2)
+    assert deleted["intersections"] == []
+    assert deleted["issues"] == []
+    assert len(deleted["image_model"]["members"]) == 2
+
+
+def test_collinear_joint_agrees_with_independently_written_reference():
+    """新参考要求共线接头完整；运行时结果应匹配手写参考，不能从预测补参考。"""
+    from multimodal_eval.reference_topology import FORMAT, check_reference_topology
+
+    value = draft([{"id": 1, "u": 0, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}])
+    truth = {**deepcopy(value["image_model"]), "width_px": 101, "height_px": 101,
+             "nodes": [{"id": n["id"], "point": [n["u"], n["v"]]}
+                       for n in value["image_model"]["nodes"]],
+             "topology_reference": {"format": FORMAT, "scope": "all_member_pairs", "status": "verified"},
+             "intersections": [{"id": "joint", "members": [1, 2], "point": [0.5, 0.5],
+                                "decision": "connect", "node_id": 2}]}
+    assert check_reference_topology(truth)["valid"]
+    observed = detect_topology(value)["intersections"][0]
+    assert {k: observed[k] for k in ("members", "point", "decision", "node_id")} == {
+        k: truth["intersections"][0][k] for k in ("members", "point", "decision", "node_id")}
 
 
 def test_deletion_refuses_member_and_node_references():
