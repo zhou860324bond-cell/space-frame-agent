@@ -9,7 +9,7 @@ import pytest
 
 from agent import Session
 from model_compiler import compile_model
-from sketch_topology import (delete_member, delete_node, detect_topology,
+from sketch_topology import (add_image_node, delete_member, delete_node, detect_topology,
                              insert_member_node, materialize_geometry, resolve_intersection)
 
 
@@ -41,6 +41,124 @@ def crossing(kind="x"):
 def _single_beam():
     return draft([{"id": 1, "u": 0.1, "v": 0.5}, {"id": 2, "u": 0.9, "v": 0.5}],
                  [{"id": 1, "i": 1, "j": 2, "material": "Steel", "section": "S"}])
+
+
+@pytest.mark.parametrize("point", [(True, .3), (float("nan"), .3), (.3, float("inf")),
+                                   (-.01, .3), (.3, 1.01), (".3", .3)])
+def test_add_image_node_rejects_invalid_click_without_changing_draft(point):
+    """补点必须拒绝布尔、非有限、越界和字符串位置，不能污染原草稿。"""
+    value = _single_beam()
+    original = deepcopy(value)
+    with pytest.raises(ValueError, match="原图范围"):
+        add_image_node(value, *point)
+    assert value == original
+
+
+@pytest.mark.parametrize("source", [{}, {"width_px": 1, "height_px": 100}])
+def test_add_image_node_requires_source_dimensions(source):
+    """缺少有效原图尺寸时不能用预览尺寸伪造补点位置。"""
+    value = _single_beam()
+    value["source"] = source
+    with pytest.raises(ValueError, match="图片尺寸"):
+        add_image_node(value, .5, .2)
+
+
+def test_add_image_node_preserves_engineering_data_and_blocks_unconnected_import():
+    """漏节点的人工补画只加点，不自动拆杆、连接、确认尺度或生成工程值。"""
+    value = _single_beam()
+    value.update(model={"old": True}, merge_plan={"old": True}, confirmation={"old": True})
+    original = deepcopy(value)
+    updated = add_image_node(value, .5, .2)
+    assert value == original
+    assert updated["image_model"]["nodes"][-1] == {"id": 3, "u": .5, "v": .2}
+    assert updated["image_model"]["members"] == value["image_model"]["members"]
+    assert updated["scale"] == value["scale"] and updated["source"] == value["source"]
+    entity = updated["entities"][-1]
+    assert entity["source"] == "user" and entity["verified"]
+    assert entity["confidence"] is None and entity["recognition_confidence"] is None
+    assert updated["model"] is updated["merge_plan"] is updated["confirmation"] is None
+    issue = next(i for i in updated["issues"] if i["id"] == "user-node-unconnected-3")
+    assert issue["severity"] == "blocking" and issue["status"] == "open"
+    updated["image_model"]["members"].append({"id": 2, "i": 1, "j": 3})
+    connected = detect_topology(updated)
+    assert not any(i["id"] == issue["id"] for i in connected["issues"])
+    assert any(i["id"] == issue["id"] for i in detect_topology(delete_member(connected, 2))["issues"])
+
+
+def test_add_image_node_rejects_near_existing_node_and_keeps_deleted_ids_reserved():
+    """避免点击重复节点，以及删点后重用编号使旧审核引用指向新节点。"""
+    value = _single_beam()
+    with pytest.raises(ValueError, match="已有节点"):
+        add_image_node(value, .12, .5)
+    updated = delete_node(add_image_node(value, .5, .2), 3)
+    readded = add_image_node(updated, .5, .2)
+    assert readded["image_model"]["nodes"][-1]["id"] == 4
+    assert not any(i["id"] == "user-node-unconnected-3" for i in readded["issues"])
+
+
+@pytest.mark.parametrize(("collection", "item", "reason"), [
+    ("supports", {"node": 3}, "支座"), ("nodal_loads", {"node": 3}, "荷载"),
+    ("settlements", {"node": 3}, "支座位移"),
+])
+def test_delete_node_protects_referenced_engineering_objects(collection, item, reason):
+    """删除多余节点不能级联删除支座、集中力或支座位移。"""
+    value = add_image_node(_single_beam(), .5, .2)
+    value["image_model"].setdefault("load_cases", []).append({"name": "L", collection: [item]})
+    if collection == "supports":
+        value["image_model"][collection] = [item]
+    original = deepcopy(value)
+    with pytest.raises(ValueError, match=reason):
+        delete_node(value, 3)
+    assert value == original
+
+
+@pytest.mark.parametrize("reference", ["dimension", "intersection", "anchor"])
+def test_delete_node_protects_dimensions_intersections_and_confirmed_anchor(reference):
+    """节点无杆件引用也不能删除尺寸端点、人工连接节点或已确认尺度锚点。"""
+    value = add_image_node(_single_beam(), .5, .2)
+    if reference == "dimension":
+        value["dimensions"] = [{"target": {"nodes": [1, 3]}}]
+    elif reference == "intersection":
+        value["intersections"] = [{"members": [7, 8], "node_id": 3, "decision": "connect"}]
+    else:
+        value["scale"]["anchor_node"] = 3
+    with pytest.raises(ValueError, match="仍被引用"):
+        delete_node(value, 3)
+
+
+def test_delete_node_archives_observations_and_preserves_unrelated_issues():
+    """删点后只处理精确节点问题，混合引用和全局审核仍保留，原观察可追溯。"""
+    value = add_image_node(_single_beam(), .5, .2)
+    value["scale"].update(status="unknown", anchor_node=3)
+    value["issues"].extend([
+        {"id": "node-only", "entity_refs": ["node:3"], "status": "open"},
+        {"id": "mixed", "entity_refs": ["node:3", "node:2"], "status": "open"},
+        {"id": "global", "entity_refs": [], "status": "open"},
+    ])
+    original = deepcopy(value)
+    updated = delete_node(value, 3)
+    assert value == original
+    by_id = {i["id"]: i for i in updated["issues"]}
+    assert by_id["node-only"]["status"] == "resolved"
+    assert by_id["mixed"]["entity_refs"] == ["node:2"] and by_id["mixed"]["status"] == "open"
+    assert by_id["global"] == value["issues"][-1]
+    assert updated["scale"]["anchor_node"] is None
+    previous = updated["edit_history"][-1]["previous"]
+    assert previous["node"] == value["image_model"]["nodes"][-1]
+    assert previous["entities"] == value["entities"]
+    assert previous["issues"] and updated["confirmation"] is None
+
+
+def test_delete_unknown_or_last_node_is_rejected():
+    """未知节点不能假报删除成功，唯一节点不能删成无效草稿。"""
+    value = _single_beam()
+    with pytest.raises(ValueError, match="不存在"):
+        delete_node(value, 99)
+    value["image_model"]["nodes"] = value["image_model"]["nodes"][:1]
+    value["image_model"]["members"] = []
+    value["scale"]["status"] = "unknown"
+    with pytest.raises(ValueError, match="仅剩一个"):
+        delete_node(value, 1)
 
 
 def test_user_can_insert_missing_action_node_and_keep_geometry_and_boundary_data():
@@ -292,7 +410,7 @@ def test_deletion_refuses_member_and_node_references():
     value = crossing()
     value["image_model"]["supports"] = [{"name": "S", "node": 1,
                                           "fix": [1, 1, 1, 1, 1, 1]}]
-    with pytest.raises(ValueError, match="member.*support|support.*member"):
+    with pytest.raises(ValueError, match="杆件.*支座|支座.*杆件"):
         delete_node(value, 1)
 
 

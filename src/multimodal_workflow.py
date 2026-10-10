@@ -34,7 +34,11 @@ _DRAFT_HASH_FIELDS = (
 
 
 def draft_digest(draft: Mapping[str, Any]) -> str:
-    return canonical_digest({key: draft.get(key) for key in _DRAFT_HASH_FIELDS})
+    payload = {key: draft.get(key) for key in _DRAFT_HASH_FIELDS}
+    # 有人工历史时一并绑定；旧草稿没有该字段，保持原冻结哈希。
+    if "edit_history" in draft:
+        payload["edit_history"] = draft["edit_history"]
+    return canonical_digest(payload)
 
 
 def _finite(value: Any) -> bool:

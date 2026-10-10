@@ -35,6 +35,8 @@ ZH_EN: dict[str, str] = {
     "局部均布": "Partial uniform load", "局部梯形": "Partial trapezoidal load",
     "应用局部荷载": "Apply partial load", "删除局部荷载": "Delete partial load",
     "补充作用节点": "Insert action node",
+    "补画节点": "Add image node",
+    "删除节点": "Delete image node",
     "忽略符号": "Ignore symbols",
     "适应图片": "Fit image", "预览缩放": "Preview zoom",
     "建模设置": "Modeling settings", "停靠回工作区": "Dock to workspace",

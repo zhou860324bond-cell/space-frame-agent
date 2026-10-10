@@ -529,6 +529,154 @@ def test_member_editor_adds_and_removes_members(qt_app):
 
 
 @pytest.mark.parametrize("zoom", [100, 300])
+def test_missing_node_can_be_drawn_on_scrolled_image_and_connected(qt_app, tmp_path, zoom):
+    """漏接头可按缩放原图补画；单击只加一节点，接线前及编辑后不能直接导入。"""
+    from test_sketch_load_edit import beam_draft
+    path = tmp_path / "add-node.png"
+    source = QPixmap(200, 120)
+    source.fill(Qt.GlobalColor.white)
+    assert source.save(str(path))
+    value = beam_draft()
+    value["source"].update(width_px=200, height_px=120)
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.resize(500, 900)
+    panel._image_path = str(path)
+    panel.set_v2_draft(value)
+    panel.show()
+    qt_app.processEvents()
+    panel.preview_zoom.setValue(zoom)
+    qt_app.processEvents()
+    panel.preview_scroll.horizontalScrollBar().setValue(50)
+    panel.preview_scroll.verticalScrollBar().setValue(20)
+    old_revision = panel._v2_draft["revision"]
+    panel.chk_confirm.setChecked(True)
+    panel.btn_add_node.click()
+    assert panel.lbl_image.cursor().shape() == Qt.CursorShape.CrossCursor
+    pixmap = panel.lbl_image.pixmap()
+    QTest.mouseClick(panel.lbl_image, Qt.MouseButton.LeftButton,
+                     pos=QPoint(int(.6 * pixmap.width()), int(.2 * pixmap.height())))
+    model = panel._v2_draft["image_model"]
+    assert len(model["nodes"]) == 3 and len(model["members"]) == 1
+    assert (model["nodes"][-1]["u"], model["nodes"][-1]["v"]) == pytest.approx((.6, .2), abs=.02)
+    assert panel.cmb_member_j.currentData() == panel.cmb_remove_node.currentData() == 3
+    assert panel.cmb_load_node.currentData() == panel.cmb_support_node.currentData() == 3
+    assert not panel.btn_add_node.isChecked() and panel._drag_node_id is None
+    assert not panel.chk_confirm.isChecked() and not panel.btn_load.isEnabled()
+    assert panel._v2_draft["revision"] > old_revision
+    assert any(i["id"] == "user-node-unconnected-3" for i in panel._v2_draft["issues"])
+    panel.btn_add_member.click()
+    assert len(panel._v2_draft["image_model"]["members"]) == 2
+    assert not any(i["id"] == "user-node-unconnected-3" for i in panel._v2_draft["issues"])
+    assert not panel.btn_load.isEnabled()
+    panel.close()
+
+
+@pytest.mark.parametrize("cancel", ["escape", "right", "toggle", "hide", "draft", "plane"])
+def test_node_placement_can_be_cancelled_without_modifying_geometry(qt_app, tmp_path, cancel):
+    """Esc、右键、再次点击、隐藏窗口、换草稿和平面变化不能留下旧图补点模式。"""
+    from copy import deepcopy
+    from test_sketch_load_edit import beam_draft
+    path = tmp_path / "cancel-node.png"
+    source = QPixmap(200, 120)
+    source.fill(Qt.GlobalColor.white)
+    assert source.save(str(path))
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._image_path = str(path)
+    panel.set_v2_draft(beam_draft())
+    panel.show()
+    qt_app.processEvents()
+    original = deepcopy(panel._v2_draft["image_model"])
+    panel.btn_add_node.click()
+    if cancel == "escape":
+        # 独立窗口也有 Esc：调整缩放后先取消选点，下一次 Esc 才关闭窗口。
+        from PySide6.QtWidgets import QWidget
+        from desktop.drawers import PanelWindow
+        parent = QWidget()
+        window = PanelWindow("图纸审核", panel, parent, size=(960, 700))
+        window.show()
+        qt_app.processEvents()
+        panel.btn_add_node.setChecked(True)
+        panel.preview_zoom.setFocus()
+        QTest.keyClick(panel.preview_zoom, Qt.Key.Key_Escape)
+        assert not window.isHidden()
+        QTest.keyClick(panel.preview_zoom, Qt.Key.Key_Escape)
+        assert window.isHidden()
+    elif cancel == "right":
+        QTest.mouseClick(panel.lbl_image, Qt.MouseButton.RightButton)
+    elif cancel == "toggle":
+        panel.btn_add_node.click()
+    elif cancel == "hide":
+        panel.hide()
+    elif cancel == "draft":
+        panel.set_v2_draft(beam_draft())
+    else:
+        panel._on_work_plane_changed()
+    assert not panel.btn_add_node.isChecked()
+    assert panel._v2_draft["image_model"] == original
+    assert not panel._v2_draft.get("edit_history")
+    panel.close()
+
+
+def test_delete_node_button_protects_connections_then_deletes_only_selected_node(qt_app):
+    """删除按钮不得删除相连杆件；无引用节点可删除并清除选中覆盖，必须重新确认。"""
+    panel = partial_panel(qt_app)
+    panel.cmb_remove_node.setCurrentIndex(panel.cmb_remove_node.findData(2))
+    panel.btn_remove_node.click()
+    assert len(panel._v2_draft["image_model"]["nodes"]) == 2
+    assert "杆件" in panel.lbl_status.text() and "请先" in panel.lbl_status.text()
+    panel._place_image_node((.5, .2))
+    panel._highlight_refs.add("node:3")
+    panel.chk_confirm.setChecked(True)
+    panel.btn_remove_node.click()
+    assert len(panel._v2_draft["image_model"]["nodes"]) == 2
+    assert "node:3" not in panel._highlight_refs
+    assert panel._v2_draft["edit_history"][-1]["action"] == "delete_image_node"
+    assert not panel.chk_confirm.isChecked() and not panel.btn_load.isEnabled()
+
+
+def test_duplicate_point_refusal_keeps_placement_active_and_original_confirmation(qt_app, tmp_path):
+    """误点已有节点必须保留原草稿并允许重新选点，不开始拖动或修改确认。"""
+    from copy import deepcopy
+    from test_sketch_load_edit import beam_draft
+    path = tmp_path / "duplicate.png"
+    source = QPixmap(200, 120)
+    source.fill(Qt.GlobalColor.white)
+    assert source.save(str(path))
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._image_path = str(path)
+    panel.set_v2_draft(beam_draft())
+    panel.btn_add_node.click()
+    previous = deepcopy(panel._v2_draft)
+    panel._place_image_node((.1, .5))
+    assert panel._v2_draft == previous
+    assert panel.btn_add_node.isChecked() and panel._drag_node_id is None
+    assert "已有节点" in panel.lbl_status.text()
+    panel.btn_add_node.setChecked(False)
+
+
+def test_new_image_cancels_node_placement_and_clears_old_draft(qt_app, tmp_path):
+    """换图不能把旧图补点模式应用到新图，旧识别和确认必须失效。"""
+    path = tmp_path / "new-node-image.png"
+    source = QPixmap(200, 120)
+    source.fill(Qt.GlobalColor.white)
+    assert source.save(str(path))
+    panel = partial_panel(qt_app)
+    panel.btn_add_node.setChecked(True)
+    panel.preprocess_widget.output_dir = tmp_path / "derived"
+    panel.preprocess_widget.set_source(str(path))
+    assert not panel.btn_add_node.isChecked() and panel._v2_draft is None
+    assert panel.edit_widget.isHidden() and not panel.btn_load.isEnabled()
+
+
+def test_legacy_review_does_not_expose_v2_node_editing(qt_app):
+    """原 v1 审核保持既有编辑流程，不能显示无法写入其草稿的 v2 补点按钮。"""
+    panel = SketchPanel(Session(), IdleRunner())
+    draft = RecognitionDraft.from_payload(recognition_payload())
+    panel._on_recognized(ParseResult(model=draft.model, draft=draft, success=True, attempts=1))
+    assert panel.node_widget.isHidden() and not panel.btn_add_node.isEnabled()
+
+
+@pytest.mark.parametrize("zoom", [100, 300])
 def test_node_can_be_dragged_on_the_image_overlay(qt_app, tmp_path, zoom):
     """防止放大并滚动预览后，标签坐标与图片坐标错位，拖动修改错误位置。"""
     path = tmp_path / "drag.png"

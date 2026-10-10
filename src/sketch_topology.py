@@ -142,9 +142,18 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
                 generated_issues.append(_issue(
                     f"intersection-unknown-{aid}-{bid}", "intersection_unknown",
                     [f"intersection:{identifier}"], "交点连接关系尚未确认"))
+    # 只为人工补画节点检查连接，避免改变历史识别草稿的评分语义。
+    added = {item.get("node_id") for item in updated.get("edit_history") or []
+             if item.get("action") == "add_image_node"}
+    connected = {int(item[key]) for item in members.values() for key in ("i", "j")}
+    for node_id in sorted((added & nodes.keys()) - connected):
+        generated_issues.append(_issue(
+            f"user-node-unconnected-{node_id}", "topology", [f"node:{node_id}"],
+            f"补画节点 {node_id} 尚未连接杆件，请核对原图后补画相连杆件，或删除该节点。"))
     retained = [item for item in updated.get("issues") or []
                 if not (str(item.get("id", "")).startswith(("duplicate-member-", "overlap-",
-                                                             "intersection-unknown-")))]
+                                                             "intersection-unknown-",
+                                                             "user-node-unconnected-")))]
     updated["intersections"] = intersections
     updated["issues"] = retained + generated_issues
     return updated
@@ -253,30 +262,87 @@ def delete_member(draft: Mapping[str, Any], member_id: int) -> dict[str, Any]:
     return detect_topology(updated)
 
 
+def add_image_node(draft: Mapping[str, Any], u: float, v: float) -> dict[str, Any]:
+    """按用户点击补画独立图片节点，不推断连接、尺度或工程属性。"""
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool)
+           or not math.isfinite(value) or not 0 <= value <= 1 for value in (u, v)):
+        raise ValueError("节点位置无效，请在原图范围内选择真实接头。")
+    nodes, _ = _geometry(draft.get("image_model") or {})
+    source = draft.get("source") or {}
+    width, height = int(source.get("width_px", 0)), int(source.get("height_px", 0))
+    if width <= 1 or height <= 1:
+        raise ValueError("草稿缺少有效图片尺寸，请重新加载图片后补画节点。")
+    if any(math.hypot((u - p[0]) * (width - 1), (v - p[1]) * (height - 1))
+           <= point_match_threshold(width, height) for p in nodes.values()):
+        raise ValueError("位置过于接近已有节点，请使用已有节点，或放大原图后重新选择。")
+    used = [*nodes, *(item.get("node_id", 0) for item in draft.get("edit_history") or []
+                     if item.get("action") in {"add_image_node", "delete_image_node"})]
+    node_id = max(used, default=0) + 1
+    updated = deepcopy(dict(draft))
+    updated["image_model"].setdefault("nodes", []).append({"id": node_id, "u": u, "v": v})
+    entities = updated.setdefault("entities", [])
+    identifier = f"user-node-{node_id}"
+    while any(item.get("id") == identifier for item in entities):
+        identifier += "-new"
+    entities.append({"id": identifier, "kind": "node", "target": {"node": node_id},
+                     "source": "user", "verified": True, "confidence": None,
+                     "recognition_confidence": None, "image_geometry": {"point": [u, v]},
+                     "payload": {}})
+    updated.setdefault("edit_history", []).append({"action": "add_image_node", "source": "user",
+                                                   "node_id": node_id, "point": [u, v]})
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
+    return detect_topology(updated)
+
+
 def delete_node(draft: Mapping[str, Any], node_id: int) -> dict[str, Any]:
+    """删除无引用的节点，保存原观察；受力对象及已确认尺度锚点必须先处理。"""
     image_model = draft.get("image_model") or {}
+    nodes, _ = _geometry(image_model)
+    if node_id not in nodes:
+        raise ValueError("所选节点不存在，请重新选择。")
     refs = []
     if any(node_id in (item.get("i"), item.get("j")) for item in image_model.get("members") or []):
-        refs.append("member")
+        refs.append("杆件")
     if any(item.get("node") == node_id for item in image_model.get("supports") or []):
-        refs.append("support")
+        refs.append("支座")
     for block in [image_model, *(image_model.get("load_cases") or [])]:
         for collection in ("nodal_loads", "settlements"):
             if any(item.get("node") == node_id for item in block.get(collection) or []):
-                refs.append("load")
+                refs.append("荷载或支座位移")
     if any(node_id in (item.get("target", {}).get("nodes") or [])
+           or item.get("target", {}).get("node") == node_id
            for item in draft.get("dimensions") or []):
-        refs.append("dimension")
+        refs.append("尺寸")
+    if any(item.get("node_id") == node_id for item in draft.get("intersections") or []):
+        refs.append("交点")
+    scale = draft.get("scale") or {}
+    if scale.get("status") == "confirmed" and scale.get("anchor_node") == node_id:
+        refs.append("已确认尺度锚点")
     if refs:
-        raise ValueError(f"节点 {node_id} 仍被引用: {', '.join(sorted(set(refs)))}")
+        raise ValueError(f"节点 {node_id} 仍被引用：{'、'.join(sorted(set(refs)))}。请先核对并处理引用，再删除节点。")
+    if len(nodes) <= 1:
+        raise ValueError("草稿仅剩一个节点，请重新识别或补画正确节点后再删除。")
     updated = deepcopy(dict(draft))
-    before = len(updated["image_model"].get("nodes") or [])
+    previous = {"node": deepcopy(next(item for item in image_model["nodes"] if item["id"] == node_id)),
+                "entities": [deepcopy(item) for item in draft.get("entities") or []
+                             if item.get("target", {}).get("node") == node_id],
+                "issues": [deepcopy(item) for item in draft.get("issues") or []
+                           if f"node:{node_id}" in (item.get("entity_refs") or [])]}
     updated["image_model"]["nodes"] = [item for item in updated["image_model"]["nodes"]
                                                 if item.get("id") != node_id]
-    if len(updated["image_model"]["nodes"]) == before:
-        raise ValueError("未知节点")
     updated["entities"] = [item for item in updated.get("entities") or []
                            if item.get("target", {}).get("node") != node_id]
+    for issue in updated.get("issues") or []:
+        refs = issue.get("entity_refs") or []
+        if f"node:{node_id}" in refs:
+            issue["entity_refs"] = [ref for ref in refs if ref != f"node:{node_id}"]
+            if not issue["entity_refs"]:
+                issue.update(status="resolved", resolution="用户删除无引用节点", resolved_by="user")
+    if scale.get("anchor_node") == node_id:
+        updated["scale"]["anchor_node"] = None
+    updated.setdefault("edit_history", []).append({"action": "delete_image_node", "source": "user",
+                                                   "node_id": node_id, "previous": previous})
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
     return detect_topology(updated)
 
 

@@ -73,6 +73,9 @@ class SketchPanel(QWidget):
         self._missing_load_values: set[QDoubleSpinBox] = set()
 
         self._build_ui()
+        # 焦点在缩放框或节点列表时也先取消选点，避免触发外层窗口的 Esc 关闭。
+        for child in self.findChildren(QWidget):
+            child.installEventFilter(self)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -228,6 +231,22 @@ class SketchPanel(QWidget):
         edit_hint = QLabel("拖动蓝/橙色节点可修正位置；编辑后需重新确认")
         edit_hint.setStyleSheet(f"color:{theme.INK_MUTED}; font-size:8pt;")
         edit_layout.addWidget(edit_hint)
+        self.node_widget = QWidget(self)
+        node_row = QHBoxLayout(self.node_widget)
+        node_row.setContentsMargins(0, 0, 0, 0)
+        self.btn_add_node = QPushButton("补画节点")
+        self.btn_add_node.setCheckable(True)
+        self.btn_add_node.setToolTip("点击后在原图真实接头处补点，再补画相连杆件。Esc 或右键取消；杆件内部作用点请使用补充作用节点。")
+        self.btn_add_node.toggled.connect(self._toggle_node_placement)
+        self.cmb_remove_node = QComboBox()
+        self.btn_remove_node = QPushButton("删除节点")
+        self.btn_remove_node.setToolTip("仅删除无引用节点；请先处理杆件、支座、荷载、尺寸和尺度锚点引用。")
+        self.btn_remove_node.clicked.connect(self._remove_node)
+        node_row.addWidget(self.btn_add_node)
+        node_row.addWidget(self.cmb_remove_node, 1)
+        node_row.addWidget(self.btn_remove_node)
+        self.lbl_image.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        edit_layout.addWidget(self.node_widget)
         member_row = QHBoxLayout()
         self.cmb_member_i = QComboBox()
         self.cmb_member_j = QComboBox()
@@ -574,6 +593,7 @@ class SketchPanel(QWidget):
 
     def _on_preprocessed_image(self, metadata: dict) -> None:
         """Use only the derived image and invalidate every stale recognition result."""
+        self.btn_add_node.setChecked(False)
         self._preprocess_metadata = dict(metadata)
         self._source_image_path = str(metadata["original_path"])
         self._recognition_generation += 1
@@ -635,6 +655,7 @@ class SketchPanel(QWidget):
 
     def _on_work_plane_changed(self):
         """平面参数改变后必须重新确认，避免按界面已不再显示的旧平面导入。"""
+        self.btn_add_node.setChecked(False)
         self._work_plane = None
         self._recognition_generation += 1
         self.btn_recognize.setEnabled(False)
@@ -667,6 +688,7 @@ class SketchPanel(QWidget):
 
     def set_v2_draft(self, draft: dict) -> None:
         """Host the frozen v2 review APIs without changing the legacy v1 path."""
+        self.btn_add_node.setChecked(False)
         from sketch_load_edit import refresh_partial_geometry
         self._v2_draft = refresh_partial_geometry(draft)
         self._clear_reference_length()
@@ -893,6 +915,7 @@ class SketchPanel(QWidget):
         self.txt_model.setText(SketchParser._default_model(provider))
 
     def _recognize(self):
+        self.btn_add_node.setChecked(False)
         if not self._image_path or self.runner.busy:
             return
         self.btn_recognize.setEnabled(False)
@@ -1193,7 +1216,7 @@ class SketchPanel(QWidget):
             return
         nodes = model.get("nodes") or []
         members = model.get("members") or []
-        for combo in (self.cmb_member_i, self.cmb_member_j):
+        for combo in (self.cmb_member_i, self.cmb_member_j, self.cmb_remove_node):
             current = combo.currentData()
             combo.clear()
             for node in nodes:
@@ -1214,6 +1237,53 @@ class SketchPanel(QWidget):
         self.btn_remove_member.setEnabled(len(members) > 1)
         self.split_widget.setVisible(self._v2_draft is not None)
         self.btn_insert_member_node.setEnabled(bool(members))
+        self.node_widget.setVisible(self._v2_draft is not None)
+        self.btn_add_node.setEnabled(self._v2_draft is not None
+                                     and not self.lbl_image.pixmap().isNull())
+        self.btn_remove_node.setEnabled(self._v2_draft is not None and len(nodes) > 1)
+
+    def _toggle_node_placement(self, enabled: bool) -> None:
+        self._drag_node_id = None
+        self._drag_changed = False
+        self.lbl_image.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.OpenHandCursor)
+        if enabled:
+            self.lbl_image.setFocus()
+            self.lbl_status.setText("请在原图真实接头处单击补画节点，再补画相连杆件；Esc 或右键取消。")
+        else:
+            self.lbl_status.setText("补画节点已结束，可继续核对节点与杆件。")
+
+    def hideEvent(self, event):
+        self.btn_add_node.setChecked(False)
+        super().hideEvent(event)
+
+    def _place_image_node(self, point: tuple[float, float]) -> None:
+        if self._v2_draft is None:
+            return
+        from sketch_topology import add_image_node
+        try:
+            draft = add_image_node(self._v2_draft, *point)
+        except ValueError as exc:
+            self._show_edit_error("补画节点失败", exc)
+            return
+        node_id = draft["edit_history"][-1]["node_id"]
+        self.btn_add_node.setChecked(False)
+        self._apply_v2_edit(draft, f"已补画节点 {node_id}，请核对并补画相连杆件")
+        for combo in (self.cmb_member_j, self.cmb_remove_node, self.cmb_load_node, self.cmb_support_node):
+            combo.setCurrentIndex(combo.findData(node_id))
+
+    def _remove_node(self) -> None:
+        if self._v2_draft is None or self.cmb_remove_node.currentData() is None:
+            return
+        from sketch_topology import delete_node
+        node_id = int(self.cmb_remove_node.currentData())
+        try:
+            draft = delete_node(self._v2_draft, node_id)
+        except ValueError as exc:
+            self._show_edit_error("删除节点失败", exc)
+            return
+        self.btn_add_node.setChecked(False)
+        self._highlight_refs.discard(f"node:{node_id}")
+        self._apply_v2_edit(draft, f"已删除无引用节点 {node_id}")
 
     def _reset_confirmation(self):
         self.chk_confirm.setChecked(False)
@@ -2003,7 +2073,8 @@ class SketchPanel(QWidget):
         painter.end()
         self._preview_pixmap = pixmap
         self._refresh_image_preview()
-        self.lbl_image.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.lbl_image.setCursor(Qt.CursorShape.CrossCursor if self.btn_add_node.isChecked()
+                                 else Qt.CursorShape.OpenHandCursor)
 
     def _refresh_image_preview(self, *_):
         if self._preview_pixmap.isNull():
@@ -2088,10 +2159,30 @@ class SketchPanel(QWidget):
         self.lbl_status.setText(f"已移动节点 {node_id}，尺寸与交点已重新计算。")
 
     def eventFilter(self, watched, event):
+        placing = getattr(self, "btn_add_node", None)
+        if placing is not None and placing.isChecked() and event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
+            if event.key() == Qt.Key.Key_Escape:
+                event.accept()
+                if event.type() == QEvent.Type.KeyPress:
+                    self.btn_add_node.setChecked(False)
+                return True
         if watched is self.preview_scroll.viewport() and event.type() == QEvent.Type.Resize:
             self._refresh_image_preview()
         active = self._v2_draft is not None or self._result_draft is not None
         if watched is self.lbl_image and active:
+            if self.btn_add_node.isChecked():
+                if ((event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape)
+                        or (event.type() == QEvent.Type.MouseButtonPress
+                            and event.button() == Qt.MouseButton.RightButton)):
+                    self.btn_add_node.setChecked(False)
+                    return True
+                if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                    point = self._image_position(event)
+                    if point is not None:
+                        self._place_image_node(point)
+                    return True
+                if event.type() in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease):
+                    return True
             if (event.type() == QEvent.Type.MouseButtonPress
                     and event.button() == Qt.MouseButton.LeftButton):
                 point = self._image_position(event)
