@@ -1,0 +1,1829 @@
+{
+  "description": "教学演示模型，按用户图片外形建模；参数非图纸测量值。",
+  "variants": {
+    "初设": {
+      "model_file": "拱形网格屋盖_初设.json",
+      "model_sha256": "44b98b2b0d39a7ffb736d44dfe6bfe0e9ec47354555302fdf6d791e8e1682a64",
+      "raw_tool_record": "results\\defense_vault\\拱形网格屋盖工具结果.json",
+      "raw_tool_record_sha256": "49340d7d8bbdb9b28d289d85e62bc9b2dadbb84ea4a1702ab0b22ec59fd1e6db",
+      "geometry": {
+        "span_m": 24.0,
+        "length_m": 36.0,
+        "rise_m": 5.0,
+        "eave_m": 6.0,
+        "nodes": 239,
+        "members": 622,
+        "supports": 18,
+        "roof_nodes": 221,
+        "arch_divisions": 12,
+        "length_divisions": 16
+      },
+      "steel_self_weight_kN": 593.0924454899134,
+      "validate_model": {
+        "summary": {
+          "nodes": 239,
+          "members": 622,
+          "supports": 18,
+          "load_cases": 5
+        }
+      },
+      "query_results_max_displacement": {
+        "DL": {
+          "case": "DL",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 73.960467,
+          "components_mm": {
+            "ux": -0.0,
+            "uy": -0.0,
+            "uz": -73.960467
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "LL": {
+          "case": "LL",
+          "node": 98,
+          "coordinates_xyz": [
+            12.0,
+            15.75,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 28.250591,
+          "components_mm": {
+            "ux": -0.0,
+            "uy": 0.007836,
+            "uz": -28.25059
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "WX": {
+          "case": "WX",
+          "node": 218,
+          "coordinates_xyz": [
+            18.5,
+            36.0,
+            9.7
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 27.878394,
+          "components_mm": {
+            "ux": 23.598197,
+            "uy": 0.001971,
+            "uz": 14.843515
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "WU": {
+          "case": "WU",
+          "node": 98,
+          "coordinates_xyz": [
+            12.0,
+            15.75,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 35.313239,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": -0.009796,
+            "uz": 35.313238
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ASYM": {
+          "case": "ASYM",
+          "node": 109,
+          "coordinates_xyz": [
+            7.603195,
+            18.0,
+            10.41803
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 21.124311,
+          "components_mm": {
+            "ux": 8.10295,
+            "uy": 0.0,
+            "uz": -19.508427
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-G": {
+          "case": "ULS-G",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 138.523306,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": -0.0,
+            "uz": -138.523306
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-GW": {
+          "case": "ULS-GW",
+          "node": 110,
+          "coordinates_xyz": [
+            9.782424,
+            18.0,
+            10.853876
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 143.15656,
+          "components_mm": {
+            "ux": 32.377235,
+            "uy": 0.0,
+            "uz": -139.447178
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-UP": {
+          "case": "ULS-UP",
+          "node": 213,
+          "coordinates_xyz": [
+            7.603195,
+            36.0,
+            10.41803
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 45.134781,
+          "components_mm": {
+            "ux": 34.001236,
+            "uy": 0.016293,
+            "uz": -29.682725
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-ASYM": {
+          "case": "ULS-ASYM",
+          "node": 110,
+          "coordinates_xyz": [
+            9.782424,
+            18.0,
+            10.853876
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 136.213359,
+          "components_mm": {
+            "ux": 44.54239,
+            "uy": 0.0,
+            "uz": -128.724725
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "SLS": {
+          "case": "SLS",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 102.210266,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": -0.0,
+            "uz": -102.210266
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        }
+      },
+      "independent_force_and_moment_checks": {
+        "DL": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -1111.4924454899133
+          ],
+          "support_kN": [
+            1.9441358745098115e-11,
+            1.1698375601554288e-12,
+            1111.49244548989
+          ],
+          "force_residual_N": [
+            1.9441358745098114e-08,
+            1.169837560155429e-09,
+            -2.3050233721733093e-08
+          ],
+          "moment_residual_Nm": [
+            -5.587935447692871e-07,
+            1.0114163160324097e-06,
+            -6.193295121192932e-08
+          ]
+        },
+        "LL": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -345.6000000000001
+          ],
+          "support_kN": [
+            7.290509529411793e-12,
+            4.462208380573429e-13,
+            345.59999999998956
+          ],
+          "force_residual_N": [
+            7.290509529411793e-09,
+            4.462208380573429e-10,
+            -1.0477378964424133e-08
+          ],
+          "moment_residual_Nm": [
+            -2.421438694000244e-07,
+            4.023313522338867e-07,
+            -2.0547304302453995e-08
+          ]
+        },
+        "WX": {
+          "external_kN": [
+            216.00000000000028,
+            0.0,
+            0.0
+          ],
+          "support_kN": [
+            -216.0000000005051,
+            -3.588127128750784e-12,
+            -3.042350726900622e-11
+          ],
+          "force_residual_N": [
+            -5.048059392720461e-07,
+            -3.5881271287507843e-09,
+            -3.042350726900622e-08
+          ],
+          "moment_residual_Nm": [
+            -5.513429641723633e-07,
+            -4.309695214033127e-06,
+            9.12696123123169e-06
+          ]
+        },
+        "WU": {
+          "external_kN": [
+            0.0,
+            0.0,
+            432.00000000000057
+          ],
+          "support_kN": [
+            -9.313225746154785e-12,
+            -4.253024599165656e-13,
+            -431.9999999999853
+          ],
+          "force_residual_N": [
+            -9.313225746154785e-09,
+            -4.2530245991656557e-10,
+            1.5308614820241928e-08
+          ],
+          "moment_residual_Nm": [
+            3.3061951398849487e-07,
+            -5.280598998069763e-07,
+            3.026798367500305e-08
+          ]
+        },
+        "ASYM": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -172.8
+          ],
+          "support_kN": [
+            -1.7845468391897156e-10,
+            -1.3485532690538094e-12,
+            172.79999999998677
+          ],
+          "force_residual_N": [
+            -1.7845468391897157e-07,
+            -1.3485532690538093e-09,
+            -1.3242242857813835e-08
+          ],
+          "moment_residual_Nm": [
+            -2.598389983177185e-07,
+            -1.4042016118764877e-06,
+            3.2972893677651882e-06
+          ]
+        },
+        "ULS-G": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -1963.340179136888
+          ],
+          "support_kN": [
+            3.621971700340509e-11,
+            2.1914274839218706e-12,
+            1963.3401791368422
+          ],
+          "force_residual_N": [
+            3.6219717003405094e-08,
+            2.1914274839218706e-09,
+            -4.586763679981232e-08
+          ],
+          "moment_residual_Nm": [
+            -1.087784767150879e-06,
+            1.903623342514038e-06,
+            -1.1175870895385742e-07
+          ]
+        },
+        "ULS-GW": {
+          "external_kN": [
+            323.99999999999983,
+            0.0,
+            -1963.340179136888
+          ],
+          "support_kN": [
+            -324.00000000072146,
+            -3.1936906452756374e-12,
+            1963.340179136796
+          ],
+          "force_residual_N": [
+            -7.216585800051689e-07,
+            -3.1936906452756375e-09,
+            -9.220093488693237e-08
+          ],
+          "moment_residual_Nm": [
+            -1.9297003746032715e-06,
+            -4.567205905914307e-06,
+            1.3574957847595215e-05
+          ]
+        },
+        "ULS-UP": {
+          "external_kN": [
+            323.99999999999983,
+            0.0,
+            -352.34320094092243
+          ],
+          "support_kN": [
+            -324.00000000075414,
+            -4.968114808434621e-12,
+            352.34320094087775
+          ],
+          "force_residual_N": [
+            -7.543130777776241e-07,
+            -4.9681148084346205e-09,
+            -4.470348358154297e-08
+          ],
+          "moment_residual_Nm": [
+            -8.298084139823914e-07,
+            -6.340444087982178e-06,
+            1.3676472008228302e-05
+          ]
+        },
+        "ULS-ASYM": {
+          "external_kN": [
+            323.99999999999983,
+            0.0,
+            -1704.14017913689
+          ],
+          "support_kN": [
+            -324.00000000100016,
+            -5.883975973119959e-12,
+            1704.140179136792
+          ],
+          "force_residual_N": [
+            -1.0003568604588509e-06,
+            -5.883975973119959e-09,
+            -9.778887033462524e-08
+          ],
+          "moment_residual_Nm": [
+            -1.9334256649017334e-06,
+            -7.268041372299194e-06,
+            1.8553808331489563e-05
+          ]
+        },
+        "SLS": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -1457.0924454899134
+          ],
+          "support_kN": [
+            2.6731868274509906e-11,
+            1.61662683240138e-12,
+            1457.09244548988
+          ],
+          "force_residual_N": [
+            2.6731868274509907e-08,
+            1.61662683240138e-09,
+            -3.3527612686157227e-08
+          ],
+          "moment_residual_Nm": [
+            -7.82310962677002e-07,
+            1.4081597328186035e-06,
+            -8.265487849712372e-08
+          ]
+        }
+      },
+      "check_strength": {
+        "cases": [
+          "DL",
+          "LL",
+          "WX",
+          "WU",
+          "ASYM",
+          "ULS-G",
+          "ULS-GW",
+          "ULS-UP",
+          "ULS-ASYM",
+          "SLS"
+        ],
+        "count": 622,
+        "ok": false,
+        "failed_members": [
+          73,
+          97,
+          121
+        ],
+        "inconclusive_members": []
+      },
+      "worst_members_from_check_strength": [
+        {
+          "member": 97,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 1.0116,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "强度超限",
+          "combined_stress_MPa": 308.537,
+          "combined_ratio": 0.9196,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 290.574,
+            "σr2": 290.574,
+            "σr3": 308.537,
+            "σr4": 308.537
+          },
+          "axial_kN": -64.748,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0411,
+          "code_stability_ok": true
+        },
+        {
+          "member": 73,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 1.0088,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "强度超限",
+          "combined_stress_MPa": 307.683,
+          "combined_ratio": 0.9171,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 289.741,
+            "σr2": 289.741,
+            "σr3": 307.683,
+            "σr4": 307.683
+          },
+          "axial_kN": -64.398,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0408,
+          "code_stability_ok": true
+        },
+        {
+          "member": 121,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 1.0088,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "强度超限",
+          "combined_stress_MPa": 307.683,
+          "combined_ratio": 0.9171,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 289.741,
+            "σr2": 289.741,
+            "σr3": 307.683,
+            "σr4": 307.683
+          },
+          "axial_kN": -64.398,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0408,
+          "code_stability_ok": true
+        },
+        {
+          "member": 49,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 0.9975,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.975，应力比 0.040；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 304.226,
+          "combined_ratio": 0.9068,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 286.486,
+            "σr2": 286.486,
+            "σr3": 304.226,
+            "σr4": 304.226
+          },
+          "axial_kN": -63.249,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0401,
+          "code_stability_ok": true
+        },
+        {
+          "member": 145,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 0.9975,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.975，应力比 0.040；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 304.226,
+          "combined_ratio": 0.9068,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 286.486,
+            "σr2": 286.486,
+            "σr3": 304.226,
+            "σr4": 304.226
+          },
+          "axial_kN": -63.249,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0401,
+          "code_stability_ok": true
+        },
+        {
+          "member": 25,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 0.9653,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.975，应力比 0.039；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 294.41,
+          "combined_ratio": 0.8775,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 277.218,
+            "σr2": 277.218,
+            "σr3": 294.41,
+            "σr4": 294.41
+          },
+          "axial_kN": -61.956,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0393,
+          "code_stability_ok": true
+        },
+        {
+          "member": 169,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 0.9653,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.975，应力比 0.039；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 294.41,
+          "combined_ratio": 0.8775,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 277.218,
+            "σr2": 277.218,
+            "σr3": 294.41,
+            "σr4": 294.41
+          },
+          "axial_kN": -61.956,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0393,
+          "code_stability_ok": true
+        },
+        {
+          "member": 614,
+          "section": "COL-P406x16",
+          "length_m": 6.0,
+          "stress_ratio": 0.9406,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.947，应力比 0.020；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 286.898,
+          "combined_ratio": 0.8551,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 275.227,
+            "σr2": 275.227,
+            "σr3": 286.898,
+            "σr4": 286.898
+          },
+          "axial_kN": -114.399,
+          "P_cr_kN": 84339.009,
+          "buckling_ratio": 0.0014,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 21.7,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9474,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0202,
+          "code_stability_ok": true
+        },
+        {
+          "member": 612,
+          "section": "COL-P406x16",
+          "length_m": 6.0,
+          "stress_ratio": 0.9384,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.947，应力比 0.020；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 286.207,
+          "combined_ratio": 0.8531,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 274.568,
+            "σr2": 274.568,
+            "σr3": 286.207,
+            "σr4": 286.207
+          },
+          "axial_kN": -114.081,
+          "P_cr_kN": 84339.009,
+          "buckling_ratio": 0.0014,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 21.7,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9474,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0201,
+          "code_stability_ok": true
+        },
+        {
+          "member": 616,
+          "section": "COL-P406x16",
+          "length_m": 6.0,
+          "stress_ratio": 0.9384,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.947，应力比 0.020；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 286.207,
+          "combined_ratio": 0.8531,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 274.568,
+            "σr2": 274.568,
+            "σr3": 286.207,
+            "σr4": 286.207
+          },
+          "axial_kN": -114.081,
+          "P_cr_kN": 84339.009,
+          "buckling_ratio": 0.0014,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 21.7,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9474,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0201,
+          "code_stability_ok": true
+        },
+        {
+          "member": 108,
+          "section": "ARCH-P219x8",
+          "length_m": 2.2224,
+          "stress_ratio": 0.9311,
+          "governs": "受压",
+          "worst_case": "ULS-G",
+          "at_x_m": 2.222,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.975，应力比 0.049；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 283.996,
+          "combined_ratio": 0.8465,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 2.222,
+          "equivalent_stress_MPa": {
+            "σr1": 259.577,
+            "σr2": 259.577,
+            "σr3": 283.996,
+            "σr4": 283.996
+          },
+          "axial_kN": -77.22,
+          "P_cr_kN": 48664.162,
+          "buckling_ratio": 0.0016,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 14.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9749,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.049,
+          "code_stability_ok": true
+        },
+        {
+          "member": 610,
+          "section": "COL-P406x16",
+          "length_m": 6.0,
+          "stress_ratio": 0.9309,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.947，应力比 0.020；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 283.914,
+          "combined_ratio": 0.8462,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 272.404,
+            "σr2": 272.404,
+            "σr3": 283.914,
+            "σr4": 283.914
+          },
+          "axial_kN": -112.821,
+          "P_cr_kN": 84339.009,
+          "buckling_ratio": 0.0013,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 21.7,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9474,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0199,
+          "code_stability_ok": true
+        }
+      ]
+    },
+    "调整版": {
+      "model_file": "拱形网格屋盖.json",
+      "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+      "raw_tool_record": "results\\defense_vault_strengthened\\拱形网格屋盖工具结果.json",
+      "raw_tool_record_sha256": "7114f6049a0266b704fa34b9bdd5e33231b3ce5d86d6b740b32450413f3cf758",
+      "geometry": {
+        "span_m": 24.0,
+        "length_m": 36.0,
+        "rise_m": 5.0,
+        "eave_m": 6.0,
+        "nodes": 239,
+        "members": 622,
+        "supports": 18,
+        "roof_nodes": 221,
+        "arch_divisions": 12,
+        "length_divisions": 16
+      },
+      "steel_self_weight_kN": 696.413543115841,
+      "validate_model": {
+        "summary": {
+          "nodes": 239,
+          "members": 622,
+          "supports": 18,
+          "load_cases": 5
+        }
+      },
+      "query_results_max_displacement": {
+        "DL": {
+          "case": "DL",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 52.766782,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": 0.0,
+            "uz": -52.766782
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "LL": {
+          "case": "LL",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 18.216911,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": 0.0,
+            "uz": -18.216911
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "WX": {
+          "case": "WX",
+          "node": 212,
+          "coordinates_xyz": [
+            5.5,
+            36.0,
+            9.7
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 20.233582,
+          "components_mm": {
+            "ux": 18.0238,
+            "uy": -0.005964,
+            "uz": -9.194587
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "WU": {
+          "case": "WU",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 22.771139,
+          "components_mm": {
+            "ux": -0.0,
+            "uy": -0.0,
+            "uz": 22.771139
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ASYM": {
+          "case": "ASYM",
+          "node": 109,
+          "coordinates_xyz": [
+            7.603195,
+            18.0,
+            10.41803
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 12.553476,
+          "components_mm": {
+            "ux": 4.905247,
+            "uy": 0.0,
+            "uz": -11.555445
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-G": {
+          "case": "ULS-G",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 95.922183,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": 0.0,
+            "uz": -95.922183
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-GW": {
+          "case": "ULS-GW",
+          "node": 110,
+          "coordinates_xyz": [
+            9.782424,
+            18.0,
+            10.853876
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 99.216702,
+          "components_mm": {
+            "ux": 25.100262,
+            "uy": 0.0,
+            "uz": -95.989222
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-UP": {
+          "case": "ULS-UP",
+          "node": 109,
+          "coordinates_xyz": [
+            7.603195,
+            18.0,
+            10.41803
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 33.820502,
+          "components_mm": {
+            "ux": 25.941757,
+            "uy": 0.0,
+            "uz": -21.699114
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "ULS-ASYM": {
+          "case": "ULS-ASYM",
+          "node": 110,
+          "coordinates_xyz": [
+            9.782424,
+            18.0,
+            10.853876
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 93.639992,
+          "components_mm": {
+            "ux": 32.540668,
+            "uy": 0.0,
+            "uz": -87.804061
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        },
+        "SLS": {
+          "case": "SLS",
+          "node": 111,
+          "coordinates_xyz": [
+            12.0,
+            18.0,
+            11.0
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 70.983693,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": 0.0,
+            "uz": -70.983693
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        }
+      },
+      "independent_force_and_moment_checks": {
+        "DL": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -1214.8135431158412
+          ],
+          "support_kN": [
+            -7.314520189538599e-11,
+            -2.7148416847921907e-12,
+            1214.8135431158812
+          ],
+          "force_residual_N": [
+            -7.314520189538598e-08,
+            -2.7148416847921908e-09,
+            4.0046870708465576e-08
+          ],
+          "moment_residual_Nm": [
+            9.126961231231689e-07,
+            -1.253560185432434e-06,
+            1.437729224562645e-06
+          ]
+        },
+        "LL": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -345.6000000000001
+          ],
+          "support_kN": [
+            -2.5149347493425013e-11,
+            -1.0154508345294744e-12,
+            345.6000000000133
+          ],
+          "force_residual_N": [
+            -2.514934749342501e-08,
+            -1.0154508345294744e-09,
+            1.3271346688270569e-08
+          ],
+          "moment_residual_Nm": [
+            2.859160304069519e-07,
+            -4.0605664253234863e-07,
+            4.953471943736076e-07
+          ]
+        },
+        "WX": {
+          "external_kN": [
+            216.00000000000028,
+            0.0,
+            0.0
+          ],
+          "support_kN": [
+            -216.0000000003397,
+            3.028617356903851e-12,
+            2.510751073714346e-11
+          ],
+          "force_residual_N": [
+            -3.3940887078642845e-07,
+            3.028617356903851e-09,
+            2.5107510737143457e-08
+          ],
+          "moment_residual_Nm": [
+            3.8708094507455826e-07,
+            -3.684312105178833e-06,
+            6.273388862609863e-06
+          ]
+        },
+        "WU": {
+          "external_kN": [
+            0.0,
+            0.0,
+            432.00000000000057
+          ],
+          "support_kN": [
+            3.137029125355184e-11,
+            1.1614247341640293e-12,
+            -432.0000000000194
+          ],
+          "force_residual_N": [
+            3.137029125355184e-08,
+            1.1614247341640294e-09,
+            -1.8801074475049973e-08
+          ],
+          "moment_residual_Nm": [
+            -4.153698682785034e-07,
+            5.504116415977478e-07,
+            -6.180489435791969e-07
+          ]
+        },
+        "ASYM": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -172.8
+          ],
+          "support_kN": [
+            -9.730047167977319e-11,
+            5.848619366588536e-13,
+            172.8000000000136
+          ],
+          "force_residual_N": [
+            -9.730047167977318e-08,
+            5.848619366588537e-10,
+            1.359148882329464e-08
+          ],
+          "moment_residual_Nm": [
+            2.4354085326194763e-07,
+            -1.1244555935263634e-06,
+            1.8207356333732605e-06
+          ]
+        },
+        "ULS-G": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -2097.657606050594
+          ],
+          "support_kN": [
+            -1.3278622645884752e-10,
+            -5.055881047155708e-12,
+            2097.657606050666
+          ],
+          "force_residual_N": [
+            -1.3278622645884752e-07,
+            -5.055881047155708e-09,
+            7.171183824539185e-08
+          ],
+          "moment_residual_Nm": [
+            1.6093254089355469e-06,
+            -2.2649765014648438e-06,
+            2.6114284992218018e-06
+          ]
+        },
+        "ULS-GW": {
+          "external_kN": [
+            323.99999999999983,
+            0.0,
+            -2097.657606050594
+          ],
+          "support_kN": [
+            -324.00000000064233,
+            -5.106812750454992e-13,
+            2097.6576060507036
+          ],
+          "force_residual_N": [
+            -6.424961611628532e-07,
+            -5.106812750454992e-10,
+            1.0943040251731873e-07
+          ],
+          "moment_residual_Nm": [
+            2.1830201148986816e-06,
+            -7.756054401397705e-06,
+            1.2017786502838135e-05
+          ]
+        },
+        "ULS-UP": {
+          "external_kN": [
+            323.99999999999983,
+            0.0,
+            -445.3321888042557
+          ],
+          "support_kN": [
+            -324.0000000005284,
+            3.8392897749872645e-12,
+            445.3321888043019
+          ],
+          "force_residual_N": [
+            -5.285837687551975e-07,
+            3.8392897749872645e-09,
+            4.621688276529312e-08
+          ],
+          "moment_residual_Nm": [
+            7.748603820800781e-07,
+            -5.8300793170928955e-06,
+            9.772367775440216e-06
+          ]
+        },
+        "ULS-ASYM": {
+          "external_kN": [
+            323.99999999999983,
+            0.0,
+            -1838.4576060505938
+          ],
+          "support_kN": [
+            -324.00000000075056,
+            1.889247869257815e-12,
+            1838.4576060507038
+          ],
+          "force_residual_N": [
+            -7.507624104619026e-07,
+            1.889247869257815e-09,
+            1.1012889444828033e-07
+          ],
+          "moment_residual_Nm": [
+            2.123415470123291e-06,
+            -8.847564458847046e-06,
+            1.4007091522216797e-05
+          ]
+        },
+        "SLS": {
+          "external_kN": [
+            0.0,
+            0.0,
+            -1560.4135431158386
+          ],
+          "support_kN": [
+            -9.828363545238971e-11,
+            -3.728018782567233e-12,
+            1560.413543115895
+          ],
+          "force_residual_N": [
+            -9.828363545238972e-08,
+            -3.728018782567233e-09,
+            5.634501576423645e-08
+          ],
+          "moment_residual_Nm": [
+            1.2069940567016602e-06,
+            -1.6614794731140137e-06,
+            1.9331928342580795e-06
+          ]
+        }
+      },
+      "check_strength": {
+        "cases": [
+          "DL",
+          "LL",
+          "WX",
+          "WU",
+          "ASYM",
+          "ULS-G",
+          "ULS-GW",
+          "ULS-UP",
+          "ULS-ASYM",
+          "SLS"
+        ],
+        "count": 622,
+        "ok": true,
+        "failed_members": [],
+        "inconclusive_members": []
+      },
+      "worst_members_from_check_strength": [
+        {
+          "member": 108,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.8059,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 2.222,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.029；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 245.798,
+          "combined_ratio": 0.7326,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 2.222,
+          "equivalent_stress_MPa": {
+            "σr1": 229.391,
+            "σr2": 229.391,
+            "σr3": 245.798,
+            "σr4": 245.798
+          },
+          "axial_kN": -72.947,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0006,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0294,
+          "code_stability_ok": true
+        },
+        {
+          "member": 84,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.8031,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 2.222,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.029；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 244.934,
+          "combined_ratio": 0.7301,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 2.222,
+          "equivalent_stress_MPa": {
+            "σr1": 228.703,
+            "σr2": 228.703,
+            "σr3": 244.934,
+            "σr4": 244.934
+          },
+          "axial_kN": -72.518,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0006,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0293,
+          "code_stability_ok": true
+        },
+        {
+          "member": 132,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.8031,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 2.222,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.029；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 244.934,
+          "combined_ratio": 0.7301,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 2.222,
+          "equivalent_stress_MPa": {
+            "σr1": 228.703,
+            "σr2": 228.703,
+            "σr3": 244.934,
+            "σr4": 244.934
+          },
+          "axial_kN": -72.518,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0006,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0293,
+          "code_stability_ok": true
+        },
+        {
+          "member": 97,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.8,
+          "governs": "受压",
+          "worst_case": "ULS-G",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.024；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 244.008,
+          "combined_ratio": 0.7273,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 230.641,
+            "σr2": 230.641,
+            "σr3": 244.008,
+            "σr4": 244.008
+          },
+          "axial_kN": -60.388,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0005,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0244,
+          "code_stability_ok": true
+        },
+        {
+          "member": 73,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.7975,
+          "governs": "受压",
+          "worst_case": "ULS-G",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.024；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 243.226,
+          "combined_ratio": 0.725,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 230.025,
+            "σr2": 230.025,
+            "σr3": 243.226,
+            "σr4": 243.226
+          },
+          "axial_kN": -59.999,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0005,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0242,
+          "code_stability_ok": true
+        },
+        {
+          "member": 121,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.7975,
+          "governs": "受压",
+          "worst_case": "ULS-G",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.024；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 243.226,
+          "combined_ratio": 0.725,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 230.025,
+            "σr2": 230.025,
+            "σr3": 243.226,
+            "σr4": 243.226
+          },
+          "axial_kN": -59.999,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0005,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0242,
+          "code_stability_ok": true
+        },
+        {
+          "member": 614,
+          "section": "COL-P406x16",
+          "length_m": 6.0,
+          "stress_ratio": 0.7964,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.947，应力比 0.022；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 242.902,
+          "combined_ratio": 0.724,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 230.296,
+            "σr2": 230.296,
+            "σr3": 242.902,
+            "σr4": 242.902
+          },
+          "axial_kN": -123.56,
+          "P_cr_kN": 84339.009,
+          "buckling_ratio": 0.0015,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 21.7,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9474,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0218,
+          "code_stability_ok": true
+        },
+        {
+          "member": 612,
+          "section": "COL-P406x16",
+          "length_m": 6.0,
+          "stress_ratio": 0.7942,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.947，应力比 0.022；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 242.236,
+          "combined_ratio": 0.722,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 229.661,
+            "σr2": 229.661,
+            "σr3": 242.236,
+            "σr4": 242.236
+          },
+          "axial_kN": -123.264,
+          "P_cr_kN": 84339.009,
+          "buckling_ratio": 0.0015,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 21.7,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9474,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0218,
+          "code_stability_ok": true
+        },
+        {
+          "member": 616,
+          "section": "COL-P406x16",
+          "length_m": 6.0,
+          "stress_ratio": 0.7942,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.947，应力比 0.022；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 242.236,
+          "combined_ratio": 0.722,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 229.661,
+            "σr2": 229.661,
+            "σr3": 242.236,
+            "σr4": 242.236
+          },
+          "axial_kN": -123.264,
+          "P_cr_kN": 84339.009,
+          "buckling_ratio": 0.0015,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 21.7,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9474,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0218,
+          "code_stability_ok": true
+        },
+        {
+          "member": 60,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.7922,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 2.222,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.029；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 241.607,
+          "combined_ratio": 0.7201,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 2.222,
+          "equivalent_stress_MPa": {
+            "σr1": 225.939,
+            "σr2": 225.939,
+            "σr3": 241.607,
+            "σr4": 241.607
+          },
+          "axial_kN": -71.177,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0006,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0287,
+          "code_stability_ok": true
+        },
+        {
+          "member": 156,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.7922,
+          "governs": "受压",
+          "worst_case": "ULS-GW",
+          "at_x_m": 2.222,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.029；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 241.607,
+          "combined_ratio": 0.7201,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 2.222,
+          "equivalent_stress_MPa": {
+            "σr1": 225.939,
+            "σr2": 225.939,
+            "σr3": 241.607,
+            "σr4": 241.607
+          },
+          "axial_kN": -71.177,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0006,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0287,
+          "code_stability_ok": true
+        },
+        {
+          "member": 49,
+          "section": "ARCH-P273x10",
+          "length_m": 2.2224,
+          "stress_ratio": 0.7874,
+          "governs": "受压",
+          "worst_case": "ULS-G",
+          "at_x_m": 0.0,
+          "verdict": "通过（稳定按 GB 50017 b 类，φ=0.984，应力比 0.024；欧拉公式在此柔度段不适用）",
+          "combined_stress_MPa": 240.172,
+          "combined_ratio": 0.7159,
+          "combined_point": "极端纤维",
+          "combined_at_x_m": 0.0,
+          "equivalent_stress_MPa": {
+            "σr1": 227.501,
+            "σr2": 227.501,
+            "σr3": 240.172,
+            "σr4": 240.172
+          },
+          "axial_kN": -58.796,
+          "P_cr_kN": 117799.298,
+          "buckling_ratio": 0.0005,
+          "buckling_status": "欧拉公式不适用",
+          "slenderness": 11.9,
+          "mu": 0.5,
+          "mu_source": "由杆端释放推定",
+          "phi": 0.9838,
+          "buckling_curve": "b",
+          "code_stability_ratio": 0.0237,
+          "code_stability_ok": true
+        }
+      ]
+    }
+  },
+  "native_window_capture": {
+    "checks": [
+      {
+        "name": "打开调整版模型",
+        "ok": true
+      },
+      {
+        "name": "239 节点与 622 杆件",
+        "ok": true
+      },
+      {
+        "name": "18 个固定柱脚",
+        "ok": true
+      },
+      {
+        "name": "模型校验",
+        "ok": true
+      },
+      {
+        "name": "截图 01_整体模型",
+        "ok": true
+      },
+      {
+        "name": "截图 02_拱形正视",
+        "ok": true
+      },
+      {
+        "name": "截图 03_网格俯视",
+        "ok": true
+      },
+      {
+        "name": "真实后台求解完成",
+        "ok": true
+      },
+      {
+        "name": "十个工况及组合",
+        "ok": true
+      },
+      {
+        "name": "截图 04_调整版变形",
+        "ok": true
+      },
+      {
+        "name": "截图 05_轴力云图",
+        "ok": true
+      },
+      {
+        "name": "截图 06_弯矩云图",
+        "ok": true
+      },
+      {
+        "name": "截图 07_正应力云图",
+        "ok": true
+      },
+      {
+        "name": "调整版应力比任务完成",
+        "ok": true
+      },
+      {
+        "name": "调整版验算项通过",
+        "ok": true
+      },
+      {
+        "name": "截图 08_调整版应力比",
+        "ok": true
+      },
+      {
+        "name": "截图 09_半跨不对称荷载变形",
+        "ok": true
+      },
+      {
+        "name": "打开初设模型",
+        "ok": true
+      },
+      {
+        "name": "初设真实后台求解",
+        "ok": true
+      },
+      {
+        "name": "初设应力比任务完成",
+        "ok": true
+      },
+      {
+        "name": "初设三根超限可复现",
+        "ok": true
+      },
+      {
+        "name": "截图 10_初设三根杆件超限",
+        "ok": true
+      }
+    ],
+    "screenshots": [
+      {
+        "file": "01_整体模型.png",
+        "mode": "模型",
+        "case": null,
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "6ade80a80c323be0fd2bbe71307907b70842a15842b04a50e1910e31d967130a",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "02_拱形正视.png",
+        "mode": "模型",
+        "case": null,
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "fcf01f5d4e5197ae9258214cc15f17b67b531dc514f9b9aaa6a4484133347cff",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "03_网格俯视.png",
+        "mode": "模型",
+        "case": null,
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "ce8c3cebb296a5693c86a5c67dafce89cba9bb2b4f0eae3491065f685c414e08",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "04_调整版变形.png",
+        "mode": "变形",
+        "case": "ULS-GW",
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "d43504a643025018ecf1ff29ab922115c530d2eefa7d061c448432fb68b22eeb",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "05_轴力云图.png",
+        "mode": "云图",
+        "case": "ULS-GW",
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "da1615b73b806ee76c62f9733218143d6d7c996997a38ea69e6898b9d6356458",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "06_弯矩云图.png",
+        "mode": "云图",
+        "case": "ULS-GW",
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "0da0c9508f4a82befd93774be2e88b06dac5a4c8483eaca244ff3cd7fae473ff",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "07_正应力云图.png",
+        "mode": "云图",
+        "case": "ULS-GW",
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "02d0896d360c990e316ca0cbaa920f7574a1fe16162bbf6ba0553734a7b5c9b1",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "08_调整版应力比.png",
+        "mode": "应力比",
+        "case": "ULS-GW",
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "e36f20d1e73c67f4530074b645a5be073aba50d3a1fc7024432282ef40f7d391",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "09_半跨不对称荷载变形.png",
+        "mode": "变形",
+        "case": "ULS-ASYM",
+        "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+        "sha256": "179bbec3220cf8c8add54be24d0c4ee42a4feb5c19f77998397d2c8713011ad9",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      },
+      {
+        "file": "10_初设三根杆件超限.png",
+        "mode": "应力比",
+        "case": "ULS-GW",
+        "model_sha256": "44b98b2b0d39a7ffb736d44dfe6bfe0e9ec47354555302fdf6d791e8e1682a64",
+        "sha256": "6d21d745a42c85993b71eb7837a26ab0b6213fc93655573472936527c34f0a56",
+        "source": "MainWindow.export_screenshot：真实 Qt 窗口和 VTK 渲染视口"
+      }
+    ]
+  }
+}
