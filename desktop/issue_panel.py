@@ -13,7 +13,7 @@ from . import glyphs
 
 _PRIORITY = {
     "work_plane_unconfirmed": 0, "scale_unknown": 1, "scale_conflict": 2,
-    "perspective": 3, "topology": 4, "intersection_unknown": 5,
+    "perspective": 3, "topology": 4, "pixel_topology": 4, "intersection_unknown": 5,
     "low_confidence": 6, "load_incomplete": 7, "merge_collision": 8,
 }
 _CONFIRMABLE = {"work_plane_unconfirmed", "perspective", "low_confidence"}
@@ -142,8 +142,10 @@ class IssuePanel(QWidget):
                                    and math.isfinite(float(value)) and 0 <= value <= 1), None)
                 badge = (f"[低 {float(confidence):.0%}] "
                          if confidence is not None else "[低/未知] ")
+            summary = ("像素拓扑候选与草稿不一致：请核对节点位置和杆件连接"
+                       if issue.get("category") == "pixel_topology" else issue.get("message", issue["id"]))
             item = QListWidgetItem(
-                f"{marker} {badge}{issue.get('message', issue['id'])}" +
+                f"{marker} {badge}{summary}" +
                 (f"（{len(group)} 条记录）" if len(group) > 1 else ""))
             item.setData(256, str(issue["id"]))
             self.list.addItem(item)
@@ -195,6 +197,11 @@ class IssuePanel(QWidget):
         self.btn_confirm.setText("忽略符号" if unbound else "确认此项")
         self.btn_confirm.setToolTip("明确这些未绑定符号无需施加为外荷载，保留原观察记录；其他荷载问题仍需处理。" if unbound else "核对当前问题涉及的对象后确认。")
         self.btn_confirm.setVisible(category in _CONFIRMABLE or unbound)
+        if category == "pixel_topology":
+            self._confirm_action = "keep_topology"
+            self.btn_confirm.setText("保留当前拓扑")
+            self.btn_confirm.setToolTip("仅当已核对原图、确认像素候选不适用时使用；保留候选和人工记录，其他阻断仍需处理。")
+            self.btn_confirm.setVisible(True)
         intersection = category == "intersection_unknown"
         self.btn_connect.setVisible(intersection)
         self.btn_cross.setVisible(intersection)

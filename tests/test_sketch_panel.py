@@ -29,6 +29,37 @@ def qt_app():
     yield QApplication.instance() or QApplication([])
 
 
+def test_pixel_topology_issue_shows_overlay_and_preserves_model_on_retention(qt_app, tmp_path):
+    """漏点候选必须可在原图定位；保留当前拓扑只解除此问题且不得自动补节点或荷载。"""
+    from sketch_axis_refinement import review_joint_graph
+    from test_sketch_axis_refinement import _joint_picture
+    path, _, draft, _ = _joint_picture(tmp_path)
+    draft["issues"].append({"id": "global-load", "category": "load_incomplete", "status": "open", "severity": "blocking", "entity_refs": []})
+    value = review_joint_graph(draft, path)
+    panel = SketchPanel(Session(), IdleRunner())
+    panel._image_path = str(path)
+    panel.set_v2_draft(value)
+    ident = value["joint_graph_review"]["issue_id"]
+    for row in range(panel.issue_panel.list.count()):
+        item = panel.issue_panel.list.item(row)
+        if item.data(Qt.ItemDataRole.UserRole) == ident:
+            panel.issue_panel.list.setCurrentItem(item)
+            assert len(item.text()) < 60
+            break
+    assert panel.issue_panel.btn_confirm.text() == "保留当前拓扑"
+    assert any(ref.startswith("pixel-node:") for ref in panel._highlight_refs)
+    assert panel.lbl_image.pixmap() is not None and not panel.lbl_image.pixmap().isNull()
+    # 原草稿节点保留置信度颜色，紫色仅用于空心像素候选，避免两套标签叠在一起。
+    assert panel._preview_pixmap.toImage().pixelColor(55, 178) != QColor("#d946ef")
+    panel.issue_panel.btn_confirm.click()
+    result = panel._v2_draft
+    assert result["image_model"] == value["image_model"]
+    assert result["joint_graph_review"]["status"] == "dismissed"
+    assert result["edit_history"][-1]["action"] == "dismiss_joint_graph_review"
+    assert any(i["status"] == "open" for i in result["issues"] if i["id"] != ident)
+    assert not panel.btn_load.isEnabled()
+
+
 @pytest.mark.parametrize(("provider", "model"), [
     ("openai", "gpt-4o"),
     ("anthropic", "claude-3-5-sonnet-20241022"),

@@ -38,6 +38,8 @@ def draft_digest(draft: Mapping[str, Any]) -> str:
     # 有人工历史时一并绑定；旧草稿没有该字段，保持原冻结哈希。
     if "edit_history" in draft:
         payload["edit_history"] = draft["edit_history"]
+    if "joint_graph_review" in draft:
+        payload["joint_graph_review"] = draft["joint_graph_review"]
     return canonical_digest(payload)
 
 

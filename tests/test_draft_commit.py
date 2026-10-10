@@ -56,6 +56,34 @@ def test_prepare_is_pure_and_preview_is_structured():
     assert "candidate_model" not in preview
 
 
+def test_joint_graph_evidence_is_bound_to_preview_and_survives_sidecar(tmp_path):
+    """像素候选和人工保留决定不能在预演后改写，导入与证据侧车必须保留完整记录。"""
+    from sketch_axis_refinement import dismiss_joint_graph_review, review_joint_graph
+    from test_sketch_axis_refinement import _joint_picture
+    from multimodal_workflow import draft_digest
+    path, _, source, _ = _joint_picture(tmp_path)
+    source = review_joint_graph(source, path)
+    source = dismiss_joint_graph_review(source, source["joint_graph_review"]["issue_id"])
+    value = ready_draft()
+    value["joint_graph_review"] = deepcopy(source["joint_graph_review"])
+    value["edit_history"] = deepcopy(source["edit_history"])
+    before = draft_digest(value)
+    altered = deepcopy(value)
+    altered["joint_graph_review"]["nodes"][0]["point"][0] += .01
+    assert draft_digest(altered) != before
+    session = Session()
+    prepared, preview = prepare_commit(value, session.model)
+    state = armed_state(prepared, preview)
+    assert commit_prepared(session, state, confirmed_at="2026-10-10T00:00:00Z").ok
+    assert session.multimodal_provenance["joint_graph_review"] == value["joint_graph_review"]
+    target = tmp_path / "pixel-review.json"
+    save_sidecar(target, session.model, session.multimodal_provenance)
+    loaded, warning = load_sidecar(target, session.model)
+    assert warning is None and loaded["joint_graph_review"] == value["joint_graph_review"]
+    assert session.undo() and session.multimodal_provenance is None
+    assert session.redo() and session.multimodal_provenance["joint_graph_review"] == value["joint_graph_review"]
+
+
 def test_unconnected_manual_node_cannot_enter_merge_plan():
     """人工补画未接线的节点即使尺度已知、已物化也必须阻止装配预演。"""
     from sketch_topology import add_image_node, materialize_geometry

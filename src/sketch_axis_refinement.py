@@ -9,20 +9,11 @@ import numpy as np
 from PIL import Image, ImageOps
 from scipy.ndimage import find_objects, label
 
+from multimodal_contract import canonical_digest, file_digest, match_members, match_points, point_match_threshold
 
-def refine_joint_nodes(draft: dict, image_path: str | Path) -> dict:
-    """多杆图须全部节点具有唯一圆点及连线证据；只移动未审核图片位置。"""
-    model = draft["image_model"]
-    nodes, members = model.get("nodes") or [], model.get("members") or []
-    if not 3 <= len(nodes) <= 64 or not len(nodes) <= len(members) <= 128:
-        return draft
-    if ((draft.get("scale") or {}).get("status") == "confirmed"
-            or any(e.get("verified") or e.get("source") == "user" for e in draft.get("entities") or [])
-            or any(d.get("status") == "confirmed" or d.get("source") == "user"
-                   for d in draft.get("dimensions") or [])
-            or any(i.get("source") == "user" for i in draft.get("intersections") or [])
-            or any(n.get("source") == "user" for n in nodes + members)):
-        return draft
+
+def _grey_joint_pixels(image_path: str | Path):
+    """共享原有圆点证据提取，不改变位置校正的阈值。"""
     with Image.open(image_path) as image:
         image = ImageOps.exif_transpose(image).convert("RGBA")
         background = Image.new("RGBA", image.size, "white")
@@ -30,7 +21,7 @@ def refine_joint_nodes(draft: dict, image_path: str | Path) -> dict:
         rgb = np.asarray(background.convert("RGB"), dtype=np.int16)
     height, width = rgb.shape[:2]
     if min(width, height) < 20:
-        return draft
+        return [], None, width, height
     maximum = rgb.max(axis=2)
     spread = maximum - rgb.min(axis=2)
     # 彩色荷载/尺寸线不能充当圆点；灰色圆点周围还须有灰色杆身证据。
@@ -59,6 +50,25 @@ def refine_joint_nodes(draft: dict, image_path: str | Path) -> dict:
         fraction = float(grey[low[1]:high[1], low[0]:high[0]][ring].mean())
         if fraction >= .65:
             candidates.append((centre, fraction))
+    return candidates, grey, width, height
+
+
+def refine_joint_nodes(draft: dict, image_path: str | Path) -> dict:
+    """多杆图须全部节点具有唯一圆点及连线证据；只移动未审核图片位置。"""
+    model = draft["image_model"]
+    nodes, members = model.get("nodes") or [], model.get("members") or []
+    if not 3 <= len(nodes) <= 64 or not len(nodes) <= len(members) <= 128:
+        return draft
+    if ((draft.get("scale") or {}).get("status") == "confirmed"
+            or any(e.get("verified") or e.get("source") == "user" for e in draft.get("entities") or [])
+            or any(d.get("status") == "confirmed" or d.get("source") == "user"
+                   for d in draft.get("dimensions") or [])
+            or any(i.get("source") == "user" for i in draft.get("intersections") or [])
+            or any(n.get("source") == "user" for n in nodes + members)):
+        return draft
+    candidates, grey, width, height = _grey_joint_pixels(image_path)
+    if grey is None:
+        return draft
     if len(candidates) < len(nodes) or len(candidates) > 256:
         return draft
     snapped, matches = {}, {}
@@ -144,6 +154,147 @@ def refine_joint_nodes(draft: dict, image_path: str | Path) -> dict:
                    "message": "已根据局部节点圆点及相连灰色杆线提出位置候选，原坐标已保留。请核对全部节点、杆件连接和荷载作用点后确认。",
                    "resolution": None, "resolved_by": None})
     return result
+
+
+def review_joint_graph(draft: dict, image_path: str | Path) -> dict:
+    """独立提出灰色圆点图的拓扑证据，不改草稿节点、杆件及工程绑定。"""
+    model = draft["image_model"]
+    nodes, members = model.get("nodes") or [], model.get("members") or []
+    if ("joint_graph_review" in draft or not 2 <= len(nodes) <= 64 or not 1 <= len(members) <= 128
+            or (draft.get("scale") or {}).get("status") == "confirmed"
+            or any(e.get("verified") or e.get("source") == "user" for e in draft.get("entities") or [])
+            or any(d.get("status") == "confirmed" or d.get("source") == "user"
+                   for d in draft.get("dimensions") or [])
+            or any(i.get("source") == "user" for i in draft.get("intersections") or [])
+            or any(n.get("source") == "user" for n in nodes + members)):
+        return draft
+    candidates, grey, width, height = _grey_joint_pixels(image_path)
+    if grey is None or not 3 <= len(candidates) <= 64:
+        return draft
+    centres = [item[0] for item in candidates]
+    links, neighbours = [], [set() for _ in centres]
+    tolerance = point_match_threshold(width, height)
+    for i, a in enumerate(centres):
+        for j in range(i + 1, len(centres)):
+            delta = centres[j] - a
+            length = float(np.linalg.norm(delta))
+            if length < 12:
+                continue
+            # 中间已有圆点时只核对相邻段，不把跨过接头的长线算成另一根杆件。
+            intermediate = False
+            for k, p in enumerate(centres):
+                if k in (i, j):
+                    continue
+                t = float((p - a) @ delta / length ** 2)
+                if 0 < t < 1 and np.linalg.norm(p - (a + t * delta)) <= tolerance:
+                    intermediate = True
+                    break
+            if intermediate:
+                continue
+            normal = np.array([-delta[1], delta[0]]) / length
+            points = np.rint(a + np.linspace(.2, .8, 24)[:, None, None] * delta
+                            + np.arange(-2, 3)[None, :, None] * normal).astype(int)
+            if (points[:, :, 0].min() < 0 or points[:, :, 0].max() >= width
+                    or points[:, :, 1].min() < 0 or points[:, :, 1].max() >= height):
+                continue
+            coverage = float((grey[points[:, :, 1], points[:, :, 0]].sum(axis=1) >= 2).mean())
+            if coverage >= .85:
+                links.append({"id": len(links) + 1, "i": i + 1, "j": j + 1, "grey_coverage": coverage})
+                neighbours[i].add(j)
+                neighbours[j].add(i)
+    # 只处理一个闭合的多杆图；端点链、孤立圆点或多个图样不强行选取主体。
+    if len(links) > 128 or any(len(items) < 2 for items in neighbours):
+        return draft
+    visited, pending = set(), [0]
+    while pending:
+        i = pending.pop()
+        if i not in visited:
+            visited.add(i)
+            pending.extend(neighbours[i] - visited)
+    if len(visited) != len(centres):
+        return draft
+    updated = deepcopy(draft)
+    identifier = "pixel-topology-review"
+    while any(item.get("id") == identifier for item in draft.get("issues") or []):
+        identifier += "-new"
+    updated["joint_graph_review"] = {
+        "method": "grey-joint-graph/v1", "source": "derived", "confidence": None,
+        "image_hash": (draft.get("source") or {}).get("image_hash"), "file_sha256": file_digest(image_path),
+        "width_px": width, "height_px": height, "issue_id": identifier,
+        "nodes": [{"id": i + 1, "point": [float(p[0]) / (width - 1), float(p[1]) / (height - 1)],
+                   "grey_ring_fraction": candidates[i][1]} for i, p in enumerate(centres)],
+        "members": links, "original_geometry": {"nodes": deepcopy(nodes), "members": deepcopy(members)},
+    }
+    return sync_joint_graph_review(updated)
+
+
+def _joint_geometry_digest(draft: dict) -> str:
+    model = draft["image_model"]
+    return canonical_digest({key: model.get(key) or [] for key in ("nodes", "members")})
+
+
+def sync_joint_graph_review(draft: dict) -> dict:
+    """人工编辑后只重算已冻结像素候选的对应关系，不重新读图或重建工程模型。"""
+    previous = draft.get("joint_graph_review")
+    if previous is None:
+        return draft
+    if previous.get("image_hash") != (draft.get("source") or {}).get("image_hash"):
+        raise ValueError("像素候选与当前图片不一致，请重新识别当前图片后审核。")
+    if previous.get("status") == "dismissed" and previous.get("dismissed_geometry_hash") == _joint_geometry_digest(draft):
+        return draft
+    updated = deepcopy(draft)
+    review = updated["joint_graph_review"]
+    model = draft["image_model"]
+    matched = match_points([{"id": n["id"], "point": [n["u"], n["v"]]}
+                            for n in model.get("nodes") or []], review["nodes"],
+                           review["width_px"], review["height_px"])
+    edges = match_members(model.get("members") or [], review["members"], matched.pairs)
+    comparison = {"matched_nodes": len(matched.pairs), "matched_members": len(edges.pairs),
+                  "unmatched_candidate_nodes": list(matched.unmatched_truths),
+                  "unmatched_draft_nodes": list(matched.unmatched_predictions),
+                  "unmatched_candidate_members": list(edges.unmatched_truths),
+                  "unmatched_draft_members": list(edges.unmatched_predictions)}
+    review.setdefault("initial_comparison", deepcopy(comparison))
+    review["comparison"] = comparison
+    mismatch = any(comparison[key] for key in comparison if key.startswith("unmatched_"))
+    review["status"] = "review_required" if mismatch else "matched"
+    issue = next((item for item in updated.get("issues") or [] if item.get("id") == review["issue_id"]), None)
+    if mismatch:
+        if issue is None:
+            issue = {"id": review["issue_id"], "category": "pixel_topology", "severity": "blocking"}
+            updated.setdefault("issues", []).append(issue)
+        issue.update(status="open", resolution=None, resolved_by=None,
+                     entity_refs=[*(f"pixel-node:{ident}" for ident in comparison["unmatched_candidate_nodes"]),
+                                  *(f"pixel-member:{ident}" for ident in comparison["unmatched_candidate_members"]),
+                                  *(f"node:{ident}" for ident in comparison["unmatched_draft_nodes"]),
+                                  *(f"member:{ident}" for ident in comparison["unmatched_draft_members"])],
+                     message=(f"圆点候选 {len(review['nodes'])} 个、灰色杆线候选 {len(review['members'])} 条，"
+                              f"与草稿对应 {len(matched.pairs)} 个节点、{len(edges.pairs)} 根杆件。"
+                              "紫色空心圆和虚线为像素候选，请核对漏节点、位置偏差及真实连接，按图移动或补画。"
+                              "候选不替换工程模型；候选不适用时，核对原图后保留当前拓扑。"))
+    elif issue is not None:
+        issue.update(status="resolved", resolution="像素候选与当前节点和杆件已对应", resolved_by="derived")
+    if review != previous or updated.get("issues") != draft.get("issues"):
+        updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
+    return updated
+
+
+def dismiss_joint_graph_review(draft: dict, issue_id: str) -> dict:
+    """用户明确核对当前拓扑，保留候选及原问题；后续几何改变必须重新核对。"""
+    review = draft.get("joint_graph_review") or {}
+    issue = next((item for item in draft.get("issues") or [] if item.get("id") == issue_id), None)
+    if (review.get("issue_id") != issue_id or review.get("status") != "review_required"
+            or issue is None or issue.get("category") != "pixel_topology" or issue.get("status") != "open"):
+        raise ValueError("当前像素拓扑问题已改变，请重新选择待核对问题。")
+    updated = deepcopy(draft)
+    updated.setdefault("edit_history", []).append({"action": "dismiss_joint_graph_review", "source": "user",
+                                                   "previous": {"review": deepcopy(review), "issue": deepcopy(issue)}})
+    updated["joint_graph_review"].update(status="dismissed", dismissed_geometry_hash=_joint_geometry_digest(draft))
+    for item in updated["issues"]:
+        if item.get("id") == issue_id:
+            item.update(status="resolved", resolution="用户核对原图后保留当前拓扑", resolved_by="user")
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
+    return updated
 
 
 def _support_anchor(pixels: np.ndarray, node: dict, band_bottom: int,

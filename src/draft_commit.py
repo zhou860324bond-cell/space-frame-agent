@@ -394,6 +394,7 @@ def commit_prepared(session: Any, state: MultimodalControllerState, *,
             "intersections": deepcopy(draft["intersections"]),
             "issues": deepcopy(draft["issues"]),
             "edit_history": deepcopy(draft.get("edit_history") or []),
+            "joint_graph_review": deepcopy(draft.get("joint_graph_review")),
             "merge_plan": deepcopy(draft["merge_plan"]),
             "commit_preview": deepcopy(preview),
         }

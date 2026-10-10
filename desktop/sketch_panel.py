@@ -690,7 +690,8 @@ class SketchPanel(QWidget):
         """Host the frozen v2 review APIs without changing the legacy v1 path."""
         self.btn_add_node.setChecked(False)
         from sketch_load_edit import refresh_partial_geometry
-        self._v2_draft = refresh_partial_geometry(draft)
+        from sketch_axis_refinement import sync_joint_graph_review
+        self._v2_draft = sync_joint_graph_review(refresh_partial_geometry(draft))
         self._clear_reference_length()
         self._v2_node_reuse.clear()
         self._result_draft = None
@@ -750,6 +751,9 @@ class SketchPanel(QWidget):
                 for record in group:
                     record.update(status="resolved", resolution="用户已核对该对象的全部低置信度说明",
                                   resolved_by="user", reviewed_together=[i["id"] for i in group])
+            elif category == "pixel_topology" and action == "keep_topology":
+                from sketch_axis_refinement import dismiss_joint_graph_review
+                draft = dismiss_joint_graph_review(draft, issue_id)
             elif (category == "load_incomplete" and action == "ignore"
                   and issue.get("unbound_symbols_only") is True and issue.get("observations")):
                 issue.update(status="resolved", resolution="用户明确忽略未绑定的荷载符号",
@@ -765,6 +769,8 @@ class SketchPanel(QWidget):
         except (StopIteration, ValueError) as exc:
             self._show_edit_error("问题处理失败", exc)
             return
+        from sketch_axis_refinement import sync_joint_graph_review
+        draft = sync_joint_graph_review(draft)
         if category != "intersection_unknown":
             draft["revision"] = int(draft.get("revision", 0)) + 1
             draft["confirmation"] = None
@@ -1379,7 +1385,8 @@ class SketchPanel(QWidget):
 
     def _apply_v2_edit(self, draft: dict, message: str) -> None:
         from sketch_load_edit import refresh_partial_geometry
-        draft = refresh_partial_geometry(draft)
+        from sketch_axis_refinement import sync_joint_graph_review
+        draft = sync_joint_graph_review(refresh_partial_geometry(draft))
         self._v2_node_reuse.clear()
         draft["model"] = draft["merge_plan"] = draft["confirmation"] = None
         if self._v2_state is not None and self._v2_state.draft is not None:
@@ -2004,6 +2011,7 @@ class SketchPanel(QWidget):
             return x * pixmap.width(), y * pixmap.height()
 
         entities = draft.get("entities", []) if isinstance(draft, dict) else draft.entities
+        pixel_review = any(ref.startswith(("pixel-node:", "pixel-member:")) for ref in self._highlight_refs)
         for entity in entities:
             geometry = entity.get("image_geometry") or {}
             target = entity.get("target") or {}
@@ -2013,7 +2021,7 @@ class SketchPanel(QWidget):
                 identifier = identifier.get("name", "")
             label = f"{ {'node': '节点', 'member': '杆件', 'support': '支座', 'load': '荷载'}.get(kind, '')} {identifier}".strip()
             band = confidence_band(entity)
-            if self._v2_entity_ref(entity) in self._highlight_refs:
+            if self._v2_entity_ref(entity) in self._highlight_refs and not pixel_review:
                 colour = QColor("#d946ef")
             elif band == "low":
                 colour = QColor(theme.ERROR)
@@ -2034,7 +2042,7 @@ class SketchPanel(QWidget):
                 if start and end:
                     painter.drawLine(int(start[0]), int(start[1]),
                                      int(end[0]), int(end[1]))
-                    if kind == "member":
+                    if kind == "member" and not pixel_review:
                         painter.drawText(int((start[0] + end[0]) / 2),
                                          int((start[1] + end[1]) / 2 - font.pixelSize() / 2), label)
                     elif kind == "load" and (entity.get("payload") or {}).get("kind") in {"partial", "partial_trapezoid"}:
@@ -2059,7 +2067,8 @@ class SketchPanel(QWidget):
                                     radius * 2, radius * 2)
                 label_y = (where[1] + radius + font.pixelSize() if kind in {"support", "load"}
                            else where[1] - radius)
-                painter.drawText(int(where[0] + radius + 2), int(label_y), label)
+                if not pixel_review or kind != "node":
+                    painter.drawText(int(where[0] + radius + 2), int(label_y), label)
             bounds = geometry.get("bbox")
             if isinstance(bounds, list) and len(bounds) == 4:
                 top_left = point(bounds[:2])
@@ -2070,6 +2079,25 @@ class SketchPanel(QWidget):
                     painter.setBrush(Qt.BrushStyle.NoBrush)
                     painter.drawRect(left, top, right - left, bottom - top)
                     painter.drawText(left + 2, max(12, top - 3), label)
+        review = draft.get("joint_graph_review") if isinstance(draft, dict) else None
+        if review:
+            candidates = {str(n["id"]): n["point"] for n in review["nodes"]}
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#d946ef"), max(2, pixmap.width() // 300), Qt.PenStyle.DashLine))
+            for member in review["members"]:
+                if f"pixel-member:{member['id']}" not in self._highlight_refs:
+                    continue
+                a, b = point(candidates[str(member["i"])]), point(candidates[str(member["j"])])
+                if a and b:
+                    painter.drawLine(int(a[0]), int(a[1]), int(b[0]), int(b[1]))
+            painter.setPen(QPen(QColor("#d946ef"), max(2, pixmap.width() // 300)))
+            for identifier, where in candidates.items():
+                if f"pixel-node:{identifier}" not in self._highlight_refs:
+                    continue
+                x, y = point(where)
+                radius = max(6, pixmap.width() // 100)
+                painter.drawEllipse(int(x - radius), int(y - radius), radius * 2, radius * 2)
+                painter.drawText(int(x + radius + 2), int(y + font.pixelSize()), f"候选 {identifier}")
         painter.end()
         self._preview_pixmap = pixmap
         self._refresh_image_preview()
@@ -2141,8 +2169,9 @@ class SketchPanel(QWidget):
         from dimension_constraints import apply_scale_to_draft
         from sketch_topology import detect_topology
         from sketch_load_edit import refresh_partial_geometry
+        from sketch_axis_refinement import sync_joint_graph_review
 
-        draft = refresh_partial_geometry(apply_scale_to_draft(detect_topology(self._v2_draft)))
+        draft = sync_joint_graph_review(refresh_partial_geometry(apply_scale_to_draft(detect_topology(self._v2_draft))))
         self._v2_node_reuse.clear()
         if self._v2_state is not None and self._v2_state.draft is not None:
             draft["revision"] = int(self._v2_state.draft.get("revision", 0))

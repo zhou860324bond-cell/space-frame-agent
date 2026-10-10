@@ -249,6 +249,8 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
     payload["merge_plan"] = None
     payload["revision"] = 0
     payload["confirmation"] = None
+    # 像素证据只能由本地读图生成，不能采信视觉响应自报的核对记录。
+    payload.pop("joint_graph_review", None)
 
     source = payload.get("source")
     observed = dict(source) if isinstance(source, dict) else {}
@@ -846,9 +848,10 @@ class SketchParser:
                 errors = validate_v2_draft(payload)
                 if errors:
                     raise ValueError("；".join(errors))
-                from sketch_axis_refinement import refine_horizontal_axis, refine_joint_nodes
+                from sketch_axis_refinement import refine_horizontal_axis, refine_joint_nodes, review_joint_graph
                 payload = refine_horizontal_axis(payload, image_path)
                 payload = refine_joint_nodes(payload, image_path)
+                payload = review_joint_graph(payload, image_path)
                 if review_actions:
                     from PIL import Image, ImageOps
                     from sketch_action_review import ACTION_REVIEW_PROMPT, apply_action_review
@@ -893,6 +896,8 @@ class SketchParser:
                         state.cancel_recognition(job_id)
                         result.cancelled = True
                         break
+                from sketch_axis_refinement import sync_joint_graph_review
+                payload = sync_joint_graph_review(payload)
                 if not state.complete_recognition(job_id, payload):
                     result.cancelled = True
                     break
