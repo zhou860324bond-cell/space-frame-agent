@@ -610,7 +610,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.quickbar.show_context_for(
                 self.ribbon.tabText(self.ribbon.currentIndex()), name)
         if name in {"变形", "云图", "内力图", "应力比"} and self.session.solution is not None:
-            self.viewport.set_pick_mode("member")
+            # 沿用用户选择的对象类型，默认杆件时也同步按钮，避免显示与拾取不一致。
+            if not any(action.isChecked() for action in self.pick_actions.values()):
+                self.pick_actions["member"].setChecked(True)
+            self._apply_pick_mode()
         act = self.mode_actions.get(name)
         if act is not None:
             act.setChecked(True)
@@ -1273,6 +1276,11 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                     None)
         if mode and self.mode == "实体云图":
             self.set_mode("模型")
+        if mode:
+            for name in ("model_node", "model_member"):
+                self.actions_by_name[name].setChecked(False)
+            if self.viewport.model_mode is not None:
+                self.viewport.set_model_mode(None)
         self.viewport.set_pick_mode(mode)
         if mode == "node":
             self.set_prompt("选择节点模式：在视口中点击节点选中，可用于创建边界条件/载荷/查看属性")
@@ -2155,7 +2163,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         # 已经在合适的拾取模式里就沿用；否则取最后一个（荷载默认拾杆件）
         mode = current if current in accepted else accepted[-1]
         self.pick_actions[mode].setChecked(True)
-        self.viewport.set_pick_mode(mode)
+        self._apply_pick_mode()
         what = "节点或杆件" if len(accepted) > 1 else "节点"
         self.set_prompt(f"{label}：请在视口中点选一个{what}（Esc 取消）")
         self.statusBar().showMessage(f"{label}：在视口中点选一个{what}", 6000)

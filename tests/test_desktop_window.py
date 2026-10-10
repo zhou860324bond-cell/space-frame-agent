@@ -274,11 +274,25 @@ def test_every_display_mode_survives(qt_app, mode):
 
 
 def test_the_mode_buttons_are_mutually_exclusive(qt_app):
+    """切到云图或变形不能悄悄把已启用的节点选择改成杆件选择。"""
     w = MainWindow(built())
     solved(w)
+    w.pick_actions["node"].trigger()
     w.set_mode("云图")
     checked = [n for n, a in w.mode_actions.items() if a.isChecked()]
     assert checked == ["云图"]
+    assert w.pick_actions["node"].isChecked()
+    assert w.viewport.pick_mode == "node"
+    w.set_mode("变形")
+    assert w.pick_actions["node"].isChecked()
+    assert w.viewport.pick_mode == "node"
+    w.cancel_interaction()
+    w.set_mode("云图")
+    assert w.pick_actions["member"].isChecked()
+    assert w.viewport.pick_mode == "member"
+    w.pick_actions["node"].trigger()
+    assert w.viewport.pick_mode == "node"
+    w.close()
 
 
 def test_analysis_mesh_preview_is_read_only_and_exposes_mapping(qt_app):

@@ -100,6 +100,8 @@ def test_grid_snap(qt_app):
 
 
 def test_snap_to_existing_node(qt_app):
+    """放大变形后拾取节点应读取点云编号，不能用原始坐标拒绝可见节点。"""
+    from types import SimpleNamespace
     from agent import Session
     from desktop.viewport import Viewport
     s = Session()
@@ -108,6 +110,25 @@ def test_snap_to_existing_node(qt_app):
     vp._frame = scene.draft_frame(s.model)
     assert vp._snap_to_existing_node(np.array([4.97, 4.02, 0.0])) == 3
     assert vp._snap_to_existing_node(np.array([100., 100, 100])) is None
+    vector = np.zeros(18)
+    vector[vp._frame.node_dofs(3)[0]] = .01
+    cloud = scene.displaced_node_points(vp._frame, vector, 10000.)
+    picker = SimpleNamespace(GetDataSet=lambda: cloud, GetPointId=lambda: 2)
+    picked = []
+    vp.picked.connect(lambda kind, ident: picked.append((kind, ident)))
+    vp.set_pick_mode("node")
+    vp._on_pick(cloud.points[2], picker)
+    assert picked == [("node", 3)]
+    # 实际 VTK 也可能先命中节点旁的变形梁管，仍应按当前可见位置选节点。
+    vp._pick_node_cloud = cloud
+    vp._on_pick(cloud.points[2] + [0, .02, 0])
+    assert picked == [("node", 3), ("node", 3)]
+    picker.GetPointId = lambda: -1
+    vp._on_pick([1000., 1000., 1000.], picker)
+    assert picked == [("node", 3), ("node", 3)]
+    vp.show_model(vp._frame, loads=False)
+    assert vp._pick_node_cloud is None
+    vp.shutdown()
 
 
 def test_mode_badge_text_and_hide(qt_app):
@@ -157,6 +178,7 @@ def test_exact_coordinate_reuses_an_existing_node_without_crashing(qt_app):
 # ---------------------------------------------------------- 主窗口早期链路
 
 def test_early_manual_modeling_flow(qt_app):
+    """建杆件后切换节点选择应终止建模，避免点击仍被当成创建杆件。"""
     from conftest import opengl_available
     if not opengl_available():
         pytest.skip("无可用 OpenGL，跳过主窗口链路")
@@ -185,6 +207,14 @@ def test_early_manual_modeling_flow(qt_app):
     vp._on_pick([4.95, 0.03, 0.0])
     members = w.session.model.get("members", [])
     assert len(members) == 1 and members[0]["i"] == 1 and members[0]["j"] == 2
+    # 直接换选择过滤器，不能保留建杆件回调和待连接节点。
+    vp._pending_node = 2
+    w.pick_actions["node"].trigger()
+    assert not w.actions_by_name["model_member"].isChecked()
+    assert vp.model_mode is None and vp._pending_node is None
+    vp._on_pick([0.0, 0.0, 0.0])
+    assert w._selected_kind == "node" and w._selected_id == 1
+    assert len(w.session.model["members"]) == 1
     # Esc 退出
     w.cancel_interaction()
     assert not w.actions_by_name["model_member"].isChecked()
