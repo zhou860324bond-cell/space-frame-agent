@@ -12,6 +12,7 @@ import pytest
 from multimodal_contract import canonical_digest, file_digest, load_manifest
 from multimodal_eval.evaluate import _numeric_equal, evaluate_manifest
 from multimodal_eval.provider_smoke import PROVIDERS, run
+from multimodal_eval.reference_topology import FORMAT as REFERENCE_FORMAT, check_reference_topology
 from multimodal_eval.real_world_eval import (FORMAT, PROMPT_HASH, SCHEMA_HASH,
                                               audit_dataset, create_templates,
                                               draft_to_prediction,
@@ -97,6 +98,102 @@ def _real_image(root: Path, image_id: str = "site_photo") -> Path:
     return path
 
 
+def reference_triangle():
+    return {"width_px": 101, "height_px": 101,
+        "topology_reference": {"format": REFERENCE_FORMAT, "scope": "all_member_pairs", "status": "verified"},
+        "nodes": [{"id": 1, "point": [.1, .9]}, {"id": 2, "point": [.5, .1]}, {"id": 3, "point": [.9, .9]}],
+        "members": [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}, {"id": 3, "i": 3, "j": 1}],
+        "intersections": [
+            {"id": "a", "members": [1, 2], "point": [.5, .1], "decision": "connect", "node_id": 2},
+            {"id": "b", "members": [1, 3], "point": [.1, .9], "decision": "connect", "node_id": 1},
+            {"id": "c", "members": [2, 3], "point": [.9, .9], "decision": "connect", "node_id": 3}]}
+
+
+@pytest.mark.parametrize("shape", ["triangle", "collinear_shared", "t_connect", "x_connect", "x_cross", "disjoint"])
+def test_reference_pairwise_contract_accepts_explicit_endpoint_t_and_x_decisions(shape):
+    """完整参考须覆盖共享端点、共线接头及 T/X 相交；不相连交叉不能自动当作连接。"""
+    from copy import deepcopy
+    truth = reference_triangle()
+    if shape == "collinear_shared":
+        truth["nodes"][1]["point"] = [.5, .9]
+        truth["members"].pop()
+        truth["intersections"] = [{"id": "a", "members": [1, 2], "point": [.5, .9], "decision": "connect", "node_id": 2}]
+    elif shape != "triangle":
+        truth["nodes"] = [{"id": 1, "point": [.1, .5]}, {"id": 2, "point": [.9, .5]},
+                          {"id": 3, "point": [.5, .1]}, {"id": 4, "point": [.5, .9]}, {"id": 5, "point": [.5, .5]}]
+        truth["members"] = [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 3, "j": 4}]
+        truth["intersections"] = [{"id": "x", "members": [2, 1], "point": [.5, .5],
+                                   "decision": "cross" if shape == "x_cross" else "connect",
+                                   "node_id": None if shape == "x_cross" else 5}]
+        if shape == "t_connect":
+            truth["members"][1]["i"] = 5
+        if shape == "disjoint":
+            truth["nodes"][2]["point"] = [.1, .7]
+            truth["nodes"][3]["point"] = [.9, .7]
+            truth["intersections"] = []
+    original = deepcopy(truth)
+    assert check_reference_topology(truth) == {"valid": True, "legacy": False, "errors": []}
+    assert truth == original
+
+
+@pytest.mark.parametrize(("change", "error"), [
+    ("missing", "missing_intersection"), ("duplicate_pair", "duplicate_intersection_pair"),
+    ("duplicate_id", "duplicate_intersection_id"), ("wrong_point", "intersection_point_mismatch"),
+    ("unknown", "intersection_decision_unverified"), ("wrong_node", "connection_node_mismatch"),
+    ("shared_cross", "cross_has_connected_node"), ("foreign_pair", "unexpected_intersection"),
+    ("overlap", "overlapping_members"), ("duplicate_geometry", "duplicate_member_geometry"),
+    ("dangling", "invalid_reference_geometry"), ("boolean_point", "invalid_reference_geometry"),
+    ("pending", "contract_not_verified"), ("empty", "invalid_reference_geometry")])
+def test_reference_incompleteness_is_rejected_without_generating_answers(change, error):
+    """三角桁架空交点参考曾导致额外预测；错误/缺项不能被校验器自动补齐或静默放过。"""
+    from copy import deepcopy
+    truth = reference_triangle()
+    if change == "missing":
+        truth["intersections"].pop()
+    elif change == "duplicate_pair":
+        truth["intersections"].append({**truth["intersections"][0], "id": "extra"})
+    elif change == "duplicate_id":
+        truth["intersections"][1]["id"] = "a"
+    elif change == "wrong_point":
+        truth["intersections"][0]["point"] = [.7, .7]
+    elif change == "unknown":
+        truth["intersections"][0]["decision"] = "unknown"
+    elif change == "wrong_node":
+        truth["intersections"][0]["node_id"] = 1
+    elif change == "shared_cross":
+        truth["intersections"][0].update(decision="cross", node_id=None)
+    elif change == "foreign_pair":
+        truth["intersections"][0]["members"] = [1, 99]
+    elif change == "overlap":
+        truth["nodes"].append({"id": 4, "point": [.3, .5]})
+        truth["members"].append({"id": 4, "i": 1, "j": 4})
+    elif change == "duplicate_geometry":
+        truth["members"].append({"id": 4, "i": 2, "j": 1})
+    elif change == "dangling":
+        truth["members"][0]["i"] = 99
+    elif change == "boolean_point":
+        truth["nodes"][0]["point"][0] = True
+    elif change == "pending":
+        truth["topology_reference"]["status"] = "pending"
+    else:
+        truth["nodes"] = truth["members"] = []
+    original = deepcopy(truth)
+    result = check_reference_topology(truth)
+    assert not result["valid"] and error in {item["code"] for item in result["errors"]}
+    assert truth == original
+
+
+def test_reference_position_rounding_has_one_pixel_bound_without_changing_score_tolerance():
+    """人工坐标舍入允许一像素误差，不能借参考校验放宽原五像素预测匹配阈值。"""
+    from multimodal_contract import point_match_threshold
+    truth = reference_triangle()
+    truth["intersections"][0]["point"][0] += .009
+    assert check_reference_topology(truth)["valid"]
+    truth["intersections"][0]["point"][0] += .002
+    assert not check_reference_topology(truth)["valid"]
+    assert point_match_threshold(101, 101) == 5
+
+
 def test_real_world_templates_never_claim_consent_or_verified_truth(tmp_path):
     _real_image(tmp_path)
     result = create_templates(tmp_path)
@@ -108,6 +205,8 @@ def test_real_world_templates_never_claim_consent_or_verified_truth(tmp_path):
     assert metadata["format"] == FORMAT
     assert metadata["consent_to_evaluate"] is False
     assert truth["annotation_status"] == "pending"
+    assert metadata["reference_contract"] == truth["topology_reference"]["format"] == REFERENCE_FORMAT
+    assert truth["topology_reference"]["status"] == "pending"
     status = audit_dataset(tmp_path)
     assert status["ready_count"] == 0
     assert {"consent_not_confirmed", "ground_truth_not_verified",
@@ -126,6 +225,12 @@ def _complete_real_case(tmp_path):
     fixture_truth = json.loads((ROOT / "ground_truth" / "seed_01_portal.json")
                                .read_text(encoding="utf-8"))
     fixture_truth.update(image_id="site_photo", annotation_status="verified")
+    # 测试专用参考在模拟响应之前补齐门式结构的两个共享端点，不修改冻结语料。
+    fixture_truth["topology_reference"] = {"format": REFERENCE_FORMAT, "scope": "all_member_pairs", "status": "verified"}
+    fixture_truth["intersections"] = [
+        {"id": "shared-1", "members": [1, 2], "point": fixture_truth["nodes"][1]["point"], "decision": "connect", "node_id": 2},
+        {"id": "shared-2", "members": [2, 3], "point": fixture_truth["nodes"][2]["point"], "decision": "connect", "node_id": 3},
+    ]
     fixture_truth.update(image_hash=file_digest(image),
                          input_context_hash=canonical_digest(input_context(metadata)))
     truth_path.write_text(json.dumps(fixture_truth), encoding="utf-8")
@@ -138,11 +243,125 @@ def _complete_real_case(tmp_path):
         "prompt_hash": PROMPT_HASH, "schema_hash": SCHEMA_HASH,
         "image_hash": file_digest(image),
         "input_context_hash": canonical_digest(input_context(metadata)),
+        "ground_truth_hash": file_digest(truth_path), "reference_contract": REFERENCE_FORMAT,
     }
     fixture.update(outcome="PASS", runtime={"attempts": 1, "duration_ms": 125.0})
     response_path.parent.mkdir()
     response_path.write_text(json.dumps(fixture), encoding="utf-8")
     return image, metadata_path, truth_path, response_path
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_freeze_again_preserves_existing_manifest_bytes_and_legacy_version(tmp_path, legacy):
+    """增加参考版本字段后再次 freeze 不能重写既有历史 manifest 或悄悄迁移旧契约。"""
+    _, metadata_path, truth_path, response_path = _complete_real_case(tmp_path)
+    if legacy:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata.pop("reference_contract")
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        truth = json.loads(truth_path.read_text(encoding="utf-8"))
+        truth.pop("topology_reference")
+        truth["input_context_hash"] = canonical_digest(input_context(metadata))
+        truth_path.write_text(json.dumps(truth), encoding="utf-8")
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+        response["request_fingerprint"].pop("ground_truth_hash")
+        response["request_fingerprint"].pop("reference_contract")
+        response_path.write_text(json.dumps(response), encoding="utf-8")
+    manifest = freeze_manifest(tmp_path)
+    path = tmp_path / "manifest.json"
+    if legacy:
+        # 只在临时测试目录模拟早期 manifest，没有触及真实冻结语料。
+        manifest["cases"][0].pop("reference_contract")
+        path.write_text(json.dumps(manifest, indent=4), encoding="utf-8")
+    before = path.read_bytes()
+    assert freeze_manifest(tmp_path) == manifest and path.read_bytes() == before
+
+
+@pytest.mark.parametrize("change", ["missing_pair", "missing_contract", "deleted_markers", "pending", "wrong_decision"])
+def test_new_calls_require_complete_verified_topology_before_client_creation(tmp_path, monkeypatch, change):
+    """完整性标记被删、共享端点漏标或未确认时，付费接口客户端都不能创建。"""
+    _, metadata_path, truth_path, response_path = _complete_real_case(tmp_path)
+    response_path.unlink()
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    if change == "missing_pair":
+        truth["intersections"].pop()
+    elif change in ("missing_contract", "deleted_markers"):
+        truth.pop("topology_reference")
+        if change == "deleted_markers":
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata.pop("reference_contract")
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    elif change == "pending":
+        truth["topology_reference"]["status"] = "pending"
+    else:
+        truth["intersections"][0].update(decision="cross", node_id=None)
+    truth_path.write_text(json.dumps(truth), encoding="utf-8")
+    before = truth_path.read_bytes()
+    monkeypatch.setattr("sketch_parser.SketchParser.from_env", lambda *a, **k: pytest.fail("不完整参考不能创建客户端"))
+    result = recognize(tmp_path, provider="openai")
+    assert result["results"][0]["status"] == "SKIPPED_NOT_READY"
+    assert "ground_truth_topology_incomplete" in result["results"][0]["reasons"]
+    assert truth_path.read_bytes() == before and not response_path.exists()
+
+
+@pytest.mark.parametrize("change", ["changed_truth", "unbound_response"])
+def test_reference_hash_change_after_response_blocks_freeze_and_reuse(tmp_path, monkeypatch, change):
+    """获得响应后改参考或删掉调用前参考哈希，不能重新冻结成独立结果或重新付费覆盖。"""
+    _, _, truth_path, response_path = _complete_real_case(tmp_path)
+    if change == "changed_truth":
+        truth = json.loads(truth_path.read_text(encoding="utf-8"))
+        truth["notes"] = "after response"
+        truth_path.write_text(json.dumps(truth), encoding="utf-8")
+    else:
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+        response["request_fingerprint"].pop("ground_truth_hash")
+        response_path.write_text(json.dumps(response), encoding="utf-8")
+    assert audit_dataset(tmp_path)["ready_count"] == 0
+    with pytest.raises(ValueError, match="尚未完整冻结"):
+        freeze_manifest(tmp_path)
+    monkeypatch.setattr("sketch_parser.SketchParser._call_llm", lambda *a, **k: pytest.fail("旧响应不能覆盖"))
+    before = response_path.read_bytes()
+    assert recognize(tmp_path, provider="openai", model="test-model")["results"][0]["status"] == "STALE_RESPONSE"
+    assert response_path.read_bytes() == before
+
+
+def test_reference_hash_is_captured_before_parse_not_after_response(tmp_path, monkeypatch):
+    """调用过程中修改参考也不能把事后参考当成调用前绑定，解析失败的首响应仍保留。"""
+    from sketch_parser import SketchParser, V2ParseResult
+    _, _, truth_path, response_path = _complete_real_case(tmp_path)
+    response_path.unlink()
+    original_hash = file_digest(truth_path)
+    parser = SketchParser(api_key="test-key", model="test-model")
+    monkeypatch.setattr(SketchParser, "from_env", lambda *a, **k: parser)
+
+    def failed_parse(*a, **k):
+        truth = json.loads(truth_path.read_text(encoding="utf-8"))
+        truth["notes"] = "changed during request"
+        truth_path.write_text(json.dumps(truth), encoding="utf-8")
+        return V2ParseResult(attempts=1, duration_ms=1, errors=["模拟失败"], raw_responses=["invalid"])
+
+    monkeypatch.setattr(parser, "parse_v2_with_retry", failed_parse)
+    assert recognize(tmp_path, provider="openai", model="test-model", max_repairs=0)["results"][0]["status"] == "FAIL"
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    assert response["request_fingerprint"]["ground_truth_hash"] == original_hash != file_digest(truth_path)
+    assert "response_ground_truth_mismatch" in audit_dataset(tmp_path)["cases"][0]["reasons"]
+
+
+def test_legacy_reference_warnings_keep_frozen_online_metrics_and_bytes(monkeypatch):
+    """历史数值图漏共享端点参考时只注明限制，不能补旧标注、删交点或改写旧在线失败。"""
+    root = ROOT / "public_cases/numeric_01"
+    monkeypatch.setattr("sketch_parser.SketchParser._call_llm", lambda *a, **k: pytest.fail("历史参考检查不能调用模型"))
+    before = {p: p.read_bytes() for folder in ("ground_truth", "responses") for p in (root / folder).glob("*.json")}
+    audit = audit_dataset(root)
+    assert audit["ready_count"] == 2
+    assert all("legacy_topology_reference_unchecked" in c["warnings"] for c in audit["cases"])
+    report = evaluate_real_world(root)
+    frozen = json.loads((root / "report.json").read_text(encoding="utf-8"))
+    assert report["metrics"] == frozen["metrics"] and not report["passed"]
+    assert report["reference_contract"]["checked_cases"] == 0
+    assert len(report["reference_contract"]["legacy_cases"]) == 2
+    assert replay_real_world(root)["reference_contract"] == report["reference_contract"]
+    assert before == {p: p.read_bytes() for p in before}
 
 
 def test_real_world_freeze_hash_binds_a_complete_case(tmp_path):
@@ -502,6 +721,7 @@ def test_duplicate_numeric_predictions_cannot_score_above_one(tmp_path):
     truth_path.write_text(json.dumps(truth), encoding="utf-8")
     response = json.loads(response_path.read_text(encoding="utf-8"))
     response["prediction"]["loads"] = [load, load]
+    response["request_fingerprint"]["ground_truth_hash"] = file_digest(truth_path)
     response_path.write_text(json.dumps(response), encoding="utf-8")
     freeze_manifest(tmp_path)
     report = evaluate_real_world(tmp_path)

@@ -21,6 +21,7 @@ from PIL import Image, ImageOps
 from multimodal_contract import canonical_digest, file_digest, load_manifest
 from image_preprocess import preprocess_image, work_plane_payload
 from multimodal_eval.evaluate import evaluate_manifest
+from multimodal_eval.reference_topology import FORMAT as REFERENCE_FORMAT, check_reference_topology
 from multimodal_workflow import MultimodalControllerState, V2_DRAFT_FORMAT, validate_v2_draft
 from sketch_parser import (IMAGE_MIME_TYPES, V2_SKETCH_SYSTEM_PROMPT,
                            SketchParser, _fill_bookkeeping)
@@ -110,6 +111,7 @@ def create_templates(root: str | Path = ROOT) -> dict[str, Any]:
                 "source": "user-provided", "license": "private-evaluation-only",
                 "consent_to_evaluate": False, "subset_labels": [],
                 "work_plane": work_plane_payload(), "preprocessing": {},
+                "reference_contract": REFERENCE_FORMAT,
                 "notes": "确认无敏感信息后，将 consent_to_evaluate 改为 true。",
             })
             created.append(metadata_path.relative_to(root).as_posix())
@@ -123,6 +125,7 @@ def create_templates(root: str | Path = ROOT) -> dict[str, Any]:
                 "input_context_hash": canonical_digest(input_context(metadata)),
                 "annotation_status": "pending", "nodes": [], "members": [],
                 "intersections": [], "supports": [], "loads": [], "issues": [],
+                "topology_reference": {"format": REFERENCE_FORMAT, "scope": "all_member_pairs", "status": "pending"},
                 "scale": {"status": "unknown"},
             })
             created.append(truth_path.relative_to(root).as_posix())
@@ -134,6 +137,8 @@ def audit_dataset(root: str | Path = ROOT) -> dict[str, Any]:
     cases, ready = [], 0
     for image_id, image_path in _images(root).items():
         reasons: list[str] = []
+        warnings: list[str] = []
+        topology = None
         metadata_path = root / "metadata" / f"{image_id}.json"
         truth_path = root / "ground_truth" / f"{image_id}.json"
         response_path = root / "responses" / f"{image_id}.json"
@@ -170,6 +175,13 @@ def audit_dataset(root: str | Path = ROOT) -> dict[str, Any]:
                 reasons.append("ground_truth_image_hash_mismatch")
             if truth.get("input_context_hash") != context_hash:
                 reasons.append("ground_truth_input_context_mismatch")
+            topology = check_reference_topology(truth, required=bool((metadata or {}).get("reference_contract")))
+            if not topology["valid"]:
+                reasons.append("ground_truth_topology_incomplete")
+            elif topology["legacy"]:
+                warnings.append("legacy_topology_reference_unchecked")
+            if (metadata or {}).get("reference_contract") not in (None, REFERENCE_FORMAT):
+                reasons.append("ground_truth_reference_contract_invalid")
         if response is None:
             reasons.append("missing_response")
         else:
@@ -184,6 +196,14 @@ def audit_dataset(root: str | Path = ROOT) -> dict[str, Any]:
             elif fingerprint.get("image_hash") != image_hash \
                     or fingerprint.get("input_context_hash") != context_hash:
                 reasons.append("response_input_mismatch")
+            if isinstance(fingerprint, dict):
+                if fingerprint.get("ground_truth_hash") is not None:
+                    if not truth_path.is_file() or fingerprint["ground_truth_hash"] != file_digest(truth_path):
+                        reasons.append("response_ground_truth_mismatch")
+                elif (metadata or {}).get("reference_contract"):
+                    reasons.append("response_ground_truth_unbound")
+                else:
+                    warnings.append("legacy_response_reference_unbound")
             if response.get("outcome") not in ("PASS", "FAIL"):
                 reasons.append("missing_response_outcome")
             runtime = response.get("runtime") or {}
@@ -196,7 +216,8 @@ def audit_dataset(root: str | Path = ROOT) -> dict[str, Any]:
         if not reasons:
             ready += 1
         cases.append({"image_id": image_id, "image_hash": file_digest(image_path),
-                      "ready": not reasons, "reasons": reasons})
+                      "ready": not reasons, "reasons": reasons, "warnings": warnings,
+                      "topology_reference": topology})
     return {"format": "space-frame-real-world-audit/v1",
             "root": str(root), "image_count": len(cases),
             "ready_count": ready, "cases": cases}
@@ -246,12 +267,17 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
                    if reason.startswith(("consent", "ground_truth", "missing_ground_truth",
                                          "missing_metadata", "invalid_metadata", "missing_source"))]
         plane = metadata.get("work_plane") or {}
+        output_path = root / "responses" / f"{image_id}.json"
+        if not output_path.exists():
+            truth_path = root / "ground_truth" / f"{image_id}.json"
+            topology = check_reference_topology(_read(truth_path), required=True) if truth_path.is_file() else None
+            if topology is not None and not topology["valid"] and "ground_truth_topology_incomplete" not in reasons:
+                reasons.append("ground_truth_topology_incomplete")
         if plane.get("status") != "confirmed":
             reasons.append("work_plane_not_confirmed")
         if reasons:
             results.append({"image_id": image_id, "status": "SKIPPED_NOT_READY", "reasons": reasons})
             continue
-        output_path = root / "responses" / f"{image_id}.json"
         if output_path.exists():
             invalid = [reason for reason in audit[image_id]["reasons"] if reason != "missing_response"]
             fingerprint = _read(output_path).get("request_fingerprint") or {}
@@ -271,6 +297,7 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
                             "status": "STALE_RESPONSE" if invalid else "SKIPPED_EXISTS",
                             "reasons": invalid})
             continue
+        reference_hash = file_digest(truth_path)
         if parser is None:
             try:
                 parser = SketchParser.from_env(provider, model=model)
@@ -326,6 +353,8 @@ def recognize(root: str | Path = ROOT, *, provider: str, model: str = "",
                 "prompt_hash": PROMPT_HASH, "schema_hash": SCHEMA_HASH,
                 "image_hash": image_hash, "derived_image_hash": prepared.derived_image_hash,
                 "input_context_hash": canonical_digest(input_context(metadata)),
+                "ground_truth_hash": reference_hash,
+                "reference_contract": REFERENCE_FORMAT,
                 "request_options": parser.request_options(),
                 "pipeline_hash": PIPELINE_HASH,
                 "review_actions": review_actions,
@@ -348,12 +377,22 @@ def evaluate_real_world(root: str | Path = ROOT) -> dict:
     manifest = load_manifest(path)
     report = evaluate_manifest(path)
     attempts, durations, outcomes = [], [], []
+    legacy_references = []
     for case in manifest["cases"]:
         if not case["gate"]:
             continue
         if file_digest(root / case["metadata_path"]) != case["metadata_hash"]:
             raise ValueError(f"样本 {case['image_id']} 的授权或输入参数哈希漂移")
         response = _read(root / case["response_fixture_path"])
+        topology = check_reference_topology(_read(root / case["ground_truth_path"]),
+            required=case.get("reference_contract") == REFERENCE_FORMAT)
+        if not topology["valid"]:
+            raise ValueError(f"样本 {case['image_id']} 的拓扑参考不完整，请在新轮次调用前独立标注。")
+        reference_hash = response["request_fingerprint"].get("ground_truth_hash")
+        if reference_hash is not None and reference_hash != case["ground_truth_hash"]:
+            raise ValueError(f"样本 {case['image_id']} 的参考已在调用后改变，请保留原轮次并新建独立参考。")
+        if topology["legacy"] or reference_hash is None:
+            legacy_references.append(case["image_id"])
         outcomes.append({"image_id": case["image_id"], "outcome": response["outcome"],
                          **response["runtime"], "errors": response.get("errors", []),
                          "call_metadata": response.get("call_metadata", []),
@@ -362,6 +401,8 @@ def evaluate_real_world(root: str | Path = ROOT) -> dict:
         attempts.append(response["runtime"]["attempts"])
         durations.append(response["runtime"]["duration_ms"])
     report.update(sample_kind="external-real-world-pilot", case_outcomes=outcomes,
+                  reference_contract={"format": REFERENCE_FORMAT, "legacy_cases": legacy_references,
+                                      "checked_cases": len(outcomes) - len(legacy_references)},
                   runtime={"attempted_cases": len(outcomes),
                            "parse_successes": sum(item["outcome"] == "PASS" for item in outcomes),
                            "parse_failures": sum(item["outcome"] == "FAIL" for item in outcomes),
@@ -374,6 +415,8 @@ def evaluate_real_world(root: str | Path = ROOT) -> dict:
                                      (item["action_review"] or {}).get("status") != "completed" for item in outcomes)},
                   limitations=["小样本单次结果，不代表真实手绘、手机照片或所有提供商的准确率。",
                                "无参考对象的指标为 null，不补成 100%；失败输入不从分母移除。"])
+    if legacy_references:
+        report["limitations"].append("历史样本未验证完整拓扑参考或未绑定调用前参考哈希，保留旧成绩，不能作为新契约的独立验证。")
     return report
 
 
@@ -384,7 +427,7 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
     from sketch_axis_refinement import refine_horizontal_axis, refine_joint_nodes
 
     root = Path(root)
-    evaluate_real_world(root)  # 先验证所有原始证据，禁止回放已被修改的样本。
+    original_report = evaluate_real_world(root)  # 先验证原始证据，禁止回放已被修改的样本。
     manifest = load_manifest(root / "manifest.json")
     predictions, outcomes = {}, []
     for case in manifest["cases"]:
@@ -443,6 +486,7 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
     report = evaluate_manifest(root / "manifest.json", prediction_overrides=predictions)
     report.update(case_outcomes=outcomes, new_api_calls=0, replay_successes=sum(
         item["outcome"] == "PASS" for item in outcomes),
+        reference_contract=deepcopy(original_report["reference_contract"]),
         pipeline_hash=PIPELINE_HASH,
         action_review={"attempted_cases": sum("action_review_status" in item for item in outcomes),
                        "completed_cases": sum(item.get("action_review_status") == "completed" for item in outcomes),
@@ -450,6 +494,8 @@ def replay_real_world(root: str | Path = ROOT) -> dict:
                                                       for item in outcomes)},
         limitations=["修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
                      "输入与真值不变；失败保留在分母，无证据指标仍为 null。"])
+    if original_report["reference_contract"]["legacy_cases"]:
+        report["limitations"].append("历史样本未验证完整拓扑参考或未绑定调用前参考哈希，回放不能替代新契约的独立验证。")
     return report
 
 
@@ -464,6 +510,15 @@ def freeze_manifest(root: str | Path = ROOT) -> dict[str, Any]:
         summary = ", ".join(f"{item['image_id']}:{'/'.join(item['reasons'])}"
                             for item in pending)
         raise ValueError(f"真实样本尚未完整冻结: {summary}")
+    frozen_path = root / "manifest.json"
+    if frozen_path.exists():
+        frozen = load_manifest(frozen_path)
+        if {c["image_id"] for c in frozen["cases"]} != {c["image_id"] for c in audit["cases"]}:
+            raise ValueError("目录已冻结，不能增减图片；请保留原轮次并另建目录。")
+        for case in frozen["cases"]:
+            if file_digest(root / case["metadata_path"]) != case["metadata_hash"]:
+                raise ValueError(f"样本 {case['image_id']} 的元数据哈希漂移，请保留原轮次并另建目录。")
+        return frozen
     cases = []
     for item in audit["cases"]:
         image_id = item["image_id"]
@@ -493,6 +548,7 @@ def freeze_manifest(root: str | Path = ROOT) -> dict[str, Any]:
             "action_prompt_hash": fingerprint.get("action_prompt_hash"),
             "subset_labels": metadata["subset_labels"], "gate": True,
             "source": metadata["source"], "license": metadata["license"],
+            "reference_contract": metadata.get("reference_contract") or fingerprint.get("reference_contract", "legacy-unchecked"),
         })
     manifest = {"format": "space-frame-multimodal-eval/v1", "cases": cases}
     _write(root / "manifest.json", manifest)
