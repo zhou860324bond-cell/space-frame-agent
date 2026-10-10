@@ -53,9 +53,9 @@ def _case(draft: dict, case_name: str) -> dict:
 
 def _resolve_exact_issues(draft: dict, target: dict, resolution: str) -> None:
     # 杆件级、全局及涉及多个荷载的问题仍需分别审核。
-    ref = f"load:{target['case']}:member_spans:{target['name']}"
+    ref = f"load:{target['case']}:{target['collection']}:{target['name']}"
     for issue in draft.get("issues") or []:
-        if (issue.get("category") == "load_incomplete"
+        if (issue.get("category") == "load_incomplete" and issue.get("status") == "open"
                 and (set(issue.get("entity_refs") or []) == {ref}
                      or (issue.get("load_target") == target
                          and len(issue.get("entity_refs") or []) <= 1))):

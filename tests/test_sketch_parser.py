@@ -454,6 +454,24 @@ def test_loads_are_converted_from_drawing_units_by_code():
     assert "w" not in member_loads[2], "单位认不出时宁可不给，也不能猜一个数出来"
 
 
+@pytest.mark.parametrize("named", [True, False])
+def test_missing_nodal_load_keeps_original_observation_and_exact_binding(named):
+    """同节点多条缺值荷载必须可分别修正，换算失败前的原始值、单位和方向不能只留在文字里。"""
+    from copy import deepcopy
+    from sketch_parser import _fill_bookkeeping
+    entries = [{"node": 1, "value": 5, "unit": "未知", "direction": [0, 0, -1]}, {"node": 1}]
+    if named:
+        entries[0]["name"], entries[1]["name"] = "F", "G"
+    observed = deepcopy(entries)
+    draft = _fill_bookkeeping({"image_model": {"load_cases": [{"name": "D", "nodal_loads": entries}]}}, "h", "a.png")
+    for index, problem in enumerate(draft["issues"]):
+        name = observed[index].get("name", f"nodal_loads-{index+1}")
+        assert problem["load_target"] == {"case": "D", "collection": "nodal_loads", "name": name}
+        assert problem["observations"] == [observed[index]] and problem["status"] == "open"
+        assert "load" not in draft["image_model"]["load_cases"][0]["nodal_loads"][index]
+    assert "默认零值" in draft["issues"][-1]["message"] and "None" not in draft["issues"][-1]["message"]
+
+
 @pytest.mark.parametrize("unit", ["N·m", "N.m", "Nm", "kN·m", "kN.m", "kNm"])
 def test_concentrated_moment_does_not_become_a_force(unit):
     """防止混合荷载图的集中矩三分量方向被旧换算写入力分量。"""

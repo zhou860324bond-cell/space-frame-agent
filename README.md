@@ -2,7 +2,7 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **2587 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
+当前回归基线为 **2613 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
 后台线程收尾修复与三平台验收记录见 [工作进度](docs/PROGRESS.md) 和 [PR #25](https://github.com/zhou860324bond-cell/space-frame-agent/pull/25)。
 桌面安装使用已验收的 PySide6 6.11.2；CI 与 `.[desktop]` 共用版本声明。
 多模态新增 [闭合梁轴、小图支座与独立试点实测](multimodal_eval/public_cases/OUTLINE_REPORT.md)：原 5 张开发图本轮几何全匹配，新增独立混合荷载图仍失败。未知位置、符号荷载和尺度必须人工校核，不能据开发图成绩声明通用准确率。
@@ -13,8 +13,11 @@
 新增默认关闭的作用点复核：额外一次视觉调用提取位置候选，保留人工审核。
 [初版三图实测](multimodal_eval/public_cases/ACTION_REVIEW_REPORT.md)补出了混合图集中力位置，
 但力矩中心仍有偏差、另一图支座类型仍误判，完整验收未通过。
-最新加入 [圆弧中心与支座符号复核](multimodal_eval/public_cases/MOMENT_SUPPORT_REPORT.md)：
+此前加入 [圆弧中心与支座符号复核](multimodal_eval/public_cases/MOMENT_SUPPORT_REPORT.md)：
 三图当次几何和支座匹配参考，在线复核 2/3；格式兼容修复仅做零调用回放，原失败保留，完整验收仍未通过。
+最新加入 [审核问题分组与节点荷载缺值](multimodal_eval/public_cases/REVIEW_EDIT_REPORT.md)：
+重复提示合并展示，原问题与阻断总数保留；无数值节点荷载保持空白，人工填写或删除留存原观察。
+本轮新增接口调用为零，回放评测指标不变，不能把展示行数减少当作识别准确率提升。
 核心原则只有一条：
 **大模型只产结构，不产数值**——报告里每个数字都能溯源到某次工具调用。
 

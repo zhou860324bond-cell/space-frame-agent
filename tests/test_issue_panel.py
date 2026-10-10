@@ -76,6 +76,90 @@ def test_queue_orders_blockers_by_workflow_priority_and_counts(qt_app):
     assert panel.current_issue_id() == "low"
 
 
+def test_low_confidence_group_shows_all_messages_and_retains_raw_counts(qt_app):
+    """同一对象的多次低置信度说明应只占一行，但不能丢原始记录、说明或阻断总数。"""
+    value = {"issues": [issue("first", "low_confidence", refs=["node:1"]),
+                        issue("second", "low_confidence", refs=["node:1"]),
+                        issue("other", "low_confidence", refs=["node:2"])]}
+    original = deepcopy(value)
+    panel = IssuePanel()
+    panel.set_draft(value)
+    assert panel.list.count() == 2 and panel.summary.text() == "阻断 3 · 警告 0"
+    assert panel.confidence_summary.text() == "低置信度待审核 2 · 记录 3"
+    assert "1. first" in panel.message.text() and "2. second" in panel.message.text()
+    assert "2 条记录" in panel.list.item(0).text()
+    panel.btn_next_low.click()
+    assert panel.current_issue_id() == "other" and value == original
+
+
+@pytest.mark.parametrize("difference", ["global", "mixed", "severity", "category"])
+def test_low_confidence_groups_never_mix_other_review_scopes(qt_app, difference):
+    """全局、多对象、不同等级或荷载缺值问题不能被同对象的低置信度分组合并。"""
+    first = issue("first", "low_confidence", refs=["node:1"])
+    second = deepcopy(first)
+    second["id"] = "second"
+    if difference == "global":
+        first["entity_refs"] = second["entity_refs"] = []
+    elif difference == "mixed":
+        first["entity_refs"] = second["entity_refs"] = ["node:1", "node:2"]
+    elif difference == "severity":
+        second["severity"] = "warning"
+    else:
+        second["category"] = "load_incomplete"
+    panel = IssuePanel()
+    panel.set_draft({"issues": [first, second]})
+    assert panel.list.count() == 2
+
+
+def test_confirm_group_keeps_each_issue_and_other_blockers(qt_app):
+    """一次核对单一对象应留存组内每条确认记录，不能解除同节点荷载缺值或其他对象问题。"""
+    value = base_draft()
+    value["issues"] = [issue("first", "low_confidence", refs=["node:1"]),
+                       issue("second", "low_confidence", refs=["node:1"]),
+                       issue("load", "load_incomplete", refs=["node:1"]),
+                       issue("other", "low_confidence", refs=["node:2"])]
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(value)
+    panel.issue_panel.btn_confirm.click()
+    records = {i["id"]: i for i in panel._v2_draft["issues"]}
+    for ident in ("first", "second"):
+        assert records[ident]["status"] == "resolved" and records[ident]["resolved_by"] == "user"
+        assert records[ident]["message"] == ident
+        assert records[ident]["reviewed_together"] == ["first", "second"]
+    assert records["load"]["status"] == records["other"]["status"] == "open"
+    assert panel._v2_draft["revision"] == value["revision"] + 1 and not panel.btn_load.isEnabled()
+
+
+def test_position_review_absorbs_only_generated_entity_prompts(qt_app):
+    """作用点位置说明可收纳其已覆盖的界面单对象提示，但不能收纳模型另报的混合或荷载问题。"""
+    anchor = issue("action", "low_confidence", refs=["node:1", "member:1"])
+    node = issue("ui-node", "low_confidence", refs=["node:1"])
+    member = issue("ui-member", "low_confidence", refs=["member:1"])
+    node["review_generated"] = member["review_generated"] = True
+    other = issue("raw-node", "low_confidence", refs=["node:1"])
+    panel = IssuePanel()
+    panel.set_draft({"issues": [anchor, node, member, other, issue("load", "load_incomplete", refs=["node:1"])]})
+    assert panel.list.count() == 3
+    assert {i["id"] for i in panel.issue_group("action")} == {"action", "ui-node", "ui-member"}
+    assert "ui-node" in panel.message.text() and "ui-member" in panel.message.text()
+
+
+def test_overlapping_position_groups_confirm_only_the_displayed_records(qt_app):
+    """两组分段说明共享杆件时，单对象提示只能归属一组，确认不可处理另组未展示的记录。"""
+    value = base_draft()
+    value["issues"] = [issue("action-a", "low_confidence", refs=["node:1", "member:1"]),
+                       issue("action-b", "low_confidence", refs=["node:2", "member:1"]),
+                       issue("ui-member", "low_confidence", refs=["member:1"])]
+    value["issues"][-1]["review_generated"] = True
+    panel = SketchPanel(Session(), IdleRunner())
+    panel.set_v2_draft(value)
+    assert len(panel.issue_panel.issue_group("action-a")) == 2
+    panel.issue_panel.list.setCurrentRow(1)
+    panel.issue_panel.btn_confirm.click()
+    statuses = {i["id"]: i["status"] for i in panel._v2_draft["issues"]}
+    assert statuses == {"action-a": "open", "action-b": "resolved", "ui-member": "open"}
+
+
 def test_confidence_bands_distinguish_recognition_quality_from_user_review():
     assert confidence_band({"source": "vision", "confidence": 0.92}) == "high"
     assert confidence_band({"source": "vision", "confidence": 0.80}) == "medium"

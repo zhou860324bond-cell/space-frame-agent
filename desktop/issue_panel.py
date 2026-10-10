@@ -19,6 +19,22 @@ _PRIORITY = {
 _CONFIRMABLE = {"work_plane_unconfirmed", "perspective", "low_confidence"}
 
 
+def low_confidence_group(issues: list[dict], identifier: str) -> list[dict]:
+    """合并同对象提示，以及已被明确位置说明覆盖的界面置信度提示；原记录不删。"""
+    current = next((item for item in issues if str(item.get("id")) == identifier), None)
+    if current is None:
+        return []
+    refs = set(current.get("entity_refs") or [])
+    if current.get("category") != "low_confidence" or not refs:
+        return [current]
+    return [item for item in issues if item.get("status") == "open"
+            and item.get("category") == "low_confidence"
+            and item.get("severity") == current.get("severity")
+            and (item is current or (len(refs) == 1 and set(item.get("entity_refs") or []) == refs)
+                 or (item.get("review_generated") is True and len(item.get("entity_refs") or []) == 1
+                     and set(item["entity_refs"]) <= refs))]
+
+
 def confidence_band(entity: dict) -> str:
     """识别置信度只描述图像提取质量，不代表结构可靠性。"""
     if entity.get("verified") or entity.get("source") == "user":
@@ -82,6 +98,15 @@ class IssuePanel(QWidget):
             item.get("severity") != "blocking",
             _PRIORITY.get(str(item.get("category")), 99), str(item.get("id"))))
         self._issues = {str(item["id"]): item for item in issues}
+        groups = []
+        shown = set()
+        for issue in issues:
+            if str(issue["id"]) in shown:
+                continue
+            group = [i for i in low_confidence_group(issues, str(issue["id"])) if str(i["id"]) not in shown]
+            groups.append(group)
+            shown.update(str(item["id"]) for item in group)
+        self._groups = {str(group[0]["id"]): group for group in groups}
         entity_confidence = {}
         for entity in draft.get("entities") or []:
             target = entity.get("target") or {}
@@ -100,10 +125,13 @@ class IssuePanel(QWidget):
         blockers = sum(item.get("severity") == "blocking" for item in issues)
         self.summary.setText(f"阻断 {blockers} · 警告 {len(issues) - blockers}")
         low_count = sum(item.get("category") == "low_confidence" for item in issues)
-        self.confidence_summary.setText(f"低置信度待审核 {low_count}")
+        low_groups = sum(group[0].get("category") == "low_confidence" for group in groups)
+        self.confidence_summary.setText(f"低置信度待审核 {low_groups}" +
+                                       (f" · 记录 {low_count}" if low_groups != low_count else ""))
         self.btn_next_low.setEnabled(low_count > 0)
         self.list.clear()
-        for issue in issues:
+        for group in groups:
+            issue = group[0]
             marker = (glyphs.BLOCK if issue.get("severity") == "blocking" else glyphs.WARN)
             badge = ""
             if issue.get("category") == "low_confidence":
@@ -115,11 +143,13 @@ class IssuePanel(QWidget):
                 badge = (f"[低 {float(confidence):.0%}] "
                          if confidence is not None else "[低/未知] ")
             item = QListWidgetItem(
-                f"{marker} {badge}{issue.get('message', issue['id'])}")
+                f"{marker} {badge}{issue.get('message', issue['id'])}" +
+                (f"（{len(group)} 条记录）" if len(group) > 1 else ""))
             item.setData(256, str(issue["id"]))
             self.list.addItem(item)
         target = next((row for row in range(self.list.count())
-                       if self.list.item(row).data(256) == current), 0)
+                       if any(str(i["id"]) == current for i in
+                              self._groups[self.list.item(row).data(256)])), 0)
         if self.list.count():
             self.list.setCurrentRow(target)
         else:
@@ -144,11 +174,17 @@ class IssuePanel(QWidget):
         identifier = self.current_issue_id()
         return self._issues.get(identifier) if identifier else None
 
+    def issue_group(self, identifier: str) -> list[dict]:
+        return next((group for group in self._groups.values()
+                     if any(str(item["id"]) == identifier for item in group)), [])
+
     def _selection_changed(self, current, previous) -> None:
         issue = self.current_issue()
         if issue is None:
             return
-        self.message.setText(str(issue.get("message", "")))
+        group = self._groups[str(issue["id"])]
+        self.message.setText("\n".join(f"{n}. {i.get('message', '')}" for n, i in enumerate(group, 1))
+                             if len(group) > 1 else str(issue.get("message", "")))
         self._set_actions(str(issue.get("category")))
         self.issue_selected.emit(str(issue["id"]), list(issue.get("entity_refs") or []))
 

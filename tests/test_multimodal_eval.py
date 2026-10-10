@@ -286,6 +286,22 @@ def test_postcall_replay_snapshot_is_bound_separately_from_original_online_pipel
     assert report["new_api_calls"] == 0
 
 
+def test_review_edit_evidence_keeps_symbol_load_and_original_metrics():
+    """界面分组不能删除问题或无数值荷载来美化成绩，新回放须绑定原记录和完整源码。"""
+    original = ROOT / "public_cases/action_review_02"
+    root = ROOT / "public_cases/review_edit_01"
+    report = json.loads((root / "report.json").read_text(encoding="utf-8"))
+    snapshot = json.loads((root / report["replay_snapshot"]).read_text(encoding="utf-8"))
+    previous = json.loads((original / "current_replay.json").read_text(encoding="utf-8"))
+    assert canonical_digest(snapshot) == report["replay_implementation_hash"]
+    assert len(snapshot) == 14 and "desktop/issue_panel.py" in snapshot
+    assert file_digest(original / "report.json") == report["original_online_report_hash"]
+    assert file_digest(original / "current_replay.json") == report["original_postcall_replay_hash"]
+    assert report["metrics"] == previous["metrics"] and report["new_api_calls"] == 0 and not report["passed"]
+    assert len(report["native_ui"]) == 4
+    assert all(i["raw_open_records"] > i["visible_rows"] and i["commit_blocked"] for i in report["native_ui"])
+
+
 @pytest.mark.parametrize("change", ["image", "crop", "rotation", "plane", "offset"])
 def test_real_world_input_changes_block_old_truth_and_network_calls(tmp_path, monkeypatch, change):
     """同名图片或输入参数变化必须重新标注，不能复用旧真值或继续付费调用。"""

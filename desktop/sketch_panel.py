@@ -70,6 +70,7 @@ class SketchPanel(QWidget):
         self._drag_changed = False
         self._recognition_generation = 0
         self._missing_span_values: set[QDoubleSpinBox] = set()
+        self._missing_load_values: set[QDoubleSpinBox] = set()
 
         self._build_ui()
 
@@ -321,14 +322,22 @@ class SketchPanel(QWidget):
             spin.setRange(-1e12, 1e12)
             spin.setDecimals(3)
             spin.setPrefix(label + " ")
+            spin.setSuffix(" N" if index < 3 else " N·m")
+            spin.lineEdit().setPlaceholderText("必填")
+            spin.valueChanged.connect(lambda _, s=spin: self._missing_load_values.discard(s))
+            spin.lineEdit().textEdited.connect(lambda _, s=spin: self._load_text_edited(s))
+            spin.setToolTip("力分量用 N，力矩分量用 N·m；缺失分量须明确填写，确认是零时输入 0。")
             self.load_spins.append(spin)
             boundary_layout.addWidget(spin, 4 + index // 2, 3 * (index % 2), 1, 3)
         self.btn_apply_load = QPushButton("应用节点荷载")
         self.btn_remove_load = QPushButton("删除节点荷载")
         self.btn_apply_load.clicked.connect(self._apply_nodal_load_edit)
         self.btn_remove_load.clicked.connect(self._remove_nodal_load_edit)
-        boundary_layout.addWidget(self.btn_apply_load, 7, 0, 1, 3)
-        boundary_layout.addWidget(self.btn_remove_load, 7, 3, 1, 3)
+        self.lbl_load_hint = QLabel("缺失分量保持空白；力用 N、力矩用 N·m。确认分量为零时请明确输入 0。")
+        self.lbl_load_hint.setWordWrap(True)
+        boundary_layout.addWidget(self.lbl_load_hint, 7, 0, 1, 6)
+        boundary_layout.addWidget(self.btn_apply_load, 8, 0, 1, 3)
+        boundary_layout.addWidget(self.btn_remove_load, 8, 3, 1, 3)
 
         self.boundary_widget.setVisible(False)
         self.btn_boundaries.toggled.connect(self.boundary_widget.setVisible)
@@ -651,12 +660,16 @@ class SketchPanel(QWidget):
                 issue.update(status="resolved", resolution="用户确认近似正射/已矫正",
                              resolved_by="user")
             elif category == "low_confidence" and action == "confirm":
-                refs = set(issue.get("entity_refs") or [])
+                ids = {str(i["id"]) for i in self.issue_panel.issue_group(issue_id)}
+                group = [i for i in draft.get("issues") or [] if str(i.get("id")) in ids
+                         and i.get("category") == "low_confidence" and i.get("status") == "open"] or [issue]
+                refs = {ref for record in group for ref in record.get("entity_refs") or []}
                 for entity in draft.get("entities") or []:
                     if self._v2_entity_ref(entity) in refs:
                         entity.update(source="user", confidence=None, verified=True)
-                issue.update(status="resolved", resolution="用户已核对实体",
-                             resolved_by="user")
+                for record in group:
+                    record.update(status="resolved", resolution="用户已核对该对象的全部低置信度说明",
+                                  resolved_by="user", reviewed_together=[i["id"] for i in group])
             elif (category == "load_incomplete" and action == "ignore"
                   and issue.get("unbound_symbols_only") is True and issue.get("observations")):
                 issue.update(status="resolved", resolution="用户明确忽略未绑定的荷载符号",
@@ -1042,6 +1055,7 @@ class SketchPanel(QWidget):
             while any(item.get("id") == ident for item in issues):
                 ident += "-review"
             issues.append({"id": ident, "category": category,
+                           "review_generated": True,
                            "severity": "blocking", "entity_refs": refs,
                            "message": message, "status": "open",
                            "resolution": None, "resolved_by": None})
@@ -1462,13 +1476,43 @@ class SketchPanel(QWidget):
                      if str(item.get("name", "")) == case_name), None)
         entry = next((item for item in (case or {}).get("nodal_loads", [])
                       if str(item.get("name", "")) == load_name), None)
-        values = entry.get("load", [0.0] * 6) if entry else [0.0] * 6
+        values = entry.get("load") if entry else [0.0] * 6
+        if not isinstance(values, (list, tuple)) or len(values) != 6:
+            values = [None] * 6
         if entry and self.cmb_load_node.findData(int(entry["node"])) >= 0:
             self.cmb_load_node.setCurrentIndex(
                 self.cmb_load_node.findData(int(entry["node"])))
         for spin, value in zip(self.load_spins, values, strict=True):
-            spin.setValue(float(value))
+            valid = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                     and math.isfinite(value) and spin.minimum() <= value <= spin.maximum())
+            spin.blockSignals(True)
+            spin.setValue(float(value) if valid else 0)
+            if valid:
+                self._missing_load_values.discard(spin)
+            else:
+                spin.clear()
+                self._missing_load_values.add(spin)
+            spin.blockSignals(False)
         self.btn_remove_load.setEnabled(entry is not None)
+
+    def _load_text_edited(self, spin):
+        if spin.hasAcceptableInput() and spin.cleanText().strip():
+            self._missing_load_values.discard(spin)
+        else:
+            self._missing_load_values.add(spin)
+
+    def _audit_v2_nodal_load_edit(self, draft, case, name, replacement=None):
+        """只处理选中荷载的缺值问题，保留替换前条目和原观察供审核追溯。"""
+        from copy import deepcopy
+        from sketch_load_edit import _resolve_exact_issues
+        target = {"case": case["name"], "collection": "nodal_loads", "name": name}
+        previous = {"loads": [deepcopy(i) for i in case.get("nodal_loads") or [] if i.get("name") == name],
+                    "entities": [deepcopy(e) for e in draft.get("entities") or []
+                                 if e.get("kind") == "load" and e.get("target", {}).get("load") == target]}
+        draft.setdefault("edit_history", []).append({"action": "set_nodal_load" if replacement else "delete_nodal_load",
+            "target": deepcopy(target), "previous": deepcopy(previous), "replacement": deepcopy(replacement)})
+        _resolve_exact_issues(draft, target, "用户已填写节点荷载分量" if replacement else "用户明确删除此节点荷载")
+        return previous
 
     def _resolve_questions(self, keyword: str):
         for row in range(self.lst_questions.count()):
@@ -1594,6 +1638,10 @@ class SketchPanel(QWidget):
         self.cmb_load_case.setCurrentText(name)
 
     def _apply_nodal_load_edit(self):
+        if any(spin in self._missing_load_values or not spin.cleanText().strip()
+               or not spin.hasAcceptableInput() for spin in self.load_spins):
+            self._show_edit_error("节点荷载设置失败", ValueError("分量尚未有效填写，请补齐 Fx/Fy/Fz/Mx/My/Mz；确认该分量为零时请明确输入 0。"))
+            return
         if self._v2_draft is not None:
             from copy import deepcopy
             draft = deepcopy(self._v2_draft)
@@ -1612,6 +1660,7 @@ class SketchPanel(QWidget):
             loads = [item for item in case.get("nodal_loads") or []
                      if str(item.get("name")) != load_name]
             payload = {"name": load_name, "node": node_id, "load": values}
+            observations = self._audit_v2_nodal_load_edit(draft, case, load_name, payload)
             loads.append(payload)
             case["nodal_loads"] = loads
             draft["entities"] = [item for item in draft.get("entities") or []
@@ -1628,6 +1677,7 @@ class SketchPanel(QWidget):
                 "image_geometry": {"point": [float(node["u"]), float(node["v"])]},
                 "target": {"load": {"case": case_name, "collection": "nodal_loads",
                                       "name": load_name}}, "payload": deepcopy(payload),
+                "original_observation": observations,
             })
             self._apply_v2_edit(draft, f"已更新节点荷载 {load_name}")
             return
@@ -1656,6 +1706,10 @@ class SketchPanel(QWidget):
             before = len((case or {}).get("nodal_loads") or [])
             if case is None:
                 return
+            if not any(str(item.get("name")) == load_name for item in case.get("nodal_loads") or []):
+                self._show_edit_error("删除节点荷载失败", ValueError("荷载不存在"))
+                return
+            self._audit_v2_nodal_load_edit(draft, case, load_name)
             case["nodal_loads"] = [item for item in case.get("nodal_loads") or []
                                    if str(item.get("name")) != load_name]
             if len(case["nodal_loads"]) == before:

@@ -120,6 +120,84 @@ def fill_partial_inputs(panel):
         QTest.keyClicks(spin.lineEdit(), str(value))
 
 
+def missing_nodal_panel(qt_app):
+    from copy import deepcopy
+    from sketch_parser import _convert_case_loads
+    panel = partial_panel(qt_app)
+    draft = deepcopy(panel._v2_draft)
+    case = draft["image_model"]["load_cases"][0]
+    case["nodal_loads"] = [{"node": 2, "name": "F"}, {"node": 2, "name": "G"}]
+    problems = _convert_case_loads(case)
+    for index, issue in enumerate(problems):
+        issue.update(id=f"missing-{index}", status="open")
+    draft["issues"] = problems + [{"id": "global", "category": "load_incomplete", "severity": "blocking",
+        "entity_refs": [], "status": "open", "message": "其他荷载需要核对"}]
+    draft["entities"].append({"id": "observed-F", "kind": "load", "source": "vision", "verified": False,
+        "confidence": None, "target": {"load": {"case": case["name"], "collection": "nodal_loads", "name": "F"}},
+        "image_geometry": {"point": [1, .5]}})
+    panel.set_v2_draft(draft)
+    panel.cmb_load_name.setCurrentText("F")
+    return panel
+
+
+def test_nodal_placeholder_stays_blank_and_cannot_apply_after_qt_fixup(qt_app):
+    """真实无数值占位不能显示六个零，Qt 失焦自动显示零也不能被应用为工程荷载。"""
+    from copy import deepcopy
+    panel = missing_nodal_panel(qt_app)
+    original = deepcopy(panel._v2_draft)
+    assert all(not s.cleanText().strip() for s in panel.load_spins)
+    for spin in panel.load_spins:
+        spin.interpretText()
+    panel.btn_apply_load.click()
+    assert panel._v2_draft == original and "明确输入 0" in panel.lbl_status.text()
+    assert not panel.btn_load.isEnabled()
+
+
+@pytest.mark.parametrize("action", ["apply", "delete"])
+def test_nodal_placeholder_manual_edit_preserves_evidence_and_other_blockers(qt_app, action):
+    """填写或删除某个占位只处理其精确缺值问题，原观察及同节点另一条荷载仍保留。"""
+    panel = missing_nodal_panel(qt_app)
+    if action == "apply":
+        for spin, value in zip(panel.load_spins, [0, 0, -500, 0, 0, 0], strict=True):
+            spin.lineEdit().selectAll()
+            QTest.keyClicks(spin.lineEdit(), str(value))
+        panel.btn_apply_load.click()
+        entry = next(i for i in panel._v2_draft["image_model"]["load_cases"][0]["nodal_loads"] if i["name"] == "F")
+        assert entry["load"] == [0, 0, -500, 0, 0, 0]
+        entity = next(e for e in panel._v2_draft["entities"] if e.get("kind") == "load")
+        assert entity["verified"] and entity["original_observation"]["loads"] == [{"node": 2, "name": "F"}]
+    else:
+        panel.btn_remove_load.click()
+    draft = panel._v2_draft
+    issues = {i["id"]: i for i in draft["issues"]}
+    assert issues["missing-0"]["status"] == "resolved" and issues["missing-0"]["observations"] == [{"node": 2, "name": "F"}]
+    assert issues["missing-1"]["status"] == issues["global"]["status"] == "open"
+    assert draft["edit_history"][-1]["previous"]["entities"][0]["id"] == "observed-F"
+    assert not panel.btn_load.isEnabled()
+
+
+def test_nodal_case_switch_does_not_reuse_filled_values_for_another_placeholder(qt_app):
+    """填写到一半后切换另一无数值荷载，应重新显示缺值，不能借用上一条的分量。"""
+    panel = missing_nodal_panel(qt_app)
+    panel.load_spins[2].setValue(-200)
+    panel.cmb_load_name.setCurrentText("G")
+    assert all(not s.cleanText().strip() for s in panel.load_spins)
+    panel.btn_apply_load.click()
+    assert "分量尚未" in panel.lbl_status.text()
+
+
+@pytest.mark.parametrize("values", [None, [0, 0, 0], [0, False, 0, 0, 0, 0],
+                                   [0, float("nan"), 0, 0, 0, 0], [0, None, 0, 0, 0, 0]])
+def test_invalid_or_partial_nodal_vector_cannot_be_silently_zeroed(qt_app, values):
+    """旧草稿中的短向量、空值、布尔及非有限分量应显示缺失，不能截断或补零后应用。"""
+    panel = missing_nodal_panel(qt_app)
+    panel._v2_draft["image_model"]["load_cases"][0]["nodal_loads"][0]["load"] = values
+    panel._fill_load_values()
+    assert panel._missing_load_values
+    panel.btn_apply_load.click()
+    assert "分量尚未" in panel.lbl_status.text() and not panel.btn_load.isEnabled()
+
+
 def test_partial_editor_stays_collapsed_and_requires_explicit_missing_values(qt_app):
     """新增局部编辑不能挤占原布局，缺失强度也不能由默认零值自动补齐。"""
     panel = partial_panel(qt_app)

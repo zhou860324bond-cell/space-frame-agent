@@ -40,6 +40,7 @@ draft = result.draft
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 import math
 import time
@@ -364,30 +365,37 @@ def _convert_case_loads(case: dict) -> list[dict]:
 
     problems: list[dict] = []
 
-    def span_target(item: dict) -> dict:
-        if case.get("name") and item.get("name"):
-            return {"load_target": {"case": case["name"], "collection": "member_spans",
-                                    "name": item["name"]}}
+    def load_target(item: dict, collection: str, index: int = 1) -> dict:
+        if case.get("name"):
+            return {"load_target": {"case": case["name"], "collection": collection,
+                                    "name": item.get("name") or f"{collection}-{index}"}}
         return {}
 
     def convert(items: Any, key: str, size: int, ref: str, label: str,
                 units: set[str]) -> None:
-        for item in items or []:
+        collection = {"load": "nodal_loads", "w": "member_loads", "w1": "member_spans"}[key]
+        for index, item in enumerate(items or [], 1):
             if not isinstance(item, dict):
                 continue
             if not isinstance(item.get(key), (list, tuple)):
                 got = vector(item, size, units)
                 if got is None:
+                    if all(item.get(k) is None for k in ("value", "unit", "direction")):
+                        components = "Fx/Fy/Fz/Mx/My/Mz" if key == "load" else "全局 X/Y/Z 分量"
+                        message = (f"{label} {item.get(ref)} 的荷载 {item.get('name') or f'{collection}-{index}'} "
+                                   f"尚未提供有效分量。请在对应荷载编辑器中明确填写 {components}；"
+                                   "确认该分量为零时输入 0，不能用默认零值代替缺失值。")
+                    else:
+                        message = (f"{label} {item.get(ref)} 上这条荷载没能换算："
+                                   f"值 {item.get('value')!r}、单位 {item.get('unit')!r}、"
+                                   f"方向 {item.get('direction')!r}。认得的单位是 {_UNIT_DISPLAY}。"
+                                   "请确认图上写的是什么，或直接给出分量向量。")
                     problems.append({
                         "category": "load_incomplete", "severity": "blocking",
-                        **(span_target(item) if key == "w1" else {}),
+                        **load_target(item, collection, index),
+                        "observations": [deepcopy(item)],
                         "entity_refs": [f"{ref}:{item.get(ref)}"],
-                        "message": (
-                            f"{label} {item.get(ref)} 上这条荷载没能换算："
-                            f"值 {item.get('value')!r}、单位 {item.get('unit')!r}、"
-                            f"方向 {item.get('direction')!r}。认得的单位是 "
-                            f"{_UNIT_DISPLAY}。"
-                            "请确认图上写的是什么，或直接给出分量向量。"),
+                        "message": message,
                     })
                 else:
                     item[key] = got
@@ -417,7 +425,7 @@ def _convert_case_loads(case: dict) -> list[dict]:
                 and not isinstance(item[k], bool) and math.isfinite(item[k]) for k in ("a", "b"))
                 or not 0 <= item["a"] < item["b"])):
             problems.append({"category": "load_incomplete", "severity": "blocking",
-                **span_target(item),
+                **load_target(item, "member_spans", index),
                 "entity_refs": [f"member:{item.get('member')}"],
                 "message": f"局部分布荷载缺少有效作用范围：{observed_range!r}。请确认距杆件 i 端的起止长度和单位，不能按整跨施加。"})
     return problems
