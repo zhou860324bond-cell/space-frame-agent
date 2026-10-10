@@ -1,0 +1,245 @@
+{
+  "beam_solve": {
+    "cases": {
+      "LC1": {
+        "max_displacement_mm": 235.366956,
+        "at_node": 3,
+        "equilibrium_ok": true,
+        "equilibrium_residual": 4.948e-14,
+        "max_deflection_mm": 227.818229,
+        "at_member": 2,
+        "at_x_m": 4.0,
+        "warning": "最大位移达到最短杆件长度的 1/12，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+      }
+    },
+    "analysis": {
+      "type": "linear_static"
+    },
+    "compilation": {
+      "physical_members": 2,
+      "analysis_elements": 2,
+      "generated_nodes": 0,
+      "diagnostics": []
+    },
+    "silent_failures": {
+      "summary": {
+        "overall": "pass",
+        "total_checks": 9,
+        "passed": 9,
+        "critical_issues": 0,
+        "warnings": 0,
+        "critical_details": [],
+        "warning_details": []
+      },
+      "findings": [
+        {
+          "id": "insufficient_supports",
+          "name": "支座约束不足",
+          "severity": "critical",
+          "status": "pass",
+          "message": "支座约束 6 个自由度，6 个刚体运动方向均有约束",
+          "detail": {
+            "support_dofs": 6,
+            "support_nodes": 1
+          },
+          "suggestion": ""
+        },
+        {
+          "id": "excessive_displacement",
+          "name": "位移过大",
+          "severity": "critical",
+          "status": "pass",
+          "message": "最大位移 235.3670 mm，结构尺寸 5000 mm，占比 4.707%（< 10%）",
+          "detail": {},
+          "suggestion": ""
+        },
+        {
+          "id": "zero_reaction_with_load",
+          "name": "有载荷但反力为零",
+          "severity": "critical",
+          "status": "pass",
+          "message": "所有有载荷的工况都有非零支座反力",
+          "detail": {},
+          "suggestion": ""
+        },
+        {
+          "id": "zero_internal_force",
+          "name": "有载荷但内力为零",
+          "severity": "critical",
+          "status": "pass",
+          "message": "所有有载荷的工况都有非零杆件内力",
+          "detail": {},
+          "suggestion": ""
+        },
+        {
+          "id": "no_applied_load",
+          "name": "求解时没有任何荷载",
+          "severity": "critical",
+          "status": "pass",
+          "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+          "detail": {
+            "loaded_cases": [
+              "LC1"
+            ]
+          },
+          "suggestion": ""
+        },
+        {
+          "id": "near_singular_stiffness",
+          "name": "刚度矩阵接近奇异",
+          "severity": "critical",
+          "status": "pass",
+          "message": "刚度矩阵条件数 2.35e+03（< 1e8），数值稳定",
+          "detail": {
+            "condition_number": 2349.5959161501655,
+            "dof": 12
+          },
+          "suggestion": ""
+        },
+        {
+          "id": "reaction_load_balance",
+          "name": "反力与外载荷不平衡",
+          "severity": "critical",
+          "status": "pass",
+          "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+          "detail": {},
+          "suggestion": ""
+        },
+        {
+          "id": "load_magnitude_anomaly",
+          "name": "载荷量级异常",
+          "severity": "warning",
+          "status": "pass",
+          "message": "所有工况载荷量级与材料弹性模量匹配",
+          "detail": {},
+          "suggestion": ""
+        },
+        {
+          "id": "section_orientation",
+          "name": "截面主轴方向风险",
+          "severity": "warning",
+          "status": "pass",
+          "message": "所有截面 Iz >= Iy，主轴方向正常",
+          "detail": {},
+          "suggestion": ""
+        }
+      ]
+    },
+    "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\solid\\capsules\\20261010_192218_21b456ed.json",
+    "result_identity": {
+      "solve_id": "259012fa490a478a993c1a4009fa3b5a",
+      "model_fingerprint": "9c58bc7d9dcd72e7df9bf2e9f12e3228",
+      "solved_at": "2026-10-10T11:22:18.161298+00:00",
+      "parameters": {
+        "analysis": "linear",
+        "increments": 10,
+        "max_iter": 40,
+        "tolerance": 1e-07,
+        "amplitudes": null
+      },
+      "analysis": {
+        "type": "linear_static"
+      }
+    }
+  },
+  "events": [
+    {
+      "elapsed_s": 0.001,
+      "text": "划分默认网格…"
+    },
+    {
+      "elapsed_s": 10.478,
+      "text": "第 1/1 档：求解 157245 个自由度（26423 个 C3D10）…"
+    }
+  ],
+  "settings": {
+    "levels": 1,
+    "mesh": "default"
+  },
+  "solid_result": {
+    "schema": "solid-joint-analysis/native-v1",
+    "backend": "native-c3d10+gmsh",
+    "node_id": 2,
+    "case": "LC1",
+    "anchor_member": 1,
+    "nominal_normal_mpa": 296.403281337581,
+    "peak_convergence": {
+      "verdict": "inconclusive",
+      "reason": "少于三档网格，无法分辨收敛与发散",
+      "levels": 1
+    },
+    "hot_spot_extrapolation": {
+      "2": {
+        "hot_spot_mpa": 1863.0123602349254,
+        "thickness_mm": 7.999999999999993,
+        "sigma_at_0_4t_mpa": 1634.5078234600292,
+        "sigma_at_1_0t_mpa": 1291.751018297685,
+        "method": "IIW linear extrapolation from 0.4t and 1.0t",
+        "sample_count": 8
+      }
+    },
+    "hot_spot_convergence": {
+      "2": {
+        "verdict": "inconclusive",
+        "levels": 1,
+        "relative_changes": [],
+        "reason": "至少需要三档局部网格才能判断热点应力收敛",
+        "values": [
+          {
+            "hotspot_mesh_size_mm": 7.999999999999993,
+            "hot_spot_mpa": 1863.0123602349254
+          }
+        ]
+      }
+    },
+    "governing_arm": null,
+    "stress_concentration_factor": null,
+    "stress_concentration_basis": null,
+    "stress_concentration_refused": "未给出正式应力集中系数：0.4t/1.0t 热点路径未覆盖，或三档局部网格下的热点应力尚未收敛。保留试算值供诊断，但不使用相贯线奇异峰值或未稳定外推值替代正式 Kt。",
+    "meshes": [
+      {
+        "mesh_size_mm": 7.999999999999993,
+        "global_mesh_size_mm": 19.999999999999982,
+        "hotspot_mesh_size_mm": 7.999999999999993,
+        "nodes": 52415,
+        "elements": 26423,
+        "max_mises_mpa": 3677.168093141806,
+        "p99_mises_mpa": 1395.6010729957159,
+        "max_abs_principal_mpa": 3949.012839367765,
+        "p99_abs_principal_mpa": 1427.4306949325528,
+        "max_displacement_mm": 13.795249659071358,
+        "free_residual_norm_n": 4.289510146999266e-06,
+        "force_balance_n": [
+          -1.591522928677779e-07,
+          6.574758323300735e-07,
+          1.309050877029705e-06
+        ],
+        "moment_balance_nmm": [
+          4.2903630082783616e-05,
+          -0.0005221145160595505,
+          0.0002361997706440117
+        ],
+        "vtu": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\solid\\results\\node_2_LC1\\native_joint_0.vtu",
+        "contour_png": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\solid\\results\\node_2_LC1\\native_joint_0.png",
+        "hot_spot_extrapolation": {
+          "2": {
+            "hot_spot_mpa": 1863.0123602349254,
+            "thickness_mm": 7.999999999999993,
+            "sigma_at_0_4t_mpa": 1634.5078234600292,
+            "sigma_at_1_0t_mpa": 1291.751018297685,
+            "method": "IIW linear extrapolation from 0.4t and 1.0t",
+            "sample_count": 8
+          }
+        }
+      }
+    ],
+    "warnings": [],
+    "files": {
+      "directory": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\solid\\results\\node_2_LC1",
+      "contour_png": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\solid\\results\\node_2_LC1\\native_joint_0.png",
+      "finest_vtu": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\solid\\results\\node_2_LC1\\native_joint_0.vtu"
+    }
+  },
+  "ok": true,
+  "elapsed_s": 141.655
+}

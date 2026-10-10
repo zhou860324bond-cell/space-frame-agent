@@ -86,7 +86,9 @@ class _OpenAICompatibleProvider:
         if not api_key:
             raise ValueError(f"模型 {config.name} 缺少 API 密钥"
                              f"（环境变量 {config.api_key_env or '未设置'} 为空）")
-        self._client = OpenAI(api_key=api_key, base_url=config.base_url)
+        # 失联后及时交给路由处理，不让 SDK 在单个提供商上反复等待。
+        self._client = OpenAI(api_key=api_key, base_url=config.base_url,
+                              timeout=90.0, max_retries=0)
         self._model = config.name
         self._temperature = config.temperature
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}

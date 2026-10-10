@@ -1,0 +1,1000 @@
+{
+  "checks": [
+    {
+      "check": "set_model",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "solve_model",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "query_results",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "端部荷载理论位移",
+      "ok": true,
+      "details": {
+        "actual_m": -0.0022500000000000003,
+        "theory_m": -0.00225
+      }
+    },
+    {
+      "check": "query_diagram",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "query_results",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "set_model",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "solve_model",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "query_results",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "跨中荷载理论位移",
+      "ok": true,
+      "details": {
+        "actual_m": -0.0007031249999999995,
+        "theory_m": -0.0007031249999999999
+      }
+    },
+    {
+      "check": "query_diagram",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "query_results",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "离线对话真实建模求解",
+      "ok": true,
+      "details": {
+        "elapsed_s": 0.056,
+        "reply": "已建好单跨 24 m 门式刚架并求解三个荷载组合，静力平衡校核通过。左侧模型树和视口里能看到结果。"
+      }
+    },
+    {
+      "check": "query_results",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "query_envelope",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "modal_analysis",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "buckling_analysis",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "write_report",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "两种报告及结果一致性",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "正式保存",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "打开已保存模型",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "重开后结果正确失效",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "真实后台求解",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "后台求解结果",
+      "ok": true,
+      "details": {
+        "elapsed_s": 0.491
+      }
+    },
+    {
+      "check": "截图 模型",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "截图 变形",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "截图 云图",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "截图 内力图",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "截图 模态",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "真实界面导出计算书",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "界面计算书存在",
+      "ok": true,
+      "details": null
+    },
+    {
+      "check": "已有真实实体结果打开",
+      "ok": true,
+      "details": null
+    }
+  ],
+  "tools": [
+    {
+      "tool": "set_model",
+      "args": {
+        "model": {
+          "schema_version": 1,
+          "units": "N-m-Pa",
+          "materials": [
+            {
+              "name": "Steel",
+              "E": 200000000000.0,
+              "nu": 0.3
+            }
+          ],
+          "sections": [
+            {
+              "name": "S",
+              "A": 0.01,
+              "Iy": 1e-05,
+              "Iz": 2e-05,
+              "J": 5e-06
+            }
+          ],
+          "nodes": [
+            {
+              "id": 11,
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            {
+              "id": 22,
+              "x": 3.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          ],
+          "members": [
+            {
+              "id": 101,
+              "i": 11,
+              "j": 22,
+              "section": "S",
+              "material": "Steel"
+            }
+          ],
+          "supports": [
+            {
+              "node": 11,
+              "fix": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ],
+          "member_spans": [
+            {
+              "member": 101,
+              "kind": "point",
+              "w1": [
+                0.0,
+                0.0,
+                -1000.0
+              ],
+              "a": 3.0
+            }
+          ]
+        }
+      },
+      "ok": true,
+      "payload": {
+        "summary": {
+          "nodes": 2,
+          "members": 1,
+          "supports": 1,
+          "load_cases": 0
+        },
+        "schema_version": 1
+      },
+      "elapsed_s": 0.3
+    },
+    {
+      "tool": "solve_model",
+      "args": {},
+      "ok": true,
+      "payload": {
+        "cases": {
+          "default": {
+            "max_displacement_mm": 2.25,
+            "at_node": 22,
+            "equilibrium_ok": true,
+            "equilibrium_residual": 3.032e-16,
+            "max_deflection_mm": 2.25,
+            "at_member": 101,
+            "at_x_m": 3.0
+          }
+        },
+        "analysis": {
+          "type": "linear_static"
+        },
+        "compilation": {
+          "physical_members": 1,
+          "analysis_elements": 1,
+          "generated_nodes": 0,
+          "diagnostics": []
+        },
+        "silent_failures": {
+          "summary": {
+            "overall": "pass",
+            "total_checks": 9,
+            "passed": 9,
+            "critical_issues": 0,
+            "warnings": 0,
+            "critical_details": [],
+            "warning_details": []
+          },
+          "findings": [
+            {
+              "id": "insufficient_supports",
+              "name": "支座约束不足",
+              "severity": "critical",
+              "status": "pass",
+              "message": "支座约束 6 个自由度，6 个刚体运动方向均有约束",
+              "detail": {
+                "support_dofs": 6,
+                "support_nodes": 1
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "excessive_displacement",
+              "name": "位移过大",
+              "severity": "critical",
+              "status": "pass",
+              "message": "最大位移 2.2500 mm，结构尺寸 3000 mm，占比 0.075%（< 10%）",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "zero_reaction_with_load",
+              "name": "有载荷但反力为零",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有有载荷的工况都有非零支座反力",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "zero_internal_force",
+              "name": "有载荷但内力为零",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有有载荷的工况都有非零杆件内力",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "no_applied_load",
+              "name": "求解时没有任何荷载",
+              "severity": "critical",
+              "status": "pass",
+              "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+              "detail": {
+                "loaded_cases": [
+                  "default"
+                ]
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "near_singular_stiffness",
+              "name": "刚度矩阵接近奇异",
+              "severity": "critical",
+              "status": "pass",
+              "message": "刚度矩阵条件数 1.39e+01（< 1e8），数值稳定",
+              "detail": {
+                "condition_number": 13.9282032302755,
+                "dof": 6
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "reaction_load_balance",
+              "name": "反力与外载荷不平衡",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "load_magnitude_anomaly",
+              "name": "载荷量级异常",
+              "severity": "warning",
+              "status": "pass",
+              "message": "所有工况载荷量级与材料弹性模量匹配",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "section_orientation",
+              "name": "截面主轴方向风险",
+              "severity": "warning",
+              "status": "pass",
+              "message": "所有截面 Iz >= Iy，主轴方向正常",
+              "detail": {},
+              "suggestion": ""
+            }
+          ]
+        },
+        "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\mainline\\capsules\\20261010_192745_38598cdd.json",
+        "result_identity": {
+          "solve_id": "bd7e8fa465544d04ac26be8e35239bf3",
+          "model_fingerprint": "a41e455674dd4d29d568211386d9fef7",
+          "solved_at": "2026-10-10T11:27:45.975723+00:00",
+          "parameters": {
+            "analysis": "linear",
+            "increments": 10,
+            "max_iter": 40,
+            "tolerance": 1e-07,
+            "amplitudes": null
+          },
+          "analysis": {
+            "type": "linear_static"
+          }
+        }
+      },
+      "elapsed_s": 0.111
+    },
+    {
+      "tool": "query_results",
+      "args": {
+        "what": "max_displacement"
+      },
+      "ok": true,
+      "payload": {
+        "case": "default",
+        "node": 22,
+        "coordinates_xyz": [
+          3.0,
+          0.0,
+          0.0
+        ],
+        "coordinate_unit": "m",
+        "magnitude_mm": 2.25,
+        "components_mm": {
+          "ux": 0.0,
+          "uy": 0.0,
+          "uz": -2.25
+        },
+        "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+        "node_kind": "physical_node"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "tool": "query_diagram",
+      "args": {
+        "member": 101,
+        "component": "My"
+      },
+      "ok": true,
+      "payload": {
+        "case": "default",
+        "member": 101,
+        "component": "My",
+        "unit": "kN·m",
+        "length_m": 3.0,
+        "peak": -0.0,
+        "at_x_m": 0.0,
+        "at_i_end": -0.0,
+        "at_j_end": -0.0
+      },
+      "elapsed_s": 0.001
+    },
+    {
+      "tool": "query_results",
+      "args": {
+        "what": "reactions"
+      },
+      "ok": true,
+      "payload": {
+        "case": "default",
+        "unit": "kN",
+        "coordinate_unit": "m",
+        "reactions": {
+          "11": {
+            "xyz": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "R": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          }
+        },
+        "vertical_total_kN": 1.0
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "tool": "set_model",
+      "args": {
+        "model": {
+          "schema_version": 1,
+          "units": "N-m-Pa",
+          "materials": [
+            {
+              "name": "Steel",
+              "E": 200000000000.0,
+              "nu": 0.3
+            }
+          ],
+          "sections": [
+            {
+              "name": "S",
+              "A": 0.01,
+              "Iy": 1e-05,
+              "Iz": 2e-05,
+              "J": 5e-06
+            }
+          ],
+          "nodes": [
+            {
+              "id": 11,
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            {
+              "id": 22,
+              "x": 3.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          ],
+          "members": [
+            {
+              "id": 101,
+              "i": 11,
+              "j": 22,
+              "section": "S",
+              "material": "Steel"
+            }
+          ],
+          "supports": [
+            {
+              "node": 11,
+              "fix": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ],
+          "member_spans": [
+            {
+              "member": 101,
+              "kind": "point",
+              "w1": [
+                0.0,
+                0.0,
+                -1000.0
+              ],
+              "a": 1.5
+            }
+          ]
+        }
+      },
+      "ok": true,
+      "payload": {
+        "summary": {
+          "nodes": 2,
+          "members": 1,
+          "supports": 1,
+          "load_cases": 0
+        },
+        "schema_version": 1
+      },
+      "elapsed_s": 0.001
+    },
+    {
+      "tool": "solve_model",
+      "args": {},
+      "ok": true,
+      "payload": {
+        "cases": {
+          "default": {
+            "max_displacement_mm": 0.703125,
+            "at_node": 22,
+            "equilibrium_ok": true,
+            "equilibrium_residual": 3.032e-16,
+            "max_deflection_mm": 0.703125,
+            "at_member": 101,
+            "at_x_m": 3.0
+          }
+        },
+        "analysis": {
+          "type": "linear_static"
+        },
+        "compilation": {
+          "physical_members": 1,
+          "analysis_elements": 2,
+          "generated_nodes": 1,
+          "diagnostics": [
+            "物理构件 101 因集中荷载编译为 2 个分析单元"
+          ]
+        },
+        "silent_failures": {
+          "summary": {
+            "overall": "pass",
+            "total_checks": 9,
+            "passed": 9,
+            "critical_issues": 0,
+            "warnings": 0,
+            "critical_details": [],
+            "warning_details": []
+          },
+          "findings": [
+            {
+              "id": "insufficient_supports",
+              "name": "支座约束不足",
+              "severity": "critical",
+              "status": "pass",
+              "message": "支座约束 6 个自由度，6 个刚体运动方向均有约束",
+              "detail": {
+                "support_dofs": 6,
+                "support_nodes": 1
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "excessive_displacement",
+              "name": "位移过大",
+              "severity": "critical",
+              "status": "pass",
+              "message": "最大位移 0.7031 mm，结构尺寸 3000 mm，占比 0.023%（< 10%）",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "zero_reaction_with_load",
+              "name": "有载荷但反力为零",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有有载荷的工况都有非零支座反力",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "zero_internal_force",
+              "name": "有载荷但内力为零",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有有载荷的工况都有非零杆件内力",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "no_applied_load",
+              "name": "求解时没有任何荷载",
+              "severity": "critical",
+              "status": "pass",
+              "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+              "detail": {
+                "loaded_cases": [
+                  "default"
+                ]
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "near_singular_stiffness",
+              "name": "刚度矩阵接近奇异",
+              "severity": "critical",
+              "status": "pass",
+              "message": "刚度矩阵条件数 1.37e+02（< 1e8），数值稳定",
+              "detail": {
+                "condition_number": 136.9178062820714,
+                "dof": 12
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "reaction_load_balance",
+              "name": "反力与外载荷不平衡",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "load_magnitude_anomaly",
+              "name": "载荷量级异常",
+              "severity": "warning",
+              "status": "pass",
+              "message": "所有工况载荷量级与材料弹性模量匹配",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "section_orientation",
+              "name": "截面主轴方向风险",
+              "severity": "warning",
+              "status": "pass",
+              "message": "所有截面 Iz >= Iy，主轴方向正常",
+              "detail": {},
+              "suggestion": ""
+            }
+          ]
+        },
+        "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\mainline\\capsules\\20261010_192745_b96716a8.json",
+        "result_identity": {
+          "solve_id": "492b445d3a494c83a110d60cfd4a841b",
+          "model_fingerprint": "4938bb74be3bdb9c4fdb311a104cb8c8",
+          "solved_at": "2026-10-10T11:27:45.988588+00:00",
+          "parameters": {
+            "analysis": "linear",
+            "increments": 10,
+            "max_iter": 40,
+            "tolerance": 1e-07,
+            "amplitudes": null
+          },
+          "analysis": {
+            "type": "linear_static"
+          }
+        }
+      },
+      "elapsed_s": 0.01
+    },
+    {
+      "tool": "query_results",
+      "args": {
+        "what": "max_displacement"
+      },
+      "ok": true,
+      "payload": {
+        "case": "default",
+        "node": 22,
+        "coordinates_xyz": [
+          3.0,
+          0.0,
+          0.0
+        ],
+        "coordinate_unit": "m",
+        "magnitude_mm": 0.703125,
+        "components_mm": {
+          "ux": 0.0,
+          "uy": 0.0,
+          "uz": -0.703125
+        },
+        "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+        "node_kind": "physical_node"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "tool": "query_diagram",
+      "args": {
+        "member": 101,
+        "component": "My"
+      },
+      "ok": true,
+      "payload": {
+        "case": "default",
+        "member": 101,
+        "component": "My",
+        "unit": "kN·m",
+        "length_m": 3.0,
+        "peak": -0.0,
+        "at_x_m": 0.0,
+        "at_i_end": -0.0,
+        "at_j_end": -0.0
+      },
+      "elapsed_s": 0.001
+    },
+    {
+      "tool": "query_results",
+      "args": {
+        "what": "reactions"
+      },
+      "ok": true,
+      "payload": {
+        "case": "default",
+        "unit": "kN",
+        "coordinate_unit": "m",
+        "reactions": {
+          "11": {
+            "xyz": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "R": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          }
+        },
+        "vertical_total_kN": 1.0
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "tool": "query_results",
+      "args": {
+        "what": "max_deflection",
+        "span": 24
+      },
+      "ok": true,
+      "payload": {
+        "case": "1.3D+1.5L",
+        "magnitude_mm": 60.586737,
+        "at_member": 3,
+        "at_x_m": 12.0599,
+        "member_length_m": 12.0599,
+        "member_length_over_deflection": 199.1,
+        "span_m": 24.0,
+        "span_over_deflection": 396.1,
+        "note": "这是**单元内**的最大横向挠度，由精确弯矩两次积分得到，与网格疏密无关。校核挠跨比用它，不要用 max_displacement——后者只看节点。注意 member_length_over_deflection 的分母是**这一根杆件的长度**，不是设计跨度：门式刚架的斜梁是两根杆，梁划成几个单元时更是差几倍。要和 L/400 这类限值比，请把设计跨度作为 span 传进来，工具会给出 span_over_deflection。"
+      },
+      "elapsed_s": 0.005
+    },
+    {
+      "tool": "query_envelope",
+      "args": {
+        "component": "Mz"
+      },
+      "ok": true,
+      "payload": {
+        "component": "Mz",
+        "unit": "kN·m",
+        "cases": [
+          "1.3D+1.5L",
+          "1.3D+1.5W",
+          "1.3D+1.5L+0.9W"
+        ],
+        "peak": 609.567585,
+        "at_member": 3,
+        "at_x_m": 11.5775,
+        "governing_case": "1.3D+1.5L",
+        "controls_global_extreme": {
+          "1.3D+1.5L": 6,
+          "1.3D+1.5W": 0,
+          "1.3D+1.5L+0.9W": 0
+        },
+        "never_governs_anywhere": [
+          "1.3D+1.5L+0.9W"
+        ],
+        "note": "全结构最不利。要看某根杆件的逐点包络，传 member。controls_global_extreme 表示该组合拿下了几个分量的全结构极值；它为 0 并不等于这个组合没用——它完全可能在某根梁的端部说了算。真正一处都不控制的在 never_governs_anywhere 里，那种才可以考虑删掉，或者检查它的系数是不是写错了。"
+      },
+      "elapsed_s": 0.009
+    },
+    {
+      "tool": "modal_analysis",
+      "args": {
+        "num_modes": 6
+      },
+      "ok": true,
+      "payload": {
+        "modes": [
+          {
+            "order": 1,
+            "frequency_Hz": 3.380159,
+            "period_s": 0.295844,
+            "mass_ratio_xyz": [
+              0.9888,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "order": 2,
+            "frequency_Hz": 8.054778,
+            "period_s": 0.12415,
+            "mass_ratio_xyz": [
+              0.0,
+              0.0,
+              0.647
+            ]
+          },
+          {
+            "order": 3,
+            "frequency_Hz": 25.82173,
+            "period_s": 0.038727,
+            "mass_ratio_xyz": [
+              0.0049,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "order": 4,
+            "frequency_Hz": 50.904609,
+            "period_s": 0.019645,
+            "mass_ratio_xyz": [
+              0.0,
+              0.0,
+              0.0389
+            ]
+          },
+          {
+            "order": 5,
+            "frequency_Hz": 71.249116,
+            "period_s": 0.014035,
+            "mass_ratio_xyz": [
+              0.0038,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "order": 6,
+            "frequency_Hz": 78.112723,
+            "period_s": 0.012802,
+            "mass_ratio_xyz": [
+              0.0,
+              0.0,
+              0.157
+            ]
+          }
+        ],
+        "total_mass_kg": 5250.287615,
+        "participable_mass_kg": [
+          4163.7579,
+          0.0,
+          4097.907615
+        ],
+        "cumulative_mass_ratio_xyz": [
+          0.9974,
+          0.0,
+          0.8429
+        ],
+        "note": "一致质量矩阵，频率略高于精确解；每跨四个单元时误差 0.2% 以内。**参与质量比的分母是 participable_mass（能参与振动的质量），不是 total_mass**——压在支座上的质量永远不参与，两者的差随网格变粗而变大。可参与质量为 0 的方向比值记 0，该方向不适用 90% 判据。",
+        "mass_ratio_warning": "这些方向的累计参与质量比不到 90%（GB 50011 的门槛）：Z 84.3%。加大 num_modes 再算。**判据只对要做地震分析的方向适用**——竖向柱在轴向的前几阶本来就接近 0，那不是缺陷。",
+        "mesh_warning": {
+          "elements_in_span": 1,
+          "member_in_that_span": 1,
+          "direction": "偏高",
+          "message": "构件 1 所在的那一跨只有 1 个单元。一致质量阵靠形函数装配，**从上方**逼近精确解——网格越粗报得越高，也就是偏不安全那一侧。实测单跨门式刚架每构件一个单元时 λ=1.66，而收敛值是 0.82，偏高 102%：前者在说「还有 66% 余量」，后者意味着它已经失稳。两个单元就收敛。8 m 梁一个单元则是屈曲 +21.6%、模态 +11.0%（简支）。要稳妥，每跨至少 4 个单元。",
+          "how_to_fix": "在那一跨里加中间节点，让它至少有 4 个单元，再重算。"
+        }
+      },
+      "elapsed_s": 0.008
+    },
+    {
+      "tool": "buckling_analysis",
+      "args": {
+        "num_modes": 3
+      },
+      "ok": true,
+      "payload": {
+        "case": "1.3D+1.5L",
+        "critical_factor": 31.141554,
+        "factors": [
+          31.141554,
+          163.475245,
+          322.238278
+        ],
+        "most_compressed_member": 2,
+        "its_axial_kN": -215.871328,
+        "mesh_warning": {
+          "elements_in_span": 1,
+          "member_in_that_span": 1,
+          "direction": "偏高",
+          "message": "构件 1 所在的那一跨只有 1 个单元。屈曲的几何刚度阵靠形函数装配，**从上方**逼近精确解——网格越粗报得越高，也就是偏不安全那一侧。实测单跨门式刚架每构件一个单元时 λ=1.66，而收敛值是 0.82，偏高 102%：前者在说「还有 66% 余量」，后者意味着它已经失稳。两个单元就收敛。8 m 梁一个单元则是屈曲 +21.6%、模态 +11.0%（简支）。要稳妥，每跨至少 4 个单元。",
+          "how_to_fix": "在那一跨里加中间节点，让它至少有 4 个单元，再重算。"
+        },
+        "note": "λ 是该工况荷载的临界放大倍数：λ=3 表示放大三倍才失稳。这是**线性特征值屈曲**，假定失稳前保持线弹性、变形小、轴力不随变形改变。真实结构有初始缺陷与残余应力，实际承载力低于此值——只能当上限，不能直接当承载力用。"
+      },
+      "elapsed_s": 0.009
+    },
+    {
+      "tool": "write_report",
+      "args": {
+        "fmt": "both",
+        "filename": "答辩门式刚架计算报告"
+      },
+      "ok": true,
+      "payload": {
+        "files": {
+          "markdown": "results\\答辩门式刚架计算报告.md",
+          "docx": "results\\答辩门式刚架计算报告.docx"
+        },
+        "case": "1.3D+1.5L",
+        "sections": [
+          "模型概况",
+          "求解与校验",
+          "位移",
+          "支座反力",
+          "内力极值与控制组合",
+          "自振特性",
+          "稳定",
+          "图"
+        ],
+        "figures": [
+          "变形图",
+          "轴力图",
+          "弯矩图 Mz",
+          "剪力图 Vy"
+        ],
+        "note": "报告已写到 results/ 目录。里面的数与你查到的完全一致，回答里可以直接引用，不必重述整张表。",
+        "skipped": {
+          "强度验算": "材料 'Q355' 没有许用应力，无法做强度验算。请给 allow_tension（受拉许用应力）；抗压不同的材料（铸铁、砌体、木材）再单独给 allow_compression。"
+        }
+      },
+      "elapsed_s": 2.252
+    },
+    {
+      "solid_result": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\solid\\results\\node_2_LC1\\summary.json",
+      "source": "已有真实自研实体结果，只读展示"
+    }
+  ]
+}
