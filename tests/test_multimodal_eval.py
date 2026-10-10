@@ -933,3 +933,71 @@ def test_joint_node_replay_is_separate_from_failed_online_results():
     assert len(report["native_ui"]) == 4 and all(x["commit_blocked"] for x in report["native_ui"])
     old = json.loads((ROOT / "public_cases" / "review_edit_01" / "report.json").read_text(encoding="utf-8"))
     assert report["legacy_replay_metrics"] == old["metrics"]
+
+
+@pytest.mark.parametrize("image_id", ["wall_truss", "tower_truss"])
+def test_compact_development_retest_preserves_reference_and_pre_call_bindings(image_id):
+    """复测不能改真实节点和杆件来适配预测，新输入须在调用前绑定并明确开发身份。"""
+    root = ROOT / "public_cases" / "compact_01"
+    old = ROOT / "public_cases" / "holdout_01"
+    info = json.loads((root / "round_info.json").read_text(encoding="utf-8"))
+    meta = json.loads((root / "metadata" / f"{image_id}.json").read_text(encoding="utf-8"))
+    truth = json.loads((root / "ground_truth" / f"{image_id}.json").read_text(encoding="utf-8"))
+    original = json.loads((old / "ground_truth" / f"{image_id}.json").read_text(encoding="utf-8"))
+    response = json.loads((root / "responses" / f"{image_id}.json").read_text(encoding="utf-8"))
+    assert "development_retest" in meta["subset_labels"] and "project_holdout" not in meta["subset_labels"]
+    assert meta["work_plane"]["plane"] == "XY"
+    assert truth["input_context_hash"] == canonical_digest(input_context(meta))
+    for key in ("nodes", "members", "intersections", "supports", "loads", "scale", "issues"):
+        assert truth[key] == original[key]
+    assert (root / "images" / f"{image_id}.png").read_bytes() == (old / "images" / f"{image_id}.png").read_bytes()
+    for kind, folder, ext in (("image_hash", "images", "png"), ("metadata_hash", "metadata", "json"),
+                              ("ground_truth_hash", "ground_truth", "json")):
+        assert info["bindings_before_calls"][image_id][kind] == file_digest(root / folder / f"{image_id}.{ext}")
+    fingerprint = response["request_fingerprint"]
+    assert fingerprint["ground_truth_hash"] == info["bindings_before_calls"][image_id]["ground_truth_hash"]
+    for key in ("prompt_hash", "schema_hash", "pipeline_hash", "request_options"):
+        assert fingerprint[key] == info[key]
+    snapshot = json.loads((root / "pipeline_snapshot.json").read_text(encoding="utf-8"))
+    assert len(snapshot) == 8 and canonical_digest(snapshot) == info["pipeline_hash"]
+    assert info["max_repairs"] == 1 and not info["review_actions"]
+    assert len(response["raw_responses"]) == response["runtime"]["attempts"] == 1
+    assert response["call_metadata"][0]["finish_reason"] == "stop"
+    assert info["original_report_hash"] == file_digest(old / "report.json")
+
+
+def test_compact_format_success_does_not_erase_geometry_and_load_failures():
+    """两图输出变完整不能冒充准确率达标，漏杆、位置和单位错误仍须进入严格评分。"""
+    root = ROOT / "public_cases" / "compact_01"
+    frozen = json.loads((root / "report.json").read_text(encoding="utf-8"))
+    report = evaluate_real_world(root)
+    assert report["metrics"] == frozen["metrics"] and report["counts"] == frozen["counts"]
+    assert report["runtime"]["parse_successes"] == report["runtime"]["total_calls"] == 2
+    assert not report["passed"]
+    assert report["counts"]["nodes"] == {"tp": 0, "fp": 16, "fn": 17}
+    assert report["counts"]["members"] == {"tp": 0, "fp": 22, "fn": 28}
+    assert report["counts"]["intersections"]["fn"] == 73
+    assert report["metrics"]["load_numeric_unit_accuracy"] == 0 and report["metrics"]["scale_accuracy"] is None
+
+
+def test_original_plane_inconsistency_is_preserved_and_explicitly_corrected_in_new_round():
+    """首测 XZ 与 XY 参考不一致不能覆盖历史输入，复测须明确记录这项混杂因素。"""
+    old = ROOT / "public_cases" / "holdout_01"
+    new = ROOT / "public_cases" / "compact_01"
+    for image_id in ("wall_truss", "tower_truss"):
+        meta = json.loads((old / "metadata" / f"{image_id}.json").read_text(encoding="utf-8"))
+        assert meta["work_plane"]["plane"] == "XZ"
+    info = json.loads((new / "round_info.json").read_text(encoding="utf-8"))
+    assert info["input_correction"]["old_plane"] == "XZ" and info["input_correction"]["new_plane"] == "XY"
+    assert any("不能分离" in text for text in info["limitations"])
+
+
+def test_compact_frozen_retest_never_pays_for_another_response(monkeypatch):
+    """已冻结开发图不能再次付费识别挑选结果，原成功草稿及错误分数须保留。"""
+    root = ROOT / "public_cases" / "compact_01"
+    original = {p: p.read_bytes() for p in (root / "responses").glob("*.json")}
+    monkeypatch.setattr("sketch_parser.SketchParser.from_env",
+                        lambda *a, **k: pytest.fail("冻结复测不能创建视觉客户端"))
+    result = recognize(root, provider="deepseek", model="deepseek-flash", max_repairs=1)
+    assert all(item["status"] in {"SKIPPED_EXISTS", "STALE_RESPONSE"} for item in result["results"])
+    assert all(p.read_bytes() == raw for p, raw in original.items())

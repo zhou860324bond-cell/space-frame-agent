@@ -110,7 +110,7 @@ entities，kind 使用 support 或 load。support 的 target.node 必须指向�
 """
 
 V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一个 JSON 对象，
-不要 Markdown、不要解释。
+不要 Markdown、不要解释。输出紧凑 JSON，不加缩进、空行或重复的簿记字段。
 
 **只需要输出下面这四个字段**，其余簿记字段由调用方填写，你写了也会被覆盖：
 
@@ -128,8 +128,7 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
                        "value": 12, "unit": "kN/m", "direction": [0, 0, -1],
                        "range": {"start": 1000, "end": 3000, "unit": "mm"}}]}]
   },
-  "entities":  [{"id": "E1", "kind": "member", "target": {"member": 1}, "confidence": 0.9,
-                 "image_geometry": {"line": [[0.12,0.83],[0.12,0.18]]}}],
+  "entities":  [{"id": "E1", "kind": "member", "target": {"member": 1}, "confidence": 0.9}],
   "dimensions":[{"id": "D1", "text": "6000", "unit": "mm",
                  "image_geometry": {"line": [[0.12,0.95],[0.5,0.95]]}}],
   "issues":    [{"id": "I1", "category": "low_confidence",
@@ -145,6 +144,8 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
 2. **节点坐标用 u/v**，取值 0~1 的归一化图片坐标，原点在左上角。不要用像素。
 3. **杆件按最小单元拆分**：一根柱子跨两层就是两根杆件，中间那个节点必须建出来；
    一层里两跨的梁是两根杆件，不是一根。杆件只能引用已经列出的节点 id。
+   每个无向端点对只列一次，i/j 对调仍是同一杆件，不得自连接。
+   怀疑实际双杆时只列一条几何边并报告待核实问题，不以重复边表达双杆。
 4. 节点 id 与杆件 id 都是从 1 开始的正整数，各自不重复。
    **节点必须按固定顺序编号：先按 v 从大到小分层（图片下方的先编），
    同一层内按 u 从小到大（左边的先编）。** 视觉模型给的编号本来是任意的，
@@ -168,7 +169,9 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
    target 分别写 {"node":1}、{"member":1}、
    {"support":{"node":1,"name":"S1"}}、
    {"load":{"case":"D","collection":"nodal_loads","name":"P1"}}。
-   支座和荷载须有对应名称；image_geometry 仅写可见证据的归一化位置。
+   支座和荷载须有对应名称。节点、杆件的 entities 不再重复 image_geometry，
+   调用方从 image_model 的 u/v 和 i/j 原样复用位置；仍逐项保留 target 和 confidence。
+   支座、荷载符号和尺寸的独立可见证据位置仍写 image_geometry，不能用节点代替符号。
    人工审核由用户完成，不得输出 verified 或 source=user，也不得将问题标为已解决。
 10. **先区分结构主体与辅助图，再提取拓扑。** 尺寸线、坐标轴、文字引线、
     剪力图、弯矩图、变形曲线及其他结果图均不是杆件。
@@ -797,7 +800,7 @@ class SketchParser:
     ) -> V2ParseResult:
         """Recognize a v2 draft and atomically deliver it to the controller.
 
-        A malformed response may be repaired at most ``max_repairs`` times. API
+        A malformed or truncated response may be repaired at most ``max_repairs`` times. API
         failures stop immediately. Cancellation cannot abort a provider socket,
         but its response is discarded and can never enter the controller.
         """
@@ -835,7 +838,7 @@ class SketchParser:
                     result.cancelled = True
                     break
                 if self._last_call_metadata.get("finish_reason") in ("length", "max_tokens"):
-                    raise RuntimeError("视觉接口输出达到长度限制，草稿不完整。请裁剪到结构主体或减少图中内容后重新识别。")
+                    raise ValueError("视觉接口输出达到长度限制，草稿不完整。请重新输出完整紧凑 JSON；节点和杆件观察不重复位置，不得省略结构对象、置信度或待核实问题。仍超限时请裁剪到结构主体后重新识别。")
                 if not raw.strip():
                     raise RuntimeError("视觉接口未返回识别内容。请检查模型是否支持图片，并裁剪到结构主体后重新识别。")
                 payload = self._extract_json(raw)
@@ -899,7 +902,7 @@ class SketchParser:
             except (json.JSONDecodeError, ValueError) as exc:
                 message = f"第{attempt}次 v2 校验失败: {exc}"
                 result.errors.append(message)
-                correction = context + f"上次输出错误：{exc}。严格修复为 v2 JSON。"
+                correction = context + f"上次输出错误：{exc}。请重新看同一张图，输出完整紧凑 v2 JSON。重复端点对须核对原图后修正，不得仅删除报错项或遗漏真实杆件；不补全截断片段。"
             except Exception as exc:  # noqa: BLE001 - provider/network boundary
                 result.errors.append(
                     f"第{attempt}次 API 调用失败: {type(exc).__name__}: {exc}")

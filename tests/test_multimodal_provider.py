@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -54,8 +56,8 @@ def test_vision_request_controls_thinking_only_for_supported_deepseek_models(pro
     ("", "length", "长度限制"),
     ("valid", "length", "长度限制"),
 ])
-def test_empty_and_truncated_responses_preserve_diagnostics_without_paid_repairs(image_path, raw, finish, error):
-    """公开图空响应被当成普通 JSON 错误重试，截断的有效片段也可能被误收为完整草稿。"""
+def test_empty_and_truncated_responses_preserve_diagnostics_without_enabled_repairs(image_path, raw, finish, error):
+    """关闭修复时公开图空响应或截断片段必须拒收，不能隐藏新增付费调用。"""
     parser = SketchParser(provider="deepseek", api_key="test-key")
     calls = []
     actual = json.dumps(v2_draft()) if raw == "valid" else raw
@@ -66,7 +68,7 @@ def test_empty_and_truncated_responses_preserve_diagnostics_without_paid_repairs
 
     parser._client = _chat_client(create)
     state, job = running_state()
-    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=2)
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=0)
     assert not result.success and result.attempts == 1 and len(calls) == 1
     assert error in result.errors[0] and "请" in result.errors[0]
     assert result.raw_responses == [actual]
@@ -126,7 +128,7 @@ def test_anthropic_token_limit_stops_instead_of_accepting_a_partial_draft(image_
     response = SimpleNamespace(content=[SimpleNamespace(text=json.dumps(v2_draft()))], stop_reason="max_tokens")
     parser._client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: response))
     state, job = running_state()
-    result = parser.parse_v2_with_retry(image_path, state, job)
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=0)
     assert not result.success and result.attempts == 1 and "长度限制" in result.errors[0]
 
 
@@ -444,6 +446,222 @@ def test_cancel_discards_provider_response(image_path, monkeypatch):
     assert result.cancelled and not result.success
     assert state.draft is None
     assert state.phase({}) == MultimodalPhase.IMAGE_LOADED
+
+
+def _holdout_response(name):
+    path = Path(__file__).resolve().parents[1] / "multimodal_eval/public_cases/holdout_01/responses"
+    return json.loads((path / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def test_compact_observations_reuse_geometry_without_changing_frozen_wall_evidence():
+    """墙图重复输出所有节点及杆件位置；省略副本应逐项还原且不抹掉未知单位和重复边。"""
+    from sketch_parser import _fill_bookkeeping
+    raw = _holdout_response("wall_truss")["raw_responses"][0]
+    original = json.loads(raw)
+    compact = deepcopy(original)
+    for entity in compact["entities"]:
+        if entity["kind"] in {"node", "member"}:
+            entity.pop("image_geometry")
+    assert _fill_bookkeeping(compact, IMAGE_HASH, "drawing.png") == _fill_bookkeeping(
+        original, IMAGE_HASH, "drawing.png")
+    assert len(compact["image_model"]["members"]) == 7
+    assert any(issue["category"] == "load_incomplete" for issue in compact["issues"])
+
+
+@pytest.mark.parametrize("confidence", [None, 0.0, 0.75])
+def test_compact_geometry_keeps_observed_confidence_and_manual_review(confidence):
+    """缩减输出不能把 null 或低置信度变成高分，也不能替用户确认节点与杆件。"""
+    from sketch_parser import _fill_bookkeeping
+    payload = v2_draft()
+    payload["entities"] = [{"id": "N1", "kind": "node", "target": {"node": 1},
+                            "confidence": confidence},
+                           {"id": "M1", "kind": "member", "target": {"member": 1},
+                            "confidence": confidence}]
+    got = _fill_bookkeeping(payload, IMAGE_HASH, "drawing.png")
+    for entity in got["entities"][:2]:
+        assert entity["confidence"] == entity["recognition_confidence"] == confidence
+        assert entity["source"] == "vision" and entity["verified"] is False
+        assert entity["image_geometry"]
+    assert got["entities"][2]["confidence"] is None
+    assert got["entities"][2]["source"] == "derived"
+    state, job = running_state()
+    assert state.complete_recognition(job, got)
+    assert state.phase({}) == MultimodalPhase.REVIEW_REQUIRED
+
+
+@pytest.mark.parametrize("finish", ["length", "max_tokens"])
+def test_frozen_tower_truncation_can_receive_only_enabled_compact_repair(image_path, finish):
+    """塔架真实首响应超限曾直接停止；允许修复时重读原图，不拼接原文或接受部分对象。"""
+    from image_preprocess import work_plane_payload
+    original = _holdout_response("tower_truss")["raw_responses"][0]
+    repaired = json.dumps(v2_draft(), separators=(",", ":"))  # 模拟协议恢复，不是图样准确率。
+    replies = iter([_chat_response(original, finish), _chat_response(repaired)])
+    calls = []
+    parser = SketchParser(provider="deepseek", api_key="test")
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return next(replies)
+
+    parser._client = _chat_client(create)
+    state, job = running_state()
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=1,
+                                       work_plane=work_plane_payload("XY", confirmed=True))
+    assert result.success and result.attempts == len(calls) == 2
+    assert result.raw_responses == [original, repaired]
+    assert [m["finish_reason"] for m in result.call_metadata] == [finish, "stop"]
+    assert "长度限制" in result.errors[0] and "API 调用失败" not in result.errors[0]
+    correction = calls[1]["messages"][1]["content"][1]["text"]
+    assert "完整紧凑" in correction and "不补全截断片段" in correction
+    assert '"plane": "XY"' in correction and IMAGE_HASH in correction
+    assert calls[0]["messages"][1]["content"][2] == calls[1]["messages"][1]["content"][2]
+    assert all(call["max_tokens"] == 4000 for call in calls)
+    assert state.phase({}) == MultimodalPhase.REVIEW_REQUIRED
+
+
+@pytest.mark.parametrize("max_repairs", [0, 1, 2])
+@pytest.mark.parametrize("finish", ["length", "max_tokens"])
+def test_repeated_truncation_never_exceeds_budget_or_accepts_closed_json(image_path, max_repairs, finish):
+    """即使超限响应看似完整 JSON，也不能收下；持续超限最多消耗明确设置的修复次数。"""
+    parser = SketchParser(api_key="test")
+    calls = []
+    raw = json.dumps(v2_draft())
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _chat_response(raw, finish)
+
+    parser._client = _chat_client(create)
+    state, job = running_state()
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=max_repairs)
+    assert not result.success and result.draft is None and state.draft is None
+    assert result.attempts == len(calls) == len(result.errors) == max_repairs + 1
+    assert result.raw_responses == [raw] * len(calls)
+    assert len(result.call_metadata) == len(calls)
+    assert state.phase({}) == MultimodalPhase.RECOGNITION_FAILED
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_cancellation_before_truncation_repair_prevents_another_call(image_path, stale):
+    """超限修复间取消或换图时旧任务必须停止，不能继续调用或交付旧草稿。"""
+    parser = SketchParser(api_key="test")
+    state, job = running_state()
+    checks = 0
+    calls = []
+
+    def cancelled():
+        nonlocal checks
+        checks += 1
+        if checks == 3 and stale:
+            state.load_image("b" * 64)
+            return False
+        return checks == 3
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _chat_response('{"image_model":', "length")
+
+    parser._client = _chat_client(create)
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=2, is_cancelled=cancelled)
+    assert result.cancelled and not result.success and len(calls) == 1
+    assert state.draft is None
+    assert state.phase({}) == MultimodalPhase.IMAGE_LOADED
+
+
+def test_network_failure_during_truncation_repair_stops_with_separate_metadata(image_path):
+    """超限后修复请求断网不应再重试，不能把上一请求的 token 用量算到失败请求。"""
+    parser = SketchParser(api_key="test")
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:
+            raise ConnectionError("offline")
+        return _chat_response('{"image_model":', "length")
+
+    parser._client = _chat_client(create)
+    state, job = running_state()
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=2)
+    assert not result.success and len(calls) == result.attempts == 2
+    assert "长度限制" in result.errors[0] and "API 调用失败" in result.errors[1]
+    assert len(result.call_metadata) == 1 and result.call_metadata[0]["attempt"] == 1
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_frozen_wall_duplicate_gives_exact_repair_feedback_without_deleting_members(image_path, repair):
+    """墙图杆件 5/6 反向重复必须指出端点和原编号；无修复时不能自动删边收下错误结构。"""
+    raw = _holdout_response("wall_truss")["raw_responses"][0]
+    calls = []
+    parser = SketchParser(api_key="test")
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _chat_response(raw)
+        return _chat_response(json.dumps(v2_draft()))  # 只验证模拟修复通道，不评分墙图。
+
+    parser._client = _chat_client(create)
+    state, job = running_state()
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=int(repair))
+    assert result.success is repair and len(calls) == 1 + int(repair)
+    assert result.raw_responses[0] == raw
+    assert "杆件 6 与杆件 5 重复" in result.errors[0]
+    assert "节点 3 和 5" in result.errors[0]
+    if repair:
+        text = calls[1]["messages"][1]["content"][1]["text"]
+        assert "不得仅删除报错项" in text and "节点 3 和 5" in text
+    else:
+        assert state.draft is None and len(json.loads(raw)["image_model"]["members"]) == 7
+
+
+def test_self_connection_diagnostic_is_distinct_from_reversed_duplicates():
+    """自连接与反向重复需要不同的端点诊断，防止修复反馈只让模型随意删除合法边。"""
+    from multimodal_workflow import validate_v2_draft
+    payload = v2_draft()
+    payload["image_model"]["members"] = [{"id": 8, "i": 1, "j": 1}]
+    before = deepcopy(payload)
+    errors = validate_v2_draft(payload)
+    assert any("杆件 8 自连接" in e and "两端均为节点 1" in e for e in errors)
+    assert not any("重复" in e for e in errors)
+    assert payload == before
+
+
+def test_anthropic_truncation_repair_uses_native_image_transport(image_path):
+    """有限超限修复也要兼容 Anthropic 原生图片块，保留两次原文与各自停止原因。"""
+    raw = _holdout_response("tower_truss")["raw_responses"][0]
+    repaired = json.dumps(v2_draft())
+    replies = iter([SimpleNamespace(content=[SimpleNamespace(text=raw)], stop_reason="max_tokens"),
+                    SimpleNamespace(content=[SimpleNamespace(text=repaired)], stop_reason="end_turn")])
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return next(replies)
+
+    parser = SketchParser(provider="anthropic", api_key="test")
+    parser._client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    state, job = running_state()
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=1)
+    assert result.success and result.attempts == len(calls) == 2
+    assert result.raw_responses == [raw, repaired]
+    assert [m["finish_reason"] for m in result.call_metadata] == ["max_tokens", "end_turn"]
+    assert all(call["messages"][0]["content"][-1]["type"] == "image" for call in calls)
+
+
+def test_empty_content_still_stops_with_repairs_enabled(image_path):
+    """缩减和超限修复不能恢复空响应的重复付费问题，空内容仍立即停止。"""
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _chat_response("")
+
+    parser = SketchParser(api_key="test")
+    parser._client = _chat_client(create)
+    state, job = running_state()
+    result = parser.parse_v2_with_retry(image_path, state, job, max_repairs=2)
+    assert not result.success and result.attempts == len(calls) == 1
+    assert "未返回识别内容" in result.errors[0]
 
 
 def test_offline_response_cache_is_keyed_by_full_provenance(tmp_path):

@@ -261,7 +261,7 @@ def validate_v2_draft(draft: Any) -> list[str]:
                 and 0.0 <= float(node["v"]) <= 1.0):
             errors.append(f"image_model 节点 {node_id} 的 u/v 无效")
     member_ids: set[int] = set()
-    edges: set[tuple[int, int]] = set()
+    edges: dict[tuple[int, int], int] = {}
     for member in members:
         if not isinstance(member, dict) or not isinstance(member.get("id"), int):
             errors.append("image_model 杆件必须包含整数 id")
@@ -275,9 +275,13 @@ def validate_v2_draft(draft: Any) -> list[str]:
             errors.append(f"image_model 杆件 {member_id} 引用悬空")
             continue
         edge = tuple(sorted((int(i), int(j))))
-        if i == j or edge in edges:
-            errors.append(f"image_model 杆件 {member_id} 自连接或重复")
-        edges.add(edge)
+        if i == j:
+            errors.append(f"image_model 杆件 {member_id} 自连接：两端均为节点 {i}。请核对原图端点。")
+        elif edge in edges:
+            errors.append(f"image_model 杆件 {member_id} 与杆件 {edges[edge]} 重复："
+                          f"两者连接节点 {edge[0]} 和 {edge[1]}，反向仍为同一杆件。请核对原图连接，修正端点或移除重复记录。")
+        else:
+            edges[edge] = member_id
 
     errors.extend(_work_plane_errors(draft.get("work_plane")))
     scale = draft.get("scale")
