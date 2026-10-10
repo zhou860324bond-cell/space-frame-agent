@@ -1,0 +1,59 @@
+{
+  "image_id": "cantilever",
+  "width_px": 400,
+  "height_px": 190,
+  "image_hash": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+  "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+  "annotation_status": "verified",
+  "annotation_method": "人工独立查看原图后标注，在首次接口调用之前固定；未使用识别输出生成真值。",
+  "annotation_notes": "标注灰色水平初始梁轴，排除曲线变形轮廓和倾斜示意；左端墙体为固接。",
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.1075,
+        0.5263157894736842
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.975,
+        0.5263157894736842
+      ]
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  ],
+  "loads": [],
+  "intersections": [],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "scale": {
+    "status": "unknown"
+  }
+}

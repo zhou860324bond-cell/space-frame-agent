@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-10",
+  "frozen_at_utc": "2026-10-10T08:39:44.805994+00:00",
+  "scope": "已用于修复的开发样本复测，不是新独立验证；同一作者两图。",
+  "base_commit": "f88eee2e6a3713fd6b9c5cb412eb8050bfb91ab9",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "max_repairs": 1,
+  "review_actions": false,
+  "prompt_hash": "842404d40ae6d80b7612c88aaaa65da479ed54bc703b0ab585ecdaf59283322b",
+  "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+  "pipeline_hash": "7690102197b87583f012dd63c55c45a4e5706f2dfc006a853305cb08d61dd1b7",
+  "request_options": {
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "extra_body": {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  },
+  "bindings_before_calls": {
+    "wall_truss": {
+      "image_hash": "1fb972a682508d1955fe12a2be48b85c362bac06a0bfd0bb3f12902b0ef78403",
+      "metadata_hash": "d9cc9088fb108677c9b054068c7f5e383afb6014ee2a21c596bfc71f3b289dc7",
+      "ground_truth_hash": "11b0d1f6cd8b32266016789c3bf3189c79322ea35e10020040b7033f68a5e058"
+    },
+    "tower_truss": {
+      "image_hash": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+      "metadata_hash": "4e631bb31696f7a75d38703014e1d651eef8512e01f8a90b4f380584cf367fda",
+      "ground_truth_hash": "485ec14e11a6aba02955fb37bb26f5375de280e2628c0b66006772e1b37a0562"
+    }
+  },
+  "original_report_hash": "72a94392303ef4a377b7ec0fead7048121b8ce5c39051dc02d47d0441d27bfcb",
+  "input_correction": {
+    "old_plane": "XZ",
+    "new_plane": "XY",
+    "reason": "原参考力向量及墙面滚动支座按 XY 标注；仅改新轮次，原输入及首测不覆盖。"
+  },
+  "limitations": [
+    "提示词和输入平面同时变化，不能分离各自对准确率的影响。",
+    "每图最多一次修复，首次失败及修复原文全部保存，不挑选成绩。"
+  ]
+}

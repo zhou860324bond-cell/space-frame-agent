@@ -1,0 +1,56 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "FAIL",
+  "prediction": {
+    "image_id": "udl",
+    "width_px": 433,
+    "height_px": 400,
+    "nodes": [],
+    "members": [],
+    "intersections": [],
+    "supports": [],
+    "loads": [],
+    "issues": [],
+    "scale": {
+      "status": "unknown"
+    }
+  },
+  "errors": [
+    "第1次 v2 校验失败: 识别实体必须引用 image_model 中存在的审核对象，请检查 target。"
+  ],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.08, \"v\": 0.27},\n      {\"id\": 2, \"u\": 0.52, \"v\": 0.27},\n      {\"id\": 3, \"u\": 0.90, \"v\": 0.27}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2},\n      {\"id\": 2, \"i\": 2, \"j\": 3}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 3, \"kind\": \"pinned\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [],\n        \"member_loads\": [\n          {\"member\": 1, \"name\": \"W\", \"value\": null, \"unit\": null, \"direction\": [0, 0, -1]},\n          {\"member\": 2, \"name\": \"W\", \"value\": null, \"unit\": null, \"direction\": [0, 0, -1]}\n        ]\n      }\n    ]\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"node\", \"target\": {\"node\": 1}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.08, 0.27]}},\n    {\"id\": \"E2\", \"kind\": \"node\", \"target\": {\"node\": 2}, \"confidence\": 0.7,\n     \"image_geometry\": {\"point\": [0.52, 0.27]}},\n    {\"id\": \"E3\", \"kind\": \"node\", \"target\": {\"node\": 3}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.90, 0.27]}},\n    {\"id\": \"E4\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.85,\n     \"image_geometry\": {\"line\": [[0.08, 0.27], [0.52, 0.27]]}},\n    {\"id\": \"E5\", \"kind\": \"member\", \"target\": {\"member\": 2}, \"confidence\": 0.85,\n     \"image_geometry\": {\"line\": [[0.52, 0.27], [0.90, 0.27]]}},\n    {\"id\": \"E6\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}}, \"confidence\": 0.7,\n     \"image_geometry\": {\"point\": [0.08, 0.31]}},\n    {\"id\": \"E7\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 3, \"name\": \"S2\"}}, \"confidence\": 0.7,\n     \"image_geometry\": {\"point\": [0.90, 0.31]}},\n    {\"id\": \"E8\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"member_loads\", \"name\": \"W\"}}, \"confidence\": 0.6,\n     \"image_geometry\": {\"line\": [[0.08, 0.24], [0.52, 0.24]]}},\n    {\"id\": \"E9\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"member_loads\", \"name\": \"W\"}}, \"confidence\": 0.6,\n     \"image_geometry\": {\"line\": [[0.52, 0.24], [0.90, 0.24]]}},\n    {\"id\": \"E10\", \"kind\": \"dimension\", \"target\": {\"dimension\": \"D1\"}, \"confidence\": 0.8,\n     \"image_geometry\": {\"line\": [[0.08, 0.95], [0.90, 0.95]]}}\n  ],\n  \"dimensions\": [\n    {\"id\": \"D1\", \"text\": \"L\", \"unit\": null,\n     \"image_geometry\": {\"line\": [[0.08, 0.95], [0.90, 0.95]]}}\n  ],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"missing_value\", \"severity\": \"major\", \"entity_refs\": [\"load:D/member_loads/W\"],\n     \"message\": \"满跨均布荷载只标注了符号式 \\\"W = wL\\\"，没有给出数值和单位，无法确定荷载大小；请补充 W（或 w 与 L 的数值）及单位（如 kN/m）。\",\n     \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"missing_dimension\", \"severity\": \"major\", \"entity_refs\": [\"dimension:D1\"],\n     \"message\": \"梁长只标注符号 L，没有数值和单位，图像中也无其他可标定的尺寸；当前节点坐标仅为归一化相对位置，请用户提供 L 的数值与单位以完成标定。\",\n     \"status\": \"open\"},\n    {\"id\": \"I3\", \"category\": \"low_confidence\", \"severity\": \"major\", \"entity_refs\": [\"support:S1\", \"support:S2\"],\n     \"message\": \"两个支座符号都是三角形（铰接），图中未画出滚轴小圆；实际简支梁通常一端为滚动支座，水平约束条件不明确，请用户确认两端支座类型。\",\n     \"status\": \"open\"},\n    {\"id\": \"I4\", \"category\": \"low_confidence\", \"severity\": \"minor\", \"entity_refs\": [\"node:2\"],\n     \"message\": \"跨中节点 B 只有字母标注，无连接构造细节；按跨中弯矩图峰值位置推断为梁上节点（非铰），如有拼接或铰请用户说明。\",\n     \"status\": \"open\"},\n    {\"id\": \"I5\", \"category\": \"unrecognized_content\", \"severity\": \"info\", \"entity_refs\": [],\n     \"message\": \"图中 R_A、R_B 剪力图、M_B 弯矩图和顶部 x 轴示意未作为结构构件录入；若需要它们参与建模请说明。\",\n     \"status\": \"open\"}\n  ]\n}"
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+    "derived_image_hash": "90cc51c81baffe274efdc2f06056fbd5f0cfe52d896ed872b204a1e1323c51db",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      433,
+      400
+    ],
+    "crop": [
+      0,
+      0,
+      433,
+      400
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 11030.99999999904
+  }
+}

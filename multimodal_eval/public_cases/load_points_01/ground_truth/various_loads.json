@@ -1,0 +1,118 @@
+{
+  "image_id": "various_loads",
+  "width_px": 874,
+  "height_px": 433,
+  "image_hash": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+  "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+  "annotation_status": "verified",
+  "annotation_method": "独立查看原图人工标注；未读取识别输出，在首次接口调用前固定。",
+  "annotation_notes": "按黑色梁中轴标注；左三角为铰接，右圆轮为滚动支座。蓝色部分均布力、斜向集中力与集中矩无数值/单位，红色支座箭头按反力排除；无尺寸。集中力及集中矩处设置节点，均布作用范围不以文字创建节点。",
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.13844393592677345,
+        0.44110854503464203
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.517162471395881,
+        0.44110854503464203
+      ]
+    },
+    {
+      "id": 3,
+      "point": [
+        0.7677345537757437,
+        0.44110854503464203
+      ]
+    },
+    {
+      "id": 4,
+      "point": [
+        0.897025171624714,
+        0.44110854503464203
+      ]
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2
+    },
+    {
+      "id": 2,
+      "i": 2,
+      "j": 3
+    },
+    {
+      "id": 3,
+      "i": 3,
+      "j": 4
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "node": 4,
+      "fix": [
+        false,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "loads": [],
+  "intersections": [],
+  "scale": {
+    "status": "unknown"
+  },
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    },
+    {
+      "category": "load_incomplete",
+      "entity_refs": [
+        "member:1"
+      ],
+      "severity": "blocking",
+      "status": "open"
+    },
+    {
+      "category": "load_incomplete",
+      "entity_refs": [
+        "node:2"
+      ],
+      "severity": "blocking",
+      "status": "open"
+    },
+    {
+      "category": "load_incomplete",
+      "entity_refs": [
+        "node:3"
+      ],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ]
+}

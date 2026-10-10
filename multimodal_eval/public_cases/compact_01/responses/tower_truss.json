@@ -1,0 +1,800 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "tower_truss",
+    "width_px": 500,
+    "height_px": 345,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.425,
+          0.85
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.575,
+          0.85
+        ]
+      },
+      {
+        "id": 3,
+        "point": [
+          0.275,
+          0.65
+        ]
+      },
+      {
+        "id": 4,
+        "point": [
+          0.425,
+          0.65
+        ]
+      },
+      {
+        "id": 5,
+        "point": [
+          0.575,
+          0.65
+        ]
+      },
+      {
+        "id": 6,
+        "point": [
+          0.725,
+          0.65
+        ]
+      },
+      {
+        "id": 7,
+        "point": [
+          0.425,
+          0.45
+        ]
+      },
+      {
+        "id": 8,
+        "point": [
+          0.575,
+          0.45
+        ]
+      },
+      {
+        "id": 9,
+        "point": [
+          0.425,
+          0.25
+        ]
+      },
+      {
+        "id": 10,
+        "point": [
+          0.575,
+          0.25
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 2
+      },
+      {
+        "id": 2,
+        "i": 1,
+        "j": 3
+      },
+      {
+        "id": 3,
+        "i": 1,
+        "j": 4
+      },
+      {
+        "id": 4,
+        "i": 2,
+        "j": 5
+      },
+      {
+        "id": 5,
+        "i": 2,
+        "j": 6
+      },
+      {
+        "id": 6,
+        "i": 3,
+        "j": 4
+      },
+      {
+        "id": 7,
+        "i": 4,
+        "j": 5
+      },
+      {
+        "id": 8,
+        "i": 5,
+        "j": 6
+      },
+      {
+        "id": 9,
+        "i": 4,
+        "j": 7
+      },
+      {
+        "id": 10,
+        "i": 5,
+        "j": 8
+      },
+      {
+        "id": 11,
+        "i": 7,
+        "j": 8
+      },
+      {
+        "id": 12,
+        "i": 7,
+        "j": 9
+      },
+      {
+        "id": 13,
+        "i": 8,
+        "j": 10
+      },
+      {
+        "id": 14,
+        "i": 9,
+        "j": 10
+      }
+    ],
+    "supports": [
+      {
+        "node": 9,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 10,
+        "fix": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [
+      {
+        "id": "I-1-2",
+        "members": [
+          1,
+          2
+        ],
+        "point": [
+          0.425,
+          0.85
+        ],
+        "decision": "connect",
+        "node_id": 1,
+        "member_s": {
+          "1": 0.0,
+          "2": 0.0
+        }
+      },
+      {
+        "id": "I-1-3",
+        "members": [
+          1,
+          3
+        ],
+        "point": [
+          0.425,
+          0.85
+        ],
+        "decision": "connect",
+        "node_id": 1,
+        "member_s": {
+          "1": 0.0,
+          "3": 0.0
+        }
+      },
+      {
+        "id": "I-1-4",
+        "members": [
+          1,
+          4
+        ],
+        "point": [
+          0.575,
+          0.85
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "1": 1.0,
+          "4": 0.0
+        }
+      },
+      {
+        "id": "I-1-5",
+        "members": [
+          1,
+          5
+        ],
+        "point": [
+          0.575,
+          0.85
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "1": 1.0,
+          "5": 0.0
+        }
+      },
+      {
+        "id": "I-2-3",
+        "members": [
+          2,
+          3
+        ],
+        "point": [
+          0.425,
+          0.85
+        ],
+        "decision": "connect",
+        "node_id": 1,
+        "member_s": {
+          "2": 0.0,
+          "3": 0.0
+        }
+      },
+      {
+        "id": "I-2-6",
+        "members": [
+          2,
+          6
+        ],
+        "point": [
+          0.275,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 3,
+        "member_s": {
+          "2": 1.0,
+          "6": 0.0
+        }
+      },
+      {
+        "id": "I-3-6",
+        "members": [
+          3,
+          6
+        ],
+        "point": [
+          0.425,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 4,
+        "member_s": {
+          "3": 1.0,
+          "6": 1.0
+        }
+      },
+      {
+        "id": "I-3-7",
+        "members": [
+          3,
+          7
+        ],
+        "point": [
+          0.425,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 4,
+        "member_s": {
+          "3": 1.0,
+          "7": 0.0
+        }
+      },
+      {
+        "id": "I-3-9",
+        "members": [
+          3,
+          9
+        ],
+        "point": [
+          0.425,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 4,
+        "member_s": {
+          "3": 1.0,
+          "9": 0.0
+        }
+      },
+      {
+        "id": "I-4-5",
+        "members": [
+          4,
+          5
+        ],
+        "point": [
+          0.575,
+          0.85
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "4": 0.0,
+          "5": 0.0
+        }
+      },
+      {
+        "id": "I-4-7",
+        "members": [
+          4,
+          7
+        ],
+        "point": [
+          0.575,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "4": 1.0,
+          "7": 1.0
+        }
+      },
+      {
+        "id": "I-4-8",
+        "members": [
+          4,
+          8
+        ],
+        "point": [
+          0.575,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "4": 1.0,
+          "8": 0.0
+        }
+      },
+      {
+        "id": "I-4-10",
+        "members": [
+          4,
+          10
+        ],
+        "point": [
+          0.575,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "4": 1.0,
+          "10": 0.0
+        }
+      },
+      {
+        "id": "I-5-8",
+        "members": [
+          5,
+          8
+        ],
+        "point": [
+          0.725,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 6,
+        "member_s": {
+          "5": 1.0,
+          "8": 1.0
+        }
+      },
+      {
+        "id": "I-6-7",
+        "members": [
+          6,
+          7
+        ],
+        "point": [
+          0.425,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 4,
+        "member_s": {
+          "6": 1.0,
+          "7": 0.0
+        }
+      },
+      {
+        "id": "I-6-9",
+        "members": [
+          6,
+          9
+        ],
+        "point": [
+          0.425,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 4,
+        "member_s": {
+          "6": 1.0,
+          "9": 0.0
+        }
+      },
+      {
+        "id": "I-7-8",
+        "members": [
+          7,
+          8
+        ],
+        "point": [
+          0.575,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "7": 1.0,
+          "8": 0.0
+        }
+      },
+      {
+        "id": "I-7-9",
+        "members": [
+          7,
+          9
+        ],
+        "point": [
+          0.425,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 4,
+        "member_s": {
+          "7": 0.0,
+          "9": 0.0
+        }
+      },
+      {
+        "id": "I-7-10",
+        "members": [
+          7,
+          10
+        ],
+        "point": [
+          0.575,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "7": 1.0,
+          "10": 0.0
+        }
+      },
+      {
+        "id": "I-8-10",
+        "members": [
+          8,
+          10
+        ],
+        "point": [
+          0.575,
+          0.65
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "8": 0.0,
+          "10": 0.0
+        }
+      },
+      {
+        "id": "I-9-11",
+        "members": [
+          9,
+          11
+        ],
+        "point": [
+          0.425,
+          0.45
+        ],
+        "decision": "connect",
+        "node_id": 7,
+        "member_s": {
+          "9": 1.0,
+          "11": 0.0
+        }
+      },
+      {
+        "id": "I-9-12",
+        "members": [
+          9,
+          12
+        ],
+        "point": [
+          0.425,
+          0.45
+        ],
+        "decision": "connect",
+        "node_id": 7,
+        "member_s": {
+          "9": 1.0,
+          "12": 0.0
+        }
+      },
+      {
+        "id": "I-10-11",
+        "members": [
+          10,
+          11
+        ],
+        "point": [
+          0.575,
+          0.45
+        ],
+        "decision": "connect",
+        "node_id": 8,
+        "member_s": {
+          "10": 1.0,
+          "11": 1.0
+        }
+      },
+      {
+        "id": "I-10-13",
+        "members": [
+          10,
+          13
+        ],
+        "point": [
+          0.575,
+          0.45
+        ],
+        "decision": "connect",
+        "node_id": 8,
+        "member_s": {
+          "10": 1.0,
+          "13": 0.0
+        }
+      },
+      {
+        "id": "I-11-12",
+        "members": [
+          11,
+          12
+        ],
+        "point": [
+          0.425,
+          0.45
+        ],
+        "decision": "connect",
+        "node_id": 7,
+        "member_s": {
+          "11": 0.0,
+          "12": 0.0
+        }
+      },
+      {
+        "id": "I-11-13",
+        "members": [
+          11,
+          13
+        ],
+        "point": [
+          0.575,
+          0.45
+        ],
+        "decision": "connect",
+        "node_id": 8,
+        "member_s": {
+          "11": 1.0,
+          "13": 0.0
+        }
+      },
+      {
+        "id": "I-12-14",
+        "members": [
+          12,
+          14
+        ],
+        "point": [
+          0.425,
+          0.25
+        ],
+        "decision": "connect",
+        "node_id": 9,
+        "member_s": {
+          "12": 1.0,
+          "14": 0.0
+        }
+      },
+      {
+        "id": "I-13-14",
+        "members": [
+          13,
+          14
+        ],
+        "point": [
+          0.575,
+          0.25
+        ],
+        "decision": "connect",
+        "node_id": 10,
+        "member_s": {
+          "13": 1.0,
+          "14": 1.0
+        }
+      }
+    ],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "low_confidence",
+        "severity": "warning",
+        "entity_refs": [
+          "support:9",
+          "support:10"
+        ],
+        "message": "柱脚支座符号被地面阴影线遮挡，无法确认是铰接还是固接，请人工核实。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "low_confidence",
+        "severity": "warning",
+        "entity_refs": [
+          "member:2",
+          "member:5"
+        ],
+        "message": "斜杆与节点连接处线条重叠，杆件端点归属需人工确认。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 3,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": [
+      {
+        "node": 3,
+        "name": "P1",
+        "load": [
+          0.0,
+          -40000.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "case": "L",
+        "collection": "nodal_loads"
+      },
+      {
+        "node": 6,
+        "name": "P2",
+        "load": [
+          0.0,
+          -50000.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "case": "L",
+        "collection": "nodal_loads"
+      }
+    ]
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\"image_model\":{\"nodes\":[{\"id\":1,\"u\":0.4250,\"v\":0.8500},{\"id\":2,\"u\":0.5750,\"v\":0.8500},{\"id\":3,\"u\":0.2750,\"v\":0.6500},{\"id\":4,\"u\":0.4250,\"v\":0.6500},{\"id\":5,\"u\":0.5750,\"v\":0.6500},{\"id\":6,\"u\":0.7250,\"v\":0.6500},{\"id\":7,\"u\":0.4250,\"v\":0.4500},{\"id\":8,\"u\":0.5750,\"v\":0.4500},{\"id\":9,\"u\":0.4250,\"v\":0.2500},{\"id\":10,\"u\":0.5750,\"v\":0.2500}],\"members\":[{\"id\":1,\"i\":1,\"j\":2},{\"id\":2,\"i\":1,\"j\":3},{\"id\":3,\"i\":1,\"j\":4},{\"id\":4,\"i\":2,\"j\":5},{\"id\":5,\"i\":2,\"j\":6},{\"id\":6,\"i\":3,\"j\":4},{\"id\":7,\"i\":4,\"j\":5},{\"id\":8,\"i\":5,\"j\":6},{\"id\":9,\"i\":4,\"j\":7},{\"id\":10,\"i\":5,\"j\":8},{\"id\":11,\"i\":7,\"j\":8},{\"id\":12,\"i\":7,\"j\":9},{\"id\":13,\"i\":8,\"j\":10},{\"id\":14,\"i\":9,\"j\":10}],\"supports\":[{\"node\":9,\"kind\":\"pinned\"},{\"node\":10,\"kind\":\"roller\"}],\"load_cases\":[{\"name\":\"L\",\"nodal_loads\":[{\"node\":3,\"name\":\"P1\",\"value\":40,\"unit\":\"kN\",\"direction\":[0,-1,0]},{\"node\":6,\"name\":\"P2\",\"value\":50,\"unit\":\"kN\",\"direction\":[0,-1,0]}],\"member_loads\":[],\"member_spans\":[]}]},\"entities\":[{\"id\":\"E1\",\"kind\":\"node\",\"target\":{\"node\":1},\"confidence\":0.95},{\"id\":\"E2\",\"kind\":\"node\",\"target\":{\"node\":2},\"confidence\":0.95},{\"id\":\"E3\",\"kind\":\"node\",\"target\":{\"node\":3},\"confidence\":0.95},{\"id\":\"E4\",\"kind\":\"node\",\"target\":{\"node\":4},\"confidence\":0.95},{\"id\":\"E5\",\"kind\":\"node\",\"target\":{\"node\":5},\"confidence\":0.95},{\"id\":\"E6\",\"kind\":\"node\",\"target\":{\"node\":6},\"confidence\":0.95},{\"id\":\"E7\",\"kind\":\"node\",\"target\":{\"node\":7},\"confidence\":0.95},{\"id\":\"E8\",\"kind\":\"node\",\"target\":{\"node\":8},\"confidence\":0.95},{\"id\":\"E9\",\"kind\":\"node\",\"target\":{\"node\":9},\"confidence\":0.95},{\"id\":\"E10\",\"kind\":\"node\",\"target\":{\"node\":10},\"confidence\":0.95},{\"id\":\"E11\",\"kind\":\"member\",\"target\":{\"member\":1},\"confidence\":0.95},{\"id\":\"E12\",\"kind\":\"member\",\"target\":{\"member\":2},\"confidence\":0.95},{\"id\":\"E13\",\"kind\":\"member\",\"target\":{\"member\":3},\"confidence\":0.95},{\"id\":\"E14\",\"kind\":\"member\",\"target\":{\"member\":4},\"confidence\":0.95},{\"id\":\"E15\",\"kind\":\"member\",\"target\":{\"member\":5},\"confidence\":0.95},{\"id\":\"E16\",\"kind\":\"member\",\"target\":{\"member\":6},\"confidence\":0.95},{\"id\":\"E17\",\"kind\":\"member\",\"target\":{\"member\":7},\"confidence\":0.95},{\"id\":\"E18\",\"kind\":\"member\",\"target\":{\"member\":8},\"confidence\":0.95},{\"id\":\"E19\",\"kind\":\"member\",\"target\":{\"member\":9},\"confidence\":0.95},{\"id\":\"E20\",\"kind\":\"member\",\"target\":{\"member\":10},\"confidence\":0.95},{\"id\":\"E21\",\"kind\":\"member\",\"target\":{\"member\":11},\"confidence\":0.95},{\"id\":\"E22\",\"kind\":\"member\",\"target\":{\"member\":12},\"confidence\":0.95},{\"id\":\"E23\",\"kind\":\"member\",\"target\":{\"member\":13},\"confidence\":0.95},{\"id\":\"E24\",\"kind\":\"member\",\"target\":{\"member\":14},\"confidence\":0.95},{\"id\":\"E25\",\"kind\":\"support\",\"target\":{\"support\":{\"node\":9,\"name\":\"S1\"}},\"confidence\":0.9,\"image_geometry\":{\"line\":[[0.4250,0.2500],[0.4250,0.2500]]}},{\"id\":\"E26\",\"kind\":\"support\",\"target\":{\"support\":{\"node\":10,\"name\":\"S2\"}},\"confidence\":0.9,\"image_geometry\":{\"line\":[[0.5750,0.2500],[0.5750,0.2500]]}},{\"id\":\"E27\",\"kind\":\"load\",\"target\":{\"load\":{\"case\":\"L\",\"collection\":\"nodal_loads\",\"name\":\"P1\"}},\"confidence\":0.95,\"image_geometry\":{\"line\":[[0.2750,0.6500],[0.2750,0.7500]]}},{\"id\":\"E28\",\"kind\":\"load\",\"target\":{\"load\":{\"case\":\"L\",\"collection\":\"nodal_loads\",\"name\":\"P2\"}},\"confidence\":0.95,\"image_geometry\":{\"line\":[[0.7250,0.6500],[0.7250,0.7500]]}}],\"dimensions\":[{\"id\":\"D1\",\"text\":\"10 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.2750,0.1000],[0.4250,0.1000]]}},{\"id\":\"D2\",\"text\":\"10 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.4250,0.1000],[0.5750,0.1000]]}},{\"id\":\"D3\",\"text\":\"10 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.5750,0.1000],[0.7250,0.1000]]}},{\"id\":\"D4\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.2500],[0.1000,0.4500]]}},{\"id\":\"D5\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.4500],[0.1000,0.6500]]}},{\"id\":\"D6\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.6500],[0.1000,0.8500]]}},{\"id\":\"D7\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.8500],[0.1000,1.0000]]}}],\"issues\":[{\"id\":\"I1\",\"category\":\"low_confidence\",\"severity\":\"warning\",\"entity_refs\":[\"support:9\",\"support:10\"],\"message\":\"柱脚支座符号被地面阴影线遮挡，无法确认是铰接还是固接，请人工核实。\",\"status\":\"open\"},{\"id\":\"I2\",\"category\":\"low_confidence\",\"severity\":\"warning\",\"entity_refs\":[\"member:2\",\"member:5\"],\"message\":\"斜杆与节点连接处线条重叠，杆件端点归属需人工确认。\",\"status\":\"open\"}]}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "content_characters": 4230,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 2333,
+      "completion_tokens": 1670,
+      "total_tokens": 4003
+    }
+  ],
+  "action_review": null,
+  "position_refinements": [],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "842404d40ae6d80b7612c88aaaa65da479ed54bc703b0ab585ecdaf59283322b",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+    "derived_image_hash": "be7dea04eae1297a38f71b3f023c54c919783c19ec76b567ef4ee04400e494a4",
+    "input_context_hash": "9d0e4bb96cfbafd831f9cc5eca12783c8427564e8b1a953768c224c181128475",
+    "ground_truth_hash": "485ec14e11a6aba02955fb37bb26f5375de280e2628c0b66006772e1b37a0562",
+    "reference_contract": "space-frame-reference-topology/v1",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "7690102197b87583f012dd63c55c45a4e5706f2dfc006a853305cb08d61dd1b7",
+    "review_actions": false,
+    "action_prompt_hash": null
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      500,
+      345
+    ],
+    "crop": [
+      0,
+      0,
+      500,
+      345
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 10640.999999999622
+  }
+}

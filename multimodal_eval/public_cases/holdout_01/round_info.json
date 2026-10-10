@@ -1,0 +1,222 @@
+{
+  "date": "2026-10-10",
+  "frozen_at_utc": "2026-10-10T06:28:54.555567+00:00",
+  "scope": "两张本项目未参与开发的新许可图，调用前完整参考冻结；编码助手标注未经外部专家复核。",
+  "base_commit": "1b6ff2d6a8750835b5901ad15de914f94e9afc19",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "max_repairs": 0,
+  "review_actions": false,
+  "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+  "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+  "pipeline_hash": "78e9ccf839e6893946ff95c88910345e1a73b90503c19f358f52c27eaa5f9cf4",
+  "request_options": {
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "extra_body": {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  },
+  "reference_contract": "space-frame-reference-topology/v1",
+  "annotations_fixed_before_calls": {
+    "wall_truss": "4aeec948bdc80b69e1193b39c13db738a8b8830d95556af9bf686fb423af8685",
+    "tower_truss": "f9a5adc0f99f15f8ff88296818b5b6723751a4e3f31494a53accf07c472e927b"
+  },
+  "metadata_fixed_before_calls": {
+    "wall_truss": "c18438d4a95f945ce8e80325992f108d962e878eaab1f2729b3577aa31826893",
+    "tower_truss": "e2e0e97f61572859cc0117ffe84bc225407073963b3b41d5eeed2c5aa9439b2a"
+  },
+  "images_fixed_before_calls": {
+    "wall_truss": "1fb972a682508d1955fe12a2be48b85c362bac06a0bfd0bb3f12902b0ef78403",
+    "tower_truss": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8"
+  },
+  "decoded_pixels_fixed_before_calls": {
+    "wall_truss": "70783faf9a8477073344b1d44aa5c7c2c4da25d13f859b6c5f7ca62510dbb2fb",
+    "tower_truss": "b748bdd66a373a97556964f65231d1d29c920cfa64401cff7eb074ec84bdf458"
+  },
+  "prior_project_images": {
+    "multimodal_eval/public_cases/images/cantilever.png": {
+      "bytes": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "pixels": "89556974374f30ce695ecbdb026ecf96f4bf599e0ae62e85a4d4704a54ede07b"
+    },
+    "multimodal_eval/public_cases/images/end_load.png": {
+      "bytes": "8c272e64c6e3844e2878ce9b00018545c6a8c8fd6858bd1846b277d001688140",
+      "pixels": "4744c36d32fe6e43957f595214f2bc2418b56c0c4c284efe5d7a4e9bde2ea10b"
+    },
+    "multimodal_eval/public_cases/images/overhang.png": {
+      "bytes": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+      "pixels": "f26507e2dc3ffda3b3ef7ce6a39b29f09f30f3c754b10958161ad508651123f7"
+    },
+    "multimodal_eval/public_cases/images/point_load.jpg": {
+      "bytes": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "pixels": "8cdade21627cdcd5b50b6aaf15278e7fd45e177ea6ec79247480bd2d87af914c"
+    },
+    "multimodal_eval/public_cases/images/udl.jpg": {
+      "bytes": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+      "pixels": "306037b9b435c3ce44ea57697d1d66c8334fe811189ef7b506173dbd6b809a53"
+    },
+    "multimodal_eval/public_cases/action_review_01/images/cantilever.png": {
+      "bytes": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "pixels": "89556974374f30ce695ecbdb026ecf96f4bf599e0ae62e85a4d4704a54ede07b"
+    },
+    "multimodal_eval/public_cases/action_review_01/images/point_load.jpg": {
+      "bytes": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "pixels": "8cdade21627cdcd5b50b6aaf15278e7fd45e177ea6ec79247480bd2d87af914c"
+    },
+    "multimodal_eval/public_cases/action_review_01/images/various_loads.jpg": {
+      "bytes": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+      "pixels": "dcc9c26fc58a39cc61d8437f33b13b88d40ab629c1264497fcbf8a7b1c0cb8cf"
+    },
+    "multimodal_eval/public_cases/action_review_02/images/cantilever.png": {
+      "bytes": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "pixels": "89556974374f30ce695ecbdb026ecf96f4bf599e0ae62e85a4d4704a54ede07b"
+    },
+    "multimodal_eval/public_cases/action_review_02/images/point_load.jpg": {
+      "bytes": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "pixels": "8cdade21627cdcd5b50b6aaf15278e7fd45e177ea6ec79247480bd2d87af914c"
+    },
+    "multimodal_eval/public_cases/action_review_02/images/various_loads.jpg": {
+      "bytes": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+      "pixels": "dcc9c26fc58a39cc61d8437f33b13b88d40ab629c1264497fcbf8a7b1c0cb8cf"
+    },
+    "multimodal_eval/public_cases/load_points_01/images/various_loads.jpg": {
+      "bytes": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+      "pixels": "dcc9c26fc58a39cc61d8437f33b13b88d40ab629c1264497fcbf8a7b1c0cb8cf"
+    },
+    "multimodal_eval/public_cases/load_points_crop_01/images/various_loads.jpg": {
+      "bytes": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+      "pixels": "dcc9c26fc58a39cc61d8437f33b13b88d40ab629c1264497fcbf8a7b1c0cb8cf"
+    },
+    "multimodal_eval/public_cases/numeric_01/images/moj_bridge.png": {
+      "bytes": "2dc5731f983ae29a1b3a858ba260f2792c5bf39088a5ab8e3f6e73ee8218f500",
+      "pixels": "bc5e158228fca39203696df82c2b5aad1d59fc73cb7cd4156f95af3f1c1f41cd"
+    },
+    "multimodal_eval/public_cases/numeric_01/images/moj_labels.png": {
+      "bytes": "08c0103c93eec344c2f31da267eb253ca27c1a1f262f7b268a8969060caac394",
+      "pixels": "8d4fa6243446ac4a84ccd5f2321bd9ae1dd1f73f53d9c957078043a0aa93efbd"
+    },
+    "multimodal_eval/public_cases/round_02/images/cantilever.png": {
+      "bytes": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "pixels": "89556974374f30ce695ecbdb026ecf96f4bf599e0ae62e85a4d4704a54ede07b"
+    },
+    "multimodal_eval/public_cases/round_02/images/end_load.png": {
+      "bytes": "8c272e64c6e3844e2878ce9b00018545c6a8c8fd6858bd1846b277d001688140",
+      "pixels": "4744c36d32fe6e43957f595214f2bc2418b56c0c4c284efe5d7a4e9bde2ea10b"
+    },
+    "multimodal_eval/public_cases/round_02/images/overhang.png": {
+      "bytes": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+      "pixels": "f26507e2dc3ffda3b3ef7ce6a39b29f09f30f3c754b10958161ad508651123f7"
+    },
+    "multimodal_eval/public_cases/round_02/images/point_load.jpg": {
+      "bytes": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "pixels": "8cdade21627cdcd5b50b6aaf15278e7fd45e177ea6ec79247480bd2d87af914c"
+    },
+    "multimodal_eval/public_cases/round_02/images/udl.jpg": {
+      "bytes": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+      "pixels": "306037b9b435c3ce44ea57697d1d66c8334fe811189ef7b506173dbd6b809a53"
+    },
+    "multimodal_eval/public_cases/round_03/images/cantilever.png": {
+      "bytes": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "pixels": "89556974374f30ce695ecbdb026ecf96f4bf599e0ae62e85a4d4704a54ede07b"
+    },
+    "multimodal_eval/public_cases/round_03/images/end_load.png": {
+      "bytes": "8c272e64c6e3844e2878ce9b00018545c6a8c8fd6858bd1846b277d001688140",
+      "pixels": "4744c36d32fe6e43957f595214f2bc2418b56c0c4c284efe5d7a4e9bde2ea10b"
+    },
+    "multimodal_eval/public_cases/round_03/images/overhang.png": {
+      "bytes": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+      "pixels": "f26507e2dc3ffda3b3ef7ce6a39b29f09f30f3c754b10958161ad508651123f7"
+    },
+    "multimodal_eval/public_cases/round_03/images/point_load.jpg": {
+      "bytes": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "pixels": "8cdade21627cdcd5b50b6aaf15278e7fd45e177ea6ec79247480bd2d87af914c"
+    },
+    "multimodal_eval/public_cases/round_03/images/udl.jpg": {
+      "bytes": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+      "pixels": "306037b9b435c3ce44ea57697d1d66c8334fe811189ef7b506173dbd6b809a53"
+    },
+    "multimodal_eval/public_cases/round_04/images/cantilever.png": {
+      "bytes": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "pixels": "89556974374f30ce695ecbdb026ecf96f4bf599e0ae62e85a4d4704a54ede07b"
+    },
+    "multimodal_eval/public_cases/round_04/images/end_load.png": {
+      "bytes": "8c272e64c6e3844e2878ce9b00018545c6a8c8fd6858bd1846b277d001688140",
+      "pixels": "4744c36d32fe6e43957f595214f2bc2418b56c0c4c284efe5d7a4e9bde2ea10b"
+    },
+    "multimodal_eval/public_cases/round_04/images/overhang.png": {
+      "bytes": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+      "pixels": "f26507e2dc3ffda3b3ef7ce6a39b29f09f30f3c754b10958161ad508651123f7"
+    },
+    "multimodal_eval/public_cases/round_04/images/point_load.jpg": {
+      "bytes": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "pixels": "8cdade21627cdcd5b50b6aaf15278e7fd45e177ea6ec79247480bd2d87af914c"
+    },
+    "multimodal_eval/public_cases/round_04/images/udl.jpg": {
+      "bytes": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+      "pixels": "306037b9b435c3ce44ea57697d1d66c8334fe811189ef7b506173dbd6b809a53"
+    },
+    "multimodal_eval/public_cases/round_05/images/cantilever.png": {
+      "bytes": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "pixels": "89556974374f30ce695ecbdb026ecf96f4bf599e0ae62e85a4d4704a54ede07b"
+    },
+    "multimodal_eval/public_cases/round_05/images/end_load.png": {
+      "bytes": "8c272e64c6e3844e2878ce9b00018545c6a8c8fd6858bd1846b277d001688140",
+      "pixels": "4744c36d32fe6e43957f595214f2bc2418b56c0c4c284efe5d7a4e9bde2ea10b"
+    },
+    "multimodal_eval/public_cases/round_05/images/overhang.png": {
+      "bytes": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+      "pixels": "f26507e2dc3ffda3b3ef7ce6a39b29f09f30f3c754b10958161ad508651123f7"
+    },
+    "multimodal_eval/public_cases/round_05/images/point_load.jpg": {
+      "bytes": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "pixels": "8cdade21627cdcd5b50b6aaf15278e7fd45e177ea6ec79247480bd2d87af914c"
+    },
+    "multimodal_eval/public_cases/round_05/images/udl.jpg": {
+      "bytes": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+      "pixels": "306037b9b435c3ce44ea57697d1d66c8334fe811189ef7b506173dbd6b809a53"
+    },
+    "multimodal_eval/public_cases/validation_01/images/various_loads.jpg": {
+      "bytes": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+      "pixels": "dcc9c26fc58a39cc61d8437f33b13b88d40ab629c1264497fcbf8a7b1c0cb8cf"
+    }
+  },
+  "numeric_reference_calculations": {
+    "wall_lbf_to_N": {
+      "input": 500,
+      "factor": 4.4482216152605,
+      "result": -2224.11080763025,
+      "source": "https://www.nist.gov/pml/special-publication-811/nist-guide-si-footnotes#23"
+    },
+    "tower_angles": {
+      "degrees_from_vertical": 15,
+      "formula": [
+        "Fx=F*sin(15deg)",
+        "Fy=-F*cos(15deg)"
+      ],
+      "magnitudes_N": [
+        40000,
+        50000
+      ],
+      "results": [
+        [
+          10352.76180410083,
+          -38637.033051562736,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          12940.952255126036,
+          -48296.29131445342,
+          0,
+          0,
+          0,
+          0
+        ]
+      ]
+    }
+  }
+}

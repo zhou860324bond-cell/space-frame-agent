@@ -1,0 +1,150 @@
+{
+  "image_id": "moj_labels",
+  "width_px": 400,
+  "height_px": 227,
+  "image_hash": "08c0103c93eec344c2f31da267eb253ca27c1a1f262f7b268a8969060caac394",
+  "input_context_hash": "9d0e4bb96cfbafd831f9cc5eca12783c8427564e8b1a953768c224c181128475",
+  "annotation_status": "verified",
+  "annotation_method": "编码助手目视原图，首次模型调用前独立固定；未经外部人工复核。verified仅表示内部冻结状态。",
+  "annotation_notes": "左端铰接、右端滚动按既有六分量契约；仅真实节点，不将尺寸线/文字算杆件。二维XY，向下为-Y。工况D及P1/P2为调用前约定的标识，原图未命名；若模型命名不同原严格评分不改，另报告物理核对。图未声明按比例绘制，不由像素自动确认尺度。",
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.2,
+        0.6211453744493393
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.55,
+        0.31718061674008813
+      ]
+    },
+    {
+      "id": 3,
+      "point": [
+        0.55,
+        0.6211453744493393
+      ]
+    },
+    {
+      "id": 4,
+      "point": [
+        0.8975,
+        0.6211453744493393
+      ]
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2
+    },
+    {
+      "id": 2,
+      "i": 1,
+      "j": 3
+    },
+    {
+      "id": 3,
+      "i": 2,
+      "j": 3
+    },
+    {
+      "id": 4,
+      "i": 2,
+      "j": 4
+    },
+    {
+      "id": 5,
+      "i": 3,
+      "j": 4
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "node": 4,
+      "fix": [
+        false,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "loads": [
+    {
+      "case": "D",
+      "collection": "nodal_loads",
+      "node": 3,
+      "name": "P1",
+      "load": [
+        0,
+        -6000,
+        0,
+        0,
+        0,
+        0
+      ],
+      "force_unit": "N",
+      "moment_unit": "N*m"
+    }
+  ],
+  "intersections": [],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "scale": {
+    "status": "unknown"
+  },
+  "dimension_observations": [
+    {
+      "nodes": [
+        1,
+        3
+      ],
+      "value": 10,
+      "unit": "m",
+      "source": "原图明确标注；不是像素推算"
+    },
+    {
+      "nodes": [
+        3,
+        4
+      ],
+      "value": 10,
+      "unit": "m",
+      "source": "原图明确标注；不是像素推算"
+    },
+    {
+      "nodes": [
+        2,
+        3
+      ],
+      "value": 5,
+      "unit": "m",
+      "source": "原图明确标注；不是像素推算"
+    }
+  ]
+}

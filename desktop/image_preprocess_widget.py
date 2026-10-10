@@ -14,6 +14,8 @@ from image_preprocess import preprocess_image, work_plane_payload
 class ImagePreprocessWidget(QWidget):
     image_changed = Signal(dict)
     work_plane_confirmed = Signal(dict)
+    work_plane_changed = Signal()
+    processing_failed = Signal(str)
 
     def __init__(self, output_dir: str | Path, parent=None):
         super().__init__(parent)
@@ -21,6 +23,7 @@ class ImagePreprocessWidget(QWidget):
         self.source_path: str | None = None
         self.rotation = 0
         self.crop: tuple[int, int, int, int] | None = None
+        self.metadata = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         row = QHBoxLayout()
@@ -34,6 +37,8 @@ class ImagePreprocessWidget(QWidget):
         self.confirm_plane = QPushButton("确认工作平面")
         self.rotate.clicked.connect(self.rotate_clockwise)
         self.confirm_plane.clicked.connect(self._confirm_plane)
+        self.plane.currentTextChanged.connect(lambda _value: self.work_plane_changed.emit())
+        self.offset.valueChanged.connect(lambda _value: self.work_plane_changed.emit())
         for widget in (self.info, QLabel("平面"), self.plane, QLabel("偏移(m)"),
                        self.offset, self.rotate, self.confirm_plane):
             row.addWidget(widget)
@@ -51,10 +56,7 @@ class ImagePreprocessWidget(QWidget):
         layout.addLayout(crop_row)
 
     def set_source(self, path: str) -> dict:
-        self.source_path = path
-        self.rotation = 0
-        self.crop = None
-        metadata = self._process()
+        metadata = self._process(path, 0, None)
         ow, oh = metadata["preprocessing"]["oriented_size_px"]
         for box, maximum in zip(self.crop_boxes, (ow - 1, oh - 1, ow, oh), strict=True):
             box.setRange(0, maximum)
@@ -64,22 +66,31 @@ class ImagePreprocessWidget(QWidget):
 
     def rotate_clockwise(self) -> None:
         if self.source_path:
-            self.rotation = (self.rotation + 1) % 4
-            self._process()
+            self._try_process((self.rotation + 1) % 4, self.crop)
 
-    def _process(self) -> dict:
-        result = preprocess_image(self.source_path or "", self.output_dir,
-                                  crop=self.crop,
-                                  rotation_quarters_cw=self.rotation)
+    def _process(self, source_path, rotation, crop) -> dict:
+        result = preprocess_image(source_path, self.output_dir,
+                                  crop=crop, rotation_quarters_cw=rotation)
         metadata = result.source_metadata()
+        # 处理成功后才替换状态，失败不能使显示图片与后续识别来源不一致。
+        self.source_path, self.rotation, self.crop = source_path, rotation, crop
+        self.metadata = metadata
         self.info.setText(f"{result.width_px}×{result.height_px}px · {result.original_format}")
         self.image_changed.emit(metadata)
         return metadata
 
+    def _try_process(self, rotation, crop):
+        try:
+            self._process(self.source_path, rotation, crop)
+        except (OSError, ValueError) as exc:
+            ow, oh = self.metadata["preprocessing"]["oriented_size_px"]
+            for box, value in zip(self.crop_boxes, self.crop or (0, 0, ow, oh), strict=True):
+                box.setValue(value)
+            self.processing_failed.emit(f"{exc}。已保留原图，请检查裁剪范围或图片文件。")
+
     def _apply_crop(self) -> None:
         if self.source_path:
-            self.crop = tuple(box.value() for box in self.crop_boxes)
-            self._process()
+            self._try_process(self.rotation, tuple(box.value() for box in self.crop_boxes))
 
     def _confirm_plane(self) -> None:
         self.work_plane_confirmed.emit(work_plane_payload(

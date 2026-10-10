@@ -1,0 +1,212 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "mode": "frozen-response",
+  "manifest": "manifest.json",
+  "gate_cases": 1,
+  "evaluated_image_ids": [
+    "various_loads"
+  ],
+  "case_reports": [
+    {
+      "image_id": "various_loads",
+      "metrics": {
+        "node_f1": 0.0,
+        "member_f1": 0.0,
+        "clear_node_f1": null,
+        "clear_member_f1": null,
+        "intersection_accuracy": null,
+        "support_f1": 0.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 0.25,
+        "issue_false_positives": 6
+      },
+      "counts": {
+        "nodes": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 4
+        },
+        "members": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 3
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 2
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 6,
+          "fn": 3
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "extra_nodes": [
+        "1",
+        "2"
+      ],
+      "missing_members": [
+        "1",
+        "2",
+        "3"
+      ],
+      "extra_members": [
+        "1"
+      ]
+    }
+  ],
+  "metrics": {
+    "node_f1": 0.0,
+    "member_f1": 0.0,
+    "clear_node_f1": null,
+    "clear_member_f1": null,
+    "intersection_accuracy": null,
+    "support_f1": 0.0,
+    "load_f1": null,
+    "load_numeric_unit_accuracy": null,
+    "scale_accuracy": null,
+    "issue_recall": 0.25,
+    "issue_false_positives": 6
+  },
+  "counts": {
+    "nodes": {
+      "tp": 0,
+      "fp": 2,
+      "fn": 4
+    },
+    "members": {
+      "tp": 0,
+      "fp": 1,
+      "fn": 3
+    },
+    "clear_nodes": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_members": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "supports": {
+      "tp": 0,
+      "fp": 2,
+      "fn": 2
+    },
+    "loads": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "issues": {
+      "tp": 1,
+      "fp": 6,
+      "fn": 3
+    },
+    "intersections": {
+      "correct": 0,
+      "wrong": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "scale": {
+      "correct": 0,
+      "total": 0
+    },
+    "load_numeric": {
+      "correct": 0,
+      "total": 0
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [
+    "node_f1",
+    "member_f1",
+    "clear_node_f1",
+    "clear_member_f1",
+    "intersection_accuracy",
+    "support_f1",
+    "load_f1"
+  ],
+  "passed": false,
+  "sample_kind": "external-real-world-pilot",
+  "case_outcomes": [
+    {
+      "image_id": "various_loads",
+      "outcome": "PASS",
+      "attempts": 1,
+      "duration_ms": 7453.000000001339,
+      "errors": [],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "content_characters": 3107,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 1805,
+          "completion_tokens": 1231,
+          "total_tokens": 3036
+        }
+      ]
+    }
+  ],
+  "runtime": {
+    "attempted_cases": 1,
+    "parse_successes": 1,
+    "parse_failures": 0,
+    "total_calls": 1,
+    "median_duration_ms": 7453.000000001339,
+    "total_duration_ms": 7453.000000001339
+  },
+  "limitations": [
+    "小样本单次结果，不代表真实手绘、手机照片或所有提供商的准确率。",
+    "无参考对象的指标为 null，不补成 100%；失败输入不从分母移除。"
+  ]
+}

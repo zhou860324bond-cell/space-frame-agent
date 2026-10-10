@@ -1,0 +1,1170 @@
+{
+  "format": "space-frame-joint-graph-development/v1",
+  "date": "2026-10-10",
+  "new_api_calls": 0,
+  "pipeline_hash": "c42cf82074c9654aff5a1d1fad4fa2fb6cd16c118fa43964fcaa271961b6b604",
+  "replay_driver_sha256": "3bd42591a8f00111d4aae78d9c37262ce86b6b86534a7b24bbdb00ba53394834",
+  "input_manifest_sha256": "a4bb6aafeef41b4d295d6947561175c87077def7e43ce54c2f730b8afe286736",
+  "original_report_sha256": "856b98f5e7d338523dea10963a38e2357cc8f6d21b4b40272efc6b32e024912d",
+  "primary_replay": {
+    "format": "space-frame-multimodal-eval-report/v1",
+    "mode": "offline-replay",
+    "manifest": "manifest.json",
+    "gate_cases": 2,
+    "evaluated_image_ids": [
+      "tower_truss",
+      "wall_truss"
+    ],
+    "case_reports": [
+      {
+        "image_id": "tower_truss",
+        "metrics": {
+          "node_f1": 0.0,
+          "member_f1": 0.0,
+          "clear_node_f1": 0.0,
+          "clear_member_f1": 0.0,
+          "intersection_accuracy": 0.0,
+          "support_f1": 0.0,
+          "load_f1": 0.0,
+          "load_numeric_unit_accuracy": 0.0,
+          "scale_accuracy": null,
+          "issue_recall": 1.0,
+          "issue_false_positives": 3
+        },
+        "counts": {
+          "nodes": {
+            "tp": 0,
+            "fp": 10,
+            "fn": 12
+          },
+          "members": {
+            "tp": 0,
+            "fp": 14,
+            "fn": 21
+          },
+          "clear_nodes": {
+            "tp": 0,
+            "fp": 10,
+            "fn": 12
+          },
+          "clear_members": {
+            "tp": 0,
+            "fp": 14,
+            "fn": 21
+          },
+          "supports": {
+            "tp": 0,
+            "fp": 2,
+            "fn": 2
+          },
+          "loads": {
+            "tp": 0,
+            "fp": 2,
+            "fn": 2
+          },
+          "issues": {
+            "tp": 1,
+            "fp": 3,
+            "fn": 0
+          },
+          "intersections": {
+            "correct": 0,
+            "wrong": 0,
+            "fp": 28,
+            "fn": 59
+          },
+          "scale": {
+            "correct": 0,
+            "total": 0
+          },
+          "load_numeric": {
+            "correct": 0,
+            "total": 2
+          }
+        },
+        "missing_nodes": [
+          "1",
+          "10",
+          "11",
+          "12",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9"
+        ],
+        "extra_nodes": [
+          "1",
+          "10",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9"
+        ],
+        "missing_members": [
+          "1",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "15",
+          "16",
+          "17",
+          "18",
+          "19",
+          "2",
+          "20",
+          "21",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9"
+        ],
+        "extra_members": [
+          "1",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9"
+        ]
+      },
+      {
+        "image_id": "wall_truss",
+        "metrics": {
+          "node_f1": 0.0,
+          "member_f1": 0.0,
+          "clear_node_f1": 0.0,
+          "clear_member_f1": 0.0,
+          "intersection_accuracy": 0.0,
+          "support_f1": 0.0,
+          "load_f1": 0.0,
+          "load_numeric_unit_accuracy": 0.0,
+          "scale_accuracy": null,
+          "issue_recall": 1.0,
+          "issue_false_positives": 5
+        },
+        "counts": {
+          "nodes": {
+            "tp": 0,
+            "fp": 6,
+            "fn": 5
+          },
+          "members": {
+            "tp": 0,
+            "fp": 8,
+            "fn": 7
+          },
+          "clear_nodes": {
+            "tp": 0,
+            "fp": 6,
+            "fn": 5
+          },
+          "clear_members": {
+            "tp": 0,
+            "fp": 8,
+            "fn": 7
+          },
+          "supports": {
+            "tp": 0,
+            "fp": 2,
+            "fn": 2
+          },
+          "loads": {
+            "tp": 0,
+            "fp": 1,
+            "fn": 1
+          },
+          "issues": {
+            "tp": 1,
+            "fp": 5,
+            "fn": 0
+          },
+          "intersections": {
+            "correct": 0,
+            "wrong": 0,
+            "fp": 16,
+            "fn": 14
+          },
+          "scale": {
+            "correct": 0,
+            "total": 0
+          },
+          "load_numeric": {
+            "correct": 0,
+            "total": 1
+          }
+        },
+        "missing_nodes": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+        ],
+        "extra_nodes": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6"
+        ],
+        "missing_members": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7"
+        ],
+        "extra_members": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8"
+        ]
+      }
+    ],
+    "metrics": {
+      "node_f1": 0.0,
+      "member_f1": 0.0,
+      "clear_node_f1": 0.0,
+      "clear_member_f1": 0.0,
+      "intersection_accuracy": 0.0,
+      "support_f1": 0.0,
+      "load_f1": 0.0,
+      "load_numeric_unit_accuracy": 0.0,
+      "scale_accuracy": null,
+      "issue_recall": 1.0,
+      "issue_false_positives": 8
+    },
+    "counts": {
+      "nodes": {
+        "tp": 0,
+        "fp": 16,
+        "fn": 17
+      },
+      "members": {
+        "tp": 0,
+        "fp": 22,
+        "fn": 28
+      },
+      "clear_nodes": {
+        "tp": 0,
+        "fp": 16,
+        "fn": 17
+      },
+      "clear_members": {
+        "tp": 0,
+        "fp": 22,
+        "fn": 28
+      },
+      "supports": {
+        "tp": 0,
+        "fp": 4,
+        "fn": 4
+      },
+      "loads": {
+        "tp": 0,
+        "fp": 3,
+        "fn": 3
+      },
+      "issues": {
+        "tp": 2,
+        "fp": 8,
+        "fn": 0
+      },
+      "intersections": {
+        "correct": 0,
+        "wrong": 0,
+        "fp": 44,
+        "fn": 73
+      },
+      "scale": {
+        "correct": 0,
+        "total": 0
+      },
+      "load_numeric": {
+        "correct": 0,
+        "total": 3
+      }
+    },
+    "thresholds": {
+      "node_f1": 0.85,
+      "member_f1": 0.85,
+      "clear_node_f1": 0.95,
+      "clear_member_f1": 0.95,
+      "intersection_accuracy": 0.9,
+      "support_f1": 0.8,
+      "load_f1": 0.8
+    },
+    "failures": [
+      "node_f1",
+      "member_f1",
+      "clear_node_f1",
+      "clear_member_f1",
+      "intersection_accuracy",
+      "support_f1",
+      "load_f1"
+    ],
+    "passed": false,
+    "case_outcomes": [
+      {
+        "image_id": "tower_truss",
+        "outcome": "PASS"
+      },
+      {
+        "image_id": "wall_truss",
+        "outcome": "PASS"
+      }
+    ],
+    "new_api_calls": 0,
+    "replay_successes": 2,
+    "reference_contract": {
+      "format": "space-frame-reference-topology/v1",
+      "legacy_cases": [],
+      "checked_cases": 2
+    },
+    "pipeline_hash": "c42cf82074c9654aff5a1d1fad4fa2fb6cd16c118fa43964fcaa271961b6b604",
+    "action_review": {
+      "attempted_cases": 0,
+      "completed_cases": 0,
+      "failed_or_missing_cases": 0
+    },
+    "limitations": [
+      "修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
+      "输入与真值不变；失败保留在分母，无证据指标仍为 null。"
+    ]
+  },
+  "cases": [
+    {
+      "image_id": "tower_truss",
+      "input_image_path": "../compact_01/images/tower_truss.png",
+      "input_sha256": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+      "response_sha256": "98b0490a6b1d9a0d922c1a66cf8f9ee746a12fbe72488d7c9a40b923f70e93ee",
+      "first_raw_response_sha256": "e928b995ea97558ec8a7564d3d47dfe6a7be144b5bbf83536f051650ebe28ffc",
+      "reference_sha256": "485ec14e11a6aba02955fb37bb26f5375de280e2628c0b66006772e1b37a0562",
+      "reference_read_after_extraction": true,
+      "primary_image_model_unchanged": true,
+      "candidates": {
+        "method": "grey-joint-graph/v1",
+        "source": "derived",
+        "confidence": null,
+        "image_hash": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+        "file_sha256": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+        "width_px": 500,
+        "height_px": 345,
+        "issue_id": "pixel-topology-review",
+        "nodes": [
+          {
+            "id": 1,
+            "point": [
+              0.4381429525718103,
+              0.21695736434108528
+            ],
+            "grey_ring_fraction": 1.0
+          },
+          {
+            "id": 2,
+            "point": [
+              0.6090362543268355,
+              0.21714235377026075
+            ],
+            "grey_ring_fraction": 0.9456521739130435
+          },
+          {
+            "id": 3,
+            "point": [
+              0.28373413493653976,
+              0.3789970930232558
+            ],
+            "grey_ring_fraction": 0.8955223880597015
+          },
+          {
+            "id": 4,
+            "point": [
+              0.438314128256513,
+              0.381359011627907
+            ],
+            "grey_ring_fraction": 0.967032967032967
+          },
+          {
+            "id": 5,
+            "point": [
+              0.6032064128256514,
+              0.3815186751233263
+            ],
+            "grey_ring_fraction": 0.9411764705882353
+          },
+          {
+            "id": 6,
+            "point": [
+              0.7638476953907816,
+              0.38023255813953494
+            ],
+            "grey_ring_fraction": 0.8666666666666667
+          },
+          {
+            "id": 7,
+            "point": [
+              0.437875751503006,
+              0.5450581395348837
+            ],
+            "grey_ring_fraction": 1.0
+          },
+          {
+            "id": 8,
+            "point": [
+              0.6030771219859073,
+              0.5452925731432858
+            ],
+            "grey_ring_fraction": 1.0
+          },
+          {
+            "id": 9,
+            "point": [
+              0.43827048035464866,
+              0.7090380549682875
+            ],
+            "grey_ring_fraction": 0.9456521739130435
+          },
+          {
+            "id": 10,
+            "point": [
+              0.6032064128256514,
+              0.7088039867109635
+            ],
+            "grey_ring_fraction": 0.9764705882352941
+          },
+          {
+            "id": 11,
+            "point": [
+              0.4381429525718103,
+              0.8731589147286822
+            ],
+            "grey_ring_fraction": 1.0
+          },
+          {
+            "id": 12,
+            "point": [
+              0.6032064128256514,
+              0.8730922965116279
+            ],
+            "grey_ring_fraction": 0.8901098901098901
+          }
+        ],
+        "members": [
+          {
+            "id": 1,
+            "i": 1,
+            "j": 2,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 2,
+            "i": 1,
+            "j": 3,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 3,
+            "i": 1,
+            "j": 4,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 4,
+            "i": 1,
+            "j": 5,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 5,
+            "i": 2,
+            "j": 5,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 6,
+            "i": 2,
+            "j": 6,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 7,
+            "i": 3,
+            "j": 4,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 8,
+            "i": 4,
+            "j": 5,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 9,
+            "i": 4,
+            "j": 7,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 10,
+            "i": 4,
+            "j": 8,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 11,
+            "i": 5,
+            "j": 6,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 12,
+            "i": 5,
+            "j": 8,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 13,
+            "i": 7,
+            "j": 8,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 14,
+            "i": 7,
+            "j": 9,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 15,
+            "i": 7,
+            "j": 10,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 16,
+            "i": 8,
+            "j": 10,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 17,
+            "i": 9,
+            "j": 10,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 18,
+            "i": 9,
+            "j": 11,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 19,
+            "i": 9,
+            "j": 12,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 20,
+            "i": 10,
+            "j": 12,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 21,
+            "i": 11,
+            "j": 12,
+            "grey_coverage": 1.0
+          }
+        ],
+        "original_geometry": {
+          "nodes": [
+            {
+              "id": 1,
+              "u": 0.425,
+              "v": 0.85
+            },
+            {
+              "id": 2,
+              "u": 0.575,
+              "v": 0.85
+            },
+            {
+              "id": 3,
+              "u": 0.275,
+              "v": 0.65
+            },
+            {
+              "id": 4,
+              "u": 0.425,
+              "v": 0.65
+            },
+            {
+              "id": 5,
+              "u": 0.575,
+              "v": 0.65
+            },
+            {
+              "id": 6,
+              "u": 0.725,
+              "v": 0.65
+            },
+            {
+              "id": 7,
+              "u": 0.425,
+              "v": 0.45
+            },
+            {
+              "id": 8,
+              "u": 0.575,
+              "v": 0.45
+            },
+            {
+              "id": 9,
+              "u": 0.425,
+              "v": 0.25
+            },
+            {
+              "id": 10,
+              "u": 0.575,
+              "v": 0.25
+            }
+          ],
+          "members": [
+            {
+              "id": 1,
+              "i": 1,
+              "j": 2
+            },
+            {
+              "id": 2,
+              "i": 1,
+              "j": 3
+            },
+            {
+              "id": 3,
+              "i": 1,
+              "j": 4
+            },
+            {
+              "id": 4,
+              "i": 2,
+              "j": 5
+            },
+            {
+              "id": 5,
+              "i": 2,
+              "j": 6
+            },
+            {
+              "id": 6,
+              "i": 3,
+              "j": 4
+            },
+            {
+              "id": 7,
+              "i": 4,
+              "j": 5
+            },
+            {
+              "id": 8,
+              "i": 5,
+              "j": 6
+            },
+            {
+              "id": 9,
+              "i": 4,
+              "j": 7
+            },
+            {
+              "id": 10,
+              "i": 5,
+              "j": 8
+            },
+            {
+              "id": 11,
+              "i": 7,
+              "j": 8
+            },
+            {
+              "id": 12,
+              "i": 7,
+              "j": 9
+            },
+            {
+              "id": 13,
+              "i": 8,
+              "j": 10
+            },
+            {
+              "id": 14,
+              "i": 9,
+              "j": 10
+            }
+          ]
+        },
+        "initial_comparison": {
+          "matched_nodes": 0,
+          "matched_members": 0,
+          "unmatched_candidate_nodes": [
+            "1",
+            "10",
+            "11",
+            "12",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ],
+          "unmatched_draft_nodes": [
+            "1",
+            "10",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ],
+          "unmatched_candidate_members": [
+            "1",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16",
+            "17",
+            "18",
+            "19",
+            "2",
+            "20",
+            "21",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ],
+          "unmatched_draft_members": [
+            "1",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ]
+        },
+        "comparison": {
+          "matched_nodes": 0,
+          "matched_members": 0,
+          "unmatched_candidate_nodes": [
+            "1",
+            "10",
+            "11",
+            "12",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ],
+          "unmatched_draft_nodes": [
+            "1",
+            "10",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ],
+          "unmatched_candidate_members": [
+            "1",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16",
+            "17",
+            "18",
+            "19",
+            "2",
+            "20",
+            "21",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ],
+          "unmatched_draft_members": [
+            "1",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ]
+        },
+        "status": "review_required"
+      },
+      "candidate_only_scores": {
+        "nodes": {
+          "tp": 12,
+          "fp": 0,
+          "fn": 0,
+          "f1": 1.0
+        },
+        "members": {
+          "tp": 21,
+          "fp": 0,
+          "fn": 0,
+          "f1": 1.0
+        }
+      }
+    },
+    {
+      "image_id": "wall_truss",
+      "input_image_path": "../compact_01/images/wall_truss.png",
+      "input_sha256": "1fb972a682508d1955fe12a2be48b85c362bac06a0bfd0bb3f12902b0ef78403",
+      "response_sha256": "dcbfe837be0479eb15b86b316d9ed31525e1f16e3d1d60c672d07595a73cbacd",
+      "first_raw_response_sha256": "d39916feff1d278a28041853497fdadeb2f6b8502a3f953d1776846e4ca37313",
+      "reference_sha256": "11b0d1f6cd8b32266016789c3bf3189c79322ea35e10020040b7033f68a5e058",
+      "reference_read_after_extraction": true,
+      "primary_image_model_unchanged": true,
+      "candidates": {
+        "method": "grey-joint-graph/v1",
+        "source": "derived",
+        "confidence": null,
+        "image_hash": "1fb972a682508d1955fe12a2be48b85c362bac06a0bfd0bb3f12902b0ef78403",
+        "file_sha256": "1fb972a682508d1955fe12a2be48b85c362bac06a0bfd0bb3f12902b0ef78403",
+        "width_px": 500,
+        "height_px": 303,
+        "issue_id": "pixel-topology-review",
+        "nodes": [
+          {
+            "id": 1,
+            "point": [
+              0.4627676405442464,
+              0.15580341582432905
+            ],
+            "grey_ring_fraction": 1.0
+          },
+          {
+            "id": 2,
+            "point": [
+              0.22845691382765532,
+              0.5264900662251656
+            ],
+            "grey_ring_fraction": 1.0
+          },
+          {
+            "id": 3,
+            "point": [
+              0.4627676405442464,
+              0.5266643429766469
+            ],
+            "grey_ring_fraction": 1.0
+          },
+          {
+            "id": 4,
+            "point": [
+              0.7014028056112225,
+              0.5256135566809506
+            ],
+            "grey_ring_fraction": 0.9325842696629213
+          },
+          {
+            "id": 5,
+            "point": [
+              0.22814049150933444,
+              0.9363889857093064
+            ],
+            "grey_ring_fraction": 1.0
+          }
+        ],
+        "members": [
+          {
+            "id": 1,
+            "i": 1,
+            "j": 2,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 2,
+            "i": 1,
+            "j": 3,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 3,
+            "i": 1,
+            "j": 4,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 4,
+            "i": 2,
+            "j": 3,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 5,
+            "i": 2,
+            "j": 5,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 6,
+            "i": 3,
+            "j": 4,
+            "grey_coverage": 1.0
+          },
+          {
+            "id": 7,
+            "i": 3,
+            "j": 5,
+            "grey_coverage": 1.0
+          }
+        ],
+        "original_geometry": {
+          "nodes": [
+            {
+              "id": 1,
+              "u": 0.205,
+              "v": 0.885
+            },
+            {
+              "id": 2,
+              "u": 0.205,
+              "v": 0.505
+            },
+            {
+              "id": 3,
+              "u": 0.455,
+              "v": 0.505
+            },
+            {
+              "id": 4,
+              "u": 0.705,
+              "v": 0.505
+            },
+            {
+              "id": 5,
+              "u": 0.455,
+              "v": 0.115
+            },
+            {
+              "id": 6,
+              "u": 0.205,
+              "v": 0.115
+            }
+          ],
+          "members": [
+            {
+              "id": 1,
+              "i": 1,
+              "j": 2
+            },
+            {
+              "id": 2,
+              "i": 2,
+              "j": 3
+            },
+            {
+              "id": 3,
+              "i": 3,
+              "j": 4
+            },
+            {
+              "id": 4,
+              "i": 3,
+              "j": 5
+            },
+            {
+              "id": 5,
+              "i": 4,
+              "j": 5
+            },
+            {
+              "id": 6,
+              "i": 2,
+              "j": 5
+            },
+            {
+              "id": 7,
+              "i": 1,
+              "j": 6
+            },
+            {
+              "id": 8,
+              "i": 6,
+              "j": 5
+            }
+          ]
+        },
+        "initial_comparison": {
+          "matched_nodes": 0,
+          "matched_members": 0,
+          "unmatched_candidate_nodes": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5"
+          ],
+          "unmatched_draft_nodes": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "unmatched_candidate_members": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7"
+          ],
+          "unmatched_draft_members": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8"
+          ]
+        },
+        "comparison": {
+          "matched_nodes": 0,
+          "matched_members": 0,
+          "unmatched_candidate_nodes": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5"
+          ],
+          "unmatched_draft_nodes": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "unmatched_candidate_members": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7"
+          ],
+          "unmatched_draft_members": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8"
+          ]
+        },
+        "status": "review_required"
+      },
+      "candidate_only_scores": {
+        "nodes": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0,
+          "f1": 1.0
+        },
+        "members": {
+          "tp": 7,
+          "fp": 0,
+          "fn": 0,
+          "f1": 1.0
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "两张已用于开发的公开图，非独立验证，未经外部专家复核",
+    "候选单独评分，不替换节点、杆件或工程绑定，主模型未修复",
+    "新增像素核对问题计入原问题误报口径，不改参考或容差",
+    "只接受一个灰色闭合杆图，无圆点、链状、多图样、照片尚不适用"
+  ]
+}

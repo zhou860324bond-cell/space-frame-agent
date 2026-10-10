@@ -1,0 +1,76 @@
+{
+  "units": "N-m-Pa",
+  "nodes": [
+    {
+      "id": 1,
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    {
+      "id": 2,
+      "x": 3,
+      "y": 0,
+      "z": 0
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2,
+      "section": "SEC",
+      "material": "STEEL"
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "name": "BC-1"
+    }
+  ],
+  "materials": [
+    {
+      "name": "STEEL",
+      "E": 200000000000,
+      "nu": 0.3
+    }
+  ],
+  "sections": [
+    {
+      "name": "SEC",
+      "A": 0.01,
+      "Iy": 2e-05,
+      "Iz": 2e-05,
+      "J": 5e-06
+    }
+  ],
+  "schema_version": 1,
+  "load_cases": [
+    {
+      "name": "P",
+      "nodal_loads": [
+        {
+          "node": 2,
+          "load": [
+            0,
+            0,
+            -1000,
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ],
+  "combos": []
+}

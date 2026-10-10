@@ -40,7 +40,9 @@ draft = result.draft
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,7 +50,7 @@ from typing import Any, Callable
 
 from recognition_draft import DRAFT_FORMAT, RecognitionDraft
 from multimodal_workflow import (V2_DRAFT_FORMAT, MultimodalControllerState,
-                                 validate_v2_draft)
+                                 prepare_vision_entities, validate_v2_draft)
 
 
 IMAGE_MIME_TYPES = {
@@ -108,7 +110,7 @@ entities，kind 使用 support 或 load。support 的 target.node 必须指向�
 """
 
 V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一个 JSON 对象，
-不要 Markdown、不要解释。
+不要 Markdown、不要解释。输出紧凑 JSON，不加缩进、空行或重复的簿记字段。
 
 **只需要输出下面这四个字段**，其余簿记字段由调用方填写，你写了也会被覆盖：
 
@@ -121,10 +123,12 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
       "nodal_loads":[{"node": 7, "name": "P1", "value": 30, "unit": "kN",
                       "direction": [1, 0, 0]}],
       "member_loads":[{"member": 7, "name": "q1", "value": 18, "unit": "kN/m",
-                       "direction": [0, 0, -1]}]}]
+                       "direction": [0, 0, -1]}],
+      "member_spans":[{"member": 8, "name": "q2", "kind": "partial",
+                       "value": 12, "unit": "kN/m", "direction": [0, 0, -1],
+                       "range": {"start": 1000, "end": 3000, "unit": "mm"}}]}]
   },
-  "entities":  [{"id": "E1", "kind": "member", "member": 1, "confidence": 0.9,
-                 "image_geometry": {"line": [[0.12,0.83],[0.12,0.18]]}}],
+  "entities":  [{"id": "E1", "kind": "member", "target": {"member": 1}, "confidence": 0.9}],
   "dimensions":[{"id": "D1", "text": "6000", "unit": "mm",
                  "image_geometry": {"line": [[0.12,0.95],[0.5,0.95]]}}],
   "issues":    [{"id": "I1", "category": "low_confidence",
@@ -140,6 +144,8 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
 2. **节点坐标用 u/v**，取值 0~1 的归一化图片坐标，原点在左上角。不要用像素。
 3. **杆件按最小单元拆分**：一根柱子跨两层就是两根杆件，中间那个节点必须建出来；
    一层里两跨的梁是两根杆件，不是一根。杆件只能引用已经列出的节点 id。
+   每个无向端点对只列一次，i/j 对调仍是同一杆件，不得自连接。
+   怀疑实际双杆时只列一条几何边并报告待核实问题，不以重复边表达双杆。
 4. 节点 id 与杆件 id 都是从 1 开始的正整数，各自不重复。
    **节点必须按固定顺序编号：先按 v 从大到小分层（图片下方的先编），
    同一层内按 u 从小到大（左边的先编）。** 视觉模型给的编号本来是任意的，
@@ -151,11 +157,53 @@ V2_SKETCH_SYSTEM_PROMPT = """你是结构工程草图识别助手。只输出一
 6. **荷载照抄图上的数字和单位，不要自己换算。** value 写图上标的数值、
    unit 写图上标的单位（kN、kN/m、kN·m）、direction 写箭头指向的单位向量
    （向下是 [0,0,-1]，向右是 [1,0,0]）。换算成求解器单位是代码的事。
+   以上方向示例适用于 XZ 平面；若调用方提供其他工作平面，向右沿 first_axis
+   正向、向下沿 second_axis 负向，必须按所提供的 axis_mapping 写全局方向。
    图上没写数值的荷载，只写进 issues，不要凭箭头长短猜大小。
 7. 只写图里有证据的东西。不得补材料、截面、默认支座、默认荷载或默认尺寸。
    看不清、拿不准的一律写进 issues，不要猜。
 8. 图上没有可靠尺寸时，坐标只保持相对比例，并在 issues 里要求用户标定；
    绝不能把相对坐标当成米。
+9. 每个节点、杆件、支座、荷载都要提供一条 entities 观察记录，confidence 为
+   0~1 的识别确定性；无法判断时写 null，不能用高分掩盖不确定性。
+   target 分别写 {"node":1}、{"member":1}、
+   {"support":{"node":1,"name":"S1"}}、
+   {"load":{"case":"D","collection":"nodal_loads","name":"P1"}}。
+   支座和荷载须有对应名称。节点、杆件的 entities 不再重复 image_geometry，
+   调用方从 image_model 的 u/v 和 i/j 原样复用位置；仍逐项保留 target 和 confidence。
+   支座、荷载符号和尺寸的独立可见证据位置仍写 image_geometry，不能用节点代替符号。
+   人工审核由用户完成，不得输出 verified 或 source=user，也不得将问题标为已解决。
+10. **先区分结构主体与辅助图，再提取拓扑。** 尺寸线、坐标轴、文字引线、
+    剪力图、弯矩图、变形曲线及其他结果图均不是杆件。
+    同图有初始位形和变形轮廓时，按初始位形提取梁轴；无法区分时报告问题，
+    不得将变形后的曲线端点替代原结构节点。
+11. **节点位置取杆件中心轴。** 厚线或矩形梁用两边界的中线，不取外轮廓；
+    支座节点是梁轴上的附着位置，不是三角形顶点、墙体边缘或文字位置。
+    u/v 应尽量保留四位小数，位置仍必须有可见证据，不能用多位小数掩盖不确定。
+12. 仅在杆件端点、真实连接、支座或集中荷载作用点建节点。字母标注的中点、
+    尺寸分界或均布荷载图中单独的文字，不构成新增节点和杆件分段的证据。
+13. **先判断箭头表示的物理量。** 支座旁明确标出的反力（例如 RA、RB）、
+    剪力图/弯矩图的箭头不是外加荷载；不要写进 load_cases。
+    不能区分反力和外荷载时只报告待核实问题，不选择一个用于求解。
+    外荷载只有符号而没有数值/单位时，以 load_incomplete 问题保留作用节点或杆件，
+    不得写 value=null 的求解荷载，更不能补零或推算数值。
+14. **集中力和集中矩即使只有符号，也必须保留作用点。** 先逐个检查所有外加
+    直箭头的接触点及圆弧箭头的中心所在梁截面，将作用点投影到初始梁中轴，
+    在该处建立节点并拆分相邻杆件，再用 load_incomplete 引用 node:id。
+    不以箭头尾端、圆弧外缘或字母位置建节点；不要因数值未知只保留梁两端。
+    位置本身无法辨认时报告待核实问题，不推算位置。
+15. **分布荷载只施加在实际覆盖范围。** 看清箭头列的起止边界，不把局部
+    荷载扩大成整跨；数值可用且边界处确有荷载起止证据时可拆分杆件，只引用覆盖段。
+    member_loads 仅表示所引用杆件的整段均布荷载。范围在杆件内部且图上
+    明确标注距 i 端的长度时，使用 member_spans、kind=partial，range.start/end
+    照抄长度及 range.unit（m/mm/cm），代码换算为 a/b；不是像素、比例或米的猜测。
+    范围或数值/单位未知时保留 load_incomplete，引用覆盖杆件并记录可见起止
+    线段 image_geometry；符号分布范围不强制新建节点。不得补全跨范围、默认强度或零向量。
+16. 集中力 direction 是全局力方向；集中矩 direction 是右手定则的全局转轴，
+    unit 使用 N·m/kN·m，代码写入 [Fx,Fy,Fz,Mx,My,Mz] 的后三项。
+    例如 XZ 平面绕 +Y 的集中矩：{"node":3,"name":"M1","value":5,
+    "unit":"kN·m","direction":[0,1,0]}。顺逆时针与转轴关系须结合
+    工作平面；看不清旋向时仅报告问题。不能把力矩单位用于力或分布强度。
 """
 
 
@@ -201,6 +249,8 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
     payload["merge_plan"] = None
     payload["revision"] = 0
     payload["confirmation"] = None
+    # 像素证据只能由本地读图生成，不能采信视觉响应自报的核对记录。
+    payload.pop("joint_graph_review", None)
 
     source = payload.get("source")
     observed = dict(source) if isinstance(source, dict) else {}
@@ -257,6 +307,7 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
     payload["issues"] = [
         _as_issue(item, index)
         for index, item in enumerate(list(payload["issues"]) + guessed, 1)]
+    prepare_vision_entities(payload)
     return payload
 
 
@@ -264,6 +315,9 @@ def _fill_bookkeeping(payload: Any, image_hash: str, source_path: str) -> Any:
 _UNIT_FACTORS = {"n": 1.0, "kn": 1e3, "n/m": 1.0, "kn/m": 1e3,
                  "n·m": 1.0, "n.m": 1.0, "nm": 1.0,
                  "kn·m": 1e3, "kn.m": 1e3, "knm": 1e3}
+_FORCE_UNITS = {"n", "kn"}
+_DENSITY_UNITS = {"n/m", "kn/m"}
+_MOMENT_UNITS = set(_UNIT_FACTORS) - _FORCE_UNITS - _DENSITY_UNITS
 # 报错时给人看的写法。_UNIT_FACTORS 的键是归一化后的（小写、去空格、
 # 认几种点号写法），直接抖出去会让人以为要写 "knm" 才认。
 _UNIT_DISPLAY = "N、kN、N/m、kN/m、N·m、kN·m"
@@ -288,50 +342,97 @@ def _convert_case_loads(case: dict) -> list[dict]:
     原话（值、单位、方向）带上让人来判。闷掉的后果是整条荷载凭空消失，
     而模型照样算得出一个像模像样的结果。
     """
-    def factor(unit: Any) -> float | None:
-        return _UNIT_FACTORS.get(str(unit or "").strip().lower().replace(" ", ""))
-
-    def vector(item: dict, size: int) -> list[float] | None:
-        scale = factor(item.get("unit"))
+    def vector(item: dict, size: int, units: set[str]) -> list[float] | None:
+        unit = str(item.get("unit") or "").strip().lower().replace(" ", "")
+        scale = _UNIT_FACTORS.get(unit) if unit in units else None
         direction = item.get("direction")
         value = item.get("value")
         if scale is None or not isinstance(direction, (list, tuple)):
             return None
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(float(value))):
+            return None
+        if len(direction) not in (3, size) or any(
+                not isinstance(component, (int, float)) or isinstance(component, bool)
+                or not math.isfinite(float(component)) for component in direction):
+            return None
+        offset = 3 if size == 6 and unit in _MOMENT_UNITS else 0
+        if size == 6 and len(direction) == 6 and any(
+                direction[index] != 0 for index in range(6) if not offset <= index < offset + 3):
             return None
         out = [0.0] * size
-        for index in range(min(size, len(direction))):
-            component = direction[index]
+        for index in range(3):
+            source = index + offset if len(direction) == 6 else index
+            component = direction[source]
             if isinstance(component, (int, float)) and not isinstance(component, bool):
-                out[index] = float(value) * scale * float(component)
+                out[index + offset] = float(value) * scale * float(component)
         return out
 
     problems: list[dict] = []
 
-    def convert(items: Any, key: str, size: int, ref: str, label: str) -> None:
-        for item in items or []:
+    def load_target(item: dict, collection: str, index: int = 1) -> dict:
+        if case.get("name"):
+            return {"load_target": {"case": case["name"], "collection": collection,
+                                    "name": item.get("name") or f"{collection}-{index}"}}
+        return {}
+
+    def convert(items: Any, key: str, size: int, ref: str, label: str,
+                units: set[str]) -> None:
+        collection = {"load": "nodal_loads", "w": "member_loads", "w1": "member_spans"}[key]
+        for index, item in enumerate(items or [], 1):
             if not isinstance(item, dict):
                 continue
             if not isinstance(item.get(key), (list, tuple)):
-                got = vector(item, size)
+                got = vector(item, size, units)
                 if got is None:
+                    if all(item.get(k) is None for k in ("value", "unit", "direction")):
+                        components = "Fx/Fy/Fz/Mx/My/Mz" if key == "load" else "全局 X/Y/Z 分量"
+                        message = (f"{label} {item.get(ref)} 的荷载 {item.get('name') or f'{collection}-{index}'} "
+                                   f"尚未提供有效分量。请在对应荷载编辑器中明确填写 {components}；"
+                                   "确认该分量为零时输入 0，不能用默认零值代替缺失值。")
+                    else:
+                        message = (f"{label} {item.get(ref)} 上这条荷载没能换算："
+                                   f"值 {item.get('value')!r}、单位 {item.get('unit')!r}、"
+                                   f"方向 {item.get('direction')!r}。认得的单位是 {_UNIT_DISPLAY}。"
+                                   "请确认图上写的是什么，或直接给出分量向量。")
                     problems.append({
                         "category": "load_incomplete", "severity": "blocking",
+                        **load_target(item, collection, index),
+                        "observations": [deepcopy(item)],
                         "entity_refs": [f"{ref}:{item.get(ref)}"],
-                        "message": (
-                            f"{label} {item.get(ref)} 上这条荷载没能换算："
-                            f"值 {item.get('value')!r}、单位 {item.get('unit')!r}、"
-                            f"方向 {item.get('direction')!r}。认得的单位是 "
-                            f"{_UNIT_DISPLAY}。"
-                            "请确认图上写的是什么，或直接给出分量向量。"),
+                        "message": message,
                     })
                 else:
                     item[key] = got
             for scaffold in ("value", "unit", "direction"):
                 item.pop(scaffold, None)
 
-    convert(case.get("nodal_loads"), "load", 6, "node", "节点")
-    convert(case.get("member_loads"), "w", 3, "member", "杆件")
+    convert(case.get("nodal_loads"), "load", 6, "node", "节点", _FORCE_UNITS | _MOMENT_UNITS)
+    convert(case.get("member_loads"), "w", 3, "member", "杆件", _DENSITY_UNITS)
+    for index, item in enumerate(case.get("member_spans") or [], 1):
+        if not isinstance(item, dict):
+            continue
+        if not item.get("name"):
+            item["name"] = f"member_spans-{index}"
+        kind = item.get("kind")
+        units = _FORCE_UNITS if kind == "point" else _MOMENT_UNITS if kind == "moment" else _DENSITY_UNITS
+        convert([item], "w1", 3, "member", "杆件", units)
+        observed_range = item.pop("range", None)
+        range_valid = observed_range is None
+        if isinstance(observed_range, dict) and kind == "partial":
+            factor = {"m": 1.0, "mm": 0.001, "cm": 0.01}.get(observed_range.get("unit"))
+            a, b = observed_range.get("start"), observed_range.get("end")
+            if (factor is not None and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                          and math.isfinite(v) for v in (a, b)) and 0 <= a < b):
+                item.update(a=a * factor, b=b * factor)
+                range_valid = True
+        if not range_valid or (kind == "partial" and (not all(isinstance(item.get(k), (int, float))
+                and not isinstance(item[k], bool) and math.isfinite(item[k]) for k in ("a", "b"))
+                or not 0 <= item["a"] < item["b"])):
+            problems.append({"category": "load_incomplete", "severity": "blocking",
+                **load_target(item, "member_spans", index),
+                "entity_refs": [f"member:{item.get('member')}"],
+                "message": f"局部分布荷载缺少有效作用范围：{observed_range!r}。请确认距杆件 i 端的起止长度和单位，不能按整跨施加。"})
     return problems
 
 
@@ -396,8 +497,8 @@ def _as_issue(item: Any, index: int) -> dict:
         got = {**skeleton, **item}
         got["entity_refs"] = list(got.get("entity_refs") or [])
         got["message"] = str(got.get("message") or "")
-        if got.get("status") not in ("open", "resolved"):
-            got["status"] = "open"
+        # 识别模型没有人工审核权限，不能替用户消除阻断问题。
+        got.update(status="open", resolution=None, resolved_by=None)
         return got
     return {**skeleton, "message": str(item)}
 
@@ -412,6 +513,7 @@ class V2ParseResult:
     errors: list[str] = field(default_factory=list)
     raw_responses: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
+    call_metadata: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SketchParser:
@@ -441,18 +543,50 @@ class SketchParser:
         self._temperature = temperature
         self._system_prompt = system_prompt
         self._client = None
+        self._last_call_metadata: dict[str, Any] = {}
+
+    def request_options(self) -> dict[str, Any]:
+        """记录实际请求参数；视觉提取直接输出结构，避免默认推理占满输出预算。"""
+        options = {"max_tokens": 4000}
+        if self._provider != "anthropic":
+            options["temperature"] = self._temperature
+        if self._provider == "deepseek" and self._model in (
+                "deepseek-flash", "deepseek-v4-flash-vision-exp"):
+            options["extra_body"] = {"thinking": {"type": "disabled"}}
+        return options
+
+    def _record_call_metadata(self, response: Any, raw: str, *,
+                              finish_reason: Any, reasoning_present: bool = False) -> None:
+        """只记录诊断标量，不保存密钥、请求全文或模型推理内容。"""
+        metadata = {"content_characters": len(raw), "has_reasoning_content": reasoning_present}
+        if isinstance(finish_reason, str):
+            metadata["finish_reason"] = finish_reason
+        usage = getattr(response, "usage", None)
+        names = (("input_tokens", "prompt_tokens"), ("output_tokens", "completion_tokens")) \
+            if self._provider == "anthropic" else (("prompt_tokens", "prompt_tokens"),
+                ("completion_tokens", "completion_tokens"), ("total_tokens", "total_tokens"))
+        for source, target in names:
+            value = getattr(usage, source, None)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                metadata[target] = value
+        details = getattr(usage, "completion_tokens_details", None)
+        reasoning_tokens = getattr(details, "reasoning_tokens", None)
+        if isinstance(reasoning_tokens, int) and not isinstance(reasoning_tokens, bool) and reasoning_tokens >= 0:
+            metadata["reasoning_tokens"] = reasoning_tokens
+        self._last_call_metadata = metadata
 
     @staticmethod
     def _default_model(provider: str) -> str:
         # DeepSeek 平台上**没有** deepseek-vl（那是开源权重的名字，不是 API 上的
-        # 模型）。官方文档列出的可接收图片的模型是 deepseek-v4-flash-vision-exp，
+        # 模型）。2026-10-09 核对官方 Vision 文档及 /models，当前入口为 deepseek-flash；
+        # 旧视觉实验名称仍是别名，但不再作为默认值。
         # 走标准 OpenAI 兼容的 chat/completions，content 用块数组 + base64 data URL。
         # 用错名字的表现是 model not found，而不是识别不准，很容易被误读成
         # "多模态没跑通"。
         return {
             "openai": "gpt-4o",
             "anthropic": "claude-3-5-sonnet-20241022",
-            "deepseek": "deepseek-v4-flash-vision-exp",
+            "deepseek": "deepseek-flash",
         }.get(provider, "gpt-4o")
 
     @staticmethod
@@ -535,7 +669,7 @@ class SketchParser:
         ]
         if correction:
             user_content.insert(1, {"type": "text", "text":
-                f"上一次的输出有以下错误，请修正后重新输出：\n{correction}\n"
+                f"识别上下文及格式修正要求：\n{correction}\n"
                 f"只输出修正后的 JSON，不要输出其他文字。"})
 
         if self._provider in ("openai", "deepseek"):
@@ -545,26 +679,34 @@ class SketchParser:
                     {"role": "system", "content": system_prompt or self._system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                temperature=self._temperature,
-                max_tokens=4000,
+                **self.request_options(),
             )
-            return response.choices[0].message.content or ""
+            choice = response.choices[0] if response.choices else None
+            raw = (choice.message.content or "") if choice else ""
+            self._record_call_metadata(response, raw,
+                finish_reason=getattr(choice, "finish_reason", "missing_choice"),
+                reasoning_present=bool(getattr(getattr(choice, "message", None), "reasoning_content", None)))
+            return raw
         elif self._provider == "anthropic":
             content: list[dict[str, Any]] = [
                 {"type": "text", "text": "请识别这张结构草图，输出 JSON 格式的识别草稿。"},
             ]
             if correction:
                 content.append({"type": "text", "text":
-                    f"上一次的输出有以下错误，请修正后重新输出：\n{correction}\n"
+                    f"识别上下文及格式修正要求：\n{correction}\n"
                     "只输出修正后的 JSON，不要输出其他文字。"})
             content.append(self._anthropic_image(image_data_url))
             response = client.messages.create(
                 model=self._model,
-                max_tokens=4000,
+                **self.request_options(),
                 system=system_prompt or self._system_prompt,
                 messages=[{"role": "user", "content": content}],
             )
-            return response.content[0].text if response.content else ""
+            blocks = response.content or []
+            raw = "".join(block.text for block in blocks if isinstance(getattr(block, "text", None), str))
+            self._record_call_metadata(response, raw, finish_reason=getattr(response, "stop_reason", None),
+                reasoning_present=any(getattr(block, "type", None) == "thinking" for block in blocks))
+            return raw
         return ""
 
     @staticmethod
@@ -655,10 +797,12 @@ class SketchParser:
         self, image_path: str | Path, state: MultimodalControllerState,
         job_id: str, *, max_repairs: int = 2,
         is_cancelled: Callable[[], bool] | None = None,
+        work_plane: dict | None = None,
+        review_actions: bool = False,
     ) -> V2ParseResult:
         """Recognize a v2 draft and atomically deliver it to the controller.
 
-        A malformed response may be repaired at most ``max_repairs`` times. API
+        A malformed or truncated response may be repaired at most ``max_repairs`` times. API
         failures stop immediately. Cancellation cannot abort a provider socket,
         but its response is discarded and can never enter the controller.
         """
@@ -669,7 +813,12 @@ class SketchParser:
         start = time.monotonic()
         result = V2ParseResult()
         image_data = self._encode_image(image_path)
-        correction = f"当前派生图片的 SHA-256 是 {state.image_hash}。"
+        context = f"当前派生图片的 SHA-256 是 {state.image_hash}。"
+        if work_plane is not None:
+            from image_preprocess import work_plane_payload
+            plane = work_plane_payload(work_plane["plane"], offset=work_plane["offset"], confirmed=True)
+            context += "用户已确认的工作平面：" + json.dumps(plane, ensure_ascii=False) + "。"
+        correction = context
 
         def cancelled() -> bool:
             return bool((is_cancelled and is_cancelled())
@@ -681,6 +830,7 @@ class SketchParser:
                 state.cancel_recognition(job_id)
                 result.cancelled = True
                 break
+            self._last_call_metadata = {}
             try:
                 raw = self._call_llm(
                     image_data, correction, system_prompt=V2_SKETCH_SYSTEM_PROMPT)
@@ -689,11 +839,65 @@ class SketchParser:
                     state.cancel_recognition(job_id)
                     result.cancelled = True
                     break
+                if self._last_call_metadata.get("finish_reason") in ("length", "max_tokens"):
+                    raise ValueError("视觉接口输出达到长度限制，草稿不完整。请重新输出完整紧凑 JSON；节点和杆件观察不重复位置，不得省略结构对象、置信度或待核实问题。仍超限时请裁剪到结构主体后重新识别。")
+                if not raw.strip():
+                    raise RuntimeError("视觉接口未返回识别内容。请检查模型是否支持图片，并裁剪到结构主体后重新识别。")
                 payload = self._extract_json(raw)
                 payload = _fill_bookkeeping(payload, state.image_hash, str(image_path))
                 errors = validate_v2_draft(payload)
                 if errors:
                     raise ValueError("；".join(errors))
+                from sketch_axis_refinement import refine_horizontal_axis, refine_joint_nodes, review_joint_graph
+                payload = refine_horizontal_axis(payload, image_path)
+                payload = refine_joint_nodes(payload, image_path)
+                payload = review_joint_graph(payload, image_path)
+                if review_actions:
+                    from PIL import Image, ImageOps
+                    from sketch_action_review import ACTION_REVIEW_PROMPT, apply_action_review
+                    if self._last_call_metadata:
+                        result.call_metadata.append({"attempt": attempt, "stage": "geometry", **self._last_call_metadata})
+                    self._last_call_metadata = {}
+                    if cancelled():
+                        state.cancel_recognition(job_id)
+                        result.cancelled = True
+                        break
+                    try:
+                        with Image.open(image_path) as source_image:
+                            width, height = ImageOps.exif_transpose(source_image).size
+                        payload["source"].update(width_px=width, height_px=height)
+                        action_context = "待审核几何（只引用其中的杆件编号，不默认完整）：" + json.dumps(
+                            {"nodes": payload["image_model"]["nodes"], "members": payload["image_model"]["members"],
+                             "support_nodes": [s["node"] for s in payload["image_model"].get("supports", [])]},
+                            ensure_ascii=False)
+                        result.attempts += 1
+                        focused_raw = self._call_llm(image_data, action_context, system_prompt=ACTION_REVIEW_PROMPT)
+                        result.raw_responses.append(focused_raw)
+                        if cancelled():
+                            state.cancel_recognition(job_id)
+                            result.cancelled = True
+                            break
+                        if (not focused_raw.strip() or self._last_call_metadata.get("finish_reason") in ("length", "max_tokens")):
+                            raise ValueError("作用点复核内容为空或截断，请人工补充作用节点。")
+                        payload = apply_action_review(payload, self._extract_json(focused_raw), image_path=image_path)
+                    except Exception as exc:  # noqa: BLE001 - 单次可选视觉复核失败仍保留基础草稿
+                        detail = str(exc).rstrip("。")
+                        message = f"作用点复核未完成：{type(exc).__name__}: {detail}。请人工核对并补充作用节点。"
+                        result.errors.append(message)
+                        payload["action_review"] = {"status": "failed", "message": message}
+                        payload.setdefault("issues", []).append({"id": "action-review-failed",
+                            "category": "load_incomplete", "severity": "blocking", "status": "open",
+                            "entity_refs": [], "message": message, "resolution": None, "resolved_by": None})
+                    finally:
+                        if self._last_call_metadata:
+                            result.call_metadata.append({"attempt": result.attempts, "stage": "action_review", **self._last_call_metadata})
+                        self._last_call_metadata = {}
+                    if cancelled():
+                        state.cancel_recognition(job_id)
+                        result.cancelled = True
+                        break
+                from sketch_axis_refinement import sync_joint_graph_review
+                payload = sync_joint_graph_review(payload)
                 if not state.complete_recognition(job_id, payload):
                     result.cancelled = True
                     break
@@ -703,12 +907,14 @@ class SketchParser:
             except (json.JSONDecodeError, ValueError) as exc:
                 message = f"第{attempt}次 v2 校验失败: {exc}"
                 result.errors.append(message)
-                correction = (f"当前派生图片的 SHA-256 是 {state.image_hash}。"
-                              f"上次输出错误：{exc}。严格修复为 v2 JSON。")
+                correction = context + f"上次输出错误：{exc}。请重新看同一张图，输出完整紧凑 v2 JSON。重复端点对须核对原图后修正，不得仅删除报错项或遗漏真实杆件；不补全截断片段。"
             except Exception as exc:  # noqa: BLE001 - provider/network boundary
                 result.errors.append(
                     f"第{attempt}次 API 调用失败: {type(exc).__name__}: {exc}")
                 break
+            finally:
+                if self._last_call_metadata:
+                    result.call_metadata.append({"attempt": attempt, **self._last_call_metadata})
 
         if not result.success and not result.cancelled \
                 and state.job_status == "running" and state.job_id == job_id:

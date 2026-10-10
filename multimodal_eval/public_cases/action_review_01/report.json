@@ -1,0 +1,490 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "mode": "frozen-response",
+  "manifest": "manifest.json",
+  "gate_cases": 3,
+  "evaluated_image_ids": [
+    "cantilever",
+    "point_load",
+    "various_loads"
+  ],
+  "case_reports": [
+    {
+      "image_id": "cantilever",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": null,
+        "support_f1": 1.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 4
+      },
+      "counts": {
+        "nodes": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 4,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    },
+    {
+      "image_id": "point_load",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": null,
+        "support_f1": 0.5,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 5
+      },
+      "counts": {
+        "nodes": {
+          "tp": 3,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 3,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 1
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 2,
+          "fp": 5,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    },
+    {
+      "image_id": "various_loads",
+      "metrics": {
+        "node_f1": 0.75,
+        "member_f1": 0.3333333333333333,
+        "clear_node_f1": null,
+        "clear_member_f1": null,
+        "intersection_accuracy": null,
+        "support_f1": 1.0,
+        "load_f1": null,
+        "load_numeric_unit_accuracy": null,
+        "scale_accuracy": null,
+        "issue_recall": 0.5,
+        "issue_false_positives": 12
+      },
+      "counts": {
+        "nodes": {
+          "tp": 3,
+          "fp": 1,
+          "fn": 1
+        },
+        "members": {
+          "tp": 1,
+          "fp": 2,
+          "fn": 2
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 2,
+          "fp": 12,
+          "fn": 2
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 0
+        }
+      },
+      "missing_nodes": [
+        "3"
+      ],
+      "extra_nodes": [
+        "4"
+      ],
+      "missing_members": [
+        "2",
+        "3"
+      ],
+      "extra_members": [
+        "2",
+        "3"
+      ]
+    }
+  ],
+  "metrics": {
+    "node_f1": 0.8888888888888888,
+    "member_f1": 0.6666666666666666,
+    "clear_node_f1": 1.0,
+    "clear_member_f1": 1.0,
+    "intersection_accuracy": null,
+    "support_f1": 0.8,
+    "load_f1": null,
+    "load_numeric_unit_accuracy": null,
+    "scale_accuracy": null,
+    "issue_recall": 0.7142857142857143,
+    "issue_false_positives": 21
+  },
+  "counts": {
+    "nodes": {
+      "tp": 8,
+      "fp": 1,
+      "fn": 1
+    },
+    "members": {
+      "tp": 4,
+      "fp": 2,
+      "fn": 2
+    },
+    "clear_nodes": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_members": {
+      "tp": 3,
+      "fp": 0,
+      "fn": 0
+    },
+    "supports": {
+      "tp": 4,
+      "fp": 1,
+      "fn": 1
+    },
+    "loads": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "issues": {
+      "tp": 5,
+      "fp": 21,
+      "fn": 2
+    },
+    "intersections": {
+      "correct": 0,
+      "wrong": 0,
+      "fp": 0,
+      "fn": 0
+    },
+    "scale": {
+      "correct": 0,
+      "total": 0
+    },
+    "load_numeric": {
+      "correct": 0,
+      "total": 0
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [
+    "member_f1",
+    "intersection_accuracy",
+    "load_f1"
+  ],
+  "passed": false,
+  "sample_kind": "external-real-world-pilot",
+  "case_outcomes": [
+    {
+      "image_id": "cantilever",
+      "outcome": "PASS",
+      "attempts": 2,
+      "duration_ms": 7516.00000000326,
+      "errors": [],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "stage": "geometry",
+          "content_characters": 1267,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 2239,
+          "completion_tokens": 518,
+          "total_tokens": 2757
+        },
+        {
+          "attempt": 2,
+          "stage": "action_review",
+          "content_characters": 71,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 622,
+          "completion_tokens": 38,
+          "total_tokens": 660
+        }
+      ],
+      "action_review": {
+        "status": "completed",
+        "records": [],
+        "warnings": [
+          "图中仅见固定端与自由端的文字标注及指示箭头，未发现可定位的集中力或集中力矩作用点。"
+        ]
+      },
+      "review_actions": true
+    },
+    {
+      "image_id": "point_load",
+      "outcome": "PASS",
+      "attempts": 2,
+      "duration_ms": 4078.000000001339,
+      "errors": [],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "stage": "geometry",
+          "content_characters": 2124,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 2255,
+          "completion_tokens": 890,
+          "total_tokens": 3145
+        },
+        {
+          "attempt": 2,
+          "stage": "action_review",
+          "content_characters": 116,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 682,
+          "completion_tokens": 50,
+          "total_tokens": 732
+        }
+      ],
+      "action_review": {
+        "status": "completed",
+        "records": [
+          {
+            "observation": {
+              "id": "A1",
+              "kind": "force",
+              "member": 1,
+              "point": [
+                0.5,
+                0.263
+              ],
+              "text": "图上集中力符号F，直箭头向下指向梁中部B点"
+            },
+            "node": 2,
+            "reason": null
+          }
+        ],
+        "warnings": []
+      },
+      "review_actions": true
+    },
+    {
+      "image_id": "various_loads",
+      "outcome": "PASS",
+      "attempts": 2,
+      "duration_ms": 5640.999999995984,
+      "errors": [],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "stage": "geometry",
+          "content_characters": 3314,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 2298,
+          "completion_tokens": 1217,
+          "total_tokens": 3515
+        },
+        {
+          "attempt": 2,
+          "stage": "action_review",
+          "content_characters": 262,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 684,
+          "completion_tokens": 124,
+          "total_tokens": 808
+        }
+      ],
+      "action_review": {
+        "status": "completed",
+        "records": [
+          {
+            "observation": {
+              "id": "A1",
+              "kind": "force",
+              "member": 1,
+              "point": [
+                0.52,
+                0.44
+              ],
+              "text": "斜向集中力箭头，箭头尖接触梁上缘"
+            },
+            "node": 3,
+            "reason": null
+          },
+          {
+            "observation": {
+              "id": "A2",
+              "kind": "moment",
+              "member": 1,
+              "point": [
+                0.81,
+                0.44
+              ],
+              "text": "顺时针圆弧箭头，圆弧中心位于梁上"
+            },
+            "node": 4,
+            "reason": null
+          }
+        ],
+        "warnings": [
+          "左侧水平红色箭头与支座反力/外力难以区分，未计入集中作用点",
+          "梁下红色竖直箭头为支座反力，已排除",
+          "蓝色分布荷载箭头列已排除"
+        ]
+      },
+      "review_actions": true
+    }
+  ],
+  "runtime": {
+    "attempted_cases": 3,
+    "parse_successes": 3,
+    "parse_failures": 0,
+    "total_calls": 6,
+    "median_duration_ms": 5640.999999995984,
+    "total_duration_ms": 17235.000000000582
+  },
+  "action_review": {
+    "attempted_cases": 3,
+    "completed_cases": 3,
+    "failed_or_missing_cases": 0
+  },
+  "limitations": [
+    "小样本单次结果，不代表真实手绘、手机照片或所有提供商的准确率。",
+    "无参考对象的指标为 null，不补成 100%；失败输入不从分母移除。"
+  ]
+}

@@ -12,11 +12,11 @@ import math
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
                                QListWidget, QListWidgetItem, QPushButton, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QScrollArea, QVBoxLayout, QWidget)
 
 from . import theme
 from .image_preprocess_widget import ImagePreprocessWidget
@@ -68,8 +68,14 @@ class SketchPanel(QWidget):
         self._highlight_refs: set[str] = set()
         self._drag_node_id: int | None = None
         self._drag_changed = False
+        self._recognition_generation = 0
+        self._missing_span_values: set[QDoubleSpinBox] = set()
+        self._missing_load_values: set[QDoubleSpinBox] = set()
 
         self._build_ui()
+        # 焦点在缩放框或节点列表时也先取消选点，避免触发外层窗口的 Esc 关闭。
+        for child in self.findChildren(QWidget):
+            child.installEventFilter(self)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -108,7 +114,7 @@ class SketchPanel(QWidget):
         self.txt_model.setPlaceholderText("模型名")
         self.txt_model.setToolTip(
             "多模态模型名称，如 gpt-4o / claude-3-5-sonnet-20241022 / "
-            "deepseek-v4-flash-vision-exp")
+            "deepseek-flash")
         self.txt_key = QLineEdit()
         self.txt_key.setPlaceholderText("API 密钥（不填读环境变量）")
         self.txt_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -136,6 +142,9 @@ class SketchPanel(QWidget):
         key_row.addWidget(QLabel("重试"))
         key_row.addWidget(self.spn_retries)
         settings_layout.addLayout(key_row)
+        self.chk_review_actions = QCheckBox("作用点复核")
+        self.chk_review_actions.setToolTip("基础识别后额外调用一次视觉接口，聚焦集中力、力矩位置及支座可见符号；可能增加耗时与费用，候选仍需人工审核。")
+        settings_layout.addWidget(self.chk_review_actions)
         self.settings_widget.setVisible(False)
         self.btn_settings.toggled.connect(self.settings_widget.setVisible)
         self.btn_settings.toggled.connect(
@@ -162,6 +171,9 @@ class SketchPanel(QWidget):
         self.preprocess_widget.image_changed.connect(self._on_preprocessed_image)
         self.preprocess_widget.work_plane_confirmed.connect(
             self._on_work_plane_confirmed)
+        self.preprocess_widget.work_plane_changed.connect(self._on_work_plane_changed)
+        self.preprocess_widget.processing_failed.connect(
+            lambda message: self.lbl_status.setText(f"图片预处理失败：{message}"))
         self.preprocess_widget.setVisible(False)
         layout.addWidget(self.preprocess_widget)
 
@@ -172,7 +184,30 @@ class SketchPanel(QWidget):
             f"border:1px dashed {theme.BORDER}; color:{theme.INK_MUTED}; "
             f"background:{theme.PANEL_ALT};")
         self.lbl_image.installEventFilter(self)
-        layout.addWidget(self.lbl_image)
+        self._preview_pixmap = QPixmap()
+        self._source_preview_pixmap = QPixmap()
+        self._source_preview_path = None
+        self.preview_scroll = QScrollArea()
+        self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_scroll.setMinimumHeight(180)
+        self.preview_scroll.setMaximumHeight(320)
+        self.preview_scroll.setWidget(self.lbl_image)
+        self.preview_scroll.viewport().installEventFilter(self)
+        preview_row = QHBoxLayout()
+        self.preview_zoom = QSpinBox()
+        self.preview_zoom.setRange(25, 400)
+        self.preview_zoom.setValue(100)
+        self.preview_zoom.setSuffix("%")
+        self.preview_zoom.setToolTip("相对适应图片的缩放比例；放大后可滚动查看和校核节点")
+        self.preview_zoom.valueChanged.connect(self._refresh_image_preview)
+        self.btn_fit_image = QPushButton("适应图片")
+        self.btn_fit_image.clicked.connect(lambda: self.preview_zoom.setValue(100))
+        preview_row.addWidget(QLabel("预览缩放"))
+        preview_row.addWidget(self.preview_zoom)
+        preview_row.addWidget(self.btn_fit_image)
+        preview_row.addStretch()
+        layout.addLayout(preview_row)
+        layout.addWidget(self.preview_scroll)
 
         self.lbl_confidence_legend = QLabel(
             "识别置信度：高 ≥90% · 中 75–89% · 低 <75% · 紫色为当前审核对象\n"
@@ -196,6 +231,22 @@ class SketchPanel(QWidget):
         edit_hint = QLabel("拖动蓝/橙色节点可修正位置；编辑后需重新确认")
         edit_hint.setStyleSheet(f"color:{theme.INK_MUTED}; font-size:8pt;")
         edit_layout.addWidget(edit_hint)
+        self.node_widget = QWidget(self)
+        node_row = QHBoxLayout(self.node_widget)
+        node_row.setContentsMargins(0, 0, 0, 0)
+        self.btn_add_node = QPushButton("补画节点")
+        self.btn_add_node.setCheckable(True)
+        self.btn_add_node.setToolTip("点击后在原图真实接头处补点，再补画相连杆件。Esc 或右键取消；杆件内部作用点请使用补充作用节点。")
+        self.btn_add_node.toggled.connect(self._toggle_node_placement)
+        self.cmb_remove_node = QComboBox()
+        self.btn_remove_node = QPushButton("删除节点")
+        self.btn_remove_node.setToolTip("仅删除无引用节点；请先处理杆件、支座、荷载、尺寸和尺度锚点引用。")
+        self.btn_remove_node.clicked.connect(self._remove_node)
+        node_row.addWidget(self.btn_add_node)
+        node_row.addWidget(self.cmb_remove_node, 1)
+        node_row.addWidget(self.btn_remove_node)
+        self.lbl_image.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        edit_layout.addWidget(self.node_widget)
         member_row = QHBoxLayout()
         self.cmb_member_i = QComboBox()
         self.cmb_member_j = QComboBox()
@@ -211,6 +262,24 @@ class SketchPanel(QWidget):
         member_row.addWidget(self.cmb_remove_member)
         member_row.addWidget(self.btn_remove_member)
         edit_layout.addLayout(member_row)
+        self.split_widget = QWidget(self)
+        split_row = QHBoxLayout(self.split_widget)
+        split_row.setContentsMargins(0, 0, 0, 0)
+        self.cmb_split_member = QComboBox()
+        self.spin_member_position = QDoubleSpinBox()
+        self.spin_member_position.setRange(0.01, 99.99)
+        self.spin_member_position.setDecimals(2)
+        self.spin_member_position.setValue(50)
+        self.spin_member_position.setSuffix(" %")
+        self.spin_member_position.setToolTip("从杆件 i 端量起的相对位置；只修正图像拓扑，不代表实际长度。")
+        self.btn_insert_member_node = QPushButton("补充作用节点")
+        self.btn_insert_member_node.setToolTip("在所选杆件内补节点并分段，随后在支座与节点荷载中填写集中力或力矩。已有荷载或尺寸引用时需先处理引用。")
+        self.btn_insert_member_node.clicked.connect(self._insert_member_node)
+        split_row.addWidget(self.cmb_split_member)
+        split_row.addWidget(QLabel("距 i 端"))
+        split_row.addWidget(self.spin_member_position)
+        split_row.addWidget(self.btn_insert_member_node)
+        edit_layout.addWidget(self.split_widget)
         self.edit_widget.setVisible(False)
         layout.addWidget(self.edit_widget)
 
@@ -261,6 +330,7 @@ class SketchPanel(QWidget):
         self.cmb_load_name = QComboBox()
         self.cmb_load_name.setEditable(True)
         self.cmb_load_name.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cmb_load_name.setToolTip("这里填写新荷载或更新同名荷载；修改已有名称请使用工况与荷载名称。")
         self.cmb_load_name.currentTextChanged.connect(self._fill_load_values)
         boundary_layout.addWidget(QLabel("节点荷载"), 3, 0)
         boundary_layout.addWidget(self.cmb_load_node, 3, 1)
@@ -272,14 +342,22 @@ class SketchPanel(QWidget):
             spin.setRange(-1e12, 1e12)
             spin.setDecimals(3)
             spin.setPrefix(label + " ")
+            spin.setSuffix(" N" if index < 3 else " N·m")
+            spin.lineEdit().setPlaceholderText("必填")
+            spin.valueChanged.connect(lambda _, s=spin: self._missing_load_values.discard(s))
+            spin.lineEdit().textEdited.connect(lambda _, s=spin: self._load_text_edited(s))
+            spin.setToolTip("力分量用 N，力矩分量用 N·m；缺失分量须明确填写，确认是零时输入 0。")
             self.load_spins.append(spin)
             boundary_layout.addWidget(spin, 4 + index // 2, 3 * (index % 2), 1, 3)
         self.btn_apply_load = QPushButton("应用节点荷载")
         self.btn_remove_load = QPushButton("删除节点荷载")
         self.btn_apply_load.clicked.connect(self._apply_nodal_load_edit)
         self.btn_remove_load.clicked.connect(self._remove_nodal_load_edit)
-        boundary_layout.addWidget(self.btn_apply_load, 7, 0, 1, 3)
-        boundary_layout.addWidget(self.btn_remove_load, 7, 3, 1, 3)
+        self.lbl_load_hint = QLabel("缺失分量保持空白；力用 N、力矩用 N·m。确认分量为零时请明确输入 0。")
+        self.lbl_load_hint.setWordWrap(True)
+        boundary_layout.addWidget(self.lbl_load_hint, 7, 0, 1, 6)
+        boundary_layout.addWidget(self.btn_apply_load, 8, 0, 1, 3)
+        boundary_layout.addWidget(self.btn_remove_load, 8, 3, 1, 3)
 
         self.boundary_widget.setVisible(False)
         self.btn_boundaries.toggled.connect(self.boundary_widget.setVisible)
@@ -288,6 +366,116 @@ class SketchPanel(QWidget):
                 f"支座与节点荷载 {glyphs.DISCLOSE_OPEN}" if checked
                 else f"支座与节点荷载 {glyphs.DISCLOSE_CLOSED}"))
         layout.addWidget(self.boundary_widget)
+
+        self.btn_names = QPushButton(f"工况与荷载名称 {glyphs.DISCLOSE_CLOSED}")
+        self.btn_names.setCheckable(True)
+        self.btn_names.setVisible(False)
+        layout.addWidget(self.btn_names)
+        self.names_widget = QWidget(self)
+        names_grid = QGridLayout(self.names_widget)
+        names_grid.setContentsMargins(0, 0, 0, 0)
+        self.cmb_name_case = QComboBox()
+        self.cmb_name_case.currentTextChanged.connect(self._refresh_name_loads)
+        self.txt_case_rename = QLineEdit()
+        self.txt_case_rename.setPlaceholderText("新的工况名称")
+        self.btn_rename_case = QPushButton("修改工况名称")
+        self.btn_rename_case.clicked.connect(self._rename_case_edit)
+        names_grid.addWidget(self.cmb_name_case, 0, 0, 1, 3)
+        names_grid.addWidget(self.txt_case_rename, 1, 0, 1, 2)
+        names_grid.addWidget(self.btn_rename_case, 1, 2)
+        self.cmb_name_load = QComboBox()
+        self.cmb_name_load.currentIndexChanged.connect(lambda _: self.txt_load_rename.clear())
+        self.txt_load_rename = QLineEdit()
+        self.txt_load_rename.setPlaceholderText("新的荷载名称")
+        self.btn_rename_load = QPushButton("修改荷载名称")
+        self.btn_rename_load.clicked.connect(self._rename_load_edit)
+        names_grid.addWidget(self.cmb_name_load, 2, 0, 1, 3)
+        names_grid.addWidget(self.txt_load_rename, 3, 0, 1, 2)
+        names_grid.addWidget(self.btn_rename_load, 3, 2)
+        names_hint = QLabel("先选择原工况和荷载，再填写新名称；仅修改名称，数值、作用点和待核对问题仍需分别审核。")
+        names_hint.setWordWrap(True)
+        names_grid.addWidget(names_hint, 4, 0, 1, 3)
+        self.names_widget.setVisible(False)
+        self.btn_names.toggled.connect(self.names_widget.setVisible)
+        self.btn_names.toggled.connect(lambda checked: self.btn_names.setText(
+            f"工况与荷载名称 {glyphs.DISCLOSE_OPEN}" if checked
+            else f"工况与荷载名称 {glyphs.DISCLOSE_CLOSED}"))
+        layout.addWidget(self.names_widget)
+
+        self.btn_partial_loads = QPushButton(f"局部分布荷载 {glyphs.DISCLOSE_CLOSED}")
+        self.btn_partial_loads.setCheckable(True)
+        self.btn_partial_loads.setVisible(False)
+        layout.addWidget(self.btn_partial_loads)
+        self.partial_widget = QWidget(self)
+        partial_grid = QGridLayout(self.partial_widget)
+        partial_grid.setContentsMargins(0, 0, 0, 0)
+        self.cmb_span_case = QComboBox()
+        self.cmb_span_case.currentTextChanged.connect(self._refresh_span_names)
+        self.cmb_span_member = QComboBox()
+        self.cmb_span_member.currentIndexChanged.connect(self._update_span_length)
+        self.cmb_span_name = QComboBox()
+        self.cmb_span_name.setEditable(True)
+        self.cmb_span_name.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.cmb_span_name.setToolTip("这里填写新荷载或更新同名荷载；修改已有名称请使用工况与荷载名称。")
+        self.cmb_span_name.currentTextChanged.connect(self._fill_span_values)
+        self.cmb_span_kind = QComboBox()
+        self.cmb_span_kind.addItem("局部均布", "partial")
+        self.cmb_span_kind.addItem("局部梯形", "partial_trapezoid")
+        self.cmb_span_kind.currentIndexChanged.connect(self._update_span_kind)
+        partial_grid.addWidget(QLabel("工况"), 0, 0)
+        partial_grid.addWidget(self.cmb_span_case, 0, 1, 1, 3)
+        partial_grid.addWidget(self.cmb_span_member, 1, 0, 1, 2)
+        partial_grid.addWidget(self.cmb_span_name, 1, 2, 1, 2)
+        partial_grid.addWidget(QLabel("分布形式"), 2, 0)
+        partial_grid.addWidget(self.cmb_span_kind, 2, 1, 1, 3)
+        self.span_a, self.span_b = QDoubleSpinBox(), QDoubleSpinBox()
+        for spin, label in ((self.span_a, "a "), (self.span_b, "b ")):
+            spin.setRange(0, 1e9)
+            spin.setDecimals(6)
+            spin.setPrefix(label)
+            spin.setSuffix(" m")
+            spin.lineEdit().setPlaceholderText("必填")
+            spin.valueChanged.connect(lambda _, s=spin: self._missing_span_values.discard(s))
+            spin.lineEdit().textEdited.connect(lambda _, s=spin: self._span_text_edited(s))
+            spin.setToolTip("从杆件 i 端沿杆件量起的实际距离，单位为米；必须先确认尺度。")
+        partial_grid.addWidget(self.span_a, 3, 0, 1, 2)
+        partial_grid.addWidget(self.span_b, 3, 2, 1, 2)
+        self.lbl_span_length = QLabel()
+        self.lbl_span_length.setWordWrap(True)
+        partial_grid.addWidget(self.lbl_span_length, 4, 0, 1, 4)
+        self.span_w1, self.span_w2 = [], []
+        for row, vector in enumerate((self.span_w1, self.span_w2), 5):
+            label = QLabel("起点强度" if row == 5 else "终点强度")
+            if row == 6:
+                self.lbl_span_w2 = label
+            partial_grid.addWidget(label, row, 0)
+            for column, axis in enumerate("XYZ", 1):
+                spin = QDoubleSpinBox()
+                spin.setDecimals(3)
+                spin.setRange(-1e12, 1e12)
+                spin.setPrefix(f"q{axis} ")
+                spin.setSuffix(" N/m")
+                spin.lineEdit().setPlaceholderText("必填")
+                spin.valueChanged.connect(lambda _, s=spin: self._missing_span_values.discard(s))
+                spin.lineEdit().textEdited.connect(lambda _, s=spin: self._span_text_edited(s))
+                spin.setToolTip("全局坐标分量；正负号表示全局轴方向，不按图片的上下方向自动转换。")
+                vector.append(spin)
+                partial_grid.addWidget(spin, row, column)
+        self.lbl_span_hint = QLabel("请明确填写范围和强度；未知值不得用默认零值代替。新工况在支座与节点荷载中创建。")
+        self.lbl_span_hint.setWordWrap(True)
+        partial_grid.addWidget(self.lbl_span_hint, 7, 0, 1, 4)
+        self.btn_apply_span = QPushButton("应用局部荷载")
+        self.btn_remove_span = QPushButton("删除局部荷载")
+        self.btn_apply_span.clicked.connect(self._apply_partial_load_edit)
+        self.btn_remove_span.clicked.connect(self._remove_partial_load_edit)
+        partial_grid.addWidget(self.btn_apply_span, 8, 0, 1, 2)
+        partial_grid.addWidget(self.btn_remove_span, 8, 2, 1, 2)
+        self.partial_widget.setVisible(False)
+        self.btn_partial_loads.toggled.connect(self.partial_widget.setVisible)
+        self.btn_partial_loads.toggled.connect(lambda checked: self.btn_partial_loads.setText(
+            f"局部分布荷载 {glyphs.DISCLOSE_OPEN if checked else glyphs.DISCLOSE_CLOSED}"))
+        layout.addWidget(self.partial_widget)
+        self._update_span_kind()
 
         # 状态标签
         self.lbl_status = QLabel("")
@@ -328,10 +516,20 @@ class SketchPanel(QWidget):
         scale_row.setContentsMargins(0, 0, 0, 0)
         self.cmb_reference_member = QComboBox()
         self.spn_reference_length = QDoubleSpinBox()
-        self.spn_reference_length.setRange(0.001, 1_000_000.0)
+        self.spn_reference_length.setRange(0.0, 1_000_000.0)
         self.spn_reference_length.setDecimals(4)
-        self.spn_reference_length.setValue(1.0)
+        self.spn_reference_length.setSpecialValueText(" ")
         self.spn_reference_length.setSuffix(" m")
+        self.spn_reference_length.valueChanged.connect(
+            lambda value: setattr(self, "_reference_length_missing", value <= 0))
+        self.spn_reference_length.lineEdit().textEdited.connect(
+            lambda _: setattr(self, "_reference_length_missing",
+                              not self.spn_reference_length.cleanText().strip()
+                              or not self.spn_reference_length.hasAcceptableInput()))
+        self.spn_reference_length.lineEdit().setPlaceholderText("填写原图实际长度")
+        self.spn_reference_length.setToolTip("核对原图尺寸和所选杆件后填写实际长度；未填写时不能应用尺度。")
+        self.cmb_reference_member.currentIndexChanged.connect(self._clear_reference_length)
+        self._clear_reference_length()
         self.btn_scale = QPushButton("应用尺度")
         self.btn_scale.clicked.connect(self._apply_scale)
         scale_row.addWidget(QLabel("参考杆件"))
@@ -341,6 +539,13 @@ class SketchPanel(QWidget):
         scale_row.addWidget(self.btn_scale)
         self.scale_widget.setVisible(False)
         layout.addWidget(self.scale_widget)
+        self.txt_dimension_observations = QPlainTextEdit()
+        self.txt_dimension_observations.setReadOnly(True)
+        self.txt_dimension_observations.setMaximumHeight(95)
+        self.txt_dimension_observations.setPlaceholderText("图中尺寸（待核对）")
+        self.txt_dimension_observations.setToolTip("原始尺寸观察，尚未绑定并确认实际长度；请在原图核对，不能自动确定比例尺。")
+        self.txt_dimension_observations.hide()
+        layout.addWidget(self.txt_dimension_observations)
 
         self.chk_confirm = QCheckBox("我已核对二维覆盖、结构拓扑和装配预演")
         self.chk_confirm.setEnabled(False)
@@ -379,41 +584,50 @@ class SketchPanel(QWidget):
             "图片文件 (*.png *.jpg *.jpeg *.webp)")
         if not path:
             return
-        self._source_image_path = path
         try:
             self.preprocess_widget.set_source(path)
         except (OSError, ValueError) as exc:
-            self.lbl_status.setText(f"图片预处理失败：{exc}")
+            self.lbl_status.setText(f"图片预处理失败：{exc}。请重新选择有效图片，原草稿仍保留。")
             return
         self.preprocess_widget.setVisible(True)
 
     def _on_preprocessed_image(self, metadata: dict) -> None:
         """Use only the derived image and invalidate every stale recognition result."""
+        self.btn_add_node.setChecked(False)
         self._preprocess_metadata = dict(metadata)
+        self._source_image_path = str(metadata["original_path"])
+        self._recognition_generation += 1
         self._work_plane = None
         self._image_path = str(metadata["derived_path"])
         pixmap = QPixmap(self._image_path)
         if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                self.lbl_image.width(), 160,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
-            self.lbl_image.setPixmap(scaled)
-            self.lbl_image.setText("")
+            self._source_preview_pixmap = pixmap
+            self._source_preview_path = self._image_path
+            self._preview_pixmap = pixmap
+            self.preview_zoom.setValue(100)
+            self._refresh_image_preview()
         self.btn_recognize.setEnabled(False)
         self.btn_load.setEnabled(False)
         self._result_model = None
         self._result_draft = None
         self._v2_draft = None
         self._v2_state = None
+        self._highlight_refs.clear()
+        self._drag_node_id = None
+        self.issue_panel.set_draft({"issues": [], "entities": []})
+        self.issue_panel.hide()
         self._v2_node_reuse.clear()
         self.lbl_confidence_legend.setVisible(False)
         self.chk_confirm.setChecked(False)
         self.chk_confirm.setEnabled(False)
         self.scale_widget.setVisible(False)
+        self._clear_reference_length()
+        self.txt_dimension_observations.clear()
+        self.txt_dimension_observations.hide()
         self.edit_widget.setVisible(False)
         self.btn_boundaries.setChecked(False)
         self.btn_boundaries.setVisible(False)
+        self._refresh_partial_controls()
         self.lst_questions.clear()
         self.lst_questions.setVisible(False)
         self.lbl_questions.setVisible(False)
@@ -426,15 +640,59 @@ class SketchPanel(QWidget):
 
     def _on_work_plane_confirmed(self, payload: dict) -> None:
         self._work_plane = dict(payload)
-        self.btn_recognize.setEnabled(True)
+        self.btn_recognize.setEnabled(bool(self._image_path) and not self.runner.busy)
+        if self._v2_draft is not None:
+            from copy import deepcopy
+            draft = deepcopy(self._v2_draft)
+            draft["work_plane"] = deepcopy(payload)
+            for issue in draft.get("issues") or []:
+                if issue.get("category") == "work_plane_unconfirmed" and issue.get("status") == "open":
+                    issue.update(status="resolved", resolved_by="user", resolution="confirmed")
+            self._apply_v2_edit(draft, "工作平面已重新确认，请继续审核并确认导入")
         self.lbl_status.setText(
             f"工作平面已确认：{payload['plane']}，可开始识别")
         self._set_stage(1, f"工作平面 {payload['plane']} 已确认；可以开始二维识别")
 
+    def _on_work_plane_changed(self):
+        """平面参数改变后必须重新确认，避免按界面已不再显示的旧平面导入。"""
+        self.btn_add_node.setChecked(False)
+        self._work_plane = None
+        self._recognition_generation += 1
+        self.btn_recognize.setEnabled(False)
+        self.chk_confirm.setChecked(False)
+        self.btn_load.setEnabled(False)
+        if self._v2_draft is not None:
+            from copy import deepcopy
+            from image_preprocess import work_plane_payload
+            draft = deepcopy(self._v2_draft)
+            new_plane = self.preprocess_widget.plane.currentText()
+            cases = draft.get("image_model", {}).get("load_cases") or []
+            if (draft["work_plane"]["plane"] != new_plane and any(
+                    case.get(collection) for case in cases
+                    for collection in ("nodal_loads", "member_loads", "member_spans", "settlements"))):
+                issues = draft.setdefault("issues", [])
+                message = "工作平面已改变，原荷载方向需要重新解释。请确认新平面后重新识别图片。"
+                if not any(item.get("message") == message and item.get("status") == "open"
+                           for item in issues):
+                    ident = "ui-plane-loads"
+                    while any(item.get("id") == ident for item in issues):
+                        ident += "-edit"
+                    issues.append({"id": ident, "category": "load_incomplete",
+                                   "severity": "blocking", "entity_refs": [], "status": "open",
+                                   "message": message,
+                                   "resolution": None, "resolved_by": None})
+            draft["work_plane"] = work_plane_payload(
+                new_plane, offset=self.preprocess_widget.offset.value())
+            self._apply_v2_edit(draft, "工作平面已改变，请重新确认工作平面")
+        self.lbl_status.setText("工作平面已改变，请点击确认工作平面后继续。")
+
     def set_v2_draft(self, draft: dict) -> None:
         """Host the frozen v2 review APIs without changing the legacy v1 path."""
-        from copy import deepcopy
-        self._v2_draft = deepcopy(draft)
+        self.btn_add_node.setChecked(False)
+        from sketch_load_edit import refresh_partial_geometry
+        from sketch_axis_refinement import sync_joint_graph_review
+        self._v2_draft = sync_joint_graph_review(refresh_partial_geometry(draft))
+        self._clear_reference_length()
         self._v2_node_reuse.clear()
         self._result_draft = None
         self.chk_confirm.setChecked(False)
@@ -483,11 +741,22 @@ class SketchPanel(QWidget):
                 issue.update(status="resolved", resolution="用户确认近似正射/已矫正",
                              resolved_by="user")
             elif category == "low_confidence" and action == "confirm":
-                refs = set(issue.get("entity_refs") or [])
+                ids = {str(i["id"]) for i in self.issue_panel.issue_group(issue_id)}
+                group = [i for i in draft.get("issues") or [] if str(i.get("id")) in ids
+                         and i.get("category") == "low_confidence" and i.get("status") == "open"] or [issue]
+                refs = {ref for record in group for ref in record.get("entity_refs") or []}
                 for entity in draft.get("entities") or []:
                     if self._v2_entity_ref(entity) in refs:
                         entity.update(source="user", confidence=None, verified=True)
-                issue.update(status="resolved", resolution="用户已核对实体",
+                for record in group:
+                    record.update(status="resolved", resolution="用户已核对该对象的全部低置信度说明",
+                                  resolved_by="user", reviewed_together=[i["id"] for i in group])
+            elif category == "pixel_topology" and action == "keep_topology":
+                from sketch_axis_refinement import dismiss_joint_graph_review
+                draft = dismiss_joint_graph_review(draft, issue_id)
+            elif (category == "load_incomplete" and action == "ignore"
+                  and issue.get("unbound_symbols_only") is True and issue.get("observations")):
+                issue.update(status="resolved", resolution="用户明确忽略未绑定的荷载符号",
                              resolved_by="user")
             elif category == "merge_collision" and action == "reuse":
                 draft_id = int(issue["candidate_node"])
@@ -500,6 +769,8 @@ class SketchPanel(QWidget):
         except (StopIteration, ValueError) as exc:
             self._show_edit_error("问题处理失败", exc)
             return
+        from sketch_axis_refinement import sync_joint_graph_review
+        draft = sync_joint_graph_review(draft)
         if category != "intersection_unknown":
             draft["revision"] = int(draft.get("revision", 0)) + 1
             draft["confirmation"] = None
@@ -517,10 +788,17 @@ class SketchPanel(QWidget):
         self._refresh_v2_scale_controls()
         self._refresh_v2_commit_state()
 
+    def _clear_reference_length(self) -> None:
+        """新图或参考杆件改变时不沿用默认/上一对象的实际长度。"""
+        self.spn_reference_length.setValue(0.0)
+        self.spn_reference_length.lineEdit().clear()
+        self._reference_length_missing = True
+
     def _refresh_v2_scale_controls(self) -> None:
         if self._v2_draft is None:
             return
         current = self.cmb_reference_member.currentData()
+        previous_block = self.cmb_reference_member.blockSignals(True)
         self.cmb_reference_member.clear()
         for member in sorted(self._v2_draft.get("image_model", {}).get("members") or [],
                              key=lambda item: int(item["id"])):
@@ -528,6 +806,17 @@ class SketchPanel(QWidget):
         index = self.cmb_reference_member.findData(current)
         if index >= 0:
             self.cmb_reference_member.setCurrentIndex(index)
+        self.cmb_reference_member.blockSignals(previous_block)
+        if self.cmb_reference_member.currentData() != current:
+            self._clear_reference_length()
+        observations = []
+        for item in self._v2_draft.get("dimensions") or []:
+            text = item.get("text")
+            if text is None or not str(text).strip():
+                text = "原图文字缺失"
+            observations.append(f"{item.get('id', '')}：{text}；单位：{item.get('unit') or '未识别'}；待核对")
+        self.txt_dimension_observations.setPlainText("\n".join(observations))
+        self.txt_dimension_observations.setVisible(bool(observations))
         self.scale_widget.setVisible(
             self._v2_draft.get("scale", {}).get("status") != "confirmed")
 
@@ -632,6 +921,7 @@ class SketchPanel(QWidget):
         self.txt_model.setText(SketchParser._default_model(provider))
 
     def _recognize(self):
+        self.btn_add_node.setChecked(False)
         if not self._image_path or self.runner.busy:
             return
         self.btn_recognize.setEnabled(False)
@@ -649,6 +939,7 @@ class SketchPanel(QWidget):
         self.edit_widget.setVisible(False)
         self.btn_boundaries.setChecked(False)
         self.btn_boundaries.setVisible(False)
+        self._refresh_partial_controls()
         self.lst_questions.clear()
         self.lst_questions.setVisible(False)
         self.lbl_questions.setVisible(False)
@@ -662,25 +953,57 @@ class SketchPanel(QWidget):
         model = self.txt_model.text().strip()
         key = self.txt_key.text().strip()
         retries = self.spn_retries.value()
+        review_actions = self.chk_review_actions.isChecked()
         image_path = self._image_path
+        from copy import deepcopy
+        work_plane = deepcopy(self._work_plane)
+        generation = self._recognition_generation
+        from multimodal_workflow import MultimodalControllerState
+        state = None
+        job_id = None
+        if self._preprocess_metadata:
+            state = MultimodalControllerState()
+            state.load_image(str(self._preprocess_metadata["image_hash"]))
+            job_id = state.start_recognition()
+        self._v2_state = state
+        self.preprocess_widget.setEnabled(False)
 
         def _job():
             from sketch_parser import SketchParser
-            from multimodal_workflow import MultimodalControllerState
+            from task_control import TaskCancelled, checkpoint
+
+            def cancelled():
+                try:
+                    checkpoint()
+                except TaskCancelled:
+                    return True
+                return False
+
             if key:
                 parser = SketchParser(provider=provider, api_key=key, model=model)
             else:
                 parser = SketchParser.from_env(provider, model=model)
-            if self._preprocess_metadata:
-                state = MultimodalControllerState()
-                state.load_image(str(self._preprocess_metadata["image_hash"]))
-                job_id = state.start_recognition()
-                self._v2_state = state
+            if state is not None:
                 return parser.parse_v2_with_retry(
-                    image_path, state, job_id, max_repairs=min(2, max(0, retries - 1)))
+                    image_path, state, job_id, max_repairs=min(2, max(0, retries - 1)),
+                    is_cancelled=cancelled, work_plane=work_plane, review_actions=review_actions)
             return parser.parse_with_retry(image_path, max_retries=retries)
 
-        self.runner.submit(_job, on_done=self._on_recognized, on_failed=self._on_failed)
+        def finish(callback, *args):
+            self._stop_elapsed_ticker()
+            self.preprocess_widget.setEnabled(True)
+            self.btn_pick.setEnabled(True)
+            if generation != self._recognition_generation:
+                self.btn_recognize.setEnabled(bool(self._image_path and self._work_plane))
+                self.lbl_status.setText("图片或工作平面已改变，旧识别响应已舍弃。请重新确认后识别。")
+                return
+            callback(*args)
+
+        submitted = self.runner.submit(
+            _job, on_done=lambda result: finish(self._on_recognized, result),
+            on_failed=lambda kind, msg: finish(self._on_failed, kind, msg))
+        if submitted is False:
+            finish(self._on_failed, "任务忙碌", "请等待当前任务结束后重新识别。")
 
     def _start_elapsed_ticker(self) -> None:
         """识别期间每秒刷新已用时。
@@ -744,6 +1067,9 @@ class SketchPanel(QWidget):
             draft = result.draft or RecognitionDraft.from_payload(
                 result.model, source_image=self._image_path or "")
             self._result_draft = draft
+            self._clear_reference_length()
+            self.txt_dimension_observations.clear()
+            self.txt_dimension_observations.hide()
             self._result_model = draft.model
             n_nodes = len(draft.model.get("nodes", []))
             n_members = len(draft.model.get("members", []))
@@ -818,26 +1144,34 @@ class SketchPanel(QWidget):
         if perspective != "accepted":
             additions.append(("perspective", [], "请确认图片近似正射或已经矫正"))
         for entity in draft.get("entities") or []:
-            confidence = entity.get("confidence")
-            if (not entity.get("verified") and
-                    (entity.get("source") == "migration" or
-                     entity.get("source") == "vision" and confidence is not None
-                     and float(confidence) < 0.75)):
+            if confidence_band(entity) in {"low", "unknown"}:
                 ref = self._v2_entity_ref(entity)
                 if ref:
-                    additions.append(("low_confidence", [ref], f"低置信度实体：{ref}"))
+                    message = ("识别置信度未知，请核对图中对象" if confidence_band(entity) == "unknown"
+                               else "识别置信度较低，请核对图中对象")
+                    additions.append(("low_confidence", [ref], f"{message}：{ref}"))
         for index, (category, refs, message) in enumerate(additions, 1):
             key = category, tuple(refs)
             if key in open_keys:
+                # 模型可以报告警告，低/未知置信度审核的阻断等级由界面规则决定。
+                for item in issues:
+                    if (item.get("category"), tuple(item.get("entity_refs") or [])) == key \
+                            and item.get("status") == "open":
+                        item["severity"] = "blocking"
                 continue
-            issues.append({"id": f"ui-{category}-{index}", "category": category,
+            ident = f"ui-{category}-{index}"
+            while any(item.get("id") == ident for item in issues):
+                ident += "-review"
+            issues.append({"id": ident, "category": category,
+                           "review_generated": True,
                            "severity": "blocking", "entity_refs": refs,
                            "message": message, "status": "open",
                            "resolution": None, "resolved_by": None})
             open_keys.add(key)
     def _on_failed(self, exc_type, msg):
         self._stop_elapsed_ticker()
-        self.btn_recognize.setEnabled(True)
+        self.btn_recognize.setEnabled(bool(self._image_path) and
+                                      (not self._preprocess_metadata or bool(self._work_plane)))
         self.btn_pick.setEnabled(True)
         self.lbl_status.setText(f"{glyphs.CROSS} 调用失败：{exc_type}: {msg}")
         self.lbl_status.setStyleSheet(f"color:{theme.WARN}; font-size:8pt;")
@@ -888,7 +1222,7 @@ class SketchPanel(QWidget):
             return
         nodes = model.get("nodes") or []
         members = model.get("members") or []
-        for combo in (self.cmb_member_i, self.cmb_member_j):
+        for combo in (self.cmb_member_i, self.cmb_member_j, self.cmb_remove_node):
             current = combo.currentData()
             combo.clear()
             for node in nodes:
@@ -897,14 +1231,65 @@ class SketchPanel(QWidget):
                 combo.setCurrentIndex(max(0, combo.findData(current)))
         if self.cmb_member_j.count() > 1 and self.cmb_member_j.currentIndex() == 0:
             self.cmb_member_j.setCurrentIndex(1)
-        for combo in (self.cmb_remove_member, self.cmb_reference_member):
+        for combo in (self.cmb_remove_member, self.cmb_reference_member, self.cmb_split_member):
             current = combo.currentData()
             combo.clear()
             for member in members:
-                combo.addItem(f"杆件 {member['id']}", int(member["id"]))
+                label = (f"杆件 {member['id']}（{member['i']} → {member['j']}）"
+                         if combo is self.cmb_split_member else f"杆件 {member['id']}")
+                combo.addItem(label, int(member["id"]))
             if current is not None:
                 combo.setCurrentIndex(max(0, combo.findData(current)))
         self.btn_remove_member.setEnabled(len(members) > 1)
+        self.split_widget.setVisible(self._v2_draft is not None)
+        self.btn_insert_member_node.setEnabled(bool(members))
+        self.node_widget.setVisible(self._v2_draft is not None)
+        self.btn_add_node.setEnabled(self._v2_draft is not None
+                                     and not self.lbl_image.pixmap().isNull())
+        self.btn_remove_node.setEnabled(self._v2_draft is not None and len(nodes) > 1)
+
+    def _toggle_node_placement(self, enabled: bool) -> None:
+        self._drag_node_id = None
+        self._drag_changed = False
+        self.lbl_image.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.OpenHandCursor)
+        if enabled:
+            self.lbl_image.setFocus()
+            self.lbl_status.setText("请在原图真实接头处单击补画节点，再补画相连杆件；Esc 或右键取消。")
+        else:
+            self.lbl_status.setText("补画节点已结束，可继续核对节点与杆件。")
+
+    def hideEvent(self, event):
+        self.btn_add_node.setChecked(False)
+        super().hideEvent(event)
+
+    def _place_image_node(self, point: tuple[float, float]) -> None:
+        if self._v2_draft is None:
+            return
+        from sketch_topology import add_image_node
+        try:
+            draft = add_image_node(self._v2_draft, *point)
+        except ValueError as exc:
+            self._show_edit_error("补画节点失败", exc)
+            return
+        node_id = draft["edit_history"][-1]["node_id"]
+        self.btn_add_node.setChecked(False)
+        self._apply_v2_edit(draft, f"已补画节点 {node_id}，请核对并补画相连杆件")
+        for combo in (self.cmb_member_j, self.cmb_remove_node, self.cmb_load_node, self.cmb_support_node):
+            combo.setCurrentIndex(combo.findData(node_id))
+
+    def _remove_node(self) -> None:
+        if self._v2_draft is None or self.cmb_remove_node.currentData() is None:
+            return
+        from sketch_topology import delete_node
+        node_id = int(self.cmb_remove_node.currentData())
+        try:
+            draft = delete_node(self._v2_draft, node_id)
+        except ValueError as exc:
+            self._show_edit_error("删除节点失败", exc)
+            return
+        self.btn_add_node.setChecked(False)
+        self._highlight_refs.discard(f"node:{node_id}")
+        self._apply_v2_edit(draft, f"已删除无引用节点 {node_id}")
 
     def _reset_confirmation(self):
         self.chk_confirm.setChecked(False)
@@ -974,6 +1359,20 @@ class SketchPanel(QWidget):
             return
         self._after_geometry_edit(f"已删除杆件 {member_id}")
 
+    def _insert_member_node(self):
+        if self._v2_draft is None:
+            return
+        from sketch_topology import insert_member_node
+        try:
+            draft = insert_member_node(self._v2_draft, int(self.cmb_split_member.currentData()),
+                                       self.spin_member_position.value() / 100)
+        except (TypeError, ValueError) as exc:
+            self._show_edit_error("补充节点失败", exc)
+            return
+        new_id = max(node["id"] for node in draft["image_model"]["nodes"])
+        self._apply_v2_edit(draft, f"已补充作用节点 {new_id} 并拆分杆件")
+        self.cmb_load_node.setCurrentIndex(self.cmb_load_node.findData(new_id))
+
     def _after_geometry_edit(self, message: str):
         self._result_model = self._result_draft.model
         self._reset_confirmation()
@@ -985,6 +1384,9 @@ class SketchPanel(QWidget):
         self.lbl_status.setStyleSheet(f"color:{theme.ACCENT}; font-size:8pt;")
 
     def _apply_v2_edit(self, draft: dict, message: str) -> None:
+        from sketch_load_edit import refresh_partial_geometry
+        from sketch_axis_refinement import sync_joint_graph_review
+        draft = sync_joint_graph_review(refresh_partial_geometry(draft))
         self._v2_node_reuse.clear()
         draft["model"] = draft["merge_plan"] = draft["confirmation"] = None
         if self._v2_state is not None and self._v2_state.draft is not None:
@@ -1036,6 +1438,232 @@ class SketchPanel(QWidget):
         self.cmb_load_name.setEnabled(has_case)
         self.btn_apply_load.setEnabled(has_case)
         self.btn_remove_load.setEnabled(has_case)
+        self._refresh_partial_controls()
+
+    def _refresh_partial_controls(self):
+        self._refresh_name_controls()
+        active = self._v2_draft is not None
+        self.btn_partial_loads.setVisible(active)
+        if not active:
+            self.btn_partial_loads.setChecked(False)
+            self.partial_widget.setVisible(False)
+            return
+        model = self._v2_draft["image_model"]
+        for combo, entries in ((self.cmb_span_case, model.get("load_cases") or []),
+                               (self.cmb_span_member, model.get("members") or [])):
+            current = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for entry in entries:
+                if combo is self.cmb_span_case:
+                    combo.addItem(entry["name"], entry["name"])
+                else:
+                    combo.addItem(f"杆件 {entry['id']}（{entry['i']} → {entry['j']}）", entry["id"])
+            index = combo.findData(current)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+        self._refresh_span_names()
+        self._update_span_length()
+
+    def _refresh_name_controls(self):
+        active = self._v2_draft is not None
+        self.btn_names.setVisible(active)
+        if not active:
+            self.btn_names.setChecked(False)
+            self.names_widget.hide()
+        current = self.cmb_name_case.currentText()
+        self.cmb_name_case.blockSignals(True)
+        self.cmb_name_case.clear()
+        for case in (self._v2_draft or {}).get("image_model", {}).get("load_cases") or []:
+            self.cmb_name_case.addItem(case["name"])
+        if self.cmb_name_case.findText(current) >= 0:
+            self.cmb_name_case.setCurrentText(current)
+        self.cmb_name_case.blockSignals(False)
+        self._refresh_name_loads()
+
+    def _refresh_name_loads(self, *_):
+        from sketch_load_edit import LOAD_COLLECTIONS
+        self.txt_case_rename.clear()
+        self.txt_load_rename.clear()
+        current = self.cmb_name_load.currentData()
+        self.cmb_name_load.blockSignals(True)
+        self.cmb_name_load.clear()
+        model = (self._v2_draft or {}).get("image_model") or {}
+        case = next((c for c in model.get("load_cases") or []
+                     if c.get("name") == self.cmb_name_case.currentText()), {})
+        labels = ("节点荷载", "整段均布荷载", "跨间荷载", "支座位移")
+        for collection, label in zip(LOAD_COLLECTIONS, labels, strict=True):
+            for load in case.get(collection) or []:
+                at = f"节点 {load.get('node')}" if "node" in load else f"杆件 {load.get('member')}"
+                self.cmb_name_load.addItem(f"{load.get('name')} · {label} · {at}",
+                                          {"collection": collection, "name": load.get("name")})
+        index = self.cmb_name_load.findData(current)
+        if index >= 0:
+            self.cmb_name_load.setCurrentIndex(index)
+        self.cmb_name_load.blockSignals(False)
+        self.btn_rename_case.setEnabled(bool(case))
+        self.btn_rename_load.setEnabled(self.cmb_name_load.count() > 0)
+
+    def _rename_case_edit(self):
+        if self._v2_draft is None:
+            return
+        from sketch_load_edit import rename_load_case
+        old, new = self.cmb_name_case.currentText(), self.txt_case_rename.text().strip()
+        try:
+            draft = rename_load_case(self._v2_draft, old, new)
+        except ValueError as exc:
+            self._show_edit_error("名称修改失败", exc)
+            return
+        if new == old:
+            return
+        boundary_selected = self.cmb_load_case.currentText() == old
+        span_selected = self.cmb_span_case.currentText() == old
+        selected_load = self.cmb_name_load.currentData()
+        nodal_name, span_name = self.cmb_load_name.currentText(), self.cmb_span_name.currentText()
+        self._apply_v2_edit(draft, f"已修改工况名称：{old} → {new}")
+        self.cmb_name_case.setCurrentText(new)
+        self.cmb_name_load.setCurrentIndex(self.cmb_name_load.findData(selected_load))
+        if boundary_selected:
+            self.cmb_load_case.setCurrentText(new)
+            self.cmb_load_name.setCurrentText(nodal_name)
+        if span_selected:
+            self.cmb_span_case.setCurrentText(new)
+            if self.cmb_span_name.findText(span_name) >= 0:
+                self.cmb_span_name.setCurrentText(span_name)
+
+    def _rename_load_edit(self):
+        target = self.cmb_name_load.currentData()
+        if self._v2_draft is None or not target:
+            return
+        from sketch_load_edit import rename_load
+        case, new = self.cmb_name_case.currentText(), self.txt_load_rename.text().strip()
+        try:
+            draft = rename_load(self._v2_draft, case, target["collection"], target["name"], new)
+        except ValueError as exc:
+            self._show_edit_error("名称修改失败", exc)
+            return
+        if new == target["name"]:
+            return
+        self._apply_v2_edit(draft, f"已修改荷载名称：{target['name']} → {new}")
+        self.cmb_name_load.setCurrentIndex(self.cmb_name_load.findData({**target, "name": new}))
+        if target["collection"] == "nodal_loads" and self.cmb_load_case.currentText() == case:
+            self.cmb_load_name.setCurrentText(new)
+        if (target["collection"] == "member_spans" and self.cmb_span_case.currentText() == case
+                and self.cmb_span_name.findText(new) >= 0):
+            self.cmb_span_name.setCurrentText(new)
+
+    def _selected_span(self):
+        model = (self._v2_draft or {}).get("image_model") or {}
+        case = next((c for c in model.get("load_cases") or []
+                     if c.get("name") == self.cmb_span_case.currentText()), {})
+        return next((s for s in case.get("member_spans") or []
+                     if s.get("name") == self.cmb_span_name.currentText().strip()), None)
+
+    def _refresh_span_names(self, *_):
+        from sketch_load_edit import PARTIAL_KINDS
+        model = (self._v2_draft or {}).get("image_model") or {}
+        case = next((c for c in model.get("load_cases") or []
+                     if c.get("name") == self.cmb_span_case.currentText()), {})
+        current = self.cmb_span_name.currentText()
+        self.cmb_span_name.blockSignals(True)
+        self.cmb_span_name.clear()
+        for load in case.get("member_spans") or []:
+            if load.get("kind") in PARTIAL_KINDS:
+                self.cmb_span_name.addItem(str(load.get("name", "")))
+        if self.cmb_span_name.findText(current) >= 0:
+            self.cmb_span_name.setCurrentText(current)
+        elif not self.cmb_span_name.count():
+            self.cmb_span_name.setEditText("Q-1")
+        self.cmb_span_name.blockSignals(False)
+        self._fill_span_values()
+
+    def _fill_span_values(self, *_):
+        entry = self._selected_span() or {}
+        index = self.cmb_span_member.findData(entry.get("member"))
+        if index >= 0:
+            self.cmb_span_member.setCurrentIndex(index)
+        self.cmb_span_kind.setCurrentIndex(max(0, self.cmb_span_kind.findData(entry.get("kind"))))
+        for spin, value in [(self.span_a, entry.get("a")), (self.span_b, entry.get("b"))]:
+            self._set_span_value(spin, value)
+        for key, spins in (("w1", self.span_w1), ("w2", self.span_w2)):
+            values = entry.get(key)
+            for i, spin in enumerate(spins):
+                value = values[i] if isinstance(values, list) and len(values) == 3 else None
+                self._set_span_value(spin, value)
+        self.btn_remove_span.setEnabled(bool(entry))
+        self._update_span_length()
+
+    def _set_span_value(self, spin, value):
+        valid = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                 and math.isfinite(value) and spin.minimum() <= value <= spin.maximum())
+        spin.blockSignals(True)
+        spin.setValue(float(value) if valid else 0)
+        if not valid:
+            spin.clear()
+            self._missing_span_values.add(spin)
+        else:
+            self._missing_span_values.discard(spin)
+        spin.blockSignals(False)
+
+    def _span_text_edited(self, spin):
+        if spin.hasAcceptableInput() and spin.cleanText().strip():
+            self._missing_span_values.discard(spin)
+        else:
+            self._missing_span_values.add(spin)
+
+    def _update_span_kind(self, *_):
+        trapezoid = self.cmb_span_kind.currentData() == "partial_trapezoid"
+        self.lbl_span_w2.setVisible(trapezoid)
+        for spin in self.span_w2:
+            spin.setEnabled(trapezoid)
+            spin.setVisible(trapezoid)
+
+    def _update_span_length(self, *_):
+        from sketch_load_edit import member_length
+        has_inputs = (self._v2_draft is not None and self.cmb_span_case.count() > 0
+                      and self.cmb_span_member.currentData() is not None)
+        self.btn_apply_span.setEnabled(has_inputs)
+        if not has_inputs:
+            self.lbl_span_length.setText("请先创建工况并选择杆件。")
+            return
+        try:
+            length = member_length(self._v2_draft, self.cmb_span_member.currentData())
+            self.lbl_span_length.setText(f"从 i 端量起：0 ≤ a < b ≤ {length:g} m；强度按全局 X/Y/Z 填写。")
+        except (ValueError, KeyError, TypeError) as exc:
+            self.lbl_span_length.setText(f"实际范围尚不能校核：{exc}。请先确认工作平面及尺度。")
+            self.btn_apply_span.setEnabled(False)
+
+    def _apply_partial_load_edit(self):
+        if self._v2_draft is None:
+            return
+        from sketch_load_edit import set_partial_load
+        try:
+            required = [self.span_a, self.span_b, *self.span_w1]
+            if self.cmb_span_kind.currentData() == "partial_trapezoid":
+                required.extend(self.span_w2)
+            if any(spin in self._missing_span_values or not spin.cleanText().strip() for spin in required):
+                raise ValueError("范围或强度尚未填写，请补齐必填项；确认该分量为零时请明确输入 0。")
+            draft = set_partial_load(self._v2_draft, self.cmb_span_case.currentText(),
+                self.cmb_span_name.currentText(), self.cmb_span_member.currentData(),
+                self.span_a.value(), self.span_b.value(), [s.value() for s in self.span_w1],
+                kind=self.cmb_span_kind.currentData(), w2=[s.value() for s in self.span_w2])
+        except (ValueError, KeyError, TypeError) as exc:
+            self._show_edit_error("局部荷载设置失败", exc)
+            return
+        self._apply_v2_edit(draft, "已更新局部荷载，请核对图像中的作用区段")
+
+    def _remove_partial_load_edit(self):
+        if self._v2_draft is None:
+            return
+        from sketch_load_edit import remove_partial_load
+        try:
+            draft = remove_partial_load(self._v2_draft, self.cmb_span_case.currentText(),
+                                        self.cmb_span_name.currentText())
+        except ValueError as exc:
+            self._show_edit_error("删除局部荷载失败", exc)
+            return
+        self._apply_v2_edit(draft, "已删除所选局部荷载，原观察保留在审核记录")
 
     def _fill_support_values(self, *_):
         if ((self._result_draft is None and self._v2_draft is None)
@@ -1092,19 +1720,67 @@ class SketchPanel(QWidget):
                      if str(item.get("name", "")) == case_name), None)
         entry = next((item for item in (case or {}).get("nodal_loads", [])
                       if str(item.get("name", "")) == load_name), None)
-        values = entry.get("load", [0.0] * 6) if entry else [0.0] * 6
+        values = entry.get("load") if entry else [0.0] * 6
+        if not isinstance(values, (list, tuple)) or len(values) != 6:
+            values = [None] * 6
         if entry and self.cmb_load_node.findData(int(entry["node"])) >= 0:
             self.cmb_load_node.setCurrentIndex(
                 self.cmb_load_node.findData(int(entry["node"])))
         for spin, value in zip(self.load_spins, values, strict=True):
-            spin.setValue(float(value))
+            valid = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                     and math.isfinite(value) and spin.minimum() <= value <= spin.maximum())
+            spin.blockSignals(True)
+            spin.setValue(float(value) if valid else 0)
+            if valid:
+                self._missing_load_values.discard(spin)
+            else:
+                spin.clear()
+                self._missing_load_values.add(spin)
+            spin.blockSignals(False)
         self.btn_remove_load.setEnabled(entry is not None)
+
+    def _load_text_edited(self, spin):
+        if spin.hasAcceptableInput() and spin.cleanText().strip():
+            self._missing_load_values.discard(spin)
+        else:
+            self._missing_load_values.add(spin)
+
+    def _audit_v2_nodal_load_edit(self, draft, case, name, replacement=None):
+        """只处理选中荷载的缺值问题，保留替换前条目和原观察供审核追溯。"""
+        from copy import deepcopy
+        from sketch_load_edit import _resolve_exact_issues
+        target = {"case": case["name"], "collection": "nodal_loads", "name": name}
+        previous = {"loads": [deepcopy(i) for i in case.get("nodal_loads") or [] if i.get("name") == name],
+                    "entities": [deepcopy(e) for e in draft.get("entities") or []
+                                 if e.get("kind") == "load" and e.get("target", {}).get("load") == target]}
+        draft.setdefault("edit_history", []).append({"action": "set_nodal_load" if replacement else "delete_nodal_load",
+            "target": deepcopy(target), "previous": deepcopy(previous), "replacement": deepcopy(replacement)})
+        _resolve_exact_issues(draft, target, "用户已填写节点荷载分量" if replacement else "用户明确删除此节点荷载")
+        return previous
 
     def _resolve_questions(self, keyword: str):
         for row in range(self.lst_questions.count()):
             item = self.lst_questions.item(row)
             if keyword in item.text():
                 item.setCheckState(Qt.CheckState.Checked)
+
+    def _audit_v2_support_edit(self, draft, node_id, replacement=None):
+        """保留支座原观察，仅处理精确绑定的符号复核问题，改名后其他问题继续可定位。"""
+        from copy import deepcopy
+        previous = {"supports": [deepcopy(s) for s in draft["image_model"].get("supports", []) if s["node"] == node_id],
+                    "entities": [deepcopy(e) for e in draft.get("entities", []) if e.get("kind") == "support"
+                                 and (e.get("target", {}).get("support") or {}).get("node") == node_id]}
+        draft.setdefault("edit_history", []).append({"action": "set_support" if replacement else "delete_support",
+            "node": node_id, "previous": deepcopy(previous), "replacement": deepcopy(replacement)})
+        old_refs = {f"support:{node_id}:{s.get('name')}" for s in previous["supports"]}
+        for issue in draft.get("issues", []):
+            if issue.get("support_review_node") == node_id and issue.get("status") == "open":
+                issue.update(status="resolved", resolved_by="user",
+                             resolution="用户已重新设置支座" if replacement else "用户已明确删除支座")
+            if replacement:
+                issue["entity_refs"] = [f"support:{node_id}:{replacement['name']}" if ref in old_refs else ref
+                                        for ref in issue.get("entity_refs", [])]
+        return previous
 
     def _apply_support_edit(self):
         if self._v2_draft is not None:
@@ -1113,9 +1789,10 @@ class SketchPanel(QWidget):
             node_id = int(self.cmb_support_node.currentData())
             name = self.txt_support_name.text().strip() or f"BC-Node-{node_id}"
             fix = list(self.cmb_support_type.currentData())
+            support = {"name": name, "node": node_id, "fix": fix}
+            observations = self._audit_v2_support_edit(draft, node_id, support)
             supports = [item for item in draft["image_model"].get("supports") or []
                         if int(item["node"]) != node_id]
-            support = {"name": name, "node": node_id, "fix": fix}
             supports.append(support)
             draft["image_model"]["supports"] = supports
             draft["entities"] = [item for item in draft.get("entities") or []
@@ -1131,6 +1808,7 @@ class SketchPanel(QWidget):
                 "image_geometry": {"point": [float(node["u"]), float(node["v"])]},
                 "target": {"support": {"node": node_id, "name": name}},
                 "payload": deepcopy(support),
+                "original_observation": observations,
             })
             self._apply_v2_edit(draft, f"已更新节点 {node_id} 的支座")
             return
@@ -1152,13 +1830,13 @@ class SketchPanel(QWidget):
             from copy import deepcopy
             draft = deepcopy(self._v2_draft)
             node_id = int(self.cmb_support_node.currentData())
-            before = len(draft["image_model"].get("supports") or [])
+            if not any(int(s["node"]) == node_id for s in draft["image_model"].get("supports", [])):
+                self._show_edit_error("删除支座失败", ValueError("该节点没有支座"))
+                return
+            self._audit_v2_support_edit(draft, node_id)
             draft["image_model"]["supports"] = [
                 item for item in draft["image_model"].get("supports") or []
                 if int(item["node"]) != node_id]
-            if len(draft["image_model"]["supports"]) == before:
-                self._show_edit_error("删除支座失败", ValueError("该节点没有支座"))
-                return
             draft["entities"] = [item for item in draft.get("entities") or []
                                  if not (item.get("kind") == "support" and
                                          int((item.get("target", {}).get("support") or {})
@@ -1204,6 +1882,10 @@ class SketchPanel(QWidget):
         self.cmb_load_case.setCurrentText(name)
 
     def _apply_nodal_load_edit(self):
+        if any(spin in self._missing_load_values or not spin.cleanText().strip()
+               or not spin.hasAcceptableInput() for spin in self.load_spins):
+            self._show_edit_error("节点荷载设置失败", ValueError("分量尚未有效填写，请补齐 Fx/Fy/Fz/Mx/My/Mz；确认该分量为零时请明确输入 0。"))
+            return
         if self._v2_draft is not None:
             from copy import deepcopy
             draft = deepcopy(self._v2_draft)
@@ -1221,8 +1903,8 @@ class SketchPanel(QWidget):
             values = [spin.value() for spin in self.load_spins]
             loads = [item for item in case.get("nodal_loads") or []
                      if str(item.get("name")) != load_name]
-            payload = {"name": load_name, "node": node_id, "load": values,
-                       "units": ["N", "N", "N", "N*m", "N*m", "N*m"]}
+            payload = {"name": load_name, "node": node_id, "load": values}
+            observations = self._audit_v2_nodal_load_edit(draft, case, load_name, payload)
             loads.append(payload)
             case["nodal_loads"] = loads
             draft["entities"] = [item for item in draft.get("entities") or []
@@ -1235,9 +1917,11 @@ class SketchPanel(QWidget):
             draft["entities"].append({
                 "kind": "load", "id": f"load-{case_name}-{load_name}", "source": "user",
                 "confidence": None, "recognition_confidence": None, "verified": True,
+                "units": ["N", "N", "N", "N*m", "N*m", "N*m"],
                 "image_geometry": {"point": [float(node["u"]), float(node["v"])]},
                 "target": {"load": {"case": case_name, "collection": "nodal_loads",
                                       "name": load_name}}, "payload": deepcopy(payload),
+                "original_observation": observations,
             })
             self._apply_v2_edit(draft, f"已更新节点荷载 {load_name}")
             return
@@ -1266,6 +1950,10 @@ class SketchPanel(QWidget):
             before = len((case or {}).get("nodal_loads") or [])
             if case is None:
                 return
+            if not any(str(item.get("name")) == load_name for item in case.get("nodal_loads") or []):
+                self._show_edit_error("删除节点荷载失败", ValueError("荷载不存在"))
+                return
+            self._audit_v2_nodal_load_edit(draft, case, load_name)
             case["nodal_loads"] = [item for item in case.get("nodal_loads") or []
                                    if str(item.get("name")) != load_name]
             if len(case["nodal_loads"]) == before:
@@ -1298,11 +1986,18 @@ class SketchPanel(QWidget):
         """把模型给出的归一化实体位置叠到原图上，供人工核对。"""
         if not self._image_path:
             return
-        pixmap = QPixmap(self._image_path)
-        if pixmap.isNull():
+        if self._source_preview_path != self._image_path:
+            self._source_preview_pixmap = QPixmap(self._image_path)
+            self._source_preview_path = self._image_path
+        if self._source_preview_pixmap.isNull():
             return
+        # 只解码一次派生图片；每次审核与拖点在独立副本上绘制，避免累积旧标记。
+        pixmap = self._source_preview_pixmap.copy()
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont(self.font())
+        font.setPixelSize(max(8, pixmap.width() // 45))
+        painter.setFont(font)
 
         def point(values):
             if not isinstance(values, (list, tuple)) or len(values) != 2:
@@ -1316,10 +2011,17 @@ class SketchPanel(QWidget):
             return x * pixmap.width(), y * pixmap.height()
 
         entities = draft.get("entities", []) if isinstance(draft, dict) else draft.entities
+        pixel_review = any(ref.startswith(("pixel-node:", "pixel-member:")) for ref in self._highlight_refs)
         for entity in entities:
             geometry = entity.get("image_geometry") or {}
+            target = entity.get("target") or {}
+            kind = entity.get("kind")
+            identifier = target.get(kind, entity.get("id", ""))
+            if isinstance(identifier, dict):
+                identifier = identifier.get("name", "")
+            label = f"{ {'node': '节点', 'member': '杆件', 'support': '支座', 'load': '荷载'}.get(kind, '')} {identifier}".strip()
             band = confidence_band(entity)
-            if self._v2_entity_ref(entity) in self._highlight_refs:
+            if self._v2_entity_ref(entity) in self._highlight_refs and not pixel_review:
                 colour = QColor("#d946ef")
             elif band == "low":
                 colour = QColor(theme.ERROR)
@@ -1340,14 +2042,33 @@ class SketchPanel(QWidget):
                 if start and end:
                     painter.drawLine(int(start[0]), int(start[1]),
                                      int(end[0]), int(end[1]))
+                    if kind == "member" and not pixel_review:
+                        painter.drawText(int((start[0] + end[0]) / 2),
+                                         int((start[1] + end[1]) / 2 - font.pixelSize() / 2), label)
+                    elif kind == "load" and (entity.get("payload") or {}).get("kind") in {"partial", "partial_trapezoid"}:
+                        # 用平行括线标明实际区间，避免荷载覆盖与梁轴线重合而不可辨。
+                        dx, dy = end[0] - start[0], end[1] - start[1]
+                        length = math.hypot(dx, dy)
+                        if length > 0:
+                            nx, ny = -dy / length, dx / length
+                            offset = font.pixelSize() + 2
+                            a = (start[0] + nx * offset, start[1] + ny * offset)
+                            b = (end[0] + nx * offset, end[1] + ny * offset)
+                            painter.drawLine(int(a[0]), int(a[1]), int(b[0]), int(b[1]))
+                            for x, y in (a, b):
+                                painter.drawLine(int(x - nx * 4), int(y - ny * 4),
+                                                 int(x + nx * 4), int(y + ny * 4))
+                            painter.drawText(int(a[0] + nx * 6), int(a[1] + ny * 6 + font.pixelSize()), label)
             where = point(geometry.get("point"))
             if where:
                 radius = max(4, pixmap.width() // 150)
                 painter.setBrush(colour)
                 painter.drawEllipse(int(where[0] - radius), int(where[1] - radius),
                                     radius * 2, radius * 2)
-                painter.drawText(int(where[0] + radius + 2), int(where[1] - radius),
-                                 str(entity.get("id", "")))
+                label_y = (where[1] + radius + font.pixelSize() if kind in {"support", "load"}
+                           else where[1] - radius)
+                if not pixel_review or kind != "node":
+                    painter.drawText(int(where[0] + radius + 2), int(label_y), label)
             bounds = geometry.get("bbox")
             if isinstance(bounds, list) and len(bounds) == 4:
                 top_left = point(bounds[:2])
@@ -1357,16 +2078,45 @@ class SketchPanel(QWidget):
                     top, bottom = sorted((int(top_left[1]), int(bottom_right[1])))
                     painter.setBrush(Qt.BrushStyle.NoBrush)
                     painter.drawRect(left, top, right - left, bottom - top)
-                    label = f"{entity.get('kind', '')} {entity.get('id', '')}".strip()
                     painter.drawText(left + 2, max(12, top - 3), label)
+        review = draft.get("joint_graph_review") if isinstance(draft, dict) else None
+        if review:
+            candidates = {str(n["id"]): n["point"] for n in review["nodes"]}
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#d946ef"), max(2, pixmap.width() // 300), Qt.PenStyle.DashLine))
+            for member in review["members"]:
+                if f"pixel-member:{member['id']}" not in self._highlight_refs:
+                    continue
+                a, b = point(candidates[str(member["i"])]), point(candidates[str(member["j"])])
+                if a and b:
+                    painter.drawLine(int(a[0]), int(a[1]), int(b[0]), int(b[1]))
+            painter.setPen(QPen(QColor("#d946ef"), max(2, pixmap.width() // 300)))
+            for identifier, where in candidates.items():
+                if f"pixel-node:{identifier}" not in self._highlight_refs:
+                    continue
+                x, y = point(where)
+                radius = max(6, pixmap.width() // 100)
+                painter.drawEllipse(int(x - radius), int(y - radius), radius * 2, radius * 2)
+                painter.drawText(int(x + radius + 2), int(y + font.pixelSize()), f"候选 {identifier}")
         painter.end()
-        scaled = pixmap.scaled(
-            self.lbl_image.width(), 200,
+        self._preview_pixmap = pixmap
+        self._refresh_image_preview()
+        self.lbl_image.setCursor(Qt.CursorShape.CrossCursor if self.btn_add_node.isChecked()
+                                 else Qt.CursorShape.OpenHandCursor)
+
+    def _refresh_image_preview(self, *_):
+        if self._preview_pixmap.isNull():
+            return
+        viewport = self.preview_scroll.viewport()
+        scale = self.preview_zoom.value() / 100.0
+        scaled = self._preview_pixmap.scaled(
+            max(1, int((viewport.width() - 16) * scale)),
+            max(1, int((viewport.height() - 16) * scale)),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation)
         self.lbl_image.setPixmap(scaled)
         self.lbl_image.setText("")
-        self.lbl_image.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.lbl_image.setFixedSize(scaled.size())
 
     def _image_position(self, event) -> tuple[float, float] | None:
         pixmap = self.lbl_image.pixmap()
@@ -1395,6 +2145,12 @@ class SketchPanel(QWidget):
             if entity.get("kind") == "node" and int(target.get("node", -1)) == node_id:
                 entity["image_geometry"] = {"point": [float(u), float(v)]}
                 entity.update(source="user", confidence=None, verified=True)
+            if entity.get("kind") == "support" and (target.get("support") or {}).get("node") == node_id:
+                from copy import deepcopy
+                entity.setdefault("original_observation", {
+                    "image_geometry": deepcopy(entity.get("image_geometry")),
+                    "confidence": entity.get("confidence")})
+                entity["image_geometry"] = {"point": [float(u), float(v)]}
             if entity.get("kind") != "member" or "member" not in target:
                 continue
             member_id = int(target["member"])
@@ -1412,8 +2168,10 @@ class SketchPanel(QWidget):
     def _finish_v2_node_move(self, node_id: int) -> None:
         from dimension_constraints import apply_scale_to_draft
         from sketch_topology import detect_topology
+        from sketch_load_edit import refresh_partial_geometry
+        from sketch_axis_refinement import sync_joint_graph_review
 
-        draft = apply_scale_to_draft(detect_topology(self._v2_draft))
+        draft = sync_joint_graph_review(refresh_partial_geometry(apply_scale_to_draft(detect_topology(self._v2_draft))))
         self._v2_node_reuse.clear()
         if self._v2_state is not None and self._v2_state.draft is not None:
             draft["revision"] = int(self._v2_state.draft.get("revision", 0))
@@ -1425,12 +2183,35 @@ class SketchPanel(QWidget):
         self.issue_panel.set_draft(draft)
         self._show_overlay(draft)
         self._refresh_v2_scale_controls()
+        self._refresh_partial_controls()
         self._refresh_v2_commit_state()
         self.lbl_status.setText(f"已移动节点 {node_id}，尺寸与交点已重新计算。")
 
     def eventFilter(self, watched, event):
+        placing = getattr(self, "btn_add_node", None)
+        if placing is not None and placing.isChecked() and event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
+            if event.key() == Qt.Key.Key_Escape:
+                event.accept()
+                if event.type() == QEvent.Type.KeyPress:
+                    self.btn_add_node.setChecked(False)
+                return True
+        if watched is self.preview_scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self._refresh_image_preview()
         active = self._v2_draft is not None or self._result_draft is not None
         if watched is self.lbl_image and active:
+            if self.btn_add_node.isChecked():
+                if ((event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape)
+                        or (event.type() == QEvent.Type.MouseButtonPress
+                            and event.button() == Qt.MouseButton.RightButton)):
+                    self.btn_add_node.setChecked(False)
+                    return True
+                if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                    point = self._image_position(event)
+                    if point is not None:
+                        self._place_image_node(point)
+                    return True
+                if event.type() in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease):
+                    return True
             if (event.type() == QEvent.Type.MouseButtonPress
                     and event.button() == Qt.MouseButton.LeftButton):
                 point = self._image_position(event)
@@ -1499,6 +2280,12 @@ class SketchPanel(QWidget):
         return super().eventFilter(watched, event)
 
     def _apply_scale(self):
+        if (self._reference_length_missing
+                or not self.spn_reference_length.cleanText().strip()
+                or not self.spn_reference_length.hasAcceptableInput()
+                or self.spn_reference_length.value() <= 0):
+            self._show_edit_error("尺度标定失败", ValueError("实际长度尚未填写或无效，请核对原图尺寸并填写大于零的米值。"))
+            return
         if self._v2_draft is not None:
             from copy import deepcopy
             from dimension_constraints import (add_member_length_dimension,

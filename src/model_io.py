@@ -491,7 +491,11 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
         v = jsonschema.Draft202012Validator(MODEL_SCHEMA)
         for e in sorted(v.iter_errors(data), key=lambda e: list(e.path)):
             loc = "/".join(str(p) for p in e.path) or "(根)"
-            errors.append(f"[结构] {loc}: {e.message}")
+            message = e.message
+            if list(e.path) == ["supports"] and e.validator == "minItems":
+                message = ("未定义支座约束；静力求解需要约束结构的刚体运动。"
+                           "请按实际结构设置支座约束，再重新校验。")
+            errors.append(f"[结构] {loc}: {message}")
     except ImportError:
         errors.append("[提示] 未安装 jsonschema，跳过结构校验")
     except AttributeError:

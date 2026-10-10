@@ -53,15 +53,22 @@ def test_generate_frame_rejects_bad_parameters():
 
 
 def test_solve_refuses_a_structurally_invalid_model():
-    """算前守门第一级：JSON Schema 查结构，错误里带着出问题的字段路径。"""
+    """防止无支座时只显示英文数组错误；校验与求解均应说明原因及设置约束的下一步。"""
     s = Session()
     s.define_materials_and_sections(MATERIALS, SECTIONS)
     s.generate_frame(spans=[6], storeys=[3.6])
     s.model["supports"] = []
+    checked = s.validate_model()
+    assert not checked.ok
+    message = next(e for e in checked.payload["errors"] if "supports" in e)
+    assert "未定义支座约束" in message and "刚体运动" in message
+    assert "设置支座约束，再重新校验" in message
+    assert "non-empty" not in message and "non empty" not in message
     r = s.solve_model()
     assert not r.ok
     assert any(e.startswith("[结构]") and "supports" in e for e in r.payload["errors"])
     assert s.solution is None
+    assert s.model["supports"] == []
 
 
 def test_solve_refuses_a_semantically_invalid_model():

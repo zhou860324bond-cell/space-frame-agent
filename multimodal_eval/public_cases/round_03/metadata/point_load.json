@@ -1,0 +1,26 @@
+{
+  "format": "space-frame-real-world-case/v1",
+  "image_id": "point_load",
+  "source": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_central_point_load.jpg",
+  "license": "Public domain",
+  "author": "Tkn20",
+  "consent_to_evaluate": true,
+  "subset_labels": [
+    "clear",
+    "missing_dimension"
+  ],
+  "work_plane": {
+    "status": "confirmed",
+    "plane": "XZ",
+    "offset": 0.0,
+    "axis_mapping": {
+      "first_axis": "X",
+      "second_axis": "Z",
+      "offset_axis": "Y",
+      "image_right_sign": 1,
+      "image_up_sign": 1
+    }
+  },
+  "preprocessing": {},
+  "notes": "用户选择许可明确的公开工程图评测。仅标注上方梁轴，在集中荷载作用点分段；排除下方剪力、弯矩图；三角支座按契约铰接，原图未明确区分滑动。"
+}

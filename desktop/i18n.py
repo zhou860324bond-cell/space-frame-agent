@@ -25,6 +25,21 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "工况与荷载名称": "Review case and load names",
+    "修改工况名称": "Rename load case", "修改荷载名称": "Rename load",
+    "整段均布荷载": "Full member uniform load", "跨间荷载": "Member span load",
+    "图中尺寸（待核对）": "Observed dimensions (review required)",
+    "填写原图实际长度": "Enter actual length from drawing",
+    "作用点复核": "Review action points",
+    "局部分布荷载": "Partial distributed loads",
+    "局部均布": "Partial uniform load", "局部梯形": "Partial trapezoidal load",
+    "应用局部荷载": "Apply partial load", "删除局部荷载": "Delete partial load",
+    "补充作用节点": "Insert action node",
+    "补画节点": "Add image node",
+    "删除节点": "Delete image node",
+    "保留当前拓扑": "Keep current topology",
+    "忽略符号": "Ignore symbols",
+    "适应图片": "Fit image", "预览缩放": "Preview zoom",
     "建模设置": "Modeling settings", "停靠回工作区": "Dock to workspace",
     "高级参数": "Advanced parameters", "说明": "Details",
     # --- 功能区页签 ---
@@ -71,6 +86,8 @@ ZH_EN: dict[str, str] = {
     "屈曲": "Buckling", "模型检查": "Check", "分析网格": "Mesh",
     "节点实体": "Joint", "模型": "Model", "变形": "Deformed",
     "实体云图": "Solid contour", "打开实体结果": "Open solid results",
+    "点选实体单元": "Pick solid cell", "定位实体极值": "Locate solid maximum",
+    "清除实体查询": "Clear solid query", "搜索模型": "Search model",
     "实体结果": "Solid results", "返回整体模型": "Return to overall model",
     "梁内力云图": "Contour", "内力分量": "Component",
     "清除结果": "Clear", "内力图": "Diagram", "单杆内力图": "Member Chart",

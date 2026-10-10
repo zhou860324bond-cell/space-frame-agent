@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-10",
+  "scope": "两张新许可数值桁架图，首次独立试点；编码助手参考标注未经外部人工复核。每图仅基础识别一次，无修复、无复核调用。",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "max_repairs": 0,
+  "review_actions": false,
+  "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+  "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+  "pipeline_hash": "ac6bbc5ee53c6a4a31c7e858a88cc3b3d39011a28d193f55cf14a06ef6c2c4be",
+  "request_options": {
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "extra_body": {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  },
+  "annotations_fixed_before_calls": {
+    "moj_bridge": "2fb826f867287ef5bc52c1b606123bc3438e7acf8a33893f9022449e91b9da3e",
+    "moj_labels": "4b2294c8b243e36405fe30dd3669bce4ef44302bdd3d97156f2a3d2144791bf2"
+  },
+  "images_fixed_before_calls": {
+    "moj_bridge": "2dc5731f983ae29a1b3a858ba260f2792c5bf39088a5ab8e3f6e73ee8218f500",
+    "moj_labels": "08c0103c93eec344c2f31da267eb253ca27c1a1f262f7b268a8969060caac394"
+  }
+}

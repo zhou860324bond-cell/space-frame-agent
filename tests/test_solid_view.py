@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox  # noqa: E4
 from agent import ToolResult                                         # noqa: E402
 from desktop.main_window import MainWindow                           # noqa: E402
 from desktop.solid_result import read_result                         # noqa: E402
+from desktop.solid_result import query_cell, result_extreme          # noqa: E402
 from solid3d import EDGE_PAIRS                                       # noqa: E402
 from tools.render_smoke import build_session                         # noqa: E402
 
@@ -102,6 +103,115 @@ def test_displacement_uses_nodes_and_mesh_levels_keep_options(app, files):
     assert window.viewport._solid_last["peak"] == 1000
     assert window.viewport._solid_last["show_edges"] is True
     assert window.solid_panel.levels.currentIndex() == 0
+
+
+def test_cell_query_reads_original_stress_connectivity_and_nodal_values(files):
+    """单元查询不能拿 P99 值或把十个节点位移平均成虚构的单元位移。"""
+    directory, _ = files
+    grid, *_ = read_result(directory / "summary.json")
+    data = query_cell(grid, 1)
+    assert data["Mises_MPa"] == 2000 and data["AbsPrincipal_MPa"] == 4000
+    np.testing.assert_array_equal(data["nodes"], np.arange(10, 20))
+    np.testing.assert_array_equal(data["coordinates"], grid.points[10:])
+    np.testing.assert_array_equal(data["displacement"][-1], [3, 4, 0])
+    with pytest.raises(ValueError, match="单元序号"):
+        query_cell(grid, -1)
+
+
+@pytest.mark.parametrize("field, expected", [
+    ("Mises_MPa", ("cell", 1, 2000)),
+    ("AbsPrincipal_MPa", ("cell", 1, 4000)),
+    ("DisplacementMagnitude_mm", ("point", 19, 5))])
+def test_solid_maximum_uses_all_values_and_correct_association(files, field, expected):
+    """峰值定位应找原单元或节点，不能取截断色标上限或最近节点。"""
+    directory, _ = files
+    grid, *_ = read_result(directory / "summary.json")
+    assert result_extreme(grid, field) == expected
+    association = expected[0]
+    data = grid.cell_data if association == "cell" else grid.point_data
+    data[field][:] = 1
+    assert result_extreme(grid, field) == (association, 0, 1)
+
+
+def test_solid_query_survives_display_changes_and_resets_on_level_change(app, files):
+    """变形和字段切换不应丢失已选单元；换档后不能沿用旧查询。"""
+    directory, _ = files
+    window = MainWindow()
+    window._load_solid_result(directory / "summary.json")
+    window.solid_panel.query.setChecked(True)
+    assert not window.viewport.mode_badge.isHidden()
+    window.viewport.solid_picked.emit(1)
+    assert window.results.table.item(0, 1).text() == "2000"
+    window.solid_panel.scale.setValue(10)
+    window.solid_panel.field.setCurrentIndex(2)
+    assert window.viewport._solid_selection == ("cell", 1)
+    assert window.viewport._solid_query_enabled
+    window.solid_panel.levels.setCurrentIndex(0)
+    assert window.viewport._solid_selection is None
+    assert not window._solid_query_table
+    assert window.viewport._solid_query_enabled
+    window.cancel_interaction()
+    assert not window.solid_panel.query.isChecked()
+    assert not window.viewport._solid_query_enabled
+    assert window.viewport.mode_badge.isHidden()
+
+
+def test_saved_solid_extreme_and_table_location_need_no_overall_solution(app, files):
+    """独立实体文件的极值和结果表定位不能要求整体求解或切回梁模型。"""
+    directory, _ = files
+    window = MainWindow()
+    window._load_solid_result(directory / "summary.json")
+    window.locate_current_extreme()
+    assert window.viewport._solid_selection == ("cell", 1)
+    window.solid_panel.field.setCurrentIndex(2)
+    window.locate_current_extreme()
+    assert window.viewport._solid_selection == ("point", 19)
+    assert window.results.table.item(0, 1).text() == "5"
+    window.results.locate.emit("solid_point", 20)
+    assert window.mode == "实体云图"
+    window.query_solid_cell(1)
+    item = window.results.table.item(61, 0)
+    window.results.table.selectRow(61)
+    assert window.viewport._solid_selection == ("point", 19)
+    assert window.results.table.rowCount() == 62
+    assert window.results.table.item(61, 0) is item
+    window.clear_results()
+    assert window.viewport._solid_selection is None
+    assert not window._solid_query_table
+
+
+def test_cell_picker_maps_surface_faces_and_ignores_other_actors(app, files, monkeypatch):
+    """表面面号须映回体单元；标记、空白和无效拾取不能触发另一单元查询。"""
+    from types import SimpleNamespace
+    from desktop.viewport import Viewport
+
+    directory, _ = files
+    grid, *_ = read_result(directory / "summary.json")
+    view = Viewport()
+    actor = object()
+    monkeypatch.setattr(view, "plotter", SimpleNamespace(actors={"_solid_result": actor}))
+    view._solid_query_enabled = view._solid_active = True
+    view._solid_last = {"mesh": grid}
+    got = []
+    view.solid_picked.connect(got.append)
+    surface = grid.extract_surface(nonlinear_subdivision=0)
+    face = int(np.flatnonzero(surface.cell_data["vtkOriginalCellIds"] == 1)[0])
+    picker = SimpleNamespace(GetActor=lambda: actor, GetCellId=lambda: face,
+                             GetDataSet=lambda: surface)
+    view._on_solid_pick(None, picker)
+    assert got == [1]
+    picker.GetActor = lambda: object()
+    view._on_solid_pick(None, picker)
+    picker.GetActor = lambda: actor
+    picker.GetCellId = lambda: -1
+    view._on_solid_pick(None, picker)
+    assert got == [1]
+    # VTU 自带的来源标签与当前文件单元序号不同，不得误用它替代当前序号。
+    grid.cell_data["vtkOriginalCellIds"] = [100, 200]
+    picker.GetDataSet = lambda: grid
+    picker.GetCellId = lambda: 1
+    view._on_solid_pick(None, picker)
+    assert got == [1, 1]
 
 
 def test_imported_result_opens_without_model_and_returns_to_modelling(app, files):

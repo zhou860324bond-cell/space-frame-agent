@@ -1,0 +1,38 @@
+{
+  "format": "space-frame-multimodal-eval/v1",
+  "cases": [
+    {
+      "image_id": "various_loads",
+      "image_path": "images/various_loads.jpg",
+      "image_hash": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+      "metadata_path": "metadata/various_loads.json",
+      "metadata_hash": "6e4508c9262c67b333afe20d8d61a6d5a86269b80027241ba2a0895cf6571de3",
+      "ground_truth_path": "ground_truth/various_loads.json",
+      "ground_truth_hash": "58b58bbcb7959b9426e84951b7b1e701ed67515d6eb0b668abb9ad3508d202c3",
+      "response_fixture_path": "responses/various_loads.json",
+      "response_hash": "f721a29a6ebbe8c8c8ffface4b886a005f6e42833b4d59d3b8fd7e3e58858a19",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "408050abe284e344e377a2d24c64ad05d03b9e3047c697e4ea4de2b6c2482828",
+      "subset_labels": [
+        "development-crop",
+        "mixed-loads",
+        "symbolic-values"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:ABeamWithVariousLoads.jpg",
+      "license": "CC-BY-SA-3.0"
+    }
+  ]
+}

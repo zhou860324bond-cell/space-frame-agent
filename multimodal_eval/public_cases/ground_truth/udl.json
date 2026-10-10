@@ -1,0 +1,78 @@
+{
+  "image_id": "udl",
+  "width_px": 433,
+  "height_px": 400,
+  "image_hash": "f58b2e6ee895d865c1697ae37315d4024b0817fdc8f0d0107191a90911a8e4f6",
+  "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+  "annotation_status": "verified",
+  "annotation_method": "人工独立查看原图后标注，在首次接口调用之前固定；未使用识别输出生成真值。",
+  "annotation_notes": "仅标注上方梁轴；B 为中点文字而非独立几何节点；排除下方剪力、弯矩图；W=wL 无数值；三角支座按契约铰接，原图未明确区分滑动。",
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.09699769053117784,
+        0.2725
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.8729792147806005,
+        0.2725
+      ]
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "node": 2,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "loads": [],
+  "intersections": [],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    },
+    {
+      "category": "load_incomplete",
+      "entity_refs": [
+        "member:1"
+      ],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "scale": {
+    "status": "unknown"
+  }
+}

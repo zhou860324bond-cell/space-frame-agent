@@ -1,0 +1,75 @@
+{
+  "format": "space-frame-multimodal-eval/v1",
+  "cases": [
+    {
+      "image_id": "moj_bridge",
+      "image_path": "images/moj_bridge.png",
+      "image_hash": "2dc5731f983ae29a1b3a858ba260f2792c5bf39088a5ab8e3f6e73ee8218f500",
+      "metadata_path": "metadata/moj_bridge.json",
+      "metadata_hash": "727e0d9e9e3c53fd29da28263b306ed96f31b82e86b98401cfa21b3c3897d2b1",
+      "ground_truth_path": "ground_truth/moj_bridge.json",
+      "ground_truth_hash": "2fb826f867287ef5bc52c1b606123bc3438e7acf8a33893f9022449e91b9da3e",
+      "response_fixture_path": "responses/moj_bridge.json",
+      "response_hash": "d710e3b0be2ccf65f4c2a3fcdd85a0fcc0ef01bb78f44c2963214ee01830bdc0",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "ac6bbc5ee53c6a4a31c7e858a88cc3b3d39011a28d193f55cf14a06ef6c2c4be",
+      "review_actions": false,
+      "action_prompt_hash": null,
+      "subset_labels": [
+        "clear",
+        "numeric_load",
+        "dimensioned_truss"
+      ],
+      "gate": true,
+      "source": "https://eng.libretexts.org/Bookshelves/Mechanical_Engineering/Mechanics_Map_(Moore_2nd_Edition)/05%3A_Engineering_Structures/5.04%3A_Method_of_Joints",
+      "license": "CC BY-SA 4.0"
+    },
+    {
+      "image_id": "moj_labels",
+      "image_path": "images/moj_labels.png",
+      "image_hash": "08c0103c93eec344c2f31da267eb253ca27c1a1f262f7b268a8969060caac394",
+      "metadata_path": "metadata/moj_labels.json",
+      "metadata_hash": "0bec92783d169935bb8ff0f5e6a59e2c80405a02a6e96985d6f2c813326f5f41",
+      "ground_truth_path": "ground_truth/moj_labels.json",
+      "ground_truth_hash": "4b2294c8b243e36405fe30dd3669bce4ef44302bdd3d97156f2a3d2144791bf2",
+      "response_fixture_path": "responses/moj_labels.json",
+      "response_hash": "de332d2a5c39b63502d46cc28f30ca674783922a67dae7a7317fba56ae5626f4",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "ac6bbc5ee53c6a4a31c7e858a88cc3b3d39011a28d193f55cf14a06ef6c2c4be",
+      "review_actions": false,
+      "action_prompt_hash": null,
+      "subset_labels": [
+        "clear",
+        "numeric_load",
+        "dimensioned_truss"
+      ],
+      "gate": true,
+      "source": "https://eng.libretexts.org/Bookshelves/Mechanical_Engineering/Mechanics_Map_(Moore_2nd_Edition)/05%3A_Engineering_Structures/5.04%3A_Method_of_Joints",
+      "license": "CC BY-SA 4.0"
+    }
+  ]
+}

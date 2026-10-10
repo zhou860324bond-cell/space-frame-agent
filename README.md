@@ -2,9 +2,24 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **2316 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
+当前回归基线为 **2837 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
 后台线程收尾修复与三平台验收记录见 [工作进度](docs/PROGRESS.md) 和 [PR #25](https://github.com/zhou860324bond-cell/space-frame-agent/pull/25)。
 桌面安装使用已验收的 PySide6 6.11.2；CI 与 `.[desktop]` 共用版本声明。
+多模态新增 [闭合梁轴、小图支座与独立试点实测](multimodal_eval/public_cases/OUTLINE_REPORT.md)：原 5 张开发图本轮几何全匹配，新增独立混合荷载图仍失败。未知位置、符号荷载和尺度必须人工校核，不能据开发图成绩声明通用准确率。
+新增 [真实数值桁架首测与尺度填写](multimodal_eval/public_cases/NUMERIC_REPORT.md)：参考长度不再默认 1 m，尺寸原文可见并保持待核对。两张新许可图首测仍有明显位置误差，完整验收未通过。
+新增 [多杆节点圆点与作用点绑定](multimodal_eval/public_cases/JOINT_NODES_REPORT.md)：清晰圆点和灰色杆线可提出未审核位置候选；两张已知开发图零调用回放几何匹配参考，完整验收仍失败，原在线成绩保留。
+此前增加 [作用节点人工修正、力矩与局部荷载范围](multimodal_eval/public_cases/LOAD_POINTS_REPORT.md)：可在杆件内补作用节点，力矩换算写入正确分量，未知局部范围保持阻断；当轮全图及裁剪的混合图自动识别仍失败。
+
+审核面板新增局部分布荷载的人工范围与强度编辑：明确 SI 单位、显示实际作用区段，
+拖点或改尺度后重新检查越界。缺失值不默认成零，其他识别问题继续保持审核。
+新增默认关闭的作用点复核：额外一次视觉调用提取位置候选，保留人工审核。
+[初版三图实测](multimodal_eval/public_cases/ACTION_REVIEW_REPORT.md)补出了混合图集中力位置，
+但力矩中心仍有偏差、另一图支座类型仍误判，完整验收未通过。
+此前加入 [圆弧中心与支座符号复核](multimodal_eval/public_cases/MOMENT_SUPPORT_REPORT.md)：
+三图当次几何和支座匹配参考，在线复核 2/3；格式兼容修复仅做零调用回放，原失败保留，完整验收仍未通过。
+最新加入 [审核问题分组与节点荷载缺值](multimodal_eval/public_cases/REVIEW_EDIT_REPORT.md)：
+重复提示合并展示，原问题与阻断总数保留；无数值节点荷载保持空白，人工填写或删除留存原观察。
+本轮新增接口调用为零，回放评测指标不变，不能把展示行数减少当作识别准确率提升。
 核心原则只有一条：
 **大模型只产结构，不产数值**——报告里每个数字都能溯源到某次工具调用。
 
@@ -410,8 +425,13 @@ else:
 `tests/test_recognition_draft.py`、`tests/test_sketch_parser.py` 和 `tests/test_sketch_panel.py`。
 下一阶段的状态机、尺度/交点消歧、原子提交和评测任务卡见
 [`docs/MULTIMODAL_V2_WORKFLOW.md`](docs/MULTIMODAL_V2_WORKFLOW.md)。
+桌面 V2 识别已补齐对象引用与未知置信度审核，模型不能替用户完成确认。
+预览支持 25–400% 缩放、滚动查看及放大后拖点；裁剪失败保留有效状态，平面变更使确认失效。
+已确认的工作平面随识别和格式修复请求传递；有荷载时切换平面需要重新识别方向。
+桌面取消会停止后续修复调用；旧图片或旧平面的响应不能覆盖新草稿。
+
 MM2-00 已提供 `src/multimodal_contract.py`、固定的 `multimodal_eval/manifest.json`
-及 8 张离线种子图；运行
+及 30 张原创离线种子图；离线回放只证明评分和流程可复现，不代表真实图片识别准确率。运行
 `.venv\Scripts\python.exe -m pytest tests\test_multimodal_contract.py -q --basetemp=.pytest-mm2`
 可验证哈希绑定和确定性匹配。
 

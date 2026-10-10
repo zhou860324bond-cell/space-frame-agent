@@ -1,0 +1,573 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "moj_bridge",
+    "width_px": 500,
+    "height_px": 232,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.185,
+          0.72
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.41,
+          0.72
+        ]
+      },
+      {
+        "id": 3,
+        "point": [
+          0.63,
+          0.72
+        ]
+      },
+      {
+        "id": 4,
+        "point": [
+          0.87,
+          0.72
+        ]
+      },
+      {
+        "id": 5,
+        "point": [
+          0.41,
+          0.92
+        ]
+      },
+      {
+        "id": 6,
+        "point": [
+          0.63,
+          0.92
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 2
+      },
+      {
+        "id": 2,
+        "i": 2,
+        "j": 3
+      },
+      {
+        "id": 3,
+        "i": 3,
+        "j": 4
+      },
+      {
+        "id": 4,
+        "i": 1,
+        "j": 5
+      },
+      {
+        "id": 5,
+        "i": 2,
+        "j": 5
+      },
+      {
+        "id": 6,
+        "i": 2,
+        "j": 6
+      },
+      {
+        "id": 7,
+        "i": 3,
+        "j": 6
+      },
+      {
+        "id": 8,
+        "i": 5,
+        "j": 6
+      },
+      {
+        "id": 9,
+        "i": 4,
+        "j": 6
+      }
+    ],
+    "supports": [
+      {
+        "node": 1,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 4,
+        "fix": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [
+      {
+        "id": "I-1-4",
+        "members": [
+          1,
+          4
+        ],
+        "point": [
+          0.185,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 1,
+        "member_s": {
+          "1": 0.0,
+          "4": 0.0
+        }
+      },
+      {
+        "id": "I-1-5",
+        "members": [
+          1,
+          5
+        ],
+        "point": [
+          0.41,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "1": 1.0,
+          "5": 0.0
+        }
+      },
+      {
+        "id": "I-1-6",
+        "members": [
+          1,
+          6
+        ],
+        "point": [
+          0.41,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "1": 1.0,
+          "6": 0.0
+        }
+      },
+      {
+        "id": "I-2-5",
+        "members": [
+          2,
+          5
+        ],
+        "point": [
+          0.41,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "2": 0.0,
+          "5": 0.0
+        }
+      },
+      {
+        "id": "I-2-6",
+        "members": [
+          2,
+          6
+        ],
+        "point": [
+          0.41,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "2": 0.0,
+          "6": 0.0
+        }
+      },
+      {
+        "id": "I-2-7",
+        "members": [
+          2,
+          7
+        ],
+        "point": [
+          0.63,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 3,
+        "member_s": {
+          "2": 1.0,
+          "7": 0.0
+        }
+      },
+      {
+        "id": "I-3-7",
+        "members": [
+          3,
+          7
+        ],
+        "point": [
+          0.63,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 3,
+        "member_s": {
+          "3": 0.0,
+          "7": 0.0
+        }
+      },
+      {
+        "id": "I-3-9",
+        "members": [
+          3,
+          9
+        ],
+        "point": [
+          0.87,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 4,
+        "member_s": {
+          "3": 1.0,
+          "9": 0.0
+        }
+      },
+      {
+        "id": "I-4-5",
+        "members": [
+          4,
+          5
+        ],
+        "point": [
+          0.41,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "4": 1.0,
+          "5": 1.0
+        }
+      },
+      {
+        "id": "I-4-8",
+        "members": [
+          4,
+          8
+        ],
+        "point": [
+          0.41,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "4": 1.0,
+          "8": 0.0
+        }
+      },
+      {
+        "id": "I-5-6",
+        "members": [
+          5,
+          6
+        ],
+        "point": [
+          0.41,
+          0.72
+        ],
+        "decision": "connect",
+        "node_id": 2,
+        "member_s": {
+          "5": 0.0,
+          "6": 0.0
+        }
+      },
+      {
+        "id": "I-5-8",
+        "members": [
+          5,
+          8
+        ],
+        "point": [
+          0.41,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 5,
+        "member_s": {
+          "5": 1.0,
+          "8": 0.0
+        }
+      },
+      {
+        "id": "I-6-7",
+        "members": [
+          6,
+          7
+        ],
+        "point": [
+          0.63,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 6,
+        "member_s": {
+          "6": 1.0,
+          "7": 1.0
+        }
+      },
+      {
+        "id": "I-6-8",
+        "members": [
+          6,
+          8
+        ],
+        "point": [
+          0.63,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 6,
+        "member_s": {
+          "6": 1.0,
+          "8": 1.0
+        }
+      },
+      {
+        "id": "I-6-9",
+        "members": [
+          6,
+          9
+        ],
+        "point": [
+          0.6300000000000001,
+          0.9200000000000002
+        ],
+        "decision": "connect",
+        "node_id": 6,
+        "member_s": {
+          "6": 1.0,
+          "9": 1.0
+        }
+      },
+      {
+        "id": "I-7-8",
+        "members": [
+          7,
+          8
+        ],
+        "point": [
+          0.63,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 6,
+        "member_s": {
+          "7": 1.0,
+          "8": 1.0
+        }
+      },
+      {
+        "id": "I-7-9",
+        "members": [
+          7,
+          9
+        ],
+        "point": [
+          0.63,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 6,
+        "member_s": {
+          "7": 1.0,
+          "9": 1.0
+        }
+      },
+      {
+        "id": "I-8-9",
+        "members": [
+          8,
+          9
+        ],
+        "point": [
+          0.6300000000000001,
+          0.92
+        ],
+        "decision": "connect",
+        "node_id": 6,
+        "member_s": {
+          "8": 1.0,
+          "9": 1.0
+        }
+      }
+    ],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "low_confidence",
+        "severity": "warning",
+        "entity_refs": [
+          "support:1"
+        ],
+        "message": "节点 A 处支座符号被结构遮挡，无法确认是铰接还是固接，请人工核实。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "low_confidence",
+        "severity": "warning",
+        "entity_refs": [
+          "support:4"
+        ],
+        "message": "节点 F 处支座符号被结构遮挡，无法确认是滚动还是铰接，请人工核实。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 1,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": [
+      {
+        "node": 2,
+        "name": "P1",
+        "load": [
+          0.0,
+          -60000.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "case": "D",
+        "collection": "nodal_loads"
+      },
+      {
+        "node": 3,
+        "name": "P2",
+        "load": [
+          0.0,
+          -80000.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "case": "D",
+        "collection": "nodal_loads"
+      }
+    ]
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.1850, \"v\": 0.7200},\n      {\"id\": 2, \"u\": 0.4100, \"v\": 0.7200},\n      {\"id\": 3, \"u\": 0.6300, \"v\": 0.7200},\n      {\"id\": 4, \"u\": 0.8700, \"v\": 0.7200},\n      {\"id\": 5, \"u\": 0.4100, \"v\": 0.9200},\n      {\"id\": 6, \"u\": 0.6300, \"v\": 0.9200}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2},\n      {\"id\": 2, \"i\": 2, \"j\": 3},\n      {\"id\": 3, \"i\": 3, \"j\": 4},\n      {\"id\": 4, \"i\": 1, \"j\": 5},\n      {\"id\": 5, \"i\": 2, \"j\": 5},\n      {\"id\": 6, \"i\": 2, \"j\": 6},\n      {\"id\": 7, \"i\": 3, \"j\": 6},\n      {\"id\": 8, \"i\": 5, \"j\": 6},\n      {\"id\": 9, \"i\": 4, \"j\": 6}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 4, \"kind\": \"roller\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [\n          {\"node\": 2, \"name\": \"P1\", \"value\": 60, \"unit\": \"kN\", \"direction\": [0, -1, 0]},\n          {\"node\": 3, \"name\": \"P2\", \"value\": 80, \"unit\": \"kN\", \"direction\": [0, -1, 0]}\n        ],\n        \"member_loads\": [],\n        \"member_spans\": []\n      }\n    ]\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"node\", \"target\": {\"node\": 1}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.1850, 0.7200]}},\n    {\"id\": \"E2\", \"kind\": \"node\", \"target\": {\"node\": 2}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.4100, 0.7200]}},\n    {\"id\": \"E3\", \"kind\": \"node\", \"target\": {\"node\": 3}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.6300, 0.7200]}},\n    {\"id\": \"E4\", \"kind\": \"node\", \"target\": {\"node\": 4}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.8700, 0.7200]}},\n    {\"id\": \"E5\", \"kind\": \"node\", \"target\": {\"node\": 5}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.4100, 0.9200]}},\n    {\"id\": \"E6\", \"kind\": \"node\", \"target\": {\"node\": 6}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.6300, 0.9200]}},\n    {\"id\": \"E7\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.1850, 0.7200], [0.4100, 0.7200]]}},\n    {\"id\": \"E8\", \"kind\": \"member\", \"target\": {\"member\": 2}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.4100, 0.7200], [0.6300, 0.7200]]}},\n    {\"id\": \"E9\", \"kind\": \"member\", \"target\": {\"member\": 3}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.6300, 0.7200], [0.8700, 0.7200]]}},\n    {\"id\": \"E10\", \"kind\": \"member\", \"target\": {\"member\": 4}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.1850, 0.7200], [0.4100, 0.9200]]}},\n    {\"id\": \"E11\", \"kind\": \"member\", \"target\": {\"member\": 5}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.4100, 0.7200], [0.4100, 0.9200]]}},\n    {\"id\": \"E12\", \"kind\": \"member\", \"target\": {\"member\": 6}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.4100, 0.7200], [0.6300, 0.9200]]}},\n    {\"id\": \"E13\", \"kind\": \"member\", \"target\": {\"member\": 7}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.6300, 0.7200], [0.6300, 0.9200]]}},\n    {\"id\": \"E14\", \"kind\": \"member\", \"target\": {\"member\": 8}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.4100, 0.9200], [0.6300, 0.9200]]}},\n    {\"id\": \"E15\", \"kind\": \"member\", \"target\": {\"member\": 9}, \"confidence\": 0.95, \"image_geometry\": {\"line\": [[0.8700, 0.7200], [0.6300, 0.9200]]}},\n    {\"id\": \"E16\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}}, \"confidence\": 0.9, \"image_geometry\": {\"point\": [0.1850, 0.7200]}},\n    {\"id\": \"E17\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 4, \"name\": \"S2\"}}, \"confidence\": 0.9, \"image_geometry\": {\"point\": [0.8700, 0.7200]}},\n    {\"id\": \"E18\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"P1\"}}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.4100, 0.7200]}},\n    {\"id\": \"E19\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"P2\"}}, \"confidence\": 0.95, \"image_geometry\": {\"point\": [0.6300, 0.7200]}}\n  ],\n  \"dimensions\": [\n    {\"id\": \"D1\", \"text\": \"10 m\", \"unit\": \"m\", \"image_geometry\": {\"line\": [[0.1850, 0.6000], [0.4100, 0.6000]]}},\n    {\"id\": \"D2\", \"text\": \"10 m\", \"unit\": \"m\", \"image_geometry\": {\"line\": [[0.4100, 0.6000], [0.6300, 0.6000]]}},\n    {\"id\": \"D3\", \"text\": \"10 m\", \"unit\": \"m\", \"image_geometry\": {\"line\": [[0.6300, 0.6000], [0.8700, 0.6000]]}}\n  ],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"low_confidence\", \"severity\": \"warning\", \"entity_refs\": [\"support:1\"], \"message\": \"节点 A 处支座符号被结构遮挡，无法确认是铰接还是固接，请人工核实。\", \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"low_confidence\", \"severity\": \"warning\", \"entity_refs\": [\"support:4\"], \"message\": \"节点 F 处支座符号被结构遮挡，无法确认是滚动还是铰接，请人工核实。\", \"status\": \"open\"}\n  ]\n}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "content_characters": 4530,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 2238,
+      "completion_tokens": 1976,
+      "total_tokens": 4214
+    }
+  ],
+  "action_review": null,
+  "position_refinements": [],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "2dc5731f983ae29a1b3a858ba260f2792c5bf39088a5ab8e3f6e73ee8218f500",
+    "derived_image_hash": "598e8a315d4ad06eae8a5f141b9df6b321a6c40f059762a3e235bddfac913f7c",
+    "input_context_hash": "9d0e4bb96cfbafd831f9cc5eca12783c8427564e8b1a953768c224c181128475",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "ac6bbc5ee53c6a4a31c7e858a88cc3b3d39011a28d193f55cf14a06ef6c2c4be",
+    "review_actions": false,
+    "action_prompt_hash": null
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      500,
+      232
+    ],
+    "crop": [
+      0,
+      0,
+      500,
+      232
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 10625.0
+  }
+}

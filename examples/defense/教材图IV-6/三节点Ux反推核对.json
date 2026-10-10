@@ -1,0 +1,885 @@
+{
+  "reference": "用户确认节点4/5 Ux=40.0025/50.0025 mm；此前节点6约9.00 mm。",
+  "base_Ux_mm": [
+    4.0581326457057605,
+    4.063769891785096,
+    9.811332925069893
+  ],
+  "sensitivity_mm_per_kN_m": [
+    [
+      0.3857494483810804,
+      -0.012227512745933922
+    ],
+    [
+      0.38621787718063594,
+      -0.012242107983232664
+    ],
+    [
+      0.14113735856310328,
+      0.05362807820258553
+    ]
+  ],
+  "two_nodes_q_kN_per_m": [
+    1246553.850017269,
+    39322920.82983183
+  ],
+  "two_nodes_predicted_Ux_mm": [
+    40.002499997856404,
+    50.002499976385494,
+    2284757.802447315
+  ],
+  "three_nodes_least_squares_q_kN_per_m": [
+    97.46801635446519,
+    -271.6429553867794
+  ],
+  "three_nodes_predicted_Ux_mm": [
+    44.977883888573835,
+    45.03314265394356,
+    9.000021643060803
+  ],
+  "three_nodes_residual_mm": [
+    4.9753838885738375,
+    -4.969357346056441,
+    2.164306080310041e-05
+  ],
+  "matrix_condition": 3055556.6342260484,
+  "records": [
+    {
+      "label": "无均布",
+      "w_N_per_m": [
+        0,
+        0,
+        0
+      ],
+      "Ux_mm": [
+        4.0581326457057605,
+        4.063769891785096,
+        9.811332925069893
+      ],
+      "calls": [
+        {
+          "tool": "set_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1
+          }
+        },
+        {
+          "tool": "validate_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 10.271608,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 1.374e-13,
+                "max_deflection_mm": 10.271608,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/97，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 5,
+              "analysis_elements": 7,
+              "generated_nodes": 2,
+              "diagnostics": [
+                "物理构件 2 因集中荷载编译为 2 个分析单元",
+                "物理构件 4 因集中荷载编译为 2 个分析单元"
+              ]
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 10.2716 mm，结构尺寸 3464 mm，占比 0.297%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979827533,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\iv6_inverse\\capsules\\20261010_235245_b59707ea.json",
+            "result_identity": {
+              "solve_id": "e72de6759f4a4e558d13f9c05ee02942",
+              "model_fingerprint": "eb287f1634fae50dfda15634ce6db98a",
+              "solved_at": "2026-10-10T15:52:46.084393+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "label": "正X每米1kN",
+      "w_N_per_m": [
+        1000,
+        0,
+        0
+      ],
+      "Ux_mm": [
+        4.443882094086841,
+        4.449987768965732,
+        9.952470283632996
+      ],
+      "calls": [
+        {
+          "tool": "set_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1
+          }
+        },
+        {
+          "tool": "validate_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 10.402939,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 1.267e-13,
+                "max_deflection_mm": 10.402939,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/96，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 5,
+              "analysis_elements": 7,
+              "generated_nodes": 2,
+              "diagnostics": [
+                "物理构件 2 因集中荷载编译为 2 个分析单元",
+                "物理构件 4 因集中荷载编译为 2 个分析单元"
+              ]
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 10.4029 mm，结构尺寸 3464 mm，占比 0.300%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979827533,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\iv6_inverse\\capsules\\20261010_235246_060207cf.json",
+            "result_identity": {
+              "solve_id": "b32035ea2c7e427db192816a92afedc2",
+              "model_fingerprint": "278fe190ccd23a324c3c84d48dfdb225",
+              "solved_at": "2026-10-10T15:52:46.106011+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "label": "正Y每米1kN",
+      "w_N_per_m": [
+        0,
+        1000,
+        0
+      ],
+      "Ux_mm": [
+        4.045905132959827,
+        4.0515277838018635,
+        9.864961003272478
+      ],
+      "calls": [
+        {
+          "tool": "set_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1
+          }
+        },
+        {
+          "tool": "validate_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 10.442967,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 1.548e-13,
+                "max_deflection_mm": 10.442966,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/95，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 5,
+              "analysis_elements": 7,
+              "generated_nodes": 2,
+              "diagnostics": [
+                "物理构件 2 因集中荷载编译为 2 个分析单元",
+                "物理构件 4 因集中荷载编译为 2 个分析单元"
+              ]
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 10.4430 mm，结构尺寸 3464 mm，占比 0.301%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979827533,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\iv6_inverse\\capsules\\20261010_235246_ce3c891b.json",
+            "result_identity": {
+              "solve_id": "d58855b338af41ff9c259c2155b13000",
+              "model_fingerprint": "cf711f919947c7c6f48d3f2a51e7f460",
+              "solved_at": "2026-10-10T15:52:46.129978+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "label": "仅匹配节点4与5的逆算诊断",
+      "w_N_per_m": [
+        1246553850.017269,
+        39322920829.83183,
+        0
+      ],
+      "Ux_mm": [
+        40.002499997856404,
+        50.002499976385494,
+        2284757.802447315
+      ],
+      "calls": [
+        {
+          "tool": "set_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1
+          }
+        },
+        {
+          "tool": "validate_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 15324833.793189,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 2.177e-13,
+                "max_deflection_mm": 15324828.605379,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/1，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 5,
+              "analysis_elements": 7,
+              "generated_nodes": 2,
+              "diagnostics": [
+                "物理构件 2 因集中荷载编译为 2 个分析单元",
+                "物理构件 4 因集中荷载编译为 2 个分析单元"
+              ]
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "fail",
+                "total_checks": 9,
+                "passed": 7,
+                "critical_issues": 1,
+                "warnings": 1,
+                "critical_details": [
+                  {
+                    "id": "excessive_displacement",
+                    "name": "位移过大",
+                    "severity": "critical",
+                    "status": "fail",
+                    "message": "工况 图IV6 节点 6 位移 15324833.79 mm，达结构尺寸 3464 mm 的 442389.8%（阈值 10%）",
+                    "detail": {
+                      "max_displacement_m": 15324.833793188598,
+                      "structure_dimension_m": 3.4641016151377544,
+                      "ratio_pct": 442389.84578918555,
+                      "node": 6,
+                      "case": "图IV6"
+                    },
+                    "suggestion": "检查支座约束是否完整（6个刚体自由度是否都被限制）、单位是否一致（mm vs m）、载荷量级是否合理。大位移通常意味着结构处于机构运动状态而非弹性变形。"
+                  }
+                ],
+                "warning_details": [
+                  {
+                    "id": "load_magnitude_anomaly",
+                    "name": "载荷量级异常",
+                    "severity": "warning",
+                    "status": "warn",
+                    "message": "1 个工况载荷量级与材料不匹配：图IV6: 载荷过大，估算应力超过 0.1E，可能单位是 kN 但当作 N 使用",
+                    "detail": {
+                      "anomalies": [
+                        {
+                          "case": "图IV6",
+                          "applied_load_N": 78685358353.00014,
+                          "estimated_stress": 10018530.985,
+                          "stress_unit": "MPa",
+                          "issue": "载荷过大，估算应力超过 0.1E，可能单位是 kN 但当作 N 使用"
+                        }
+                      ],
+                      "typical_E": 210000.0,
+                      "stress_unit": "MPa",
+                      "typical_area": 0.007853981633974483,
+                      "structure_dimension_m": 3.4641016151377544
+                    },
+                    "suggestion": "检查载荷单位是否与材料单位一致。如果材料 E 用 Pa（N/m²），载荷应该用 N、尺寸用 m；如果载荷用 kN，材料 E 应该用 kPa（kN/m²）。"
+                  }
+                ]
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "fail",
+                  "message": "工况 图IV6 节点 6 位移 15324833.79 mm，达结构尺寸 3464 mm 的 442389.8%（阈值 10%）",
+                  "detail": {
+                    "max_displacement_m": 15324.833793188598,
+                    "structure_dimension_m": 3.4641016151377544,
+                    "ratio_pct": 442389.84578918555,
+                    "node": 6,
+                    "case": "图IV6"
+                  },
+                  "suggestion": "检查支座约束是否完整（6个刚体自由度是否都被限制）、单位是否一致（mm vs m）、载荷量级是否合理。大位移通常意味着结构处于机构运动状态而非弹性变形。"
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979827533,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "warn",
+                  "message": "1 个工况载荷量级与材料不匹配：图IV6: 载荷过大，估算应力超过 0.1E，可能单位是 kN 但当作 N 使用",
+                  "detail": {
+                    "anomalies": [
+                      {
+                        "case": "图IV6",
+                        "applied_load_N": 78685358353.00014,
+                        "estimated_stress": 10018530.985,
+                        "stress_unit": "MPa",
+                        "issue": "载荷过大，估算应力超过 0.1E，可能单位是 kN 但当作 N 使用"
+                      }
+                    ],
+                    "typical_E": 210000.0,
+                    "stress_unit": "MPa",
+                    "typical_area": 0.007853981633974483,
+                    "structure_dimension_m": 3.4641016151377544
+                  },
+                  "suggestion": "检查载荷单位是否与材料单位一致。如果材料 E 用 Pa（N/m²），载荷应该用 N、尺寸用 m；如果载荷用 kN，材料 E 应该用 kPa（kN/m²）。"
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\iv6_inverse\\capsules\\20261010_235246_9251f022.json",
+            "result_identity": {
+              "solve_id": "7bb0f42bd85e4e43abae9de469fd3151",
+              "model_fingerprint": "e9b61252d519e6a7553f266bbd46e939",
+              "solved_at": "2026-10-10T15:52:46.152747+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "limitation": "均布荷载仅允许③号杆全长全局X/Y分量；其他荷载/几何/支座保持此前照片解释，逆算载荷不是教材确认值，不写回正式JSON。",
+  "qx_qy_each_bounded_by_4kN_m_Ux_mm": {
+    "min": [
+      2.4662248011977033,
+      2.4699299511296218,
+      9.032271178007138
+    ],
+    "max": [
+      5.650040490213818,
+      5.657609832440571,
+      10.590394672132648
+    ]
+  },
+  "node5_minus_node4_range_mm": [
+    0.0037051499319185055,
+    0.007569342226752873
+  ]
+}

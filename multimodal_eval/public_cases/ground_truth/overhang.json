@@ -1,0 +1,90 @@
+{
+  "image_id": "overhang",
+  "width_px": 959,
+  "height_px": 311,
+  "image_hash": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+  "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+  "annotation_status": "verified",
+  "annotation_method": "人工独立查看原图后标注，在首次接口调用之前固定；未使用识别输出生成真值。",
+  "annotation_notes": "仅标注水平梁轴；RA、RB 为反力，F 为无数值外荷载；L1/L2 无数值。三角支座按契约标为铰接，原图未明确区分滑动。",
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.022940563086548488,
+        0.4662379421221865
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.6965589155370178,
+        0.4662379421221865
+      ]
+    },
+    {
+      "id": 3,
+      "point": [
+        0.9614181438998958,
+        0.4662379421221865
+      ]
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2
+    },
+    {
+      "id": 2,
+      "i": 2,
+      "j": 3
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "node": 2,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "loads": [],
+  "intersections": [],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    },
+    {
+      "category": "load_incomplete",
+      "entity_refs": [
+        "node:3"
+      ],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "scale": {
+    "status": "unknown"
+  }
+}

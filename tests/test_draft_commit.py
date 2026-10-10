@@ -56,6 +56,84 @@ def test_prepare_is_pure_and_preview_is_structured():
     assert "candidate_model" not in preview
 
 
+def test_joint_graph_evidence_is_bound_to_preview_and_survives_sidecar(tmp_path):
+    """像素候选和人工保留决定不能在预演后改写，导入与证据侧车必须保留完整记录。"""
+    from sketch_axis_refinement import dismiss_joint_graph_review, review_joint_graph
+    from test_sketch_axis_refinement import _joint_picture
+    from multimodal_workflow import draft_digest
+    path, _, source, _ = _joint_picture(tmp_path)
+    source = review_joint_graph(source, path)
+    source = dismiss_joint_graph_review(source, source["joint_graph_review"]["issue_id"])
+    value = ready_draft()
+    value["joint_graph_review"] = deepcopy(source["joint_graph_review"])
+    value["edit_history"] = deepcopy(source["edit_history"])
+    before = draft_digest(value)
+    altered = deepcopy(value)
+    altered["joint_graph_review"]["nodes"][0]["point"][0] += .01
+    assert draft_digest(altered) != before
+    session = Session()
+    prepared, preview = prepare_commit(value, session.model)
+    state = armed_state(prepared, preview)
+    assert commit_prepared(session, state, confirmed_at="2026-10-10T00:00:00Z").ok
+    assert session.multimodal_provenance["joint_graph_review"] == value["joint_graph_review"]
+    target = tmp_path / "pixel-review.json"
+    save_sidecar(target, session.model, session.multimodal_provenance)
+    loaded, warning = load_sidecar(target, session.model)
+    assert warning is None and loaded["joint_graph_review"] == value["joint_graph_review"]
+    assert session.undo() and session.multimodal_provenance is None
+    assert session.redo() and session.multimodal_provenance["joint_graph_review"] == value["joint_graph_review"]
+
+
+def test_unconnected_manual_node_cannot_enter_merge_plan():
+    """人工补画未接线的节点即使尺度已知、已物化也必须阻止装配预演。"""
+    from sketch_topology import add_image_node, materialize_geometry
+    from draft_commit import build_merge_plan
+    from test_sketch_load_edit import beam_draft
+    from image_preprocess import work_plane_payload
+    draft = add_image_node(beam_draft(), .5, .2)
+    draft["work_plane"] = work_plane_payload("XY", confirmed=True)
+    draft["model"] = materialize_geometry(draft)
+    with pytest.raises(DraftCommitError, match="阻断问题"):
+        build_merge_plan(draft, Session().model)
+
+
+def test_manual_node_history_survives_commit_save_and_undo_redo(tmp_path):
+    """删点前原观察必须随导入、侧车重载和撤销重做保留，不能仅留在临时审核窗口。"""
+    from sketch_topology import add_image_node, delete_node, materialize_geometry
+    value = ready_draft()
+    value["source"].update(width_px=401, height_px=201)
+    value = delete_node(add_image_node(value, .5, .2), 3)
+    value["model"] = materialize_geometry(value)
+    original_history = deepcopy(value["edit_history"])
+    session = Session()
+    prepared, preview = prepare_commit(value, session.model)
+    state = armed_state(prepared, preview)
+    assert commit_prepared(session, state, confirmed_at="2026-10-10T00:00:00Z").ok
+    assert session.multimodal_provenance["edit_history"] == original_history
+    path = tmp_path / "node-review.json"
+    save_sidecar(path, session.model, session.multimodal_provenance)
+    loaded, warning = load_sidecar(path, session.model)
+    assert warning is None and loaded["edit_history"] == original_history
+    assert session.undo() and session.multimodal_provenance is None
+    assert session.redo() and session.multimodal_provenance["edit_history"] == original_history
+
+
+def test_edit_history_is_bound_to_preview_and_legacy_draft_hash_is_unchanged():
+    """不能在预演后改写人工证据；没有历史的冻结旧草稿保持原哈希。"""
+    from multimodal_workflow import _DRAFT_HASH_FIELDS, draft_digest
+    from multimodal_contract import canonical_digest
+    value = ready_draft()
+    assert draft_digest(value) == canonical_digest({key: value.get(key) for key in _DRAFT_HASH_FIELDS})
+    value["edit_history"] = [{"action": "add_image_node", "node_id": 3, "point": [.5, .2]}]
+    session = Session()
+    prepared, preview = prepare_commit(value, session.model)
+    state = armed_state(prepared, preview)
+    state.draft["edit_history"][0]["point"][0] = .8
+    with pytest.raises(DraftCommitError, match="哈希|状态|陈旧"):
+        commit_prepared(session, state, confirmed_at="2026-10-10T00:00:00Z")
+    assert session.model == {} and session.multimodal_provenance is None
+
+
 def test_commit_is_one_undo_step_and_provenance_undoes_with_model():
     session = Session()
     prepared, preview = prepare_commit(ready_draft(), session.model)

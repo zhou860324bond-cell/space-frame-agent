@@ -1,0 +1,632 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "various_loads",
+    "width_px": 874,
+    "height_px": 433,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.13802978235967928,
+          0.4409722222222222
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.8980526918671249,
+          0.4409722222222222
+        ]
+      },
+      {
+        "id": 3,
+        "point": [
+          0.52,
+          0.4409722222222222
+        ]
+      },
+      {
+        "id": 4,
+        "point": [
+          0.81,
+          0.4409722222222222
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 3
+      },
+      {
+        "id": 2,
+        "i": 3,
+        "j": 4
+      },
+      {
+        "id": 3,
+        "i": 4,
+        "j": 2
+      }
+    ],
+    "supports": [
+      {
+        "node": 1,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 2,
+        "fix": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "load:D.member_loads.q1"
+        ],
+        "message": "分布荷载 q1 只有箭头符号，未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "load:D.nodal_loads.P1"
+        ],
+        "message": "集中力 P1 只有箭头符号，未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I3",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "load:D.nodal_loads.M1"
+        ],
+        "message": "集中矩 M1 只有圆弧箭头符号，未标注数值和单位，无法确定力矩大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I4",
+        "category": "low_confidence",
+        "severity": "warning",
+        "entity_refs": [
+          "support:S1"
+        ],
+        "message": "左侧支座符号为三角形，识别为铰接，但需人工确认。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I5",
+        "category": "low_confidence",
+        "severity": "warning",
+        "entity_refs": [
+          "support:S2"
+        ],
+        "message": "右侧支座符号为三角形加圆，识别为滚动，但需人工确认。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I6",
+        "category": "missing_dimension",
+        "severity": "warning",
+        "entity_refs": [
+          "member:1",
+          "member:2",
+          "member:3"
+        ],
+        "message": "图中无尺寸标注，节点坐标仅为相对比例，需用户标定实际尺寸。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "unbound-load-7",
+        "category": "load_incomplete",
+        "entity_refs": [],
+        "message": "荷载符号观察没有对应的求解条目，可能缺少数值或属于反力。请核对作用位置、物理含义及数值；明确无需施加时选择忽略符号，原记录仍保留。",
+        "severity": "blocking",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null,
+        "observations": [
+          {
+            "id": "E6",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "member_loads",
+                "name": "q1"
+              }
+            },
+            "confidence": 0.8,
+            "image_geometry": {
+              "line": [
+                [
+                  0.22,
+                  0.4
+                ],
+                [
+                  0.38,
+                  0.4
+                ]
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.8
+          },
+          {
+            "id": "E7",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "nodal_loads",
+                "name": "P1"
+              }
+            },
+            "confidence": 0.7,
+            "image_geometry": {
+              "point": [
+                0.52,
+                0.56
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.7
+          },
+          {
+            "id": "E8",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "nodal_loads",
+                "name": "M1"
+              }
+            },
+            "confidence": 0.7,
+            "image_geometry": {
+              "point": [
+                0.8,
+                0.56
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.7
+          }
+        ],
+        "unbound_symbols_only": true
+      },
+      {
+        "id": "pixel-axis-review",
+        "category": "low_confidence",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "node:1",
+          "node:2"
+        ],
+        "message": "已根据连续像素带提出水平梁轴候选位置，原始识别坐标已保留。请核对梁轴端点、支座附着点及中间节点，确认后再提交。",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "action-review-A1-position",
+        "category": "low_confidence",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "member:1",
+          "member:2",
+          "member:3",
+          "node:3"
+        ],
+        "message": "集中力作用点及分段为候选位置，请对照原图核对。此确认不补充荷载数值。",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "action-review-A1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "node:3"
+        ],
+        "message": "集中力作用位置候选待核对；请确认外荷载/反力含义、位置、方向、数值和单位。候选分段尚未经人工确认。",
+        "observations": [
+          {
+            "observation": {
+              "id": "A1",
+              "kind": "force",
+              "member": 1,
+              "point": [
+                0.52,
+                0.44
+              ],
+              "text": "斜向集中力箭头，箭头尖接触梁上缘"
+            },
+            "node": 3,
+            "reason": null
+          }
+        ],
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "action-review-A2-position",
+        "category": "low_confidence",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "member:2",
+          "member:3",
+          "node:4"
+        ],
+        "message": "集中力矩作用点及分段为候选位置，请对照原图核对。此确认不补充荷载数值。",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "action-review-A2",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "node:4"
+        ],
+        "message": "集中力矩作用位置候选待核对；请确认外荷载/反力含义、位置、方向、数值和单位。候选分段尚未经人工确认。",
+        "observations": [
+          {
+            "observation": {
+              "id": "A2",
+              "kind": "moment",
+              "member": 1,
+              "point": [
+                0.81,
+                0.44
+              ],
+              "text": "顺时针圆弧箭头，圆弧中心位于梁上"
+            },
+            "node": 4,
+            "reason": null
+          }
+        ],
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "action-review-warnings",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [],
+        "message": "作用点复核仍有疑问，请人工检查：左侧水平红色箭头与支座反力/外力难以区分，未计入集中作用点；梁下红色竖直箭头为支座反力，已排除；蓝色分布荷载箭头列已排除",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 1,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": []
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.1450, \"v\": 0.5600},\n      {\"id\": 2, \"u\": 0.8900, \"v\": 0.5600}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 2, \"kind\": \"roller\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [],\n        \"member_loads\": [],\n        \"member_spans\": []\n      }\n    ]\n  },\n  \"entities\": [\n    {\n      \"id\": \"E1\",\n      \"kind\": \"member\",\n      \"target\": {\"member\": 1},\n      \"confidence\": 0.95,\n      \"image_geometry\": {\"line\": [[0.1450, 0.5600], [0.8900, 0.5600]]}\n    },\n    {\n      \"id\": \"E2\",\n      \"kind\": \"node\",\n      \"target\": {\"node\": 1},\n      \"confidence\": 0.9,\n      \"image_geometry\": {\"point\": [0.1450, 0.5600]}\n    },\n    {\n      \"id\": \"E3\",\n      \"kind\": \"node\",\n      \"target\": {\"node\": 2},\n      \"confidence\": 0.9,\n      \"image_geometry\": {\"point\": [0.8900, 0.5600]}\n    },\n    {\n      \"id\": \"E4\",\n      \"kind\": \"support\",\n      \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}},\n      \"confidence\": 0.85,\n      \"image_geometry\": {\"point\": [0.1450, 0.5600]}\n    },\n    {\n      \"id\": \"E5\",\n      \"kind\": \"support\",\n      \"target\": {\"support\": {\"node\": 2, \"name\": \"S2\"}},\n      \"confidence\": 0.85,\n      \"image_geometry\": {\"point\": [0.8900, 0.5600]}\n    },\n    {\n      \"id\": \"E6\",\n      \"kind\": \"load\",\n      \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"member_loads\", \"name\": \"q1\"}},\n      \"confidence\": 0.8,\n      \"image_geometry\": {\"line\": [[0.2200, 0.4000], [0.3800, 0.4000]]}\n    },\n    {\n      \"id\": \"E7\",\n      \"kind\": \"load\",\n      \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"P1\"}},\n      \"confidence\": 0.7,\n      \"image_geometry\": {\"point\": [0.5200, 0.5600]}\n    },\n    {\n      \"id\": \"E8\",\n      \"kind\": \"load\",\n      \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"M1\"}},\n      \"confidence\": 0.7,\n      \"image_geometry\": {\"point\": [0.8000, 0.5600]}\n    }\n  ],\n  \"dimensions\": [],\n  \"issues\": [\n    {\n      \"id\": \"I1\",\n      \"category\": \"load_incomplete\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"load:D.member_loads.q1\"],\n      \"message\": \"分布荷载 q1 只有箭头符号，未标注数值和单位，无法确定荷载大小。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I2\",\n      \"category\": \"load_incomplete\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"load:D.nodal_loads.P1\"],\n      \"message\": \"集中力 P1 只有箭头符号，未标注数值和单位，无法确定荷载大小。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I3\",\n      \"category\": \"load_incomplete\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"load:D.nodal_loads.M1\"],\n      \"message\": \"集中矩 M1 只有圆弧箭头符号，未标注数值和单位，无法确定力矩大小。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I4\",\n      \"category\": \"low_confidence\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"support:S1\"],\n      \"message\": \"左侧支座符号为三角形，识别为铰接，但需人工确认。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I5\",\n      \"category\": \"low_confidence\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"support:S2\"],\n      \"message\": \"右侧支座符号为三角形加圆，识别为滚动，但需人工确认。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I6\",\n      \"category\": \"missing_dimension\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"member:1\"],\n      \"message\": \"图中无尺寸标注，节点坐标仅为相对比例，需用户标定实际尺寸。\",\n      \"status\": \"open\"\n    }\n  ]\n}",
+    "{\"actions\":[{\"id\":\"A1\",\"kind\":\"force\",\"member\":1,\"point\":[0.52,0.44],\"text\":\"斜向集中力箭头，箭头尖接触梁上缘\"},{\"id\":\"A2\",\"kind\":\"moment\",\"member\":1,\"point\":[0.81,0.44],\"text\":\"顺时针圆弧箭头，圆弧中心位于梁上\"}],\"warnings\":[\"左侧水平红色箭头与支座反力/外力难以区分，未计入集中作用点\",\"梁下红色竖直箭头为支座反力，已排除\",\"蓝色分布荷载箭头列已排除\"]}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "stage": "geometry",
+      "content_characters": 3314,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 2298,
+      "completion_tokens": 1217,
+      "total_tokens": 3515
+    },
+    {
+      "attempt": 2,
+      "stage": "action_review",
+      "content_characters": 262,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 684,
+      "completion_tokens": 124,
+      "total_tokens": 808
+    }
+  ],
+  "action_review": {
+    "status": "completed",
+    "records": [
+      {
+        "observation": {
+          "id": "A1",
+          "kind": "force",
+          "member": 1,
+          "point": [
+            0.52,
+            0.44
+          ],
+          "text": "斜向集中力箭头，箭头尖接触梁上缘"
+        },
+        "node": 3,
+        "reason": null
+      },
+      {
+        "observation": {
+          "id": "A2",
+          "kind": "moment",
+          "member": 1,
+          "point": [
+            0.81,
+            0.44
+          ],
+          "text": "顺时针圆弧箭头，圆弧中心位于梁上"
+        },
+        "node": 4,
+        "reason": null
+      }
+    ],
+    "warnings": [
+      "左侧水平红色箭头与支座反力/外力难以区分，未计入集中作用点",
+      "梁下红色竖直箭头为支座反力，已排除",
+      "蓝色分布荷载箭头列已排除"
+    ]
+  },
+  "position_refinements": [
+    {
+      "method": "solid-black-horizontal-band/v1",
+      "band_px": [
+        121.0,
+        183,
+        784.0,
+        198
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.145,
+          "v": 0.56
+        },
+        {
+          "id": 2,
+          "u": 0.89,
+          "v": 0.56
+        }
+      ]
+    },
+    {
+      "method": "solid-black-horizontal-band/v1",
+      "band_px": [
+        121.0,
+        183,
+        784.0,
+        198
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.145,
+          "v": 0.56
+        },
+        {
+          "id": 2,
+          "u": 0.89,
+          "v": 0.56
+        }
+      ]
+    },
+    {
+      "method": "solid-black-horizontal-band/v1",
+      "band_px": [
+        121.0,
+        183,
+        784.0,
+        198
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.145,
+          "v": 0.56
+        },
+        {
+          "id": 2,
+          "u": 0.89,
+          "v": 0.56
+        }
+      ]
+    },
+    {
+      "method": "solid-black-horizontal-band/v1",
+      "band_px": [
+        121.0,
+        183,
+        784.0,
+        198
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.145,
+          "v": 0.56
+        },
+        {
+          "id": 2,
+          "u": 0.89,
+          "v": 0.56
+        }
+      ]
+    },
+    {
+      "method": "focused-action-projection/v1",
+      "observation": {
+        "id": "A1",
+        "kind": "force",
+        "member": 1,
+        "point": [
+          0.52,
+          0.44
+        ],
+        "text": "斜向集中力箭头，箭头尖接触梁上缘"
+      }
+    },
+    {
+      "method": "focused-action-projection/v1",
+      "observation": {
+        "id": "A1",
+        "kind": "force",
+        "member": 1,
+        "point": [
+          0.52,
+          0.44
+        ],
+        "text": "斜向集中力箭头，箭头尖接触梁上缘"
+      }
+    },
+    {
+      "method": "focused-action-projection/v1",
+      "observation": {
+        "id": "A2",
+        "kind": "moment",
+        "member": 1,
+        "point": [
+          0.81,
+          0.44
+        ],
+        "text": "顺时针圆弧箭头，圆弧中心位于梁上"
+      }
+    },
+    {
+      "method": "focused-action-projection/v1",
+      "observation": {
+        "id": "A2",
+        "kind": "moment",
+        "member": 1,
+        "point": [
+          0.81,
+          0.44
+        ],
+        "text": "顺时针圆弧箭头，圆弧中心位于梁上"
+      }
+    },
+    {
+      "method": "focused-action-projection/v1",
+      "observation": {
+        "id": "A2",
+        "kind": "moment",
+        "member": 1,
+        "point": [
+          0.81,
+          0.44
+        ],
+        "text": "顺时针圆弧箭头，圆弧中心位于梁上"
+      }
+    }
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+    "derived_image_hash": "42aa3d64fe63b111b8f569b6ce585f1a859e17aefd017e4f2a2b3bfb7ae74610",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "5991d23b6bccdba7327635c2f90ca659103e78f409c9763d6fca13fd74edf3be",
+    "review_actions": true,
+    "action_prompt_hash": "0bf209f419d68cd4dbb9e8d063f31eafbabdf75e69c13f20a8246c103de232f7"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      874,
+      433
+    ],
+    "crop": [
+      0,
+      0,
+      874,
+      433
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 2,
+    "duration_ms": 5640.999999995984
+  }
+}

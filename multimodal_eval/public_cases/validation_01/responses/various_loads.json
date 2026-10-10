@@ -1,0 +1,373 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "various_loads",
+    "width_px": 874,
+    "height_px": 433,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.15,
+          0.5
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.88,
+          0.5
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 2
+      }
+    ],
+    "supports": [
+      {
+        "node": 1,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 2,
+        "fix": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "load:D:member_loads:q1"
+        ],
+        "message": "均布荷载箭头未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "load:D:nodal_loads:P1"
+        ],
+        "message": "斜向集中荷载箭头未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I3",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "load:D:nodal_loads:M1"
+        ],
+        "message": "弯矩荷载未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I4",
+        "category": "ambiguous_load",
+        "severity": "blocking",
+        "entity_refs": [
+          "load:D:nodal_loads:P2",
+          "load:D:nodal_loads:R1",
+          "load:D:nodal_loads:R2"
+        ],
+        "message": "红色箭头可能是外加荷载或支座反力，无法区分，需人工核实。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I5",
+        "category": "missing_dimension",
+        "severity": "blocking",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "图中无尺寸标注，节点坐标为相对比例，需用户标定实际尺寸。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "unbound-load-6",
+        "category": "load_incomplete",
+        "entity_refs": [],
+        "message": "荷载符号观察没有对应的求解条目，可能缺少数值或属于反力。请核对作用位置、物理含义及数值；明确无需施加时选择忽略符号，原记录仍保留。",
+        "severity": "blocking",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null,
+        "observations": [
+          {
+            "id": "E4",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "member_loads",
+                "name": "q1"
+              }
+            },
+            "confidence": 0.85,
+            "image_geometry": {
+              "line": [
+                [
+                  0.22,
+                  0.4
+                ],
+                [
+                  0.4,
+                  0.4
+                ]
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.85
+          },
+          {
+            "id": "E5",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "nodal_loads",
+                "name": "P1"
+              }
+            },
+            "confidence": 0.8,
+            "image_geometry": {
+              "line": [
+                [
+                  0.53,
+                  0.25
+                ],
+                [
+                  0.52,
+                  0.45
+                ]
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.8
+          },
+          {
+            "id": "E6",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "nodal_loads",
+                "name": "M1"
+              }
+            },
+            "confidence": 0.8,
+            "image_geometry": {
+              "point": [
+                0.8,
+                0.5
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.8
+          },
+          {
+            "id": "E7",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "nodal_loads",
+                "name": "P2"
+              }
+            },
+            "confidence": 0.7,
+            "image_geometry": {
+              "line": [
+                [
+                  0.02,
+                  0.45
+                ],
+                [
+                  0.12,
+                  0.45
+                ]
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.7
+          },
+          {
+            "id": "E8",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "nodal_loads",
+                "name": "R1"
+              }
+            },
+            "confidence": 0.6,
+            "image_geometry": {
+              "line": [
+                [
+                  0.15,
+                  0.8
+                ],
+                [
+                  0.15,
+                  0.6
+                ]
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.6
+          },
+          {
+            "id": "E9",
+            "kind": "load",
+            "target": {
+              "load": {
+                "case": "D",
+                "collection": "nodal_loads",
+                "name": "R2"
+              }
+            },
+            "confidence": 0.6,
+            "image_geometry": {
+              "line": [
+                [
+                  0.88,
+                  0.8
+                ],
+                [
+                  0.88,
+                  0.6
+                ]
+              ]
+            },
+            "source": "vision",
+            "verified": false,
+            "recognition_confidence": 0.6
+          }
+        ],
+        "unbound_symbols_only": true
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 1,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": []
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.1500, \"v\": 0.5000},\n      {\"id\": 2, \"u\": 0.8800, \"v\": 0.5000}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 2, \"kind\": \"roller\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [],\n        \"member_loads\": []\n      }\n    ]\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.95,\n     \"image_geometry\": {\"line\": [[0.1500, 0.5000], [0.8800, 0.5000]]}},\n    {\"id\": \"E2\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.1500, 0.5000]}},\n    {\"id\": \"E3\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 2, \"name\": \"S2\"}}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.8800, 0.5000]}},\n    {\"id\": \"E4\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"member_loads\", \"name\": \"q1\"}}, \"confidence\": 0.85,\n     \"image_geometry\": {\"line\": [[0.2200, 0.4000], [0.4000, 0.4000]]}},\n    {\"id\": \"E5\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"P1\"}}, \"confidence\": 0.8,\n     \"image_geometry\": {\"line\": [[0.5300, 0.2500], [0.5200, 0.4500]]}},\n    {\"id\": \"E6\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"M1\"}}, \"confidence\": 0.8,\n     \"image_geometry\": {\"point\": [0.8000, 0.5000]}},\n    {\"id\": \"E7\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"P2\"}}, \"confidence\": 0.7,\n     \"image_geometry\": {\"line\": [[0.0200, 0.4500], [0.1200, 0.4500]]}},\n    {\"id\": \"E8\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"R1\"}}, \"confidence\": 0.6,\n     \"image_geometry\": {\"line\": [[0.1500, 0.8000], [0.1500, 0.6000]]}},\n    {\"id\": \"E9\", \"kind\": \"load\", \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"R2\"}}, \"confidence\": 0.6,\n     \"image_geometry\": {\"line\": [[0.8800, 0.8000], [0.8800, 0.6000]]}}\n  ],\n  \"dimensions\": [],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"load_incomplete\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"load:D:member_loads:q1\"],\n     \"message\": \"均布荷载箭头未标注数值和单位，无法确定荷载大小。\",\n     \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"load_incomplete\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"load:D:nodal_loads:P1\"],\n     \"message\": \"斜向集中荷载箭头未标注数值和单位，无法确定荷载大小。\",\n     \"status\": \"open\"},\n    {\"id\": \"I3\", \"category\": \"load_incomplete\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"load:D:nodal_loads:M1\"],\n     \"message\": \"弯矩荷载未标注数值和单位，无法确定荷载大小。\",\n     \"status\": \"open\"},\n    {\"id\": \"I4\", \"category\": \"ambiguous_load\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"load:D:nodal_loads:P2\", \"load:D:nodal_loads:R1\", \"load:D:nodal_loads:R2\"],\n     \"message\": \"红色箭头可能是外加荷载或支座反力，无法区分，需人工核实。\",\n     \"status\": \"open\"},\n    {\"id\": \"I5\", \"category\": \"missing_dimension\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"member:1\"],\n     \"message\": \"图中无尺寸标注，节点坐标为相对比例，需用户标定实际尺寸。\",\n     \"status\": \"open\"}\n  ]\n}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "content_characters": 3107,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 1805,
+      "completion_tokens": 1231,
+      "total_tokens": 3036
+    }
+  ],
+  "position_refinements": [],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "077f8a9e079434865f7fecfdbf06475be7377e0231c5d51dd67ac69f4fa49a9c",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+    "derived_image_hash": "42aa3d64fe63b111b8f569b6ce585f1a859e17aefd017e4f2a2b3bfb7ae74610",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "4713cb7e89d08530adcb55f8ac5a23cd00736729a5668eb7c4aba8b5193059a0"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      874,
+      433
+    ],
+    "crop": [
+      0,
+      0,
+      874,
+      433
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 7453.000000001339
+  }
+}

@@ -178,13 +178,16 @@ def score_open_issues(predictions: Iterable[Mapping[str, Any]],
             result[key] = str(item["severity"])
         return result
 
-    predicted = indexed(predictions)
     expected = indexed(truths)
-    tp = sum(predicted[key] == expected[key] for key in predicted.keys() & expected.keys())
-    severity_mismatches = sum(predicted[key] != expected[key]
-                              for key in predicted.keys() & expected.keys())
-    fp = len(predicted.keys() - expected.keys()) + severity_mismatches
-    fn = len(expected.keys() - predicted.keys()) + severity_mismatches
+    predicted: dict[tuple[str, tuple[str, ...]], list[str]] = {}
+    for item in predictions:
+        if item.get("status") == "open":
+            key = (str(item["category"]), tuple(sorted(set(str(ref) for ref in item.get("entity_refs", ())))))
+            predicted.setdefault(key, []).append(str(item["severity"]))
+    # 首响应可能在同一杆件上报告多条缺值；一对一计分，多余预测计 FP，不丢弃整张失败图。
+    tp = sum(expected[key] in predicted[key] for key in predicted.keys() & expected.keys())
+    fp = sum(len(values) for values in predicted.values()) - tp
+    fn = len(expected) - tp
     recall = None if tp + fn == 0 else tp / (tp + fn)
     return {"tp": tp, "fp": fp, "fn": fn, "recall": recall}
 

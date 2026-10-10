@@ -1,0 +1,355 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "mode": "frozen-response",
+  "manifest": "manifest.json",
+  "gate_cases": 2,
+  "evaluated_image_ids": [
+    "tower_truss",
+    "wall_truss"
+  ],
+  "case_reports": [
+    {
+      "image_id": "tower_truss",
+      "metrics": {
+        "node_f1": 0.0,
+        "member_f1": 0.0,
+        "clear_node_f1": 0.0,
+        "clear_member_f1": 0.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 0.0,
+        "load_f1": 0.0,
+        "load_numeric_unit_accuracy": 0.0,
+        "scale_accuracy": null,
+        "issue_recall": 0.0,
+        "issue_false_positives": 0
+      },
+      "counts": {
+        "nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 12
+        },
+        "members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 21
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 12
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 21
+        },
+        "supports": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2
+        },
+        "issues": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 59
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 2
+        }
+      },
+      "missing_nodes": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "extra_nodes": [],
+      "missing_members": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "2",
+        "20",
+        "21",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "extra_members": []
+    },
+    {
+      "image_id": "wall_truss",
+      "metrics": {
+        "node_f1": 0.0,
+        "member_f1": 0.0,
+        "clear_node_f1": 0.0,
+        "clear_member_f1": 0.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 0.0,
+        "load_f1": 0.0,
+        "load_numeric_unit_accuracy": 0.0,
+        "scale_accuracy": null,
+        "issue_recall": 0.0,
+        "issue_false_positives": 0
+      },
+      "counts": {
+        "nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 5
+        },
+        "members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 7
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 5
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 7
+        },
+        "supports": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1
+        },
+        "issues": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 0,
+          "fn": 14
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 1
+        }
+      },
+      "missing_nodes": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "extra_nodes": [],
+      "missing_members": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7"
+      ],
+      "extra_members": []
+    }
+  ],
+  "metrics": {
+    "node_f1": 0.0,
+    "member_f1": 0.0,
+    "clear_node_f1": 0.0,
+    "clear_member_f1": 0.0,
+    "intersection_accuracy": 0.0,
+    "support_f1": 0.0,
+    "load_f1": 0.0,
+    "load_numeric_unit_accuracy": 0.0,
+    "scale_accuracy": null,
+    "issue_recall": 0.0,
+    "issue_false_positives": 0
+  },
+  "counts": {
+    "nodes": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 17
+    },
+    "members": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 28
+    },
+    "clear_nodes": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 17
+    },
+    "clear_members": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 28
+    },
+    "supports": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 4
+    },
+    "loads": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 3
+    },
+    "issues": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 2
+    },
+    "intersections": {
+      "correct": 0,
+      "wrong": 0,
+      "fp": 0,
+      "fn": 73
+    },
+    "scale": {
+      "correct": 0,
+      "total": 0
+    },
+    "load_numeric": {
+      "correct": 0,
+      "total": 3
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [
+    "node_f1",
+    "member_f1",
+    "clear_node_f1",
+    "clear_member_f1",
+    "intersection_accuracy",
+    "support_f1",
+    "load_f1"
+  ],
+  "passed": false,
+  "sample_kind": "external-real-world-pilot",
+  "case_outcomes": [
+    {
+      "image_id": "tower_truss",
+      "outcome": "FAIL",
+      "attempts": 1,
+      "duration_ms": 15218.000000000075,
+      "errors": [
+        "第1次 API 调用失败: RuntimeError: 视觉接口输出达到长度限制，草稿不完整。请裁剪到结构主体或减少图中内容后重新识别。"
+      ],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "content_characters": 8896,
+          "has_reasoning_content": false,
+          "finish_reason": "length",
+          "prompt_tokens": 2245,
+          "completion_tokens": 4000,
+          "total_tokens": 6245
+        }
+      ],
+      "action_review": null,
+      "review_actions": false
+    },
+    {
+      "image_id": "wall_truss",
+      "outcome": "FAIL",
+      "attempts": 1,
+      "duration_ms": 5594.000000000051,
+      "errors": [
+        "第1次 v2 校验失败: image_model 杆件 6 自连接或重复"
+      ],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "content_characters": 3655,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 2254,
+          "completion_tokens": 1600,
+          "total_tokens": 3854
+        }
+      ],
+      "action_review": null,
+      "review_actions": false
+    }
+  ],
+  "reference_contract": {
+    "format": "space-frame-reference-topology/v1",
+    "legacy_cases": [],
+    "checked_cases": 2
+  },
+  "runtime": {
+    "attempted_cases": 2,
+    "parse_successes": 0,
+    "parse_failures": 2,
+    "total_calls": 2,
+    "median_duration_ms": 10406.000000000062,
+    "total_duration_ms": 20812.000000000124
+  },
+  "action_review": {
+    "attempted_cases": 0,
+    "completed_cases": 0,
+    "failed_or_missing_cases": 0
+  },
+  "limitations": [
+    "小样本单次结果，不代表真实手绘、手机照片或所有提供商的准确率。",
+    "无参考对象的指标为 null，不补成 100%；失败输入不从分母移除。"
+  ]
+}

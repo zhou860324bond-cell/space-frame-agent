@@ -1,0 +1,915 @@
+{
+  "method": "按应变能积分独立组装 Euler-Bernoulli 12自由度梁，独立计算一致均布/跨中集中力荷载，再用numpy稠密求解；未调用项目梁刚度、坐标变换、组装或荷载等效函数。",
+  "limitation": "只验证给定输入的计算一致性；缺少教材节点4/5答案及原始输入，不能确认荷载释图。",
+  "records": [
+    {
+      "file": "图IV-6_原题五杆版.json",
+      "sha256": "a9497b1a6e725038bcc3397d306c97b8965b87775ce72a7a1964b8ac99cb0aea",
+      "max_abs_dof_difference": 4.605690828718423e-16,
+      "nodes": {
+        "1": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "2": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "3": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "4": {
+          "independent_m_rad": [
+            0.0041070426966890354,
+            -0.0002878567576185053,
+            -5.5478953168443294e-06,
+            0.0021304032246331644,
+            0.0010693749481379539,
+            -0.0013922546095790724
+          ],
+          "software_m_rad": [
+            0.004107042696689496,
+            -0.00028785675761828995,
+            -5.54789531684486e-06,
+            0.00213040322463301,
+            0.001069374948138091,
+            -0.0013922546095791737
+          ]
+        },
+        "5": {
+          "independent_m_rad": [
+            0.004112738323717569,
+            0.0014993367321005362,
+            7.328708077727522e-06,
+            -0.0005252759003157826,
+            0.0019023791575735955,
+            -0.00178601665372255
+          ],
+          "software_m_rad": [
+            0.004112738323718029,
+            0.0014993367321009079,
+            7.328708077728477e-06,
+            -0.0005252759003158981,
+            0.0019023791575737401,
+            -0.0017860166537225419
+          ]
+        },
+        "6": {
+          "independent_m_rad": [
+            0.009596820612259277,
+            0.0014973422162444414,
+            -1.7808127608831941e-06,
+            -0.0004336004263271989,
+            0.008377599045760322,
+            -0.0016836629607208736
+          ],
+          "software_m_rad": [
+            0.009596820612259551,
+            0.0014973422162448127,
+            -1.780812760883617e-06,
+            -0.00043360042632730985,
+            0.008377599045760522,
+            -0.0016836629607207576
+          ]
+        }
+      },
+      "calls": [
+        {
+          "tool": "set_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1
+          }
+        },
+        {
+          "tool": "validate_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 9.71293,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 6.759e-14,
+                "max_deflection_mm": 9.71293,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/102，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 5,
+              "analysis_elements": 7,
+              "generated_nodes": 2,
+              "diagnostics": [
+                "物理构件 2 因集中荷载编译为 2 个分析单元",
+                "物理构件 4 因集中荷载编译为 2 个分析单元"
+              ]
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 9.7129 mm，结构尺寸 3464 mm，占比 0.280%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979827533,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\iv6_independent\\capsules\\20261010_234720_6724a2d6.json",
+            "result_identity": {
+              "solve_id": "415cc684de784c6ebfeab4b163c1befd",
+              "model_fingerprint": "4ad6296e8998ec1173d0ed6f25ac36ff",
+              "solved_at": "2026-10-10T15:47:20.301010+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "file": "图IV-6_原题五杆版_双向均布_不考虑剪切.json",
+      "sha256": "989943600e7a9c5e5bdfc52a59d6803bfd024e0614419b87ab11b1d64b9c4847",
+      "max_abs_dof_difference": 3.892285799222961e-16,
+      "nodes": {
+        "1": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "2": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "3": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "4": {
+          "independent_m_rad": [
+            0.0025640449031648902,
+            -0.0005023690704287848,
+            -4.264057991552513e-06,
+            0.0022652650849941383,
+            0.0005256919269979697,
+            -0.001429875107300728
+          ],
+          "software_m_rad": [
+            0.0025640449031651773,
+            -0.0005023690704285865,
+            -4.264057991552846e-06,
+            0.002265265084993994,
+            0.0005256919269980547,
+            -0.0014298751073008368
+          ]
+        },
+        "5": {
+          "independent_m_rad": [
+            0.0025678668149952035,
+            0.0015483051640334524,
+            6.081318824277469e-06,
+            -0.0005257303860378355,
+            0.001758817711979202,
+            -0.0020915273531933957
+          ],
+          "software_m_rad": [
+            0.0025678668149954906,
+            0.0015483051640338417,
+            6.081318824278244e-06,
+            -0.0005257303860379548,
+            0.0017588177119792939,
+            -0.0020915273531934213
+          ]
+        },
+        "6": {
+          "independent_m_rad": [
+            0.009032271178006932,
+            0.0015462522672281605,
+            -1.8172608327249558e-06,
+            -0.0004513739710724772,
+            0.00799932416847346,
+            -0.0021721997787545622
+          ],
+          "software_m_rad": [
+            0.009032271178007133,
+            0.0015462522672285493,
+            -1.817260832725397e-06,
+            -0.00045137397107259384,
+            0.007999324168473605,
+            -0.0021721997787544963
+          ]
+        }
+      },
+      "calls": [
+        {
+          "tool": "set_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1
+          }
+        },
+        {
+          "tool": "validate_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 6,
+              "members": 5,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 9.163669,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 1.026e-13,
+                "max_deflection_mm": 9.163668,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/109，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 5,
+              "analysis_elements": 7,
+              "generated_nodes": 2,
+              "diagnostics": [
+                "物理构件 2 因集中荷载编译为 2 个分析单元",
+                "物理构件 4 因集中荷载编译为 2 个分析单元"
+              ]
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 9.1637 mm，结构尺寸 3464 mm，占比 0.265%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979827533,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\iv6_independent\\capsules\\20261010_234720_d49675d9.json",
+            "result_identity": {
+              "solve_id": "498fd4218db24994980623816806a3a1",
+              "model_fingerprint": "9b64886ec00d15d2274f19fa469562ba",
+              "solved_at": "2026-10-10T15:47:20.333688+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "file": "图IV-6_表格建模版_双向均布_不考虑剪切.json",
+      "sha256": "5de10a0ff10b07bc8fda196af34e353b3337183357997f606bf6b6185d3c151f",
+      "max_abs_dof_difference": 5.104423828061755e-16,
+      "nodes": {
+        "1": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "2": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "3": {
+          "independent_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "software_m_rad": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "4": {
+          "independent_m_rad": [
+            0.0025640449031650745,
+            -0.0005023690704287526,
+            -4.264057991552719e-06,
+            0.0022652650849941175,
+            0.0005256919269980246,
+            -0.0014298751073007307
+          ],
+          "software_m_rad": [
+            0.002564044903165583,
+            -0.0005023690704285351,
+            -4.2640579915533016e-06,
+            0.0022652650849939618,
+            0.0005256919269981768,
+            -0.0014298751073008277
+          ]
+        },
+        "5": {
+          "independent_m_rad": [
+            0.0025678668149953865,
+            0.0015483051640334683,
+            6.081318824277698e-06,
+            -0.0005257303860378417,
+            0.0017588177119792568,
+            -0.002091527353193364
+          ],
+          "software_m_rad": [
+            0.002567866814995897,
+            0.0015483051640338302,
+            6.08131882427869e-06,
+            -0.0005257303860379548,
+            0.001758817711979416,
+            -0.0020915273531933484
+          ]
+        },
+        "6": {
+          "independent_m_rad": [
+            0.009032271178006996,
+            0.0015462522672281761,
+            -1.8172608327249752e-06,
+            -0.0004513739710724813,
+            0.00799932416847351,
+            -0.002172199778754499
+          ],
+          "software_m_rad": [
+            0.009032271178007307,
+            0.0015462522672285378,
+            -1.8172608327253882e-06,
+            -0.0004513739710725896,
+            0.007999324168473734,
+            -0.002172199778754381
+          ]
+        },
+        "7": {
+          "independent_m_rad": [
+            0.0025659558590802305,
+            0.0007617580154038544,
+            -0.00030737281582894545,
+            0.0008697673494781375,
+            -0.0005633683771324472,
+            -0.0006576550607231418
+          ],
+          "software_m_rad": [
+            0.0025659558590807405,
+            0.0007617580154041723,
+            -0.00030737281582894713,
+            0.0008697673494780034,
+            -0.0005633683771325242,
+            -0.0006576550607232302
+          ]
+        },
+        "8": {
+          "independent_m_rad": [
+            0.006184103920185563,
+            0.001547278715630822,
+            -1.6457074745563737e-05,
+            0.00023835215453482862,
+            0.004879070940226384,
+            -0.0037823714892717404
+          ],
+          "software_m_rad": [
+            0.006184103920185998,
+            0.0015472787156311839,
+            -1.6457074745564642e-05,
+            0.00023835215453488304,
+            0.0048790709402265755,
+            -0.003782371489271626
+          ]
+        }
+      },
+      "calls": [
+        {
+          "tool": "set_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 8,
+              "members": 7,
+              "supports": 3,
+              "load_cases": 1
+            },
+            "schema_version": 1
+          }
+        },
+        {
+          "tool": "validate_model",
+          "ok": true,
+          "payload": {
+            "summary": {
+              "nodes": 8,
+              "members": 7,
+              "supports": 3,
+              "load_cases": 1
+            }
+          }
+        },
+        {
+          "tool": "solve_model",
+          "ok": true,
+          "payload": {
+            "cases": {
+              "图IV6": {
+                "max_displacement_mm": 9.163669,
+                "at_node": 6,
+                "equilibrium_ok": true,
+                "equilibrium_residual": 1.408e-13,
+                "max_deflection_mm": 9.163668,
+                "at_member": 5,
+                "at_x_m": 2.0,
+                "warning": "最大位移达到最短杆件长度的 1/109，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+              }
+            },
+            "analysis": {
+              "type": "linear_static"
+            },
+            "compilation": {
+              "physical_members": 7,
+              "analysis_elements": 7,
+              "generated_nodes": 0,
+              "diagnostics": []
+            },
+            "silent_failures": {
+              "summary": {
+                "overall": "pass",
+                "total_checks": 9,
+                "passed": 9,
+                "critical_issues": 0,
+                "warnings": 0,
+                "critical_details": [],
+                "warning_details": []
+              },
+              "findings": [
+                {
+                  "id": "insufficient_supports",
+                  "name": "支座约束不足",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "支座约束 18 个自由度，6 个刚体运动方向均有约束",
+                  "detail": {
+                    "support_dofs": 18,
+                    "support_nodes": 3
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "excessive_displacement",
+                  "name": "位移过大",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "最大位移 9.1637 mm，结构尺寸 3464 mm，占比 0.265%（< 10%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_reaction_with_load",
+                  "name": "有载荷但反力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零支座反力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "zero_internal_force",
+                  "name": "有载荷但内力为零",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有有载荷的工况都有非零杆件内力",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "no_applied_load",
+                  "name": "求解时没有任何荷载",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                  "detail": {
+                    "loaded_cases": [
+                      "图IV6"
+                    ]
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "near_singular_stiffness",
+                  "name": "刚度矩阵接近奇异",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "刚度矩阵条件数 7.58e+03（< 1e8），数值稳定",
+                  "detail": {
+                    "condition_number": 7581.808979829694,
+                    "dof": 30
+                  },
+                  "suggestion": ""
+                },
+                {
+                  "id": "reaction_load_balance",
+                  "name": "反力与外载荷不平衡",
+                  "severity": "critical",
+                  "status": "pass",
+                  "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "load_magnitude_anomaly",
+                  "name": "载荷量级异常",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有工况载荷量级与材料弹性模量匹配",
+                  "detail": {},
+                  "suggestion": ""
+                },
+                {
+                  "id": "section_orientation",
+                  "name": "截面主轴方向风险",
+                  "severity": "warning",
+                  "status": "pass",
+                  "message": "所有截面 Iz >= Iy，主轴方向正常",
+                  "detail": {},
+                  "suggestion": ""
+                }
+              ]
+            },
+            "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\iv6_independent\\capsules\\20261010_234720_009133dd.json",
+            "result_identity": {
+              "solve_id": "812cfc6124b445218584502f11a0d1c6",
+              "model_fingerprint": "159e2ac9afb4ab869db471d1ba0aa8f1",
+              "solved_at": "2026-10-10T15:47:20.358263+00:00",
+              "parameters": {
+                "analysis": "linear",
+                "increments": 10,
+                "max_iter": 40,
+                "tolerance": 1e-07,
+                "amplitudes": null
+              },
+              "analysis": {
+                "type": "linear_static"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

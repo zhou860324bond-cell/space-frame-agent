@@ -1,0 +1,360 @@
+{
+  "image_id": "wall_truss",
+  "width_px": 500,
+  "height_px": 303,
+  "image_hash": "1fb972a682508d1955fe12a2be48b85c362bac06a0bfd0bb3f12902b0ef78403",
+  "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+  "annotation_status": "verified",
+  "annotation_method": "编码助手目视原图，首次视觉调用前独立固定；未使用预测或运行时检测生成参考，未经外部专家复核。verified仅指内部完成。",
+  "annotation_notes": "墙上铰支座在节点1，竖直墙面滚动支座在节点5，滚动仅释放平面Y。500 lbs按题述外力解释为lbf，用NIST精确系数换为N；不将质量单位默认解释为外力。原图未声明按比例，尺度unknown。工况D及P1/P2为调用前约定，图未命名；命名不同仍按原严格评分，不事后改参考或容差。",
+  "topology_reference": {
+    "format": "space-frame-reference-topology/v1",
+    "scope": "all_member_pairs",
+    "status": "verified"
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "point": [
+        0.22845691382765532,
+        0.5298013245033113
+      ]
+    },
+    {
+      "id": 2,
+      "point": [
+        0.46292585170340683,
+        0.15562913907284767
+      ]
+    },
+    {
+      "id": 3,
+      "point": [
+        0.46292585170340683,
+        0.5298013245033113
+      ]
+    },
+    {
+      "id": 4,
+      "point": [
+        0.7014028056112225,
+        0.5298013245033113
+      ]
+    },
+    {
+      "id": 5,
+      "point": [
+        0.22845691382765532,
+        0.9370860927152318
+      ]
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "i": 1,
+      "j": 2
+    },
+    {
+      "id": 2,
+      "i": 2,
+      "j": 3
+    },
+    {
+      "id": 3,
+      "i": 2,
+      "j": 4
+    },
+    {
+      "id": 4,
+      "i": 1,
+      "j": 3
+    },
+    {
+      "id": 5,
+      "i": 3,
+      "j": 4
+    },
+    {
+      "id": 6,
+      "i": 1,
+      "j": 5
+    },
+    {
+      "id": 7,
+      "i": 5,
+      "j": 3
+    }
+  ],
+  "intersections": [
+    {
+      "id": "joint-1-4",
+      "members": [
+        1,
+        4
+      ],
+      "point": [
+        0.22845691382765532,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 1
+    },
+    {
+      "id": "joint-1-6",
+      "members": [
+        1,
+        6
+      ],
+      "point": [
+        0.22845691382765532,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 1
+    },
+    {
+      "id": "joint-4-6",
+      "members": [
+        4,
+        6
+      ],
+      "point": [
+        0.22845691382765532,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 1
+    },
+    {
+      "id": "joint-1-2",
+      "members": [
+        1,
+        2
+      ],
+      "point": [
+        0.46292585170340683,
+        0.15562913907284767
+      ],
+      "decision": "connect",
+      "node_id": 2
+    },
+    {
+      "id": "joint-1-3",
+      "members": [
+        1,
+        3
+      ],
+      "point": [
+        0.46292585170340683,
+        0.15562913907284767
+      ],
+      "decision": "connect",
+      "node_id": 2
+    },
+    {
+      "id": "joint-2-3",
+      "members": [
+        2,
+        3
+      ],
+      "point": [
+        0.46292585170340683,
+        0.15562913907284767
+      ],
+      "decision": "connect",
+      "node_id": 2
+    },
+    {
+      "id": "joint-2-4",
+      "members": [
+        2,
+        4
+      ],
+      "point": [
+        0.46292585170340683,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 3
+    },
+    {
+      "id": "joint-2-5",
+      "members": [
+        2,
+        5
+      ],
+      "point": [
+        0.46292585170340683,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 3
+    },
+    {
+      "id": "joint-2-7",
+      "members": [
+        2,
+        7
+      ],
+      "point": [
+        0.46292585170340683,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 3
+    },
+    {
+      "id": "joint-4-5",
+      "members": [
+        4,
+        5
+      ],
+      "point": [
+        0.46292585170340683,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 3
+    },
+    {
+      "id": "joint-4-7",
+      "members": [
+        4,
+        7
+      ],
+      "point": [
+        0.46292585170340683,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 3
+    },
+    {
+      "id": "joint-5-7",
+      "members": [
+        5,
+        7
+      ],
+      "point": [
+        0.46292585170340683,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 3
+    },
+    {
+      "id": "joint-3-5",
+      "members": [
+        3,
+        5
+      ],
+      "point": [
+        0.7014028056112225,
+        0.5298013245033113
+      ],
+      "decision": "connect",
+      "node_id": 4
+    },
+    {
+      "id": "joint-6-7",
+      "members": [
+        6,
+        7
+      ],
+      "point": [
+        0.22845691382765532,
+        0.9370860927152318
+      ],
+      "decision": "connect",
+      "node_id": 5
+    }
+  ],
+  "supports": [
+    {
+      "node": 1,
+      "fix": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "node": 5,
+      "fix": [
+        true,
+        false,
+        true,
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "loads": [
+    {
+      "case": "D",
+      "collection": "nodal_loads",
+      "node": 4,
+      "name": "P1",
+      "load": [
+        0,
+        -2224.11080763025,
+        0,
+        0,
+        0,
+        0
+      ],
+      "force_unit": "N",
+      "moment_unit": "N*m"
+    }
+  ],
+  "issues": [
+    {
+      "category": "scale_unknown",
+      "entity_refs": [],
+      "severity": "blocking",
+      "status": "open"
+    }
+  ],
+  "scale": {
+    "status": "unknown"
+  },
+  "dimension_observations": [
+    {
+      "nodes": [
+        1,
+        3
+      ],
+      "value": 6,
+      "unit": "ft"
+    },
+    {
+      "nodes": [
+        3,
+        4
+      ],
+      "value": 6,
+      "unit": "ft"
+    },
+    {
+      "nodes": [
+        2,
+        3
+      ],
+      "value": 6,
+      "unit": "ft"
+    },
+    {
+      "nodes": [
+        1,
+        5
+      ],
+      "value": 6,
+      "unit": "ft"
+    }
+  ]
+}

@@ -676,24 +676,27 @@ def support_glyphs(frame, size: float | None = None) -> dict[str, pv.PolyData]:
     全画出来会把真正的柱脚淹掉。
     """
     r = SYMBOL_RATIO * (size or model_size(frame))
-    groups: dict[str, list[pv.PolyData]] = {}
+    groups: dict[str, list[np.ndarray]] = {}
     for nid, mask in frame.supports.items():
         if sum(mask[:3]) < 2:
             continue
         p = np.asarray(frame.nodes[nid].xyz, dtype=float)
         kind = classify_support(mask)
+        groups.setdefault(kind, []).append(p)
+    meshes = {}
+    for kind, points in groups.items():
+        # 同类支座只生成一个模板，由 VTK 批量平移；避免逐支座创建过滤器。
         if kind == "固接":
-            g = pv.Cube(center=p - [0, 0, r], x_length=2.2 * r,
+            g = pv.Cube(center=[0, 0, -r], x_length=2.2 * r,
                         y_length=2.2 * r, z_length=2 * r)
         elif kind == "铰接":
-            g = pv.Cone(center=p - [0, 0, r], direction=[0, 0, 1],
+            g = pv.Cone(center=[0, 0, -r], direction=[0, 0, 1],
                         height=2 * r, radius=1.2 * r, resolution=32)
         else:
-            g = pv.Sphere(radius=0.9 * r, center=p,
+            g = pv.Sphere(radius=0.9 * r, center=[0, 0, 0],
                           theta_resolution=24, phi_resolution=24)
-        groups.setdefault(kind, []).append(g)
-    return {k: (v[0].merge(v[1:]) if len(v) > 1 else v[0])
-            for k, v in groups.items()}
+        meshes[kind] = pv.PolyData(np.asarray(points)).glyph(geom=g, orient=False, scale=False)
+    return meshes
 
 
 def support_labels(frame, size: float | None = None,

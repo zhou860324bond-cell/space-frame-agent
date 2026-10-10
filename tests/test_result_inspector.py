@@ -106,6 +106,7 @@ def test_result_panel_controls_are_wired_to_contour_options(qt_app):
 
 
 def test_member_probe_populates_result_table_and_extreme_can_be_located(qt_app):
+    """防止节点已选中却没有位移读数，以及工况、单位和放大系数改变读数。"""
     session = solved()
     window = MainWindow(session)
     from agent import ToolResult
@@ -117,6 +118,54 @@ def test_member_probe_populates_result_table_and_extreme_can_be_located(qt_app):
     window.locate_current_extreme()
     assert window.viewport.selection == ("member", 1)
     assert "绝对极值" in window.results.caption.text()
+
+    # 自由端的理论解独立核对 mm 位移与 rad 转角，不能读图上的放大位置。
+    section = session.frame.sections["B"]
+    # 本例局部 y 沿全局 Z，因此竖向弯曲采用 Iz。
+    expected_uz = -50e3 * 6**3 / (3 * 2.06e11 * section.Iz) * 1000
+    expected_ry = 50e3 * 6**2 / (2 * 2.06e11 * section.Iz)
+
+    def readings():
+        table = window.results.table
+        return {table.item(r, 0).text():
+                (float(table.item(r, 1).text()), table.item(r, 2).text())
+                for r in range(table.rowCount())}
+
+    for mode in ("模型", "变形", "云图"):
+        window.set_mode(mode)
+        window.set_scale(10000)
+        window._on_picked("node", 2)
+        values = readings()
+        assert values["Uz"] == (pytest.approx(expected_uz), "mm")
+        assert values["URy"] == (pytest.approx(expected_ry), "rad")
+        assert set(values) == {"Ux", "Uy", "Uz", "URx", "URy", "URz", "位移幅值"}
+        assert "节点 2" in window.results.caption.text()
+        assert "P" in window.results.caption.text()
+        assert window.results_dock.isVisible()
+    window._on_picked("node", 1)
+    assert all(value == 0 for value, _unit in readings().values())
+
+    from copy import deepcopy
+    from units import convert_model
+
+    model = deepcopy(session.model)
+    model["load_cases"].append({"name": "Q", "nodal_loads": [
+        {"node": 2, "load": [0, 0, -25e3, 0, 0, 0]}]})
+    model["combos"] = [{"name": "PQ", "factors": {"P": 1, "Q": 1}}]
+    assert session.set_model(model=convert_model(model, "N-mm-MPa")).ok
+    assert session.solve_model().ok
+    window.case = "P"
+    window._on_picked("node", 2)
+    assert readings()["Uz"] == (pytest.approx(expected_uz), "mm")
+    window.set_case("Q")
+    assert readings()["Uz"] == (pytest.approx(expected_uz / 2), "mm")
+    window.set_case("PQ")
+    assert readings()["Uz"] == (pytest.approx(expected_uz * 1.5), "mm")
+    assert readings()["URy"] == (pytest.approx(expected_ry * 1.5), "rad")
+    assert "PQ" in window.results.caption.text()
+    session.solution = None
+    window._on_picked("node", 2)
+    assert "节点位移" not in window.results.caption.text()
 
 
 def test_bc_edit_invalidates_backend_and_desktop_result_together(qt_app):

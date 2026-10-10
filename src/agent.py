@@ -946,7 +946,9 @@ class DeepSeekProvider:
         from openai import OpenAI          # 延迟导入：没装 openai 也能跑离线测试
         if not api_key or not api_key.strip():
             raise ValueError("缺少 API 密钥。请设置环境变量 DEEPSEEK_API_KEY 后重试。")
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        # 与图纸识别相同的单次网络超时；关闭 SDK 隐式重试，避免失联后长时间等待。
+        self._client = OpenAI(api_key=api_key, base_url=base_url,
+                              timeout=90.0, max_retries=0)
         self._model = model
         self._temperature = temperature
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0,

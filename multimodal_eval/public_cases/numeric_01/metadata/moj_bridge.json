@@ -1,0 +1,30 @@
+{
+  "format": "space-frame-real-world-case/v1",
+  "image_id": "moj_bridge",
+  "source": "https://eng.libretexts.org/Bookshelves/Mechanical_Engineering/Mechanics_Map_(Moore_2nd_Edition)/05%3A_Engineering_Structures/5.04%3A_Method_of_Joints",
+  "image_url": "https://eng.libretexts.org/@api/deki/files/42142/P1.png?revision=1",
+  "license": "CC BY-SA 4.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "author": "Jacob Moore and Contributors / Mechanics Map",
+  "retrieved_on": "2026-10-10",
+  "consent_to_evaluate": true,
+  "subset_labels": [
+    "clear",
+    "numeric_load",
+    "dimensioned_truss"
+  ],
+  "work_plane": {
+    "status": "confirmed",
+    "plane": "XY",
+    "offset": 0.0,
+    "axis_mapping": {
+      "first_axis": "X",
+      "second_axis": "Y",
+      "offset_axis": "Z",
+      "image_right_sign": 1,
+      "image_up_sign": 1
+    }
+  },
+  "preprocessing": {},
+  "notes": "用户授权许可明确的公开工程图评测；图像原字节保存，不裁剪，不改绘。许可页2024-08-18最后修改。"
+}

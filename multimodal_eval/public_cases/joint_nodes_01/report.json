@@ -1,0 +1,317 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "mode": "offline-replay",
+  "manifest": "manifest.json",
+  "gate_cases": 2,
+  "evaluated_image_ids": [
+    "moj_bridge",
+    "moj_labels"
+  ],
+  "case_reports": [
+    {
+      "image_id": "moj_bridge",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 1.0,
+        "load_f1": 1.0,
+        "load_numeric_unit_accuracy": 1.0,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 3
+      },
+      "counts": {
+        "nodes": {
+          "tp": 6,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 9,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 6,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 9,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 3,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 20,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 2,
+          "total": 2
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    },
+    {
+      "image_id": "moj_labels",
+      "metrics": {
+        "node_f1": 1.0,
+        "member_f1": 1.0,
+        "clear_node_f1": 1.0,
+        "clear_member_f1": 1.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 1.0,
+        "load_f1": 0.0,
+        "load_numeric_unit_accuracy": 0.0,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 1
+      },
+      "counts": {
+        "nodes": {
+          "tp": 4,
+          "fp": 0,
+          "fn": 0
+        },
+        "members": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_nodes": {
+          "tp": 4,
+          "fp": 0,
+          "fn": 0
+        },
+        "clear_members": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0
+        },
+        "supports": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 8,
+          "fn": 0
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 1
+        }
+      },
+      "missing_nodes": [],
+      "extra_nodes": [],
+      "missing_members": [],
+      "extra_members": []
+    }
+  ],
+  "metrics": {
+    "node_f1": 1.0,
+    "member_f1": 1.0,
+    "clear_node_f1": 1.0,
+    "clear_member_f1": 1.0,
+    "intersection_accuracy": 0.0,
+    "support_f1": 1.0,
+    "load_f1": 0.6666666666666666,
+    "load_numeric_unit_accuracy": 0.6666666666666666,
+    "scale_accuracy": null,
+    "issue_recall": 1.0,
+    "issue_false_positives": 4
+  },
+  "counts": {
+    "nodes": {
+      "tp": 10,
+      "fp": 0,
+      "fn": 0
+    },
+    "members": {
+      "tp": 14,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_nodes": {
+      "tp": 10,
+      "fp": 0,
+      "fn": 0
+    },
+    "clear_members": {
+      "tp": 14,
+      "fp": 0,
+      "fn": 0
+    },
+    "supports": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0
+    },
+    "loads": {
+      "tp": 2,
+      "fp": 1,
+      "fn": 1
+    },
+    "issues": {
+      "tp": 2,
+      "fp": 4,
+      "fn": 0
+    },
+    "intersections": {
+      "correct": 0,
+      "wrong": 0,
+      "fp": 28,
+      "fn": 0
+    },
+    "scale": {
+      "correct": 0,
+      "total": 0
+    },
+    "load_numeric": {
+      "correct": 2,
+      "total": 3
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [
+    "intersection_accuracy",
+    "load_f1"
+  ],
+  "passed": false,
+  "case_outcomes": [
+    {
+      "image_id": "moj_bridge",
+      "outcome": "PASS"
+    },
+    {
+      "image_id": "moj_labels",
+      "outcome": "PASS"
+    }
+  ],
+  "new_api_calls": 0,
+  "replay_successes": 2,
+  "pipeline_hash": "02912f5443b69e239e2a8ddd00c9f4a1b551f4c59a88931647091c9f7af1655b",
+  "action_review": {
+    "attempted_cases": 0,
+    "completed_cases": 0,
+    "failed_or_missing_cases": 0
+  },
+  "limitations": [
+    "修复后离线解析同一批首次响应，不等于修复后重新在线识别的成功率。",
+    "输入与真值不变；失败保留在分母，无证据指标仍为 null。"
+  ],
+  "date": "2026-10-10",
+  "scope": "两张已用于本轮开发的数值图，零新增调用回放，不是新独立验证或在线准确率。原在线失败、真值和容差不重写。",
+  "original_dataset": "../numeric_01",
+  "original_online_report_hash": "b8765deffeeb3a686e37af404cfc6b41f9710d20fe6967fa3344f8cb4fa78122",
+  "original_ui_review_hash": "d690d5602ea9ac8cd5d484d628e97d7ffa3b793a6947bf721237a388e5288226",
+  "replay_snapshot": "pipeline_snapshot.json",
+  "replay_implementation_hash": "e1ae96f96bdb38f92c4669d48d9e521c53c4d427f72481be7ad13dd3e48267a3",
+  "native_ui": [
+    {
+      "image": "moj_labels",
+      "scale": "1.25",
+      "geometry_candidates": 4,
+      "joint_review_visible": true,
+      "reference_blank": true,
+      "zoom_300_scroll": true,
+      "scale_unknown": true,
+      "commit_blocked": true
+    },
+    {
+      "image": "moj_bridge",
+      "scale": "1.25",
+      "geometry_candidates": 6,
+      "joint_review_visible": true,
+      "reference_blank": true,
+      "zoom_300_scroll": true,
+      "scale_unknown": true,
+      "commit_blocked": true
+    },
+    {
+      "image": "moj_labels",
+      "scale": "1.5",
+      "geometry_candidates": 4,
+      "joint_review_visible": true,
+      "reference_blank": true,
+      "zoom_300_scroll": true,
+      "scale_unknown": true,
+      "commit_blocked": true
+    },
+    {
+      "image": "moj_bridge",
+      "scale": "1.5",
+      "geometry_candidates": 6,
+      "joint_review_visible": true,
+      "reference_blank": true,
+      "zoom_300_scroll": true,
+      "scale_unknown": true,
+      "commit_blocked": true
+    }
+  ],
+  "legacy_replay_metrics": {
+    "node_f1": 1.0,
+    "member_f1": 1.0,
+    "clear_node_f1": 1.0,
+    "clear_member_f1": 1.0,
+    "intersection_accuracy": null,
+    "support_f1": 1.0,
+    "load_f1": 0.0,
+    "load_numeric_unit_accuracy": null,
+    "scale_accuracy": null,
+    "issue_recall": 0.8571428571428571,
+    "issue_false_positives": 25
+  },
+  "legacy_original_report_hash": "db749a9b463f005811d9115ba1e4ef2734f5d265208cce8272f0510e2cc69218"
+}

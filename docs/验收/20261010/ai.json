@@ -1,0 +1,3059 @@
+{
+  "scope": "既有许可开发图的功能验收，不是留出集准确率评测",
+  "text": {
+    "reply": "这一轮调了 5 次工具（4 轮）还没收尾，先停下来。已经完成的：模型已建好（2 节点 1 杆件）；已求解 1 个工况/组合。（用到：define_materials_and_sections、set_model、set_load_cases、validate_model、solve_model）这些结果是真的，没有白跑——直接接着问下一步就行，不必重来。",
+    "solved": true,
+    "stopped_by_limit": true,
+    "usage": {
+      "prompt_tokens": 81602,
+      "completion_tokens": 1300,
+      "cache_hit_tokens": 77568,
+      "calls": 4
+    },
+    "metrics": {
+      "total_ms": 10509.55089999843,
+      "provider_ms": 10150.759399995877,
+      "tool_ms": 354.42930000135675,
+      "provider_calls": 4,
+      "prompt_chars": 20146,
+      "fast_path": false
+    },
+    "model": {
+      "units": "N-m-Pa",
+      "nodes": [
+        {
+          "id": 1,
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        {
+          "id": 2,
+          "x": 3,
+          "y": 0,
+          "z": 0
+        }
+      ],
+      "members": [
+        {
+          "id": 1,
+          "i": 1,
+          "j": 2,
+          "section": "SEC",
+          "material": "STEEL"
+        }
+      ],
+      "supports": [
+        {
+          "node": 1,
+          "fix": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "name": "BC-1"
+        }
+      ],
+      "materials": [
+        {
+          "name": "STEEL",
+          "E": 200000000000,
+          "nu": 0.3
+        }
+      ],
+      "sections": [
+        {
+          "name": "SEC",
+          "A": 0.01,
+          "Iy": 2e-05,
+          "Iz": 2e-05,
+          "J": 5e-06
+        }
+      ],
+      "schema_version": 1,
+      "load_cases": [
+        {
+          "name": "P",
+          "nodal_loads": [
+            {
+              "node": 2,
+              "load": [
+                0,
+                0,
+                -1000,
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "combos": []
+    },
+    "tools": [
+      {
+        "tool": "define_materials_and_sections",
+        "args": {
+          "materials": [
+            {
+              "name": "STEEL",
+              "E": 200000000000,
+              "nu": 0.3
+            }
+          ],
+          "sections": [
+            {
+              "name": "SEC",
+              "A": 0.01,
+              "Iy": 2e-05,
+              "Iz": 2e-05,
+              "J": 5e-06
+            }
+          ]
+        },
+        "ok": true,
+        "payload": {
+          "materials": [
+            "STEEL"
+          ],
+          "sections": [
+            "SEC"
+          ],
+          "analysis_ready": false,
+          "warnings": [
+            "[结构] (根): 'nodes' is a required property",
+            "[结构] (根): 'members' is a required property",
+            "[结构] (根): 'supports' is a required property"
+          ]
+        }
+      },
+      {
+        "tool": "set_model",
+        "args": {
+          "model": {
+            "units": "N-m-Pa",
+            "nodes": [
+              {
+                "id": 1,
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              {
+                "id": 2,
+                "x": 3,
+                "y": 0,
+                "z": 0
+              }
+            ],
+            "members": [
+              {
+                "id": 1,
+                "i": 1,
+                "j": 2,
+                "section": "SEC",
+                "material": "STEEL"
+              }
+            ],
+            "supports": [
+              {
+                "node": 1,
+                "fix": [
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              }
+            ]
+          }
+        },
+        "ok": true,
+        "payload": {
+          "summary": {
+            "nodes": 2,
+            "members": 1,
+            "supports": 1,
+            "load_cases": 0
+          },
+          "schema_version": 1,
+          "migrated_from": 0,
+          "note": "沿用了已定义的 materials、sections，不必重复提交"
+        }
+      },
+      {
+        "tool": "set_load_cases",
+        "args": {
+          "cases": [
+            {
+              "name": "P",
+              "nodal_loads": [
+                {
+                  "node": 2,
+                  "load": [
+                    0,
+                    0,
+                    -1000,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "ok": true,
+        "payload": {
+          "cases": [
+            "P"
+          ],
+          "combos": []
+        }
+      },
+      {
+        "tool": "validate_model",
+        "args": {},
+        "ok": true,
+        "payload": {
+          "summary": {
+            "nodes": 2,
+            "members": 1,
+            "supports": 1,
+            "load_cases": 1
+          }
+        }
+      },
+      {
+        "tool": "solve_model",
+        "args": {
+          "analysis": "linear"
+        },
+        "ok": true,
+        "payload": {
+          "cases": {
+            "P": {
+              "max_displacement_mm": 2.25,
+              "at_node": 2,
+              "equilibrium_ok": true,
+              "equilibrium_residual": 3.032e-16,
+              "max_deflection_mm": 2.25,
+              "at_member": 1,
+              "at_x_m": 3.0
+            }
+          },
+          "analysis": {
+            "type": "linear_static"
+          },
+          "compilation": {
+            "physical_members": 1,
+            "analysis_elements": 1,
+            "generated_nodes": 0,
+            "diagnostics": []
+          },
+          "silent_failures": {
+            "summary": {
+              "overall": "pass",
+              "total_checks": 9,
+              "passed": 9,
+              "critical_issues": 0,
+              "warnings": 0,
+              "critical_details": [],
+              "warning_details": []
+            },
+            "findings": [
+              {
+                "id": "insufficient_supports",
+                "name": "支座约束不足",
+                "severity": "critical",
+                "status": "pass",
+                "message": "支座约束 6 个自由度，6 个刚体运动方向均有约束",
+                "detail": {
+                  "support_dofs": 6,
+                  "support_nodes": 1
+                },
+                "suggestion": ""
+              },
+              {
+                "id": "excessive_displacement",
+                "name": "位移过大",
+                "severity": "critical",
+                "status": "pass",
+                "message": "最大位移 2.2500 mm，结构尺寸 3000 mm，占比 0.075%（< 10%）",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "zero_reaction_with_load",
+                "name": "有载荷但反力为零",
+                "severity": "critical",
+                "status": "pass",
+                "message": "所有有载荷的工况都有非零支座反力",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "zero_internal_force",
+                "name": "有载荷但内力为零",
+                "severity": "critical",
+                "status": "pass",
+                "message": "所有有载荷的工况都有非零杆件内力",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "no_applied_load",
+                "name": "求解时没有任何荷载",
+                "severity": "critical",
+                "status": "pass",
+                "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                "detail": {
+                  "loaded_cases": [
+                    "P"
+                  ]
+                },
+                "suggestion": ""
+              },
+              {
+                "id": "near_singular_stiffness",
+                "name": "刚度矩阵接近奇异",
+                "severity": "critical",
+                "status": "pass",
+                "message": "刚度矩阵条件数 1.39e+01（< 1e8），数值稳定",
+                "detail": {
+                  "condition_number": 13.92820323027552,
+                  "dof": 6
+                },
+                "suggestion": ""
+              },
+              {
+                "id": "reaction_load_balance",
+                "name": "反力与外载荷不平衡",
+                "severity": "critical",
+                "status": "pass",
+                "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "load_magnitude_anomaly",
+                "name": "载荷量级异常",
+                "severity": "warning",
+                "status": "pass",
+                "message": "所有工况载荷量级与材料弹性模量匹配",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "section_orientation",
+                "name": "截面主轴方向风险",
+                "severity": "warning",
+                "status": "pass",
+                "message": "所有截面 Iz >= Iy，主轴方向正常",
+                "detail": {},
+                "suggestion": ""
+              }
+            ]
+          },
+          "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\ai\\capsules\\20261010_192244_4d04594f.json",
+          "result_identity": {
+            "solve_id": "73b39391dcda43d7a7614cc72b991df7",
+            "model_fingerprint": "abdc0be1258375eca6fd386a48a27189",
+            "solved_at": "2026-10-10T11:22:44.852807+00:00",
+            "parameters": {
+              "analysis": "linear",
+              "increments": 10,
+              "max_iter": 40,
+              "tolerance": 1e-07,
+              "amplitudes": null
+            },
+            "analysis": {
+              "type": "linear_static"
+            }
+          }
+        }
+      }
+    ],
+    "elapsed_s": 10.51,
+    "local_query": {
+      "case": "P",
+      "node": 2,
+      "coordinates_xyz": [
+        3.0,
+        0.0,
+        0.0
+      ],
+      "coordinate_unit": "m",
+      "magnitude_mm": 2.25,
+      "components_mm": {
+        "ux": 0.0,
+        "uy": 0.0,
+        "uz": -2.25
+      },
+      "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+      "node_kind": "physical_node"
+    }
+  },
+  "vision": [
+    {
+      "image": "cantilever",
+      "sha256": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "metadata": {
+        "format": "space-frame-real-world-case/v1",
+        "image_id": "cantilever",
+        "source": "https://commons.wikimedia.org/wiki/File:CantileverBeam.png",
+        "license": "Public domain",
+        "author": "Ben pcc",
+        "consent_to_evaluate": true,
+        "subset_labels": [
+          "clear",
+          "missing_dimension"
+        ],
+        "work_plane": {
+          "status": "confirmed",
+          "plane": "XZ",
+          "offset": 0.0,
+          "axis_mapping": {
+            "first_axis": "X",
+            "second_axis": "Z",
+            "offset_axis": "Y",
+            "image_right_sign": 1,
+            "image_up_sign": 1
+          }
+        },
+        "preprocessing": {},
+        "notes": "用户选择许可明确的公开工程图评测。标注灰色水平初始梁轴，排除曲线变形轮廓和倾斜示意；左端墙体为固接。"
+      },
+      "max_repairs": 0,
+      "review_actions": false,
+      "result": {
+        "draft": null,
+        "success": false,
+        "cancelled": false,
+        "attempts": 1,
+        "errors": [
+          "第1次 v2 校验失败: 识别实体必须引用 image_model 中存在的审核对象，请检查 target。"
+        ],
+        "raw_responses": [
+          "{\"image_model\":{\"nodes\":[{\"id\":1,\"u\":0.1200,\"v\":0.5000},{\"id\":2,\"u\":0.9600,\"v\":0.6200}],\"members\":[{\"id\":1,\"i\":1,\"j\":2}],\"supports\":[{\"node\":1,\"kind\":\"fixed\"}],\"load_cases\":[]},\"entities\":[{\"id\":\"E1\",\"kind\":\"node\",\"target\":{\"node\":1},\"confidence\":0.9},{\"id\":\"E2\",\"kind\":\"node\",\"target\":{\"node\":2},\"confidence\":0.9},{\"id\":\"E3\",\"kind\":\"member\",\"target\":{\"member\":1},\"confidence\":0.9},{\"id\":\"E4\",\"kind\":\"support\",\"target\":{\"support\":{\"node\":1,\"name\":\"S1\"}},\"confidence\":0.85,\"image_geometry\":{\"line\":[[0.10,0.30],[0.14,0.50]]}},{\"id\":\"E5\",\"kind\":\"annotation\",\"target\":{\"node\":2},\"confidence\":0.8,\"image_geometry\":{\"line\":[[0.80,0.20],[0.96,0.50]]}}],\"dimensions\":[],\"issues\":[{\"id\":\"I1\",\"category\":\"ambiguous_geometry\",\"severity\":\"warning\",\"entity_refs\":[\"member:1\"],\"message\":\"图中同时存在初始位形（浅色水平梁）与变形轮廓（深色弯曲梁），已按初始位形提取梁轴；请确认深色曲线为变形后形状而非实际结构。\",\"status\":\"open\"},{\"id\":\"I2\",\"category\":\"missing_dimension\",\"severity\":\"warning\",\"entity_refs\":[\"node:1\",\"node:2\"],\"message\":\"图中无尺寸标注，节点坐标为归一化相对位置，需用户标定实际跨度与截面尺寸。\",\"status\":\"open\"}]}"
+        ],
+        "duration_ms": 2422.000000002299,
+        "call_metadata": [
+          {
+            "attempt": 1,
+            "content_characters": 1019,
+            "has_reasoning_content": false,
+            "finish_reason": "stop",
+            "prompt_tokens": 2328,
+            "completion_tokens": 397,
+            "total_tokens": 2725
+          }
+        ]
+      },
+      "elapsed_s": 2.433,
+      "phase_note": "已完成真实识别；原验收脚本误把 phase 方法当属性，未重发请求"
+    },
+    {
+      "image": "point_load",
+      "sha256": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "metadata": {
+        "format": "space-frame-real-world-case/v1",
+        "image_id": "point_load",
+        "source": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_central_point_load.jpg",
+        "license": "Public domain",
+        "author": "Tkn20",
+        "consent_to_evaluate": true,
+        "subset_labels": [
+          "clear",
+          "missing_dimension"
+        ],
+        "work_plane": {
+          "status": "confirmed",
+          "plane": "XZ",
+          "offset": 0.0,
+          "axis_mapping": {
+            "first_axis": "X",
+            "second_axis": "Z",
+            "offset_axis": "Y",
+            "image_right_sign": 1,
+            "image_up_sign": 1
+          }
+        },
+        "preprocessing": {},
+        "notes": "用户选择许可明确的公开工程图评测。仅标注上方梁轴，在集中荷载作用点分段；排除下方剪力、弯矩图；三角支座按契约铰接，原图未明确区分滑动。"
+      },
+      "max_repairs": 0,
+      "review_actions": false,
+      "result": {
+        "draft": {
+          "image_model": {
+            "nodes": [
+              {
+                "id": 1,
+                "u": 0.10300925925925926,
+                "v": 0.2631578947368421
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2631578947368421
+              },
+              {
+                "id": 3,
+                "u": 0.8807870370370371,
+                "v": 0.2631578947368421
+              }
+            ],
+            "members": [
+              {
+                "id": 1,
+                "i": 1,
+                "j": 2
+              },
+              {
+                "id": 2,
+                "i": 2,
+                "j": 3
+              }
+            ],
+            "supports": [
+              {
+                "node": 1,
+                "fix": [
+                  1,
+                  1,
+                  1,
+                  0,
+                  0,
+                  0
+                ],
+                "name": "S1"
+              },
+              {
+                "node": 3,
+                "fix": [
+                  1,
+                  1,
+                  1,
+                  0,
+                  0,
+                  0
+                ],
+                "name": "S2"
+              }
+            ],
+            "load_cases": [
+              {
+                "name": "F",
+                "nodal_loads": [
+                  {
+                    "node": 2,
+                    "name": "F"
+                  }
+                ],
+                "member_loads": [],
+                "member_spans": []
+              }
+            ]
+          },
+          "entities": [
+            {
+              "id": "E1",
+              "kind": "node",
+              "target": {
+                "node": 1
+              },
+              "confidence": null,
+              "source": "derived",
+              "verified": false,
+              "recognition_confidence": null,
+              "image_geometry": {
+                "point": [
+                  0.10300925925925926,
+                  0.2631578947368421
+                ]
+              },
+              "original_observation": {
+                "image_geometry": {
+                  "point": [
+                    0.0857,
+                    0.2857
+                  ]
+                },
+                "confidence": 0.9
+              },
+              "position_refinement": {
+                "method": "filled-horizontal-pixel-band/v2",
+                "band_px": [
+                  40.0,
+                  100,
+                  386.0,
+                  110
+                ],
+                "original_nodes": [
+                  {
+                    "id": 1,
+                    "u": 0.0857,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 2,
+                    "u": 0.5,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 3,
+                    "u": 0.9143,
+                    "v": 0.2857
+                  }
+                ]
+              }
+            },
+            {
+              "id": "E2",
+              "kind": "node",
+              "target": {
+                "node": 2
+              },
+              "confidence": null,
+              "source": "derived",
+              "verified": false,
+              "recognition_confidence": null,
+              "image_geometry": {
+                "point": [
+                  0.5,
+                  0.2631578947368421
+                ]
+              },
+              "original_observation": {
+                "image_geometry": {
+                  "point": [
+                    0.5,
+                    0.2857
+                  ]
+                },
+                "confidence": 0.9
+              },
+              "position_refinement": {
+                "method": "filled-horizontal-pixel-band/v2",
+                "band_px": [
+                  40.0,
+                  100,
+                  386.0,
+                  110
+                ],
+                "original_nodes": [
+                  {
+                    "id": 1,
+                    "u": 0.0857,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 2,
+                    "u": 0.5,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 3,
+                    "u": 0.9143,
+                    "v": 0.2857
+                  }
+                ]
+              }
+            },
+            {
+              "id": "E3",
+              "kind": "node",
+              "target": {
+                "node": 3
+              },
+              "confidence": null,
+              "source": "derived",
+              "verified": false,
+              "recognition_confidence": null,
+              "image_geometry": {
+                "point": [
+                  0.8807870370370371,
+                  0.2631578947368421
+                ]
+              },
+              "original_observation": {
+                "image_geometry": {
+                  "point": [
+                    0.9143,
+                    0.2857
+                  ]
+                },
+                "confidence": 0.9
+              },
+              "position_refinement": {
+                "method": "filled-horizontal-pixel-band/v2",
+                "band_px": [
+                  40.0,
+                  100,
+                  386.0,
+                  110
+                ],
+                "original_nodes": [
+                  {
+                    "id": 1,
+                    "u": 0.0857,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 2,
+                    "u": 0.5,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 3,
+                    "u": 0.9143,
+                    "v": 0.2857
+                  }
+                ]
+              }
+            },
+            {
+              "id": "E4",
+              "kind": "member",
+              "target": {
+                "member": 1
+              },
+              "confidence": null,
+              "source": "derived",
+              "verified": false,
+              "recognition_confidence": null,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.10300925925925926,
+                    0.2631578947368421
+                  ],
+                  [
+                    0.5,
+                    0.2631578947368421
+                  ]
+                ]
+              },
+              "original_observation": {
+                "image_geometry": {
+                  "line": [
+                    [
+                      0.0857,
+                      0.2857
+                    ],
+                    [
+                      0.5,
+                      0.2857
+                    ]
+                  ]
+                },
+                "confidence": 0.9
+              },
+              "position_refinement": {
+                "method": "filled-horizontal-pixel-band/v2",
+                "band_px": [
+                  40.0,
+                  100,
+                  386.0,
+                  110
+                ],
+                "original_nodes": [
+                  {
+                    "id": 1,
+                    "u": 0.0857,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 2,
+                    "u": 0.5,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 3,
+                    "u": 0.9143,
+                    "v": 0.2857
+                  }
+                ]
+              }
+            },
+            {
+              "id": "E5",
+              "kind": "member",
+              "target": {
+                "member": 2
+              },
+              "confidence": null,
+              "source": "derived",
+              "verified": false,
+              "recognition_confidence": null,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.5,
+                    0.2631578947368421
+                  ],
+                  [
+                    0.8807870370370371,
+                    0.2631578947368421
+                  ]
+                ]
+              },
+              "original_observation": {
+                "image_geometry": {
+                  "line": [
+                    [
+                      0.5,
+                      0.2857
+                    ],
+                    [
+                      0.9143,
+                      0.2857
+                    ]
+                  ]
+                },
+                "confidence": 0.9
+              },
+              "position_refinement": {
+                "method": "filled-horizontal-pixel-band/v2",
+                "band_px": [
+                  40.0,
+                  100,
+                  386.0,
+                  110
+                ],
+                "original_nodes": [
+                  {
+                    "id": 1,
+                    "u": 0.0857,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 2,
+                    "u": 0.5,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 3,
+                    "u": 0.9143,
+                    "v": 0.2857
+                  }
+                ]
+              }
+            },
+            {
+              "id": "E6",
+              "kind": "support",
+              "target": {
+                "support": {
+                  "node": 1,
+                  "name": "S1"
+                }
+              },
+              "confidence": null,
+              "image_geometry": {
+                "point": [
+                  0.10300925925925926,
+                  0.2631578947368421
+                ]
+              },
+              "source": "derived",
+              "verified": false,
+              "recognition_confidence": null,
+              "original_observation": {
+                "image_geometry": {
+                  "line": [
+                    [
+                      0.06,
+                      0.3
+                    ],
+                    [
+                      0.11,
+                      0.3
+                    ]
+                  ]
+                },
+                "confidence": 0.8
+              },
+              "position_refinement": {
+                "method": "filled-horizontal-pixel-band/v2",
+                "band_px": [
+                  40.0,
+                  100,
+                  386.0,
+                  110
+                ],
+                "original_nodes": [
+                  {
+                    "id": 1,
+                    "u": 0.0857,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 2,
+                    "u": 0.5,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 3,
+                    "u": 0.9143,
+                    "v": 0.2857
+                  }
+                ]
+              }
+            },
+            {
+              "id": "E7",
+              "kind": "support",
+              "target": {
+                "support": {
+                  "node": 3,
+                  "name": "S2"
+                }
+              },
+              "confidence": null,
+              "image_geometry": {
+                "point": [
+                  0.8807870370370371,
+                  0.2631578947368421
+                ]
+              },
+              "source": "derived",
+              "verified": false,
+              "recognition_confidence": null,
+              "original_observation": {
+                "image_geometry": {
+                  "line": [
+                    [
+                      0.89,
+                      0.3
+                    ],
+                    [
+                      0.94,
+                      0.3
+                    ]
+                  ]
+                },
+                "confidence": 0.8
+              },
+              "position_refinement": {
+                "method": "filled-horizontal-pixel-band/v2",
+                "band_px": [
+                  40.0,
+                  100,
+                  386.0,
+                  110
+                ],
+                "original_nodes": [
+                  {
+                    "id": 1,
+                    "u": 0.0857,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 2,
+                    "u": 0.5,
+                    "v": 0.2857
+                  },
+                  {
+                    "id": 3,
+                    "u": 0.9143,
+                    "v": 0.2857
+                  }
+                ]
+              }
+            },
+            {
+              "id": "E8",
+              "kind": "load",
+              "target": {
+                "load": {
+                  "case": "F",
+                  "collection": "nodal_loads",
+                  "name": "F"
+                }
+              },
+              "confidence": 0.7,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.5,
+                    0.05
+                  ],
+                  [
+                    0.5,
+                    0.28
+                  ]
+                ]
+              },
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.7
+            }
+          ],
+          "dimensions": [
+            {
+              "id": "D1",
+              "text": "L",
+              "unit": "mm",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.0857,
+                    0.95
+                  ],
+                  [
+                    0.9143,
+                    0.95
+                  ]
+                ]
+              }
+            }
+          ],
+          "issues": [
+            {
+              "id": "I1",
+              "category": "load_incomplete",
+              "severity": "blocking",
+              "entity_refs": [
+                "node:2"
+              ],
+              "message": "集中力 F 只有符号没有数值和单位，无法用于求解",
+              "status": "open",
+              "resolution": null,
+              "resolved_by": null
+            },
+            {
+              "id": "I2",
+              "category": "dimension_incomplete",
+              "severity": "blocking",
+              "entity_refs": [
+                "dimension:D1"
+              ],
+              "message": "跨度只标注 L，没有具体数值，需要用户标定",
+              "status": "open",
+              "resolution": null,
+              "resolved_by": null
+            },
+            {
+              "id": "I3",
+              "category": "low_confidence",
+              "severity": "warning",
+              "entity_refs": [
+                "support:1",
+                "support:3"
+              ],
+              "message": "支座三角形符号较小，需确认是铰接还是滚动支座",
+              "status": "open",
+              "resolution": null,
+              "resolved_by": null
+            },
+            {
+              "id": "I4",
+              "category": "load_incomplete",
+              "severity": "blocking",
+              "entity_refs": [
+                "node:2"
+              ],
+              "message": "节点 2 上这条荷载没能换算：值 None、单位 'kN'、方向 [0, 0, -1]。认得的单位是 N、kN、N/m、kN/m、N·m、kN·m。请确认图上写的是什么，或直接给出分量向量。",
+              "status": "open",
+              "resolution": null,
+              "resolved_by": null,
+              "load_target": {
+                "case": "F",
+                "collection": "nodal_loads",
+                "name": "F"
+              },
+              "observations": [
+                {
+                  "node": 2,
+                  "name": "F",
+                  "value": null,
+                  "unit": "kN",
+                  "direction": [
+                    0,
+                    0,
+                    -1
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "pixel-axis-review",
+              "category": "low_confidence",
+              "severity": "blocking",
+              "status": "open",
+              "entity_refs": [
+                "node:1",
+                "node:2",
+                "node:3"
+              ],
+              "message": "已根据连续像素带提出水平梁轴候选位置，原始识别坐标已保留。请核对梁轴端点、支座附着点及中间节点，确认后再提交。",
+              "resolution": null,
+              "resolved_by": null
+            }
+          ],
+          "format": "space-frame-recognition-draft/v2",
+          "model": null,
+          "merge_plan": null,
+          "revision": 0,
+          "confirmation": null,
+          "source": {
+            "original_path": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\ai\\point_load.jpg",
+            "image_hash": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+            "preprocessing": {
+              "perspective_status": "unconfirmed"
+            }
+          },
+          "work_plane": {
+            "status": "proposed",
+            "plane": "XZ",
+            "offset": 0.0,
+            "axis_mapping": {
+              "first_axis": "X",
+              "second_axis": "Z",
+              "offset_axis": "Y",
+              "image_right_sign": 1,
+              "image_up_sign": 1
+            }
+          },
+          "scale": {
+            "status": "unknown",
+            "length_per_pixel": null,
+            "unit": "m/px",
+            "anchor_node": null,
+            "anchor_coordinates_xyz": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "evidence_ids": []
+          },
+          "intersections": []
+        },
+        "success": true,
+        "cancelled": false,
+        "attempts": 1,
+        "errors": [],
+        "raw_responses": [
+          "{\"image_model\":{\"nodes\":[{\"id\":1,\"u\":0.0857,\"v\":0.2857},{\"id\":2,\"u\":0.5,\"v\":0.2857},{\"id\":3,\"u\":0.9143,\"v\":0.2857}],\"members\":[{\"id\":1,\"i\":1,\"j\":2},{\"id\":2,\"i\":2,\"j\":3}],\"supports\":[{\"node\":1,\"kind\":\"pinned\"},{\"node\":3,\"kind\":\"pinned\"}],\"load_cases\":[{\"name\":\"F\",\"nodal_loads\":[{\"node\":2,\"name\":\"F\",\"value\":null,\"unit\":\"kN\",\"direction\":[0,0,-1]}],\"member_loads\":[],\"member_spans\":[]}]},\"entities\":[{\"id\":\"E1\",\"kind\":\"node\",\"target\":{\"node\":1},\"confidence\":0.9},{\"id\":\"E2\",\"kind\":\"node\",\"target\":{\"node\":2},\"confidence\":0.9},{\"id\":\"E3\",\"kind\":\"node\",\"target\":{\"node\":3},\"confidence\":0.9},{\"id\":\"E4\",\"kind\":\"member\",\"target\":{\"member\":1},\"confidence\":0.9},{\"id\":\"E5\",\"kind\":\"member\",\"target\":{\"member\":2},\"confidence\":0.9},{\"id\":\"E6\",\"kind\":\"support\",\"target\":{\"support\":{\"node\":1,\"name\":\"S1\"}},\"confidence\":0.8,\"image_geometry\":{\"line\":[[0.06,0.30],[0.11,0.30]]}},{\"id\":\"E7\",\"kind\":\"support\",\"target\":{\"support\":{\"node\":3,\"name\":\"S2\"}},\"confidence\":0.8,\"image_geometry\":{\"line\":[[0.89,0.30],[0.94,0.30]]}},{\"id\":\"E8\",\"kind\":\"load\",\"target\":{\"load\":{\"case\":\"F\",\"collection\":\"nodal_loads\",\"name\":\"F\"}},\"confidence\":0.7,\"image_geometry\":{\"line\":[[0.5,0.05],[0.5,0.28]]}}],\"dimensions\":[{\"id\":\"D1\",\"text\":\"L\",\"unit\":\"mm\",\"image_geometry\":{\"line\":[[0.0857,0.95],[0.9143,0.95]]}}],\"issues\":[{\"id\":\"I1\",\"category\":\"load_incomplete\",\"severity\":\"blocking\",\"entity_refs\":[\"node:2\"],\"message\":\"集中力 F 只有符号没有数值和单位，无法用于求解\",\"status\":\"open\"},{\"id\":\"I2\",\"category\":\"dimension_incomplete\",\"severity\":\"blocking\",\"entity_refs\":[\"dimension:D1\"],\"message\":\"跨度只标注 L，没有具体数值，需要用户标定\",\"status\":\"open\"},{\"id\":\"I3\",\"category\":\"low_confidence\",\"severity\":\"warning\",\"entity_refs\":[\"support:1\",\"support:3\"],\"message\":\"支座三角形符号较小，需确认是铰接还是滚动支座\",\"status\":\"open\"}]}"
+        ],
+        "duration_ms": 2921.999999998661,
+        "call_metadata": [
+          {
+            "attempt": 1,
+            "content_characters": 1727,
+            "has_reasoning_content": false,
+            "finish_reason": "stop",
+            "prompt_tokens": 2344,
+            "completion_tokens": 649,
+            "total_tokens": 2993
+          }
+        ]
+      },
+      "elapsed_s": 2.922,
+      "phase_note": "已完成真实识别；原验收脚本误把 phase 方法当属性，未重发请求"
+    },
+    {
+      "image": "tower_truss",
+      "sha256": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+      "metadata": {
+        "format": "space-frame-real-world-case/v1",
+        "image_id": "tower_truss",
+        "source": "https://eng.libretexts.org/Bookshelves/Mechanical_Engineering/Mechanics_Map_(Moore_2nd_Edition)/05:_Engineering_Structures/5.05:_Method_of_Sections",
+        "image_url": "https://eng.libretexts.org/@api/deki/files/42296/P2.png?revision=1",
+        "license": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "author": "Jacob Moore and Contributors / Mechanics Map",
+        "retrieved_on": "2026-10-10",
+        "license_verified_at": "2026-10-10T06:28:54.555567+00:00",
+        "source_page_modified": "2024-08-18T17:46:25Z",
+        "consent_to_evaluate": true,
+        "reference_contract": "space-frame-reference-topology/v1",
+        "subset_labels": [
+          "clear",
+          "numeric_load",
+          "dimensioned_truss",
+          "development_retest"
+        ],
+        "work_plane": {
+          "status": "confirmed",
+          "plane": "XY",
+          "offset": 0.0,
+          "axis_mapping": {
+            "first_axis": "X",
+            "second_axis": "Y",
+            "offset_axis": "Z",
+            "image_right_sign": 1,
+            "image_up_sign": 1
+          }
+        },
+        "preprocessing": {},
+        "notes": "复用 holdout_01 开发图，非新独立验证；上轮实际输入 XZ 而参考向量为 XY，本轮调用前统一 XY。未裁剪、旋转或改图。"
+      },
+      "max_repairs": 0,
+      "review_actions": false,
+      "result": {
+        "draft": {
+          "image_model": {
+            "nodes": [
+              {
+                "id": 1,
+                "u": 0.425,
+                "v": 0.85
+              },
+              {
+                "id": 2,
+                "u": 0.6,
+                "v": 0.85
+              },
+              {
+                "id": 3,
+                "u": 0.425,
+                "v": 0.7
+              },
+              {
+                "id": 4,
+                "u": 0.6,
+                "v": 0.7
+              },
+              {
+                "id": 5,
+                "u": 0.425,
+                "v": 0.55
+              },
+              {
+                "id": 6,
+                "u": 0.6,
+                "v": 0.55
+              },
+              {
+                "id": 7,
+                "u": 0.425,
+                "v": 0.4
+              },
+              {
+                "id": 8,
+                "u": 0.6,
+                "v": 0.4
+              },
+              {
+                "id": 9,
+                "u": 0.425,
+                "v": 0.25
+              },
+              {
+                "id": 10,
+                "u": 0.6,
+                "v": 0.25
+              },
+              {
+                "id": 11,
+                "u": 0.275,
+                "v": 0.4
+              },
+              {
+                "id": 12,
+                "u": 0.75,
+                "v": 0.4
+              },
+              {
+                "id": 13,
+                "u": 0.425,
+                "v": 0.2
+              },
+              {
+                "id": 14,
+                "u": 0.6,
+                "v": 0.2
+              }
+            ],
+            "members": [
+              {
+                "id": 1,
+                "i": 1,
+                "j": 2
+              },
+              {
+                "id": 2,
+                "i": 1,
+                "j": 3
+              },
+              {
+                "id": 3,
+                "i": 2,
+                "j": 4
+              },
+              {
+                "id": 4,
+                "i": 3,
+                "j": 4
+              },
+              {
+                "id": 5,
+                "i": 3,
+                "j": 5
+              },
+              {
+                "id": 6,
+                "i": 4,
+                "j": 6
+              },
+              {
+                "id": 7,
+                "i": 5,
+                "j": 6
+              },
+              {
+                "id": 8,
+                "i": 5,
+                "j": 7
+              },
+              {
+                "id": 9,
+                "i": 6,
+                "j": 8
+              },
+              {
+                "id": 10,
+                "i": 7,
+                "j": 8
+              },
+              {
+                "id": 11,
+                "i": 7,
+                "j": 9
+              },
+              {
+                "id": 12,
+                "i": 8,
+                "j": 10
+              },
+              {
+                "id": 13,
+                "i": 9,
+                "j": 10
+              },
+              {
+                "id": 14,
+                "i": 11,
+                "j": 3
+              },
+              {
+                "id": 15,
+                "i": 12,
+                "j": 4
+              },
+              {
+                "id": 16,
+                "i": 11,
+                "j": 1
+              },
+              {
+                "id": 17,
+                "i": 12,
+                "j": 2
+              },
+              {
+                "id": 18,
+                "i": 9,
+                "j": 13
+              },
+              {
+                "id": 19,
+                "i": 10,
+                "j": 14
+              }
+            ],
+            "supports": [
+              {
+                "node": 13,
+                "fix": [
+                  1,
+                  1,
+                  1,
+                  0,
+                  0,
+                  0
+                ],
+                "name": "S1"
+              },
+              {
+                "node": 14,
+                "fix": [
+                  0,
+                  1,
+                  1,
+                  0,
+                  0,
+                  0
+                ],
+                "name": "S2"
+              }
+            ],
+            "load_cases": [
+              {
+                "name": "D",
+                "nodal_loads": [
+                  {
+                    "node": 11,
+                    "name": "P1",
+                    "load": [
+                      0.0,
+                      -40000.0,
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  {
+                    "node": 12,
+                    "name": "P2",
+                    "load": [
+                      0.0,
+                      -50000.0,
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  }
+                ],
+                "member_loads": [],
+                "member_spans": []
+              }
+            ]
+          },
+          "entities": [
+            {
+              "id": "E1",
+              "kind": "node",
+              "target": {
+                "node": 1
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.425,
+                  0.85
+                ]
+              }
+            },
+            {
+              "id": "E2",
+              "kind": "node",
+              "target": {
+                "node": 2
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.6,
+                  0.85
+                ]
+              }
+            },
+            {
+              "id": "E3",
+              "kind": "node",
+              "target": {
+                "node": 3
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.425,
+                  0.7
+                ]
+              }
+            },
+            {
+              "id": "E4",
+              "kind": "node",
+              "target": {
+                "node": 4
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.6,
+                  0.7
+                ]
+              }
+            },
+            {
+              "id": "E5",
+              "kind": "node",
+              "target": {
+                "node": 5
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.425,
+                  0.55
+                ]
+              }
+            },
+            {
+              "id": "E6",
+              "kind": "node",
+              "target": {
+                "node": 6
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.6,
+                  0.55
+                ]
+              }
+            },
+            {
+              "id": "E7",
+              "kind": "node",
+              "target": {
+                "node": 7
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.425,
+                  0.4
+                ]
+              }
+            },
+            {
+              "id": "E8",
+              "kind": "node",
+              "target": {
+                "node": 8
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.6,
+                  0.4
+                ]
+              }
+            },
+            {
+              "id": "E9",
+              "kind": "node",
+              "target": {
+                "node": 9
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.425,
+                  0.25
+                ]
+              }
+            },
+            {
+              "id": "E10",
+              "kind": "node",
+              "target": {
+                "node": 10
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.6,
+                  0.25
+                ]
+              }
+            },
+            {
+              "id": "E11",
+              "kind": "node",
+              "target": {
+                "node": 11
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.275,
+                  0.4
+                ]
+              }
+            },
+            {
+              "id": "E12",
+              "kind": "node",
+              "target": {
+                "node": 12
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "point": [
+                  0.75,
+                  0.4
+                ]
+              }
+            },
+            {
+              "id": "E13",
+              "kind": "node",
+              "target": {
+                "node": 13
+              },
+              "confidence": 0.8,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.8,
+              "image_geometry": {
+                "point": [
+                  0.425,
+                  0.2
+                ]
+              }
+            },
+            {
+              "id": "E14",
+              "kind": "node",
+              "target": {
+                "node": 14
+              },
+              "confidence": 0.8,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.8,
+              "image_geometry": {
+                "point": [
+                  0.6,
+                  0.2
+                ]
+              }
+            },
+            {
+              "id": "E15",
+              "kind": "member",
+              "target": {
+                "member": 1
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.85
+                  ],
+                  [
+                    0.6,
+                    0.85
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E16",
+              "kind": "member",
+              "target": {
+                "member": 2
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.85
+                  ],
+                  [
+                    0.425,
+                    0.7
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E17",
+              "kind": "member",
+              "target": {
+                "member": 3
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.6,
+                    0.85
+                  ],
+                  [
+                    0.6,
+                    0.7
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E18",
+              "kind": "member",
+              "target": {
+                "member": 4
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.7
+                  ],
+                  [
+                    0.6,
+                    0.7
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E19",
+              "kind": "member",
+              "target": {
+                "member": 5
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.7
+                  ],
+                  [
+                    0.425,
+                    0.55
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E20",
+              "kind": "member",
+              "target": {
+                "member": 6
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.6,
+                    0.7
+                  ],
+                  [
+                    0.6,
+                    0.55
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E21",
+              "kind": "member",
+              "target": {
+                "member": 7
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.55
+                  ],
+                  [
+                    0.6,
+                    0.55
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E22",
+              "kind": "member",
+              "target": {
+                "member": 8
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.55
+                  ],
+                  [
+                    0.425,
+                    0.4
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E23",
+              "kind": "member",
+              "target": {
+                "member": 9
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.6,
+                    0.55
+                  ],
+                  [
+                    0.6,
+                    0.4
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E24",
+              "kind": "member",
+              "target": {
+                "member": 10
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.4
+                  ],
+                  [
+                    0.6,
+                    0.4
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E25",
+              "kind": "member",
+              "target": {
+                "member": 11
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.4
+                  ],
+                  [
+                    0.425,
+                    0.25
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E26",
+              "kind": "member",
+              "target": {
+                "member": 12
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.6,
+                    0.4
+                  ],
+                  [
+                    0.6,
+                    0.25
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E27",
+              "kind": "member",
+              "target": {
+                "member": 13
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.25
+                  ],
+                  [
+                    0.6,
+                    0.25
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E28",
+              "kind": "member",
+              "target": {
+                "member": 14
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.275,
+                    0.4
+                  ],
+                  [
+                    0.425,
+                    0.7
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E29",
+              "kind": "member",
+              "target": {
+                "member": 15
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.75,
+                    0.4
+                  ],
+                  [
+                    0.6,
+                    0.7
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E30",
+              "kind": "member",
+              "target": {
+                "member": 16
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.275,
+                    0.4
+                  ],
+                  [
+                    0.425,
+                    0.85
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E31",
+              "kind": "member",
+              "target": {
+                "member": 17
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.75,
+                    0.4
+                  ],
+                  [
+                    0.6,
+                    0.85
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E32",
+              "kind": "member",
+              "target": {
+                "member": 18
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.25
+                  ],
+                  [
+                    0.425,
+                    0.2
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E33",
+              "kind": "member",
+              "target": {
+                "member": 19
+              },
+              "confidence": 0.9,
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.6,
+                    0.25
+                  ],
+                  [
+                    0.6,
+                    0.2
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "E34",
+              "kind": "support",
+              "target": {
+                "support": {
+                  "node": 13,
+                  "name": "S1"
+                }
+              },
+              "confidence": 0.7,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.2
+                  ],
+                  [
+                    0.425,
+                    0.22
+                  ]
+                ]
+              },
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.7
+            },
+            {
+              "id": "E35",
+              "kind": "support",
+              "target": {
+                "support": {
+                  "node": 14,
+                  "name": "S2"
+                }
+              },
+              "confidence": 0.7,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.6,
+                    0.2
+                  ],
+                  [
+                    0.6,
+                    0.22
+                  ]
+                ]
+              },
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.7
+            },
+            {
+              "id": "E36",
+              "kind": "load",
+              "target": {
+                "load": {
+                  "case": "D",
+                  "collection": "nodal_loads",
+                  "name": "P1"
+                }
+              },
+              "confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.275,
+                    0.4
+                  ],
+                  [
+                    0.275,
+                    0.5
+                  ]
+                ]
+              },
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9
+            },
+            {
+              "id": "E37",
+              "kind": "load",
+              "target": {
+                "load": {
+                  "case": "D",
+                  "collection": "nodal_loads",
+                  "name": "P2"
+                }
+              },
+              "confidence": 0.9,
+              "image_geometry": {
+                "line": [
+                  [
+                    0.75,
+                    0.4
+                  ],
+                  [
+                    0.75,
+                    0.5
+                  ]
+                ]
+              },
+              "source": "vision",
+              "verified": false,
+              "recognition_confidence": 0.9
+            }
+          ],
+          "dimensions": [
+            {
+              "id": "D1",
+              "text": "10 m",
+              "unit": "m",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.275,
+                    0.1
+                  ],
+                  [
+                    0.425,
+                    0.1
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "D2",
+              "text": "10 m",
+              "unit": "m",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.425,
+                    0.1
+                  ],
+                  [
+                    0.6,
+                    0.1
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "D3",
+              "text": "10 m",
+              "unit": "m",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.6,
+                    0.1
+                  ],
+                  [
+                    0.75,
+                    0.1
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "D4",
+              "text": "6 m",
+              "unit": "m",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.1,
+                    0.25
+                  ],
+                  [
+                    0.1,
+                    0.4
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "D5",
+              "text": "6 m",
+              "unit": "m",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.1,
+                    0.4
+                  ],
+                  [
+                    0.1,
+                    0.55
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "D6",
+              "text": "6 m",
+              "unit": "m",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.1,
+                    0.55
+                  ],
+                  [
+                    0.1,
+                    0.7
+                  ]
+                ]
+              }
+            },
+            {
+              "id": "D7",
+              "text": "6 m",
+              "unit": "m",
+              "image_geometry": {
+                "line": [
+                  [
+                    0.1,
+                    0.7
+                  ],
+                  [
+                    0.1,
+                    0.85
+                  ]
+                ]
+              }
+            }
+          ],
+          "issues": [
+            {
+              "id": "I1",
+              "category": "low_confidence",
+              "severity": "blocking",
+              "entity_refs": [
+                "node:13",
+                "node:14"
+              ],
+              "message": "底部支座符号被地面阴影线遮挡，无法确认是铰接还是滚动支座",
+              "status": "open",
+              "resolution": null,
+              "resolved_by": null
+            },
+            {
+              "id": "I2",
+              "category": "unclear_annotation",
+              "severity": "warning",
+              "entity_refs": [
+                "node:12"
+              ],
+              "message": "右侧标注 15° x2 含义不明，无法确定是角度还是其他参数",
+              "status": "open",
+              "resolution": null,
+              "resolved_by": null
+            },
+            {
+              "id": "pixel-topology-review",
+              "category": "pixel_topology",
+              "severity": "blocking",
+              "status": "open",
+              "resolution": null,
+              "resolved_by": null,
+              "entity_refs": [
+                "pixel-node:1",
+                "pixel-node:11",
+                "pixel-node:12",
+                "pixel-node:2",
+                "pixel-node:3",
+                "pixel-node:4",
+                "pixel-node:5",
+                "pixel-node:6",
+                "pixel-node:7",
+                "pixel-node:9",
+                "pixel-member:1",
+                "pixel-member:10",
+                "pixel-member:11",
+                "pixel-member:12",
+                "pixel-member:13",
+                "pixel-member:14",
+                "pixel-member:15",
+                "pixel-member:17",
+                "pixel-member:18",
+                "pixel-member:19",
+                "pixel-member:2",
+                "pixel-member:20",
+                "pixel-member:21",
+                "pixel-member:3",
+                "pixel-member:4",
+                "pixel-member:5",
+                "pixel-member:6",
+                "pixel-member:7",
+                "pixel-member:8",
+                "pixel-member:9",
+                "node:1",
+                "node:10",
+                "node:11",
+                "node:12",
+                "node:13",
+                "node:14",
+                "node:2",
+                "node:3",
+                "node:5",
+                "node:7",
+                "node:8",
+                "node:9",
+                "member:1",
+                "member:10",
+                "member:11",
+                "member:12",
+                "member:13",
+                "member:14",
+                "member:15",
+                "member:16",
+                "member:17",
+                "member:18",
+                "member:19",
+                "member:2",
+                "member:3",
+                "member:4",
+                "member:5",
+                "member:7",
+                "member:8",
+                "member:9"
+              ],
+              "message": "圆点候选 12 个、灰色杆线候选 21 条，与草稿对应 2 个节点、1 根杆件。紫色空心圆和虚线为像素候选，请核对漏节点、位置偏差及真实连接，按图移动或补画。候选不替换工程模型；候选不适用时，核对原图后保留当前拓扑。"
+            }
+          ],
+          "format": "space-frame-recognition-draft/v2",
+          "model": null,
+          "merge_plan": null,
+          "revision": 0,
+          "confirmation": null,
+          "source": {
+            "original_path": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\ai\\tower_truss.png",
+            "image_hash": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+            "preprocessing": {
+              "perspective_status": "unconfirmed"
+            }
+          },
+          "work_plane": {
+            "status": "proposed",
+            "plane": "XZ",
+            "offset": 0.0,
+            "axis_mapping": {
+              "first_axis": "X",
+              "second_axis": "Z",
+              "offset_axis": "Y",
+              "image_right_sign": 1,
+              "image_up_sign": 1
+            }
+          },
+          "scale": {
+            "status": "unknown",
+            "length_per_pixel": null,
+            "unit": "m/px",
+            "anchor_node": null,
+            "anchor_coordinates_xyz": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "evidence_ids": []
+          },
+          "intersections": [],
+          "joint_graph_review": {
+            "method": "grey-joint-graph/v1",
+            "source": "derived",
+            "confidence": null,
+            "image_hash": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+            "file_sha256": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+            "width_px": 500,
+            "height_px": 345,
+            "issue_id": "pixel-topology-review",
+            "nodes": [
+              {
+                "id": 1,
+                "point": [
+                  0.4381429525718103,
+                  0.21695736434108528
+                ],
+                "grey_ring_fraction": 1.0
+              },
+              {
+                "id": 2,
+                "point": [
+                  0.6090362543268355,
+                  0.21714235377026075
+                ],
+                "grey_ring_fraction": 0.9456521739130435
+              },
+              {
+                "id": 3,
+                "point": [
+                  0.28373413493653976,
+                  0.3789970930232558
+                ],
+                "grey_ring_fraction": 0.8955223880597015
+              },
+              {
+                "id": 4,
+                "point": [
+                  0.438314128256513,
+                  0.381359011627907
+                ],
+                "grey_ring_fraction": 0.967032967032967
+              },
+              {
+                "id": 5,
+                "point": [
+                  0.6032064128256514,
+                  0.3815186751233263
+                ],
+                "grey_ring_fraction": 0.9411764705882353
+              },
+              {
+                "id": 6,
+                "point": [
+                  0.7638476953907816,
+                  0.38023255813953494
+                ],
+                "grey_ring_fraction": 0.8666666666666667
+              },
+              {
+                "id": 7,
+                "point": [
+                  0.437875751503006,
+                  0.5450581395348837
+                ],
+                "grey_ring_fraction": 1.0
+              },
+              {
+                "id": 8,
+                "point": [
+                  0.6030771219859073,
+                  0.5452925731432858
+                ],
+                "grey_ring_fraction": 1.0
+              },
+              {
+                "id": 9,
+                "point": [
+                  0.43827048035464866,
+                  0.7090380549682875
+                ],
+                "grey_ring_fraction": 0.9456521739130435
+              },
+              {
+                "id": 10,
+                "point": [
+                  0.6032064128256514,
+                  0.7088039867109635
+                ],
+                "grey_ring_fraction": 0.9764705882352941
+              },
+              {
+                "id": 11,
+                "point": [
+                  0.4381429525718103,
+                  0.8731589147286822
+                ],
+                "grey_ring_fraction": 1.0
+              },
+              {
+                "id": 12,
+                "point": [
+                  0.6032064128256514,
+                  0.8730922965116279
+                ],
+                "grey_ring_fraction": 0.8901098901098901
+              }
+            ],
+            "members": [
+              {
+                "id": 1,
+                "i": 1,
+                "j": 2,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 2,
+                "i": 1,
+                "j": 3,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 3,
+                "i": 1,
+                "j": 4,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 4,
+                "i": 1,
+                "j": 5,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 5,
+                "i": 2,
+                "j": 5,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 6,
+                "i": 2,
+                "j": 6,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 7,
+                "i": 3,
+                "j": 4,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 8,
+                "i": 4,
+                "j": 5,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 9,
+                "i": 4,
+                "j": 7,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 10,
+                "i": 4,
+                "j": 8,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 11,
+                "i": 5,
+                "j": 6,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 12,
+                "i": 5,
+                "j": 8,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 13,
+                "i": 7,
+                "j": 8,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 14,
+                "i": 7,
+                "j": 9,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 15,
+                "i": 7,
+                "j": 10,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 16,
+                "i": 8,
+                "j": 10,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 17,
+                "i": 9,
+                "j": 10,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 18,
+                "i": 9,
+                "j": 11,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 19,
+                "i": 9,
+                "j": 12,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 20,
+                "i": 10,
+                "j": 12,
+                "grey_coverage": 1.0
+              },
+              {
+                "id": 21,
+                "i": 11,
+                "j": 12,
+                "grey_coverage": 1.0
+              }
+            ],
+            "original_geometry": {
+              "nodes": [
+                {
+                  "id": 1,
+                  "u": 0.425,
+                  "v": 0.85
+                },
+                {
+                  "id": 2,
+                  "u": 0.6,
+                  "v": 0.85
+                },
+                {
+                  "id": 3,
+                  "u": 0.425,
+                  "v": 0.7
+                },
+                {
+                  "id": 4,
+                  "u": 0.6,
+                  "v": 0.7
+                },
+                {
+                  "id": 5,
+                  "u": 0.425,
+                  "v": 0.55
+                },
+                {
+                  "id": 6,
+                  "u": 0.6,
+                  "v": 0.55
+                },
+                {
+                  "id": 7,
+                  "u": 0.425,
+                  "v": 0.4
+                },
+                {
+                  "id": 8,
+                  "u": 0.6,
+                  "v": 0.4
+                },
+                {
+                  "id": 9,
+                  "u": 0.425,
+                  "v": 0.25
+                },
+                {
+                  "id": 10,
+                  "u": 0.6,
+                  "v": 0.25
+                },
+                {
+                  "id": 11,
+                  "u": 0.275,
+                  "v": 0.4
+                },
+                {
+                  "id": 12,
+                  "u": 0.75,
+                  "v": 0.4
+                },
+                {
+                  "id": 13,
+                  "u": 0.425,
+                  "v": 0.2
+                },
+                {
+                  "id": 14,
+                  "u": 0.6,
+                  "v": 0.2
+                }
+              ],
+              "members": [
+                {
+                  "id": 1,
+                  "i": 1,
+                  "j": 2
+                },
+                {
+                  "id": 2,
+                  "i": 1,
+                  "j": 3
+                },
+                {
+                  "id": 3,
+                  "i": 2,
+                  "j": 4
+                },
+                {
+                  "id": 4,
+                  "i": 3,
+                  "j": 4
+                },
+                {
+                  "id": 5,
+                  "i": 3,
+                  "j": 5
+                },
+                {
+                  "id": 6,
+                  "i": 4,
+                  "j": 6
+                },
+                {
+                  "id": 7,
+                  "i": 5,
+                  "j": 6
+                },
+                {
+                  "id": 8,
+                  "i": 5,
+                  "j": 7
+                },
+                {
+                  "id": 9,
+                  "i": 6,
+                  "j": 8
+                },
+                {
+                  "id": 10,
+                  "i": 7,
+                  "j": 8
+                },
+                {
+                  "id": 11,
+                  "i": 7,
+                  "j": 9
+                },
+                {
+                  "id": 12,
+                  "i": 8,
+                  "j": 10
+                },
+                {
+                  "id": 13,
+                  "i": 9,
+                  "j": 10
+                },
+                {
+                  "id": 14,
+                  "i": 11,
+                  "j": 3
+                },
+                {
+                  "id": 15,
+                  "i": 12,
+                  "j": 4
+                },
+                {
+                  "id": 16,
+                  "i": 11,
+                  "j": 1
+                },
+                {
+                  "id": 17,
+                  "i": 12,
+                  "j": 2
+                },
+                {
+                  "id": 18,
+                  "i": 9,
+                  "j": 13
+                },
+                {
+                  "id": 19,
+                  "i": 10,
+                  "j": 14
+                }
+              ]
+            },
+            "initial_comparison": {
+              "matched_nodes": 2,
+              "matched_members": 1,
+              "unmatched_candidate_nodes": [
+                "1",
+                "11",
+                "12",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "9"
+              ],
+              "unmatched_draft_nodes": [
+                "1",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                "2",
+                "3",
+                "5",
+                "7",
+                "8",
+                "9"
+              ],
+              "unmatched_candidate_members": [
+                "1",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                "15",
+                "17",
+                "18",
+                "19",
+                "2",
+                "20",
+                "21",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9"
+              ],
+              "unmatched_draft_members": [
+                "1",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                "15",
+                "16",
+                "17",
+                "18",
+                "19",
+                "2",
+                "3",
+                "4",
+                "5",
+                "7",
+                "8",
+                "9"
+              ]
+            },
+            "comparison": {
+              "matched_nodes": 2,
+              "matched_members": 1,
+              "unmatched_candidate_nodes": [
+                "1",
+                "11",
+                "12",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "9"
+              ],
+              "unmatched_draft_nodes": [
+                "1",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                "2",
+                "3",
+                "5",
+                "7",
+                "8",
+                "9"
+              ],
+              "unmatched_candidate_members": [
+                "1",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                "15",
+                "17",
+                "18",
+                "19",
+                "2",
+                "20",
+                "21",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9"
+              ],
+              "unmatched_draft_members": [
+                "1",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                "15",
+                "16",
+                "17",
+                "18",
+                "19",
+                "2",
+                "3",
+                "4",
+                "5",
+                "7",
+                "8",
+                "9"
+              ]
+            },
+            "status": "review_required"
+          }
+        },
+        "success": true,
+        "cancelled": false,
+        "attempts": 1,
+        "errors": [],
+        "raw_responses": [
+          "{\"image_model\":{\"nodes\":[{\"id\":1,\"u\":0.4250,\"v\":0.8500},{\"id\":2,\"u\":0.6000,\"v\":0.8500},{\"id\":3,\"u\":0.4250,\"v\":0.7000},{\"id\":4,\"u\":0.6000,\"v\":0.7000},{\"id\":5,\"u\":0.4250,\"v\":0.5500},{\"id\":6,\"u\":0.6000,\"v\":0.5500},{\"id\":7,\"u\":0.4250,\"v\":0.4000},{\"id\":8,\"u\":0.6000,\"v\":0.4000},{\"id\":9,\"u\":0.4250,\"v\":0.2500},{\"id\":10,\"u\":0.6000,\"v\":0.2500},{\"id\":11,\"u\":0.2750,\"v\":0.4000},{\"id\":12,\"u\":0.7500,\"v\":0.4000},{\"id\":13,\"u\":0.4250,\"v\":0.2000},{\"id\":14,\"u\":0.6000,\"v\":0.2000}],\"members\":[{\"id\":1,\"i\":1,\"j\":2},{\"id\":2,\"i\":1,\"j\":3},{\"id\":3,\"i\":2,\"j\":4},{\"id\":4,\"i\":3,\"j\":4},{\"id\":5,\"i\":3,\"j\":5},{\"id\":6,\"i\":4,\"j\":6},{\"id\":7,\"i\":5,\"j\":6},{\"id\":8,\"i\":5,\"j\":7},{\"id\":9,\"i\":6,\"j\":8},{\"id\":10,\"i\":7,\"j\":8},{\"id\":11,\"i\":7,\"j\":9},{\"id\":12,\"i\":8,\"j\":10},{\"id\":13,\"i\":9,\"j\":10},{\"id\":14,\"i\":11,\"j\":3},{\"id\":15,\"i\":12,\"j\":4},{\"id\":16,\"i\":11,\"j\":1},{\"id\":17,\"i\":12,\"j\":2},{\"id\":18,\"i\":9,\"j\":13},{\"id\":19,\"i\":10,\"j\":14}],\"supports\":[{\"node\":13,\"kind\":\"pinned\"},{\"node\":14,\"kind\":\"roller\"}],\"load_cases\":[{\"name\":\"D\",\"nodal_loads\":[{\"node\":11,\"name\":\"P1\",\"value\":40,\"unit\":\"kN\",\"direction\":[0,-1,0]},{\"node\":12,\"name\":\"P2\",\"value\":50,\"unit\":\"kN\",\"direction\":[0,-1,0]}],\"member_loads\":[],\"member_spans\":[]}]},\"entities\":[{\"id\":\"E1\",\"kind\":\"node\",\"target\":{\"node\":1},\"confidence\":0.9},{\"id\":\"E2\",\"kind\":\"node\",\"target\":{\"node\":2},\"confidence\":0.9},{\"id\":\"E3\",\"kind\":\"node\",\"target\":{\"node\":3},\"confidence\":0.9},{\"id\":\"E4\",\"kind\":\"node\",\"target\":{\"node\":4},\"confidence\":0.9},{\"id\":\"E5\",\"kind\":\"node\",\"target\":{\"node\":5},\"confidence\":0.9},{\"id\":\"E6\",\"kind\":\"node\",\"target\":{\"node\":6},\"confidence\":0.9},{\"id\":\"E7\",\"kind\":\"node\",\"target\":{\"node\":7},\"confidence\":0.9},{\"id\":\"E8\",\"kind\":\"node\",\"target\":{\"node\":8},\"confidence\":0.9},{\"id\":\"E9\",\"kind\":\"node\",\"target\":{\"node\":9},\"confidence\":0.9},{\"id\":\"E10\",\"kind\":\"node\",\"target\":{\"node\":10},\"confidence\":0.9},{\"id\":\"E11\",\"kind\":\"node\",\"target\":{\"node\":11},\"confidence\":0.9},{\"id\":\"E12\",\"kind\":\"node\",\"target\":{\"node\":12},\"confidence\":0.9},{\"id\":\"E13\",\"kind\":\"node\",\"target\":{\"node\":13},\"confidence\":0.8},{\"id\":\"E14\",\"kind\":\"node\",\"target\":{\"node\":14},\"confidence\":0.8},{\"id\":\"E15\",\"kind\":\"member\",\"target\":{\"member\":1},\"confidence\":0.9},{\"id\":\"E16\",\"kind\":\"member\",\"target\":{\"member\":2},\"confidence\":0.9},{\"id\":\"E17\",\"kind\":\"member\",\"target\":{\"member\":3},\"confidence\":0.9},{\"id\":\"E18\",\"kind\":\"member\",\"target\":{\"member\":4},\"confidence\":0.9},{\"id\":\"E19\",\"kind\":\"member\",\"target\":{\"member\":5},\"confidence\":0.9},{\"id\":\"E20\",\"kind\":\"member\",\"target\":{\"member\":6},\"confidence\":0.9},{\"id\":\"E21\",\"kind\":\"member\",\"target\":{\"member\":7},\"confidence\":0.9},{\"id\":\"E22\",\"kind\":\"member\",\"target\":{\"member\":8},\"confidence\":0.9},{\"id\":\"E23\",\"kind\":\"member\",\"target\":{\"member\":9},\"confidence\":0.9},{\"id\":\"E24\",\"kind\":\"member\",\"target\":{\"member\":10},\"confidence\":0.9},{\"id\":\"E25\",\"kind\":\"member\",\"target\":{\"member\":11},\"confidence\":0.9},{\"id\":\"E26\",\"kind\":\"member\",\"target\":{\"member\":12},\"confidence\":0.9},{\"id\":\"E27\",\"kind\":\"member\",\"target\":{\"member\":13},\"confidence\":0.9},{\"id\":\"E28\",\"kind\":\"member\",\"target\":{\"member\":14},\"confidence\":0.9},{\"id\":\"E29\",\"kind\":\"member\",\"target\":{\"member\":15},\"confidence\":0.9},{\"id\":\"E30\",\"kind\":\"member\",\"target\":{\"member\":16},\"confidence\":0.9},{\"id\":\"E31\",\"kind\":\"member\",\"target\":{\"member\":17},\"confidence\":0.9},{\"id\":\"E32\",\"kind\":\"member\",\"target\":{\"member\":18},\"confidence\":0.9},{\"id\":\"E33\",\"kind\":\"member\",\"target\":{\"member\":19},\"confidence\":0.9},{\"id\":\"E34\",\"kind\":\"support\",\"target\":{\"support\":{\"node\":13,\"name\":\"S1\"}},\"confidence\":0.7,\"image_geometry\":{\"line\":[[0.4250,0.2000],[0.4250,0.2200]]}},{\"id\":\"E35\",\"kind\":\"support\",\"target\":{\"support\":{\"node\":14,\"name\":\"S2\"}},\"confidence\":0.7,\"image_geometry\":{\"line\":[[0.6000,0.2000],[0.6000,0.2200]]}},{\"id\":\"E36\",\"kind\":\"load\",\"target\":{\"load\":{\"case\":\"D\",\"collection\":\"nodal_loads\",\"name\":\"P1\"}},\"confidence\":0.9,\"image_geometry\":{\"line\":[[0.2750,0.4000],[0.2750,0.5000]]}},{\"id\":\"E37\",\"kind\":\"load\",\"target\":{\"load\":{\"case\":\"D\",\"collection\":\"nodal_loads\",\"name\":\"P2\"}},\"confidence\":0.9,\"image_geometry\":{\"line\":[[0.7500,0.4000],[0.7500,0.5000]]}}],\"dimensions\":[{\"id\":\"D1\",\"text\":\"10 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.2750,0.1000],[0.4250,0.1000]]}},{\"id\":\"D2\",\"text\":\"10 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.4250,0.1000],[0.6000,0.1000]]}},{\"id\":\"D3\",\"text\":\"10 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.6000,0.1000],[0.7500,0.1000]]}},{\"id\":\"D4\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.2500],[0.1000,0.4000]]}},{\"id\":\"D5\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.4000],[0.1000,0.5500]]}},{\"id\":\"D6\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.5500],[0.1000,0.7000]]}},{\"id\":\"D7\",\"text\":\"6 m\",\"unit\":\"m\",\"image_geometry\":{\"line\":[[0.1000,0.7000],[0.1000,0.8500]]}}],\"issues\":[{\"id\":\"I1\",\"category\":\"low_confidence\",\"severity\":\"blocking\",\"entity_refs\":[\"node:13\",\"node:14\"],\"message\":\"底部支座符号被地面阴影线遮挡，无法确认是铰接还是滚动支座\",\"status\":\"open\"},{\"id\":\"I2\",\"category\":\"unclear_annotation\",\"severity\":\"warning\",\"entity_refs\":[\"node:12\"],\"message\":\"右侧标注 15° x2 含义不明，无法确定是角度还是其他参数\",\"status\":\"open\"}]}"
+        ],
+        "duration_ms": 7641.00000000326,
+        "call_metadata": [
+          {
+            "attempt": 1,
+            "content_characters": 5046,
+            "has_reasoning_content": false,
+            "finish_reason": "stop",
+            "prompt_tokens": 2333,
+            "completion_tokens": 1993,
+            "total_tokens": 4326
+          }
+        ]
+      },
+      "phase": "review_required",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "elapsed_s": 7.637
+    }
+  ]
+}

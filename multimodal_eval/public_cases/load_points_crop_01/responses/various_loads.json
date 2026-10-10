@@ -1,0 +1,214 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "various_loads",
+    "width_px": 780,
+    "height_px": 225,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.08,
+          0.72
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.92,
+          0.72
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 2
+      }
+    ],
+    "supports": [
+      {
+        "node": 1,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 2,
+        "fix": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "梁上分布荷载（蓝色向下箭头列）未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "梁上集中荷载（蓝色斜向箭头）未标注数值和单位，无法确定荷载大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I3",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "梁右端集中力矩（蓝色圆弧箭头）未标注数值和单位，无法确定力矩大小。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I4",
+        "category": "unrecognized",
+        "severity": "warning",
+        "entity_refs": [
+          "node:1"
+        ],
+        "message": "左端支座旁有红色水平箭头，无法判断是外加荷载还是支座反力，需人工核实。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I5",
+        "category": "unrecognized",
+        "severity": "warning",
+        "entity_refs": [
+          "node:2"
+        ],
+        "message": "右端支座下方有红色竖直箭头，无法判断是外加荷载还是支座反力，需人工核实。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I6",
+        "category": "missing_dimension",
+        "severity": "warning",
+        "entity_refs": [
+          "member:1"
+        ],
+        "message": "图中无尺寸标注，节点坐标仅为相对比例，需用户标定实际跨度。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 1,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": []
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.0800, \"v\": 0.7200},\n      {\"id\": 2, \"u\": 0.9200, \"v\": 0.7200}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 2, \"kind\": \"roller\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [],\n        \"member_loads\": [],\n        \"member_spans\": []\n      }\n    ]\n  },\n  \"entities\": [\n    {\n      \"id\": \"E1\",\n      \"kind\": \"node\",\n      \"target\": {\"node\": 1},\n      \"confidence\": 0.9,\n      \"image_geometry\": {\"point\": [0.0800, 0.7200]}\n    },\n    {\n      \"id\": \"E2\",\n      \"kind\": \"node\",\n      \"target\": {\"node\": 2},\n      \"confidence\": 0.9,\n      \"image_geometry\": {\"point\": [0.9200, 0.7200]}\n    },\n    {\n      \"id\": \"E3\",\n      \"kind\": \"member\",\n      \"target\": {\"member\": 1},\n      \"confidence\": 0.95,\n      \"image_geometry\": {\"line\": [[0.0800, 0.7200], [0.9200, 0.7200]]}\n    },\n    {\n      \"id\": \"E4\",\n      \"kind\": \"support\",\n      \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}},\n      \"confidence\": 0.85,\n      \"image_geometry\": {\"point\": [0.0800, 0.7200]}\n    },\n    {\n      \"id\": \"E5\",\n      \"kind\": \"support\",\n      \"target\": {\"support\": {\"node\": 2, \"name\": \"S2\"}},\n      \"confidence\": 0.85,\n      \"image_geometry\": {\"point\": [0.9200, 0.7200]}\n    }\n  ],\n  \"dimensions\": [],\n  \"issues\": [\n    {\n      \"id\": \"I1\",\n      \"category\": \"load_incomplete\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"member:1\"],\n      \"message\": \"梁上分布荷载（蓝色向下箭头列）未标注数值和单位，无法确定荷载大小。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I2\",\n      \"category\": \"load_incomplete\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"member:1\"],\n      \"message\": \"梁上集中荷载（蓝色斜向箭头）未标注数值和单位，无法确定荷载大小。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I3\",\n      \"category\": \"load_incomplete\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"member:1\"],\n      \"message\": \"梁右端集中力矩（蓝色圆弧箭头）未标注数值和单位，无法确定力矩大小。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I4\",\n      \"category\": \"unrecognized\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"node:1\"],\n      \"message\": \"左端支座旁有红色水平箭头，无法判断是外加荷载还是支座反力，需人工核实。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I5\",\n      \"category\": \"unrecognized\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"node:2\"],\n      \"message\": \"右端支座下方有红色竖直箭头，无法判断是外加荷载还是支座反力，需人工核实。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I6\",\n      \"category\": \"missing_dimension\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"member:1\"],\n      \"message\": \"图中无尺寸标注，节点坐标仅为相对比例，需用户标定实际跨度。\",\n      \"status\": \"open\"\n    }\n  ]\n}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "content_characters": 2620,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 2238,
+      "completion_tokens": 968,
+      "total_tokens": 3206
+    }
+  ],
+  "position_refinements": [],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+    "derived_image_hash": "9722a46b5e921807243bb90d26a1c3df361ec668a06990455053c59b29c0a868",
+    "input_context_hash": "ec976caa69f0588fa8f7daf92520e9dc758d12a972484812eaf8dc5738bd679e",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "408050abe284e344e377a2d24c64ad05d03b9e3047c697e4ea4de2b6c2482828"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      874,
+      433
+    ],
+    "crop": [
+      60,
+      60,
+      840,
+      285
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 7250.0
+  }
+}

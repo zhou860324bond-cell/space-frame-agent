@@ -1,0 +1,56 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "FAIL",
+  "prediction": {
+    "image_id": "point_load",
+    "width_px": 433,
+    "height_px": 400,
+    "nodes": [],
+    "members": [],
+    "intersections": [],
+    "supports": [],
+    "loads": [],
+    "issues": [],
+    "scale": {
+      "status": "unknown"
+    }
+  },
+  "errors": [
+    "第1次 v2 校验失败: 无法从响应中提取 JSON"
+  ],
+  "raw_responses": [
+    ""
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+    "derived_image_hash": "a961bb4d7bd42ca206c50a1b7cde2a63b7e195b9e061ea7d72cb4502f849002d",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      433,
+      400
+    ],
+    "crop": [
+      0,
+      0,
+      433,
+      400
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 21687.000000001717
+  }
+}

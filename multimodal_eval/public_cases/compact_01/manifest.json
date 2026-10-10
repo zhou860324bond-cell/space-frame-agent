@@ -1,0 +1,79 @@
+{
+  "format": "space-frame-multimodal-eval/v1",
+  "cases": [
+    {
+      "image_id": "tower_truss",
+      "image_path": "images/tower_truss.png",
+      "image_hash": "30456eee652975dc11a1d1676f551e922e7c972d9b5526bb4b8d4ff5f19965c8",
+      "metadata_path": "metadata/tower_truss.json",
+      "metadata_hash": "4e631bb31696f7a75d38703014e1d651eef8512e01f8a90b4f380584cf367fda",
+      "ground_truth_path": "ground_truth/tower_truss.json",
+      "ground_truth_hash": "485ec14e11a6aba02955fb37bb26f5375de280e2628c0b66006772e1b37a0562",
+      "response_fixture_path": "responses/tower_truss.json",
+      "response_hash": "98b0490a6b1d9a0d922c1a66cf8f9ee746a12fbe72488d7c9a40b923f70e93ee",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "842404d40ae6d80b7612c88aaaa65da479ed54bc703b0ab585ecdaf59283322b",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "7690102197b87583f012dd63c55c45a4e5706f2dfc006a853305cb08d61dd1b7",
+      "review_actions": false,
+      "action_prompt_hash": null,
+      "subset_labels": [
+        "clear",
+        "numeric_load",
+        "dimensioned_truss",
+        "development_retest"
+      ],
+      "gate": true,
+      "source": "https://eng.libretexts.org/Bookshelves/Mechanical_Engineering/Mechanics_Map_(Moore_2nd_Edition)/05:_Engineering_Structures/5.05:_Method_of_Sections",
+      "license": "CC BY-SA 4.0",
+      "reference_contract": "space-frame-reference-topology/v1"
+    },
+    {
+      "image_id": "wall_truss",
+      "image_path": "images/wall_truss.png",
+      "image_hash": "1fb972a682508d1955fe12a2be48b85c362bac06a0bfd0bb3f12902b0ef78403",
+      "metadata_path": "metadata/wall_truss.json",
+      "metadata_hash": "d9cc9088fb108677c9b054068c7f5e383afb6014ee2a21c596bfc71f3b289dc7",
+      "ground_truth_path": "ground_truth/wall_truss.json",
+      "ground_truth_hash": "11b0d1f6cd8b32266016789c3bf3189c79322ea35e10020040b7033f68a5e058",
+      "response_fixture_path": "responses/wall_truss.json",
+      "response_hash": "dcbfe837be0479eb15b86b316d9ed31525e1f16e3d1d60c672d07595a73cbacd",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "842404d40ae6d80b7612c88aaaa65da479ed54bc703b0ab585ecdaf59283322b",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "7690102197b87583f012dd63c55c45a4e5706f2dfc006a853305cb08d61dd1b7",
+      "review_actions": false,
+      "action_prompt_hash": null,
+      "subset_labels": [
+        "clear",
+        "numeric_load",
+        "dimensioned_truss",
+        "development_retest"
+      ],
+      "gate": true,
+      "source": "https://eng.libretexts.org/Bookshelves/Mechanical_Engineering/Mechanics_Map_(Moore_2nd_Edition)/05:_Engineering_Structures/5.04:_Method_of_Joints",
+      "license": "CC BY-SA 4.0",
+      "reference_contract": "space-frame-reference-topology/v1"
+    }
+  ]
+}

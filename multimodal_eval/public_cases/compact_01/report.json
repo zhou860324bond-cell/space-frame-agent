@@ -1,0 +1,393 @@
+{
+  "format": "space-frame-multimodal-eval-report/v1",
+  "mode": "frozen-response",
+  "manifest": "manifest.json",
+  "gate_cases": 2,
+  "evaluated_image_ids": [
+    "tower_truss",
+    "wall_truss"
+  ],
+  "case_reports": [
+    {
+      "image_id": "tower_truss",
+      "metrics": {
+        "node_f1": 0.0,
+        "member_f1": 0.0,
+        "clear_node_f1": 0.0,
+        "clear_member_f1": 0.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 0.0,
+        "load_f1": 0.0,
+        "load_numeric_unit_accuracy": 0.0,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 2
+      },
+      "counts": {
+        "nodes": {
+          "tp": 0,
+          "fp": 10,
+          "fn": 12
+        },
+        "members": {
+          "tp": 0,
+          "fp": 14,
+          "fn": 21
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 10,
+          "fn": 12
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 14,
+          "fn": 21
+        },
+        "supports": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 2
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 2
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 2,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 28,
+          "fn": 59
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 2
+        }
+      },
+      "missing_nodes": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "extra_nodes": [
+        "1",
+        "10",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "missing_members": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "2",
+        "20",
+        "21",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "extra_members": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ]
+    },
+    {
+      "image_id": "wall_truss",
+      "metrics": {
+        "node_f1": 0.0,
+        "member_f1": 0.0,
+        "clear_node_f1": 0.0,
+        "clear_member_f1": 0.0,
+        "intersection_accuracy": 0.0,
+        "support_f1": 0.0,
+        "load_f1": 0.0,
+        "load_numeric_unit_accuracy": 0.0,
+        "scale_accuracy": null,
+        "issue_recall": 1.0,
+        "issue_false_positives": 4
+      },
+      "counts": {
+        "nodes": {
+          "tp": 0,
+          "fp": 6,
+          "fn": 5
+        },
+        "members": {
+          "tp": 0,
+          "fp": 8,
+          "fn": 7
+        },
+        "clear_nodes": {
+          "tp": 0,
+          "fp": 6,
+          "fn": 5
+        },
+        "clear_members": {
+          "tp": 0,
+          "fp": 8,
+          "fn": 7
+        },
+        "supports": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 2
+        },
+        "loads": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1
+        },
+        "issues": {
+          "tp": 1,
+          "fp": 4,
+          "fn": 0
+        },
+        "intersections": {
+          "correct": 0,
+          "wrong": 0,
+          "fp": 16,
+          "fn": 14
+        },
+        "scale": {
+          "correct": 0,
+          "total": 0
+        },
+        "load_numeric": {
+          "correct": 0,
+          "total": 1
+        }
+      },
+      "missing_nodes": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "extra_nodes": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ],
+      "missing_members": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7"
+      ],
+      "extra_members": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ]
+    }
+  ],
+  "metrics": {
+    "node_f1": 0.0,
+    "member_f1": 0.0,
+    "clear_node_f1": 0.0,
+    "clear_member_f1": 0.0,
+    "intersection_accuracy": 0.0,
+    "support_f1": 0.0,
+    "load_f1": 0.0,
+    "load_numeric_unit_accuracy": 0.0,
+    "scale_accuracy": null,
+    "issue_recall": 1.0,
+    "issue_false_positives": 6
+  },
+  "counts": {
+    "nodes": {
+      "tp": 0,
+      "fp": 16,
+      "fn": 17
+    },
+    "members": {
+      "tp": 0,
+      "fp": 22,
+      "fn": 28
+    },
+    "clear_nodes": {
+      "tp": 0,
+      "fp": 16,
+      "fn": 17
+    },
+    "clear_members": {
+      "tp": 0,
+      "fp": 22,
+      "fn": 28
+    },
+    "supports": {
+      "tp": 0,
+      "fp": 4,
+      "fn": 4
+    },
+    "loads": {
+      "tp": 0,
+      "fp": 3,
+      "fn": 3
+    },
+    "issues": {
+      "tp": 2,
+      "fp": 6,
+      "fn": 0
+    },
+    "intersections": {
+      "correct": 0,
+      "wrong": 0,
+      "fp": 44,
+      "fn": 73
+    },
+    "scale": {
+      "correct": 0,
+      "total": 0
+    },
+    "load_numeric": {
+      "correct": 0,
+      "total": 3
+    }
+  },
+  "thresholds": {
+    "node_f1": 0.85,
+    "member_f1": 0.85,
+    "clear_node_f1": 0.95,
+    "clear_member_f1": 0.95,
+    "intersection_accuracy": 0.9,
+    "support_f1": 0.8,
+    "load_f1": 0.8
+  },
+  "failures": [
+    "node_f1",
+    "member_f1",
+    "clear_node_f1",
+    "clear_member_f1",
+    "intersection_accuracy",
+    "support_f1",
+    "load_f1"
+  ],
+  "passed": false,
+  "sample_kind": "external-real-world-pilot",
+  "case_outcomes": [
+    {
+      "image_id": "tower_truss",
+      "outcome": "PASS",
+      "attempts": 1,
+      "duration_ms": 10640.999999999622,
+      "errors": [],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "content_characters": 4230,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 2333,
+          "completion_tokens": 1670,
+          "total_tokens": 4003
+        }
+      ],
+      "action_review": null,
+      "review_actions": false
+    },
+    {
+      "image_id": "wall_truss",
+      "outcome": "PASS",
+      "attempts": 1,
+      "duration_ms": 3531.9999999992433,
+      "errors": [],
+      "call_metadata": [
+        {
+          "attempt": 1,
+          "content_characters": 2385,
+          "has_reasoning_content": false,
+          "finish_reason": "stop",
+          "prompt_tokens": 2342,
+          "completion_tokens": 931,
+          "total_tokens": 3273
+        }
+      ],
+      "action_review": null,
+      "review_actions": false
+    }
+  ],
+  "reference_contract": {
+    "format": "space-frame-reference-topology/v1",
+    "legacy_cases": [],
+    "checked_cases": 2
+  },
+  "runtime": {
+    "attempted_cases": 2,
+    "parse_successes": 2,
+    "parse_failures": 0,
+    "total_calls": 2,
+    "median_duration_ms": 7086.4999999994325,
+    "total_duration_ms": 14172.999999998865
+  },
+  "action_review": {
+    "attempted_cases": 0,
+    "completed_cases": 0,
+    "failed_or_missing_cases": 0
+  },
+  "limitations": [
+    "小样本单次结果，不代表真实手绘、手机照片或所有提供商的准确率。",
+    "无参考对象的指标为 null，不补成 100%；失败输入不从分母移除。"
+  ]
+}

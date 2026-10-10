@@ -94,6 +94,7 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
             bi, bj = int(second["i"]), int(second["j"])
             c, d = nodes[bi], nodes[bj]
             pair = [aid, bid]
+            shared_endpoints = {ai, aj} & {bi, bj}
             if {ai, aj} == {bi, bj}:
                 generated_issues.append(_issue(
                     f"duplicate-member-{aid}-{bid}", "topology",
@@ -101,14 +102,19 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
                 continue
             hit = _intersection(a, b, c, d)
             if hit is None:
-                # Parallel collinear overlap is blocking rather than guessed.
+                # 共线重叠仍需处理，不能以共享端点掩盖重叠。
                 r = (b[0] - a[0], b[1] - a[1])
                 if (abs(_cross(r, (c[0] - a[0], c[1] - a[1]))) <= 1e-12
                         and _collinear_overlap(a, b, c, d)):
                     generated_issues.append(_issue(
                         f"overlap-{aid}-{bid}", "topology",
                         [f"member:{aid}", f"member:{bid}"], "共线杆件重叠"))
-                continue
+                    continue
+                if not shared_endpoints or a == b or c == d:
+                    continue
+                shared = min(shared_endpoints)
+                hit = (0.0 if ai == shared else 1.0,
+                       0.0 if bi == shared else 1.0, nodes[shared])
             sa, sb, point = hit
             la = math.hypot((b[0] - a[0]) * (width - 1),
                             (b[1] - a[1]) * (height - 1))
@@ -117,9 +123,12 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
             sa, sb = (_snap_parameter(sa, la, tolerance),
                       _snap_parameter(sb, lb, tolerance))
             previous = old.get(tuple(pair), {})
-            shared_endpoints = {ai, aj} & {bi, bj}
             if shared_endpoints:
                 decision, node_id = "connect", min(shared_endpoints)
+                # 已有节点编号明确端点；短杆的像素吸附不能改变这一关系。
+                sa = 0.0 if ai == node_id else 1.0
+                sb = 0.0 if bi == node_id else 1.0
+                point = nodes[node_id]
             else:
                 decision = previous.get("decision", "unknown")
                 node_id = previous.get("node_id") if decision == "connect" else None
@@ -133,9 +142,18 @@ def detect_topology(draft: Mapping[str, Any]) -> dict[str, Any]:
                 generated_issues.append(_issue(
                     f"intersection-unknown-{aid}-{bid}", "intersection_unknown",
                     [f"intersection:{identifier}"], "交点连接关系尚未确认"))
+    # 只为人工补画节点检查连接，避免改变历史识别草稿的评分语义。
+    added = {item.get("node_id") for item in updated.get("edit_history") or []
+             if item.get("action") == "add_image_node"}
+    connected = {int(item[key]) for item in members.values() for key in ("i", "j")}
+    for node_id in sorted((added & nodes.keys()) - connected):
+        generated_issues.append(_issue(
+            f"user-node-unconnected-{node_id}", "topology", [f"node:{node_id}"],
+            f"补画节点 {node_id} 尚未连接杆件，请核对原图后补画相连杆件，或删除该节点。"))
     retained = [item for item in updated.get("issues") or []
                 if not (str(item.get("id", "")).startswith(("duplicate-member-", "overlap-",
-                                                             "intersection-unknown-")))]
+                                                             "intersection-unknown-",
+                                                             "user-node-unconnected-")))]
     updated["intersections"] = intersections
     updated["issues"] = retained + generated_issues
     return updated
@@ -244,30 +262,138 @@ def delete_member(draft: Mapping[str, Any], member_id: int) -> dict[str, Any]:
     return detect_topology(updated)
 
 
+def add_image_node(draft: Mapping[str, Any], u: float, v: float) -> dict[str, Any]:
+    """按用户点击补画独立图片节点，不推断连接、尺度或工程属性。"""
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool)
+           or not math.isfinite(value) or not 0 <= value <= 1 for value in (u, v)):
+        raise ValueError("节点位置无效，请在原图范围内选择真实接头。")
+    nodes, _ = _geometry(draft.get("image_model") or {})
+    source = draft.get("source") or {}
+    width, height = int(source.get("width_px", 0)), int(source.get("height_px", 0))
+    if width <= 1 or height <= 1:
+        raise ValueError("草稿缺少有效图片尺寸，请重新加载图片后补画节点。")
+    if any(math.hypot((u - p[0]) * (width - 1), (v - p[1]) * (height - 1))
+           <= point_match_threshold(width, height) for p in nodes.values()):
+        raise ValueError("位置过于接近已有节点，请使用已有节点，或放大原图后重新选择。")
+    used = [*nodes, *(item.get("node_id", 0) for item in draft.get("edit_history") or []
+                     if item.get("action") in {"add_image_node", "delete_image_node"})]
+    node_id = max(used, default=0) + 1
+    updated = deepcopy(dict(draft))
+    updated["image_model"].setdefault("nodes", []).append({"id": node_id, "u": u, "v": v})
+    entities = updated.setdefault("entities", [])
+    identifier = f"user-node-{node_id}"
+    while any(item.get("id") == identifier for item in entities):
+        identifier += "-new"
+    entities.append({"id": identifier, "kind": "node", "target": {"node": node_id},
+                     "source": "user", "verified": True, "confidence": None,
+                     "recognition_confidence": None, "image_geometry": {"point": [u, v]},
+                     "payload": {}})
+    updated.setdefault("edit_history", []).append({"action": "add_image_node", "source": "user",
+                                                   "node_id": node_id, "point": [u, v]})
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
+    return detect_topology(updated)
+
+
 def delete_node(draft: Mapping[str, Any], node_id: int) -> dict[str, Any]:
+    """删除无引用的节点，保存原观察；受力对象及已确认尺度锚点必须先处理。"""
     image_model = draft.get("image_model") or {}
+    nodes, _ = _geometry(image_model)
+    if node_id not in nodes:
+        raise ValueError("所选节点不存在，请重新选择。")
     refs = []
     if any(node_id in (item.get("i"), item.get("j")) for item in image_model.get("members") or []):
-        refs.append("member")
+        refs.append("杆件")
     if any(item.get("node") == node_id for item in image_model.get("supports") or []):
-        refs.append("support")
+        refs.append("支座")
     for block in [image_model, *(image_model.get("load_cases") or [])]:
         for collection in ("nodal_loads", "settlements"):
             if any(item.get("node") == node_id for item in block.get(collection) or []):
-                refs.append("load")
+                refs.append("荷载或支座位移")
     if any(node_id in (item.get("target", {}).get("nodes") or [])
+           or item.get("target", {}).get("node") == node_id
            for item in draft.get("dimensions") or []):
-        refs.append("dimension")
+        refs.append("尺寸")
+    if any(item.get("node_id") == node_id for item in draft.get("intersections") or []):
+        refs.append("交点")
+    scale = draft.get("scale") or {}
+    if scale.get("status") == "confirmed" and scale.get("anchor_node") == node_id:
+        refs.append("已确认尺度锚点")
     if refs:
-        raise ValueError(f"节点 {node_id} 仍被引用: {', '.join(sorted(set(refs)))}")
+        raise ValueError(f"节点 {node_id} 仍被引用：{'、'.join(sorted(set(refs)))}。请先核对并处理引用，再删除节点。")
+    if len(nodes) <= 1:
+        raise ValueError("草稿仅剩一个节点，请重新识别或补画正确节点后再删除。")
     updated = deepcopy(dict(draft))
-    before = len(updated["image_model"].get("nodes") or [])
+    previous = {"node": deepcopy(next(item for item in image_model["nodes"] if item["id"] == node_id)),
+                "entities": [deepcopy(item) for item in draft.get("entities") or []
+                             if item.get("target", {}).get("node") == node_id],
+                "issues": [deepcopy(item) for item in draft.get("issues") or []
+                           if f"node:{node_id}" in (item.get("entity_refs") or [])]}
     updated["image_model"]["nodes"] = [item for item in updated["image_model"]["nodes"]
                                                 if item.get("id") != node_id]
-    if len(updated["image_model"]["nodes"]) == before:
-        raise ValueError("未知节点")
     updated["entities"] = [item for item in updated.get("entities") or []
                            if item.get("target", {}).get("node") != node_id]
+    for issue in updated.get("issues") or []:
+        refs = issue.get("entity_refs") or []
+        if f"node:{node_id}" in refs:
+            issue["entity_refs"] = [ref for ref in refs if ref != f"node:{node_id}"]
+            if not issue["entity_refs"]:
+                issue.update(status="resolved", resolution="用户删除无引用节点", resolved_by="user")
+    if scale.get("anchor_node") == node_id:
+        updated["scale"]["anchor_node"] = None
+    updated.setdefault("edit_history", []).append({"action": "delete_image_node", "source": "user",
+                                                   "node_id": node_id, "previous": previous})
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
+    return detect_topology(updated)
+
+
+def insert_member_node(draft: Mapping[str, Any], member_id: int, fraction: float) -> dict[str, Any]:
+    """用户指定杆件内的作用位置，补节点并分段；已有荷载或尺寸引用不能自动迁移。"""
+    if (not isinstance(fraction, (int, float)) or isinstance(fraction, bool)
+            or not math.isfinite(fraction) or not 0 < fraction < 1):
+        raise ValueError("作用位置必须在杆件两端之间，请填写大于 0 且小于 100 的百分比。")
+    model = draft.get("image_model") or {}
+    nodes, members = _geometry(model)
+    original = members.get(member_id)
+    if original is None:
+        raise ValueError("所选杆件不存在，请重新选择。")
+    if set(original) - {"id", "i", "j", "section", "material"}:
+        raise ValueError("杆件含端部释放或其他属性，请先核对分段后的属性归属。")
+    # 复用删除检查：拒绝已有荷载、尺寸或人工交点引用，避免偷偷重分配工程数据。
+    try:
+        updated = delete_member(draft, member_id)
+    except ValueError as exc:
+        raise ValueError("所选杆件仍被引用，请先核对并处理荷载、尺寸或交点引用后补充节点。") from exc
+    new_node_id, new_member_id = max(nodes, default=0) + 1, max(members, default=0) + 1
+    a, b = nodes[int(original["i"])], nodes[int(original["j"])]
+    point = tuple(a[index] + fraction * (b[index] - a[index]) for index in range(2))
+    source = draft.get("source") or {}
+    width, height = int(source.get("width_px", 0)), int(source.get("height_px", 0))
+    if width <= 1 or height <= 1:
+        raise ValueError("草稿缺少有效图片尺寸，请重新加载图片后补充作用节点。")
+    if any(math.hypot((point[0] - p[0]) * (width - 1), (point[1] - p[1]) * (height - 1))
+           <= point_match_threshold(width, height) for p in nodes.values()):
+        raise ValueError("作用位置过于接近已有节点，请使用已有节点或调整百分比。")
+    updated["image_model"]["nodes"].append({"id": new_node_id, "u": point[0], "v": point[1]})
+    first = {**deepcopy(original), "j": new_node_id}
+    second = {**deepcopy(original), "id": new_member_id, "i": new_node_id}
+    updated["image_model"]["members"].extend([first, second])
+    entities = updated.setdefault("entities", [])
+    def add(kind, ident, geometry):
+        entity_id = f"user-{kind}-{ident}"
+        while any(e.get("id") == entity_id for e in entities):
+            entity_id += "-new"
+        entities.append({"id": entity_id, "kind": kind, "target": {kind: ident},
+            "source": "user", "verified": True, "confidence": None, "recognition_confidence": None,
+            "image_geometry": geometry, "payload": {}})
+    add("node", new_node_id, {"point": list(point)})
+    add("member", member_id, {"line": [list(a), list(point)]})
+    add("member", new_member_id, {"line": [list(point), list(b)]})
+    for issue in updated.get("issues") or []:
+        ref = f"member:{member_id}"
+        if ref in (issue.get("entity_refs") or []):
+            issue["entity_refs"] = sorted(set([*issue["entity_refs"], f"member:{new_member_id}"]))
+            issue.update(status="open", resolution=None, resolved_by=None)
+    updated["model"] = updated["merge_plan"] = updated["confirmation"] = None
     return detect_topology(updated)
 
 

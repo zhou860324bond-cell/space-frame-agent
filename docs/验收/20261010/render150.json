@@ -1,0 +1,250 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "check": "真渲染已启用",
+      "ok": true,
+      "detail": "QT_QPA_PLATFORM 是 offscreen 时视口不画，本脚本没有意义"
+    },
+    {
+      "check": "求解成功",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "模型：绘制无异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "模型：画面非空",
+      "ok": true,
+      "detail": "像素标准差 53.5"
+    },
+    {
+      "check": "变形：绘制无异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "变形：画面非空",
+      "ok": true,
+      "detail": "像素标准差 56.9"
+    },
+    {
+      "check": "云图：绘制无异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "云图：画面非空",
+      "ok": true,
+      "detail": "像素标准差 19.4"
+    },
+    {
+      "check": "云图：画面有彩色",
+      "ok": true,
+      "detail": "彩色像素 1.50%"
+    },
+    {
+      "check": "云图：有色标",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "内力图：绘制无异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "内力图：画面非空",
+      "ok": true,
+      "detail": "像素标准差 58.4"
+    },
+    {
+      "check": "内力图：画面有彩色",
+      "ok": true,
+      "detail": "彩色像素 42.92%"
+    },
+    {
+      "check": "内力图：有色标",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "应力比：绘制无异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "应力比：画面非空",
+      "ok": true,
+      "detail": "像素标准差 18.0"
+    },
+    {
+      "check": "应力比：画面有彩色",
+      "ok": true,
+      "detail": "彩色像素 1.50%"
+    },
+    {
+      "check": "应力比：有色标",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "模态：绘制无异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "模态：画面非空",
+      "ok": true,
+      "detail": "像素标准差 39.6"
+    },
+    {
+      "check": "分级云图：画面有彩色",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "left 抽屉在视口内",
+      "ok": true,
+      "detail": "抽屉 (51, 232, 290, 653) / 视口 (51, 232, 1308, 653)"
+    },
+    {
+      "check": "left 抽屉就在分给它的位置",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "right 抽屉在视口内",
+      "ok": true,
+      "detail": "抽屉 (939, 232, 420, 653) / 视口 (51, 232, 1308, 653)"
+    },
+    {
+      "check": "right 抽屉就在分给它的位置",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "bottom 抽屉在视口内",
+      "ok": true,
+      "detail": "抽屉 (341, 585, 598, 300) / 视口 (51, 232, 1308, 653)"
+    },
+    {
+      "check": "bottom 抽屉就在分给它的位置",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "底部抽屉不压两侧抽屉",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "色标不在右抽屉底下",
+      "ok": true,
+      "detail": "色标右沿 842 px，右抽屉占 420 px"
+    },
+    {
+      "check": "色标不在底部抽屉底下",
+      "ok": true,
+      "detail": "色标下沿 326 px，底部抽屉占 300 px"
+    },
+    {
+      "check": "右侧 AI 按钮看得见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体云图：加载已保存网格",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体云图：画面有彩色",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体云图：应力按单元着色",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：变形倍数 0 拾取原单元",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：变形倍数 0 保留原应力",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：变形倍数 0 高亮不遮断拾取",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：变形倍数 10 拾取原单元",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：变形倍数 10 保留原应力",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：变形倍数 10 高亮不遮断拾取",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体云图：导出保留坐标指示器",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：导出保留操作提示",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体云图：位移按节点着色",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体云图：切换结果量保留相机",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：切换字段保留选中单元",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：节点位移极值使用原节点",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体查询：极值定位保持视角和缩放",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "实体云图：返回整体模型无异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "全程无未处理异常",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

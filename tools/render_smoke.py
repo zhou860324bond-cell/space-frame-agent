@@ -188,6 +188,28 @@ def main(report_path: Path | None = None) -> int:
         check("实体云图：画面有彩色", _colourful_fraction(shot()) > 0.003)
         actor = plotter.actors["_solid_result"]
         check("实体云图：应力按单元着色", actor.GetMapper().GetScalarMode() == 2)
+        from vtkmodules.vtkRenderingCore import vtkCellPicker
+
+        window.solid_panel.query.setChecked(True)
+        for scale in (0, 10):
+            window.solid_panel.scale.setValue(scale)
+            settle()
+            renderer = plotter.renderer
+            target = np.array([1.2 + 1 / 3, 1 / 3, 1 / 3]) + [scale * .01, 0, 0]
+            renderer.SetWorldPoint(*target, 1)
+            renderer.WorldToDisplay()
+            display = renderer.GetDisplayPoint()
+            picker = vtkCellPicker()
+            picker.SetTolerance(.001)
+            picked = picker.Pick(display[0], display[1], 0, renderer)
+            window.viewport._on_solid_pick(target, picker)
+            check(f"实体查询：变形倍数 {scale} 拾取原单元",
+                  picked and window.viewport._solid_selection == ("cell", 1))
+            check(f"实体查询：变形倍数 {scale} 保留原应力",
+                  window.results.table.item(0, 1).text() == "200")
+            check(f"实体查询：变形倍数 {scale} 高亮不遮断拾取",
+                  not plotter.actors["_solid_selection"].GetPickable())
+        window.results_dock.hide()
         # VTK 图层合成后，Qt 绘制的坐标指示器也必须保留在导出画面中。
         from PySide6.QtCore import QPoint
         from PySide6.QtGui import QImage
@@ -199,12 +221,27 @@ def main(report_path: Path | None = None) -> int:
         dpr = window.devicePixelRatioF()
         colour = QImage(str(saved)).pixelColor(round(point.x() * dpr), round(point.y() * dpr))
         check("实体云图：导出保留坐标指示器", colour.red() > colour.green() + 30)
+        badge = window.viewport.mode_badge
+        origin = badge.mapTo(window, QPoint(0, 0))
+        exported = QImage(str(saved))
+        crop = exported.copy(round(origin.x() * dpr), round(origin.y() * dpr),
+                             round(badge.width() * dpr), round(badge.height() * dpr))
+        check("实体查询：导出保留操作提示", badge.isVisible() and
+              sum(crop.pixelColor(x, y).lightness() > 170
+                  for x in range(crop.width()) for y in range(crop.height())) > 40)
         camera = plotter.camera_position
         window.solid_panel.field.setCurrentIndex(2)
         settle()
         check("实体云图：位移按节点着色",
               plotter.actors["_solid_result"].GetMapper().GetScalarMode() == 1)
         check("实体云图：切换结果量保留相机", plotter.camera_position == camera)
+        check("实体查询：切换字段保留选中单元", window.viewport._solid_selection == ("cell", 1))
+        window.locate_solid_extreme()
+        check("实体查询：节点位移极值使用原节点", window.viewport._solid_selection == ("point", 0))
+        check("实体查询：极值定位保持视角和缩放",
+              np.allclose(np.asarray(plotter.camera_position[0]) - plotter.camera_position[1],
+                          np.asarray(camera[0]) - camera[1])
+              and np.allclose(plotter.camera_position[2], camera[2]))
         window.show_model()
         settle()
         check("实体云图：返回整体模型无异常",

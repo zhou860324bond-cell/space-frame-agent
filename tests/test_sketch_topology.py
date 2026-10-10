@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 
+from copy import deepcopy
+
 import pytest
 
 from agent import Session
 from model_compiler import compile_model
-from sketch_topology import (delete_member, delete_node, detect_topology,
-                             materialize_geometry, resolve_intersection)
+from sketch_topology import (add_image_node, delete_member, delete_node, detect_topology,
+                             insert_member_node, materialize_geometry, resolve_intersection)
 
 
 def draft(nodes, members):
@@ -34,6 +36,189 @@ def crossing(kind="x"):
              {"id": 4, "u": 0.5, "v": 1.0 if kind == "x" else 0.5}]
     return draft(nodes, [{"id": 1, "i": 1, "j": 2, "material": None, "section": None},
                          {"id": 2, "i": 3, "j": 4, "material": None, "section": None}])
+
+
+def _single_beam():
+    return draft([{"id": 1, "u": 0.1, "v": 0.5}, {"id": 2, "u": 0.9, "v": 0.5}],
+                 [{"id": 1, "i": 1, "j": 2, "material": "Steel", "section": "S"}])
+
+
+@pytest.mark.parametrize("point", [(True, .3), (float("nan"), .3), (.3, float("inf")),
+                                   (-.01, .3), (.3, 1.01), (".3", .3)])
+def test_add_image_node_rejects_invalid_click_without_changing_draft(point):
+    """补点必须拒绝布尔、非有限、越界和字符串位置，不能污染原草稿。"""
+    value = _single_beam()
+    original = deepcopy(value)
+    with pytest.raises(ValueError, match="原图范围"):
+        add_image_node(value, *point)
+    assert value == original
+
+
+@pytest.mark.parametrize("source", [{}, {"width_px": 1, "height_px": 100}])
+def test_add_image_node_requires_source_dimensions(source):
+    """缺少有效原图尺寸时不能用预览尺寸伪造补点位置。"""
+    value = _single_beam()
+    value["source"] = source
+    with pytest.raises(ValueError, match="图片尺寸"):
+        add_image_node(value, .5, .2)
+
+
+def test_add_image_node_preserves_engineering_data_and_blocks_unconnected_import():
+    """漏节点的人工补画只加点，不自动拆杆、连接、确认尺度或生成工程值。"""
+    value = _single_beam()
+    value.update(model={"old": True}, merge_plan={"old": True}, confirmation={"old": True})
+    original = deepcopy(value)
+    updated = add_image_node(value, .5, .2)
+    assert value == original
+    assert updated["image_model"]["nodes"][-1] == {"id": 3, "u": .5, "v": .2}
+    assert updated["image_model"]["members"] == value["image_model"]["members"]
+    assert updated["scale"] == value["scale"] and updated["source"] == value["source"]
+    entity = updated["entities"][-1]
+    assert entity["source"] == "user" and entity["verified"]
+    assert entity["confidence"] is None and entity["recognition_confidence"] is None
+    assert updated["model"] is updated["merge_plan"] is updated["confirmation"] is None
+    issue = next(i for i in updated["issues"] if i["id"] == "user-node-unconnected-3")
+    assert issue["severity"] == "blocking" and issue["status"] == "open"
+    updated["image_model"]["members"].append({"id": 2, "i": 1, "j": 3})
+    connected = detect_topology(updated)
+    assert not any(i["id"] == issue["id"] for i in connected["issues"])
+    assert any(i["id"] == issue["id"] for i in detect_topology(delete_member(connected, 2))["issues"])
+
+
+def test_add_image_node_rejects_near_existing_node_and_keeps_deleted_ids_reserved():
+    """避免点击重复节点，以及删点后重用编号使旧审核引用指向新节点。"""
+    value = _single_beam()
+    with pytest.raises(ValueError, match="已有节点"):
+        add_image_node(value, .12, .5)
+    updated = delete_node(add_image_node(value, .5, .2), 3)
+    readded = add_image_node(updated, .5, .2)
+    assert readded["image_model"]["nodes"][-1]["id"] == 4
+    assert not any(i["id"] == "user-node-unconnected-3" for i in readded["issues"])
+
+
+@pytest.mark.parametrize(("collection", "item", "reason"), [
+    ("supports", {"node": 3}, "支座"), ("nodal_loads", {"node": 3}, "荷载"),
+    ("settlements", {"node": 3}, "支座位移"),
+])
+def test_delete_node_protects_referenced_engineering_objects(collection, item, reason):
+    """删除多余节点不能级联删除支座、集中力或支座位移。"""
+    value = add_image_node(_single_beam(), .5, .2)
+    value["image_model"].setdefault("load_cases", []).append({"name": "L", collection: [item]})
+    if collection == "supports":
+        value["image_model"][collection] = [item]
+    original = deepcopy(value)
+    with pytest.raises(ValueError, match=reason):
+        delete_node(value, 3)
+    assert value == original
+
+
+@pytest.mark.parametrize("reference", ["dimension", "intersection", "anchor"])
+def test_delete_node_protects_dimensions_intersections_and_confirmed_anchor(reference):
+    """节点无杆件引用也不能删除尺寸端点、人工连接节点或已确认尺度锚点。"""
+    value = add_image_node(_single_beam(), .5, .2)
+    if reference == "dimension":
+        value["dimensions"] = [{"target": {"nodes": [1, 3]}}]
+    elif reference == "intersection":
+        value["intersections"] = [{"members": [7, 8], "node_id": 3, "decision": "connect"}]
+    else:
+        value["scale"]["anchor_node"] = 3
+    with pytest.raises(ValueError, match="仍被引用"):
+        delete_node(value, 3)
+
+
+def test_delete_node_archives_observations_and_preserves_unrelated_issues():
+    """删点后只处理精确节点问题，混合引用和全局审核仍保留，原观察可追溯。"""
+    value = add_image_node(_single_beam(), .5, .2)
+    value["scale"].update(status="unknown", anchor_node=3)
+    value["issues"].extend([
+        {"id": "node-only", "entity_refs": ["node:3"], "status": "open"},
+        {"id": "mixed", "entity_refs": ["node:3", "node:2"], "status": "open"},
+        {"id": "global", "entity_refs": [], "status": "open"},
+    ])
+    original = deepcopy(value)
+    updated = delete_node(value, 3)
+    assert value == original
+    by_id = {i["id"]: i for i in updated["issues"]}
+    assert by_id["node-only"]["status"] == "resolved"
+    assert by_id["mixed"]["entity_refs"] == ["node:2"] and by_id["mixed"]["status"] == "open"
+    assert by_id["global"] == value["issues"][-1]
+    assert updated["scale"]["anchor_node"] is None
+    previous = updated["edit_history"][-1]["previous"]
+    assert previous["node"] == value["image_model"]["nodes"][-1]
+    assert previous["entities"] == value["entities"]
+    assert previous["issues"] and updated["confirmation"] is None
+
+
+def test_delete_unknown_or_last_node_is_rejected():
+    """未知节点不能假报删除成功，唯一节点不能删成无效草稿。"""
+    value = _single_beam()
+    with pytest.raises(ValueError, match="不存在"):
+        delete_node(value, 99)
+    value["image_model"]["nodes"] = value["image_model"]["nodes"][:1]
+    value["image_model"]["members"] = []
+    value["scale"]["status"] = "unknown"
+    with pytest.raises(ValueError, match="仅剩一个"):
+        delete_node(value, 1)
+
+
+def test_user_can_insert_missing_action_node_and_keep_geometry_and_boundary_data():
+    """模型漏掉集中作用点时，用户可补节点；原图、尺度、支座和端节点荷载必须保留。"""
+    from copy import deepcopy
+    value = _single_beam()
+    value["image_model"]["supports"] = [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]}]
+    value["image_model"]["load_cases"] = [{"name": "D", "nodal_loads": [
+        {"node": 2, "load": [0, 0, -10, 0, 0, 0]}]}]
+    value["confirmation"] = {"old": True}
+    original = deepcopy(value)
+    updated = insert_member_node(value, 1, 0.25)
+    assert value == original
+    assert updated["image_model"]["nodes"][-1] == {"id": 3, "u": pytest.approx(0.3), "v": 0.5}
+    assert [(m["id"], m["i"], m["j"]) for m in updated["image_model"]["members"]] == [(1, 1, 3), (2, 3, 2)]
+    assert all(m["section"] == "S" and m["material"] == "Steel" for m in updated["image_model"]["members"])
+    assert updated["image_model"]["supports"] == original["image_model"]["supports"]
+    assert updated["image_model"]["load_cases"] == original["image_model"]["load_cases"]
+    assert updated["scale"] == original["scale"] and updated["source"] == original["source"]
+    assert updated["confirmation"] is None
+    assert all(e["source"] == "user" and e["verified"] and e["confidence"] is None for e in updated["entities"])
+
+
+@pytest.mark.parametrize("fraction", [0, 1, True, float("nan"), 0.01])
+def test_action_node_cannot_duplicate_an_endpoint_or_use_invalid_position(fraction):
+    """防止手工补作用点时生成零长度杆件或让非有限坐标进入草稿。"""
+    with pytest.raises(ValueError):
+        insert_member_node(_single_beam(), 1, fraction)
+
+
+@pytest.mark.parametrize("reference", ["member_loads", "member_spans", "dimension"])
+def test_action_node_split_refuses_existing_member_loads_and_dimensions(reference):
+    """分段不能静默把旧整跨荷载或尺寸转移到第一小段，需先处理引用。"""
+    value = _single_beam()
+    if reference == "dimension":
+        value["dimensions"] = [{"id": "D1", "target": {"member": 1}}]
+    else:
+        value["image_model"]["load_cases"] = [{"name": "D", reference: [{"member": 1}]}]
+    with pytest.raises(ValueError, match="仍被引用"):
+        insert_member_node(value, 1, 0.5)
+    assert len(value["image_model"]["nodes"]) == 2
+
+
+def test_split_reopens_original_member_issues_for_both_segments():
+    """已有符号缺值问题不能因补节点消失或只错误附着在第一段。"""
+    value = _single_beam()
+    value["issues"] = [{"id": "q", "category": "load_incomplete", "entity_refs": ["member:1"],
+        "severity": "blocking", "status": "resolved", "resolution": "ignored", "resolved_by": "user"}]
+    updated = insert_member_node(value, 1, 0.5)
+    issue = next(i for i in updated["issues"] if i["id"] == "q")
+    assert issue["entity_refs"] == ["member:1", "member:2"] and issue["status"] == "open"
+    assert issue["resolution"] is None and issue["resolved_by"] is None
+
+
+def test_split_does_not_duplicate_end_releases_on_new_internal_node():
+    """杆件含端部释放时直接复制会使新内节点错误铰接，因此拒绝未经核对的分段。"""
+    value = _single_beam()
+    value["image_model"]["members"][0]["releases"] = ["rz_i"]
+    with pytest.raises(ValueError, match="端部释放"):
+        insert_member_node(value, 1, 0.5)
 
 
 def test_t_junction_reuses_branch_endpoint():
@@ -104,6 +289,119 @@ def test_separate_collinear_members_are_not_reported_as_overlapping():
     assert detected["issues"] == []
 
 
+@pytest.mark.parametrize("points", [
+    [(0, 0.5), (0.5, 0.5), (1, 0.5)],
+    [(0.5, 0), (0.5, 0.5), (0.5, 1)],
+    [(0, 0), (0.5, 0.5), (1, 1)],
+])
+@pytest.mark.parametrize("ends", [((1, 2), (2, 3)), ((2, 1), (2, 3)),
+                                  ((1, 2), (3, 2)), ((2, 1), (3, 2))])
+def test_collinear_shared_endpoint_is_recorded_in_either_member_direction(points, ends):
+    """防止水平、竖直或斜向共线接头被平行分支跳过，反向杆件也须引用同一节点。"""
+    value = draft([{"id": n, "u": p[0], "v": p[1]} for n, p in enumerate(points, 1)],
+                  [{"id": n, "i": e[0], "j": e[1]} for n, e in enumerate(ends, 1)])
+    original = deepcopy(value)
+    detected = detect_topology(value)
+    assert detected["intersections"] == [{
+        "id": "I-1-2", "members": [1, 2], "point": list(points[1]),
+        "decision": "connect", "node_id": 2,
+        "member_s": {str(n): 0.0 if e[0] == 2 else 1.0 for n, e in enumerate(ends, 1)},
+    }]
+    assert detected["issues"] == []
+    assert value == original
+    assert detect_topology(detected) == detected
+
+
+@pytest.mark.parametrize("last", [(0.52, 0.5), (0.51, 0.51)])
+def test_short_shared_members_keep_exact_endpoint_parameters(last):
+    """防止两端均在像素吸附范围内时，把已共享的 j 端错误改记为 i 端。"""
+    value = draft([{"id": 1, "u": 0.5, "v": 0.5}, {"id": 2, "u": 0.51, "v": 0.5},
+                   {"id": 3, "u": last[0], "v": last[1]}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}])
+    detected = detect_topology(value)
+    assert detected["intersections"][0]["member_s"] == {"1": 1.0, "2": 0.0}
+    assert detected["intersections"][0]["point"] == [0.51, 0.5]
+    resolved = resolve_intersection(detected, "I-1-2", "connect")
+    assert resolved["image_model"]["nodes"] == value["image_model"]["nodes"]
+
+
+def test_collinear_shared_endpoint_does_not_hide_overlap():
+    """共线杆件同向重叠仍须阻断，不能因具有同一端节点被当成正常接头。"""
+    value = draft([{"id": 1, "u": 0, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 1, "j": 3}])
+    detected = detect_topology(value)
+    assert detected["intersections"] == []
+    assert [(i["id"], i["severity"]) for i in detected["issues"]] == [("overlap-1-2", "blocking")]
+
+
+def test_coincident_distinct_collinear_endpoints_are_not_merged():
+    """防止仅坐标重合的两个不同节点被新增共享端点逻辑擅自合并。"""
+    value = draft([{"id": 1, "u": 0, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 0.5, "v": 0.5}, {"id": 4, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 3, "j": 4}])
+    assert detect_topology(value)["intersections"] == []
+    assert detect_topology(value)["image_model"] == value["image_model"]
+
+
+def test_degenerate_shared_member_does_not_gain_a_valid_joint():
+    """防止零长杆件从新增共线端点分支获得看似有效的连接记录。"""
+    value = draft([{"id": 1, "u": 0.5, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}])
+    assert detect_topology(value)["intersections"] == []
+
+
+def test_inserted_collinear_action_node_compiles_without_extra_segments():
+    """用户补作用点后须留下连接记录，导入求解仍只有原两段，不产生零长单元。"""
+    detected = insert_member_node(_single_beam(), 1, 0.25)
+    assert detected["intersections"][0]["node_id"] == 3
+    assert detected["intersections"][0]["member_s"] == {"1": 1.0, "2": 0.0}
+    model = materialize_geometry(detected)
+    session = Session()
+    assert session.add_nodes([[n["x"], n["y"], n["z"]] for n in model["nodes"]]).ok
+    assert session.add_members([[m["i"], m["j"]] for m in model["members"]]).ok
+    assert session.define_materials_and_sections(
+        [{"name": "Steel", "E": 2e11, "nu": 0.3}],
+        [{"name": "S", "A": 0.01, "Iy": 1e-5, "Iz": 1e-5, "J": 5e-6}],
+    ).ok
+    assert session.assign_properties([1, 2], "S", "Steel").ok
+    assert session.set_supports([1], [1, 1, 1, 1, 1, 1]).ok
+    compiled = compile_model(session.model)
+    assert [len(compiled.mapping.element_ids(n)) for n in (1, 2)] == [1, 1]
+    assert {(m.i, m.j) for m in compiled.analysis_model.members.values()} == {(1, 3), (3, 2)}
+
+
+def test_collinear_generated_joints_do_not_block_further_split_or_delete():
+    """补作用点产生的共线共享端点记录可自动重建，不能误阻止再次分段或删除杆件。"""
+    first = insert_member_node(_single_beam(), 1, 0.5)
+    second = insert_member_node(first, 2, 0.5)
+    assert [(i["members"], i["node_id"]) for i in second["intersections"]] == [([1, 2], 3), ([2, 3], 4)]
+    deleted = delete_member(second, 2)
+    assert deleted["intersections"] == []
+    assert deleted["issues"] == []
+    assert len(deleted["image_model"]["members"]) == 2
+
+
+def test_collinear_joint_agrees_with_independently_written_reference():
+    """新参考要求共线接头完整；运行时结果应匹配手写参考，不能从预测补参考。"""
+    from multimodal_eval.reference_topology import FORMAT, check_reference_topology
+
+    value = draft([{"id": 1, "u": 0, "v": 0.5}, {"id": 2, "u": 0.5, "v": 0.5},
+                   {"id": 3, "u": 1, "v": 0.5}],
+                  [{"id": 1, "i": 1, "j": 2}, {"id": 2, "i": 2, "j": 3}])
+    truth = {**deepcopy(value["image_model"]), "width_px": 101, "height_px": 101,
+             "nodes": [{"id": n["id"], "point": [n["u"], n["v"]]}
+                       for n in value["image_model"]["nodes"]],
+             "topology_reference": {"format": FORMAT, "scope": "all_member_pairs", "status": "verified"},
+             "intersections": [{"id": "joint", "members": [1, 2], "point": [0.5, 0.5],
+                                "decision": "connect", "node_id": 2}]}
+    assert check_reference_topology(truth)["valid"]
+    observed = detect_topology(value)["intersections"][0]
+    assert {k: observed[k] for k in ("members", "point", "decision", "node_id")} == {
+        k: truth["intersections"][0][k] for k in ("members", "point", "decision", "node_id")}
+
+
 def test_deletion_refuses_member_and_node_references():
     value = crossing()
     value["dimensions"] = [{"id": "D", "target": {"member": 1}}]
@@ -112,7 +410,7 @@ def test_deletion_refuses_member_and_node_references():
     value = crossing()
     value["image_model"]["supports"] = [{"name": "S", "node": 1,
                                           "fix": [1, 1, 1, 1, 1, 1]}]
-    with pytest.raises(ValueError, match="member.*support|support.*member"):
+    with pytest.raises(ValueError, match="杆件.*支座|支座.*杆件"):
         delete_node(value, 1)
 
 

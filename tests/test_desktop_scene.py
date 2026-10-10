@@ -353,6 +353,29 @@ def test_out_of_plane_restraints_do_not_get_a_glyph():
     assert sum(m.n_cells for m in glyphs.values()) > 0
 
 
+@pytest.mark.parametrize("mask, kind", [
+    ((1, 1, 1, 1, 1, 1), "固接"), ((1, 1, 1, 0, 0, 0), "铰接"),
+    ((1, 1, 0, 0, 0, 0), "部分约束")])
+def test_batched_supports_keep_template_shape_and_node_positions(mask, kind):
+    """批量绘制支座不能改变原符号尺寸、方向或遗漏多个柱脚。"""
+    frame = portal().frame
+    ids = list(frame.nodes)[:2]
+    frame.supports = {nid: mask for nid in ids}
+    r = scene.SYMBOL_RATIO * scene.model_size(frame)
+    if kind == "固接":
+        template = pv.Cube(center=[0, 0, -r], x_length=2.2 * r, y_length=2.2 * r,
+                           z_length=2 * r)
+    elif kind == "铰接":
+        template = pv.Cone(center=[0, 0, -r], direction=[0, 0, 1], height=2 * r,
+                           radius=1.2 * r, resolution=32)
+    else:
+        template = pv.Sphere(radius=.9 * r, theta_resolution=24, phi_resolution=24)
+    mesh = scene.support_glyphs(frame)[kind]
+    expected = np.vstack([template.points + frame.nodes[nid].xyz for nid in ids])
+    assert mesh.n_cells == template.n_cells * 2
+    np.testing.assert_allclose(mesh.points, expected, atol=scene.model_size(frame) * 1e-6)
+
+
 def test_support_labels_state_the_exact_restrained_dofs():
     s = beam()
     s.frame.supports[1] = (1, 0, 1, 0, 1, 0)

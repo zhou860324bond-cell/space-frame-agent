@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-09",
+  "scope": "三张既有开发图，复核圆弧中心及支座可见符号，非新独立验证；每图基础识别一次、可选复核一次，失败不重试。",
+  "source_round": "action_review_01",
+  "annotation_limit": "保留历史参考标注及容差；编码助手标注未经外部人工复核，普通三角支座按既有契约铰接。",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "max_repairs": 0,
+  "review_actions": true,
+  "request_options": {
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "extra_body": {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  },
+  "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+  "action_prompt_hash": "d0f3817374fd1af6bcb2e9bf9a8056579fe6212e8a3efa4a073f9667e2ea2ff8",
+  "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+  "pipeline_hash": "eeb181da85d87e9b30d1d2ab1beb80030aa15bb121e20ef64c730a05021060d1",
+  "annotations_fixed_before_calls": {
+    "cantilever": "ef0c3a8d5e02a0a33e3d7f153567e8360fab886b1a937aad85823f35d6621b14",
+    "point_load": "a861c7469191cef65e7ea17bca5e7eb2487da3705e6e71c30efb8a701edd953f",
+    "various_loads": "793ebc521aa961d56da12302cf9e50d011dadc061cc944c882f8a931468c0152"
+  },
+  "images_fixed_before_calls": {
+    "cantilever": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+    "point_load": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+    "various_loads": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972"
+  }
+}

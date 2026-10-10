@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-09",
+  "evaluation_round": 2,
+  "comparison": "same-development-images-and-independent-truth",
+  "scope": "同一开发集单轮在线对照；不是独立泛化或重复多轮统计。",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "max_repairs": 0,
+  "request_options": {
+    "max_tokens": 4000,
+    "temperature": 0.0,
+    "extra_body": {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  },
+  "prompt_hash": "077f8a9e079434865f7fecfdbf06475be7377e0231c5d51dd67ac69f4fa49a9c",
+  "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+  "annotations_fixed_before_calls": {
+    "cantilever": "ef0c3a8d5e02a0a33e3d7f153567e8360fab886b1a937aad85823f35d6621b14",
+    "end_load": "2cfc90c560ccaf3b172b5993091bdc4600ecd17245dc1189ca4fa8530916bc56",
+    "overhang": "2970b97d9b2f1ee41f30d9783c73320ab5f37c9f4115eaf5b77677f094631faa",
+    "point_load": "a861c7469191cef65e7ea17bca5e7eb2487da3705e6e71c30efb8a701edd953f",
+    "udl": "fcf30bb9406c29ebaeb4d8efb88b6e656f1943d8456e08319e461b5aa4f4de7a"
+  },
+  "changes": [
+    "主体与辅助图、初始梁轴、反力语义、文字中点和中心轴坐标判读规则",
+    "显式关闭 DeepSeek 默认推理，直接输出结构",
+    "记录结束原因和 token 用量，不保存推理内容"
+  ]
+}

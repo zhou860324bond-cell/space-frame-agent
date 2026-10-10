@@ -1,0 +1,400 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "PASS",
+  "prediction": {
+    "image_id": "overhang",
+    "width_px": 959,
+    "height_px": 311,
+    "nodes": [
+      {
+        "id": 1,
+        "point": [
+          0.02348643006263048,
+          0.4661290322580645
+        ]
+      },
+      {
+        "id": 2,
+        "point": [
+          0.6967640918580376,
+          0.4661290322580645
+        ]
+      },
+      {
+        "id": 3,
+        "point": [
+          0.9613778705636743,
+          0.4661290322580645
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": 1,
+        "i": 1,
+        "j": 2
+      },
+      {
+        "id": 2,
+        "i": 2,
+        "j": 3
+      }
+    ],
+    "supports": [
+      {
+        "node": 1,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S1"
+      },
+      {
+        "node": 2,
+        "fix": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "S2"
+      }
+    ],
+    "intersections": [],
+    "issues": [
+      {
+        "id": "I1",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:1"
+        ],
+        "message": "节点 A 处有向下箭头并标注 RA，但无荷载数值和单位；RA 也可能是支座反力而非外加荷载，无法区分，未写入 load_cases。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I2",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:2"
+        ],
+        "message": "节点 B 处有向上箭头并标注 RB，但无荷载数值和单位；RB 也可能是支座反力而非外加荷载，无法区分，未写入 load_cases。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I3",
+        "category": "load_incomplete",
+        "severity": "blocking",
+        "entity_refs": [
+          "node:3"
+        ],
+        "message": "节点 C 处有向下箭头并标注 F，但无荷载数值和单位，未写入 load_cases。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "I4",
+        "category": "missing_dimension",
+        "severity": "blocking",
+        "entity_refs": [
+          "D1",
+          "D2"
+        ],
+        "message": "尺寸线仅标注 L1、L2 符号，无具体数值和单位，无法确定几何尺寸，需用户标定。",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "pixel-axis-review",
+        "category": "low_confidence",
+        "severity": "blocking",
+        "status": "open",
+        "entity_refs": [
+          "node:1",
+          "node:2",
+          "node:3"
+        ],
+        "message": "已根据连续像素带提出水平梁轴候选位置，原始识别坐标已保留。请核对梁轴端点、支座附着点及中间节点，确认后再提交。",
+        "resolution": null,
+        "resolved_by": null
+      },
+      {
+        "id": "scale_unknown",
+        "category": "scale_unknown",
+        "severity": "blocking",
+        "entity_refs": [],
+        "message": "缺少可用的线性尺寸证据",
+        "status": "open",
+        "resolution": null,
+        "resolved_by": null
+      }
+    ],
+    "scale": {
+      "status": "unknown",
+      "length_per_pixel": null,
+      "unit": "m/px",
+      "anchor_node": 1,
+      "anchor_coordinates_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "evidence_ids": []
+    },
+    "loads": []
+  },
+  "errors": [],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.0300, \"v\": 0.5000},\n      {\"id\": 2, \"u\": 0.7000, \"v\": 0.5000},\n      {\"id\": 3, \"u\": 0.9700, \"v\": 0.5000}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2},\n      {\"id\": 2, \"i\": 2, \"j\": 3}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"pinned\"},\n      {\"node\": 2, \"kind\": \"pinned\"}\n    ],\n    \"load_cases\": []\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"node\", \"target\": {\"node\": 1}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.0300, 0.5000]}},\n    {\"id\": \"E2\", \"kind\": \"node\", \"target\": {\"node\": 2}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.7000, 0.5000]}},\n    {\"id\": \"E3\", \"kind\": \"node\", \"target\": {\"node\": 3}, \"confidence\": 0.9,\n     \"image_geometry\": {\"point\": [0.9700, 0.5000]}},\n    {\"id\": \"E4\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.9,\n     \"image_geometry\": {\"line\": [[0.0300, 0.5000], [0.7000, 0.5000]]}},\n    {\"id\": \"E5\", \"kind\": \"member\", \"target\": {\"member\": 2}, \"confidence\": 0.9,\n     \"image_geometry\": {\"line\": [[0.7000, 0.5000], [0.9700, 0.5000]]}},\n    {\"id\": \"E6\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}}, \"confidence\": 0.8,\n     \"image_geometry\": {\"point\": [0.0300, 0.5000]}},\n    {\"id\": \"E7\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 2, \"name\": \"S2\"}}, \"confidence\": 0.8,\n     \"image_geometry\": {\"point\": [0.7000, 0.5000]}}\n  ],\n  \"dimensions\": [\n    {\"id\": \"D1\", \"text\": \"L1\", \"unit\": null,\n     \"image_geometry\": {\"line\": [[0.0300, 0.8500], [0.7000, 0.8500]]}},\n    {\"id\": \"D2\", \"text\": \"L2\", \"unit\": null,\n     \"image_geometry\": {\"line\": [[0.7000, 0.8500], [0.9700, 0.8500]]}}\n  ],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"load_incomplete\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"node:1\"],\n     \"message\": \"节点 A 处有向下箭头并标注 RA，但无荷载数值和单位；RA 也可能是支座反力而非外加荷载，无法区分，未写入 load_cases。\",\n     \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"load_incomplete\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"node:2\"],\n     \"message\": \"节点 B 处有向上箭头并标注 RB，但无荷载数值和单位；RB 也可能是支座反力而非外加荷载，无法区分，未写入 load_cases。\",\n     \"status\": \"open\"},\n    {\"id\": \"I3\", \"category\": \"load_incomplete\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"node:3\"],\n     \"message\": \"节点 C 处有向下箭头并标注 F，但无荷载数值和单位，未写入 load_cases。\",\n     \"status\": \"open\"},\n    {\"id\": \"I4\", \"category\": \"missing_dimension\", \"severity\": \"blocking\",\n     \"entity_refs\": [\"D1\", \"D2\"],\n     \"message\": \"尺寸线仅标注 L1、L2 符号，无具体数值和单位，无法确定几何尺寸，需用户标定。\",\n     \"status\": \"open\"}\n  ]\n}"
+  ],
+  "call_metadata": [
+    {
+      "attempt": 1,
+      "content_characters": 2490,
+      "has_reasoning_content": false,
+      "finish_reason": "stop",
+      "prompt_tokens": 2252,
+      "completion_tokens": 1048,
+      "total_tokens": 3300
+    }
+  ],
+  "position_refinements": [
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        28.0,
+        133,
+        921.0,
+        156
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.03,
+          "v": 0.5
+        },
+        {
+          "id": 2,
+          "u": 0.7,
+          "v": 0.5
+        },
+        {
+          "id": 3,
+          "u": 0.97,
+          "v": 0.5
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        28.0,
+        133,
+        921.0,
+        156
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.03,
+          "v": 0.5
+        },
+        {
+          "id": 2,
+          "u": 0.7,
+          "v": 0.5
+        },
+        {
+          "id": 3,
+          "u": 0.97,
+          "v": 0.5
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        28.0,
+        133,
+        921.0,
+        156
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.03,
+          "v": 0.5
+        },
+        {
+          "id": 2,
+          "u": 0.7,
+          "v": 0.5
+        },
+        {
+          "id": 3,
+          "u": 0.97,
+          "v": 0.5
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        28.0,
+        133,
+        921.0,
+        156
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.03,
+          "v": 0.5
+        },
+        {
+          "id": 2,
+          "u": 0.7,
+          "v": 0.5
+        },
+        {
+          "id": 3,
+          "u": 0.97,
+          "v": 0.5
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        28.0,
+        133,
+        921.0,
+        156
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.03,
+          "v": 0.5
+        },
+        {
+          "id": 2,
+          "u": 0.7,
+          "v": 0.5
+        },
+        {
+          "id": 3,
+          "u": 0.97,
+          "v": 0.5
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        28.0,
+        133,
+        921.0,
+        156
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.03,
+          "v": 0.5
+        },
+        {
+          "id": 2,
+          "u": 0.7,
+          "v": 0.5
+        },
+        {
+          "id": 3,
+          "u": 0.97,
+          "v": 0.5
+        }
+      ]
+    },
+    {
+      "method": "filled-horizontal-pixel-band/v2",
+      "band_px": [
+        28.0,
+        133,
+        921.0,
+        156
+      ],
+      "original_nodes": [
+        {
+          "id": 1,
+          "u": 0.03,
+          "v": 0.5
+        },
+        {
+          "id": 2,
+          "u": 0.7,
+          "v": 0.5
+        },
+        {
+          "id": 3,
+          "u": 0.97,
+          "v": 0.5
+        }
+      ]
+    }
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "427d45cf0dda61d2fb56ff6e7ebd6a0d051e2095a09d0bd88ef1681042f0a438",
+    "derived_image_hash": "24cbdfcd97e51b2e5f20c744614e4a8c18a14e2d0ab18f04eb2000720f56d87e",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07",
+    "request_options": {
+      "max_tokens": 4000,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "pipeline_hash": "408050abe284e344e377a2d24c64ad05d03b9e3047c697e4ea4de2b6c2482828"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      959,
+      311
+    ],
+    "crop": [
+      0,
+      0,
+      959,
+      311
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 3328.000000001339
+  }
+}

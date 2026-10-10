@@ -1,0 +1,56 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "FAIL",
+  "prediction": {
+    "image_id": "end_load",
+    "width_px": 276,
+    "height_px": 220,
+    "nodes": [],
+    "members": [],
+    "intersections": [],
+    "supports": [],
+    "loads": [],
+    "issues": [],
+    "scale": {
+      "status": "unknown"
+    }
+  },
+  "errors": [
+    "第1次 v2 校验失败: 识别实体必须引用 image_model 中存在的审核对象，请检查 target。"
+  ],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.22, \"v\": 0.46},\n      {\"id\": 2, \"u\": 0.76, \"v\": 0.46}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 1, \"j\": 2}\n    ],\n    \"supports\": [\n      {\"node\": 1, \"kind\": \"fixed\", \"name\": \"S1\"}\n    ],\n    \"load_cases\": [\n      {\n        \"name\": \"D\",\n        \"nodal_loads\": [\n          {\"node\": 2, \"name\": \"P\", \"value\": null, \"unit\": null, \"direction\": [0, 0, -1]}\n        ],\n        \"member_loads\": []\n      }\n    ]\n  },\n  \"entities\": [\n    {\n      \"id\": \"E1\",\n      \"kind\": \"node\",\n      \"target\": {\"node\": 1},\n      \"confidence\": 0.9,\n      \"image_geometry\": {\"point\": [0.22, 0.46]}\n    },\n    {\n      \"id\": \"E2\",\n      \"kind\": \"node\",\n      \"target\": {\"node\": 2},\n      \"confidence\": 0.9,\n      \"image_geometry\": {\"point\": [0.76, 0.46]}\n    },\n    {\n      \"id\": \"E3\",\n      \"kind\": \"member\",\n      \"target\": {\"member\": 1},\n      \"confidence\": 0.92,\n      \"image_geometry\": {\"line\": [[0.22, 0.46], [0.76, 0.46]]}\n    },\n    {\n      \"id\": \"E4\",\n      \"kind\": \"support\",\n      \"target\": {\"support\": {\"node\": 1, \"name\": \"S1\"}},\n      \"confidence\": 0.85,\n      \"image_geometry\": {\"line\": [[0.17, 0.34], [0.17, 0.58]]}\n    },\n    {\n      \"id\": \"E5\",\n      \"kind\": \"load\",\n      \"target\": {\"load\": {\"case\": \"D\", \"collection\": \"nodal_loads\", \"name\": \"P\"}},\n      \"confidence\": 0.9,\n      \"image_geometry\": {\"line\": [[0.76, 0.26], [0.76, 0.44]]}\n    },\n    {\n      \"id\": \"E6\",\n      \"kind\": \"dimension\",\n      \"target\": {\"dimension\": \"D1\"},\n      \"confidence\": 0.85,\n      \"image_geometry\": {\"line\": [[0.22, 0.68], [0.76, 0.68]]}\n    },\n    {\n      \"id\": \"E7\",\n      \"kind\": \"dimension\",\n      \"target\": {\"dimension\": \"D2\"},\n      \"confidence\": 0.5,\n      \"image_geometry\": {\"line\": [[0.62, 0.78], [0.76, 0.78]]}\n    }\n  ],\n  \"dimensions\": [\n    {\n      \"id\": \"D1\",\n      \"text\": \"L\",\n      \"unit\": null,\n      \"image_geometry\": {\"line\": [[0.22, 0.68], [0.76, 0.68]]}\n    },\n    {\n      \"id\": \"D2\",\n      \"text\": \"1\",\n      \"unit\": null,\n      \"image_geometry\": {\"line\": [[0.62, 0.78], [0.76, 0.78]]}\n    }\n  ],\n  \"issues\": [\n    {\n      \"id\": \"I1\",\n      \"category\": \"missing_value\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"load:D/P\"],\n      \"message\": \"悬臂端集中荷载只标了符号 P，未给出数值与单位，无法确定荷载大小，请补充 P 的数值和单位。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I2\",\n      \"category\": \"unresolved_dimension\",\n      \"severity\": \"blocking\",\n      \"entity_refs\": [\"dimension:D1\"],\n      \"message\": \"梁长仅标注符号 L，未给出数值和单位，坐标只是相对比例，请补充 L 的实际数值并标定比例。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I3\",\n      \"category\": \"ambiguous_dimension\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"dimension:D2\"],\n      \"message\": \"梁右端下方另有一处标注，读作数字“1”，但其范围、含义（是长度 1 还是单位刻度）及单位均不明确，请人工确认。\",\n      \"status\": \"open\"\n    },\n    {\n      \"id\": \"I4\",\n      \"category\": \"low_confidence\",\n      \"severity\": \"warning\",\n      \"entity_refs\": [\"support:S1\"],\n      \"message\": \"左端支座画有竖向短斜线（影线）贴墙，判为固接；但影线被墙体边线压住，请确认是否为固接而非铰接。\",\n      \"status\": \"open\"\n    }\n  ]\n}"
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "8c272e64c6e3844e2878ce9b00018545c6a8c8fd6858bd1846b277d001688140",
+    "derived_image_hash": "11821a19a9e5d004b9476e7edf87ff9e14b1bca2f5d3c0e986f03f16043e43c5",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      276,
+      220
+    ],
+    "crop": [
+      0,
+      0,
+      276,
+      220
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 8265.999999999622
+  }
+}

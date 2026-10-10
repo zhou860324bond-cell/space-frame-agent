@@ -1,0 +1,109 @@
+{
+  "format": "space-frame-multimodal-eval/v1",
+  "cases": [
+    {
+      "image_id": "cantilever",
+      "image_path": "images/cantilever.png",
+      "image_hash": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+      "metadata_path": "metadata/cantilever.json",
+      "metadata_hash": "f75e141a055f307661c3c43a114c3172b980ede9b39bfa1d7cbc7c16b0cef9d1",
+      "ground_truth_path": "ground_truth/cantilever.json",
+      "ground_truth_hash": "ef0c3a8d5e02a0a33e3d7f153567e8360fab886b1a937aad85823f35d6621b14",
+      "response_fixture_path": "responses/cantilever.json",
+      "response_hash": "55aa367bda280d0d198e4d4b753bd7f10c1436168d63e35ef77df96e71d0a106",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "eeb181da85d87e9b30d1d2ab1beb80030aa15bb121e20ef64c730a05021060d1",
+      "review_actions": true,
+      "action_prompt_hash": "d0f3817374fd1af6bcb2e9bf9a8056579fe6212e8a3efa4a073f9667e2ea2ff8",
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:CantileverBeam.png",
+      "license": "Public domain"
+    },
+    {
+      "image_id": "point_load",
+      "image_path": "images/point_load.jpg",
+      "image_hash": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+      "metadata_path": "metadata/point_load.json",
+      "metadata_hash": "c606b5a28f230188defa719a921b189b2bb4ece5d6b7046319b972a047c1a3c7",
+      "ground_truth_path": "ground_truth/point_load.json",
+      "ground_truth_hash": "a861c7469191cef65e7ea17bca5e7eb2487da3705e6e71c30efb8a701edd953f",
+      "response_fixture_path": "responses/point_load.json",
+      "response_hash": "4c44d79e172c593034b0c5fda5f13d416b8857060a533d7ad57883dfc1279e79",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "eeb181da85d87e9b30d1d2ab1beb80030aa15bb121e20ef64c730a05021060d1",
+      "review_actions": true,
+      "action_prompt_hash": "d0f3817374fd1af6bcb2e9bf9a8056579fe6212e8a3efa4a073f9667e2ea2ff8",
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_central_point_load.jpg",
+      "license": "Public domain"
+    },
+    {
+      "image_id": "various_loads",
+      "image_path": "images/various_loads.jpg",
+      "image_hash": "05b4802efc174ddfa79d96a246e659a6c8fb096b5195bd8ac6f901092b582972",
+      "metadata_path": "metadata/various_loads.json",
+      "metadata_hash": "6129cdcebeeb40c9ee8cdef6a16d852b010de20847588e43d857788dc72bc342",
+      "ground_truth_path": "ground_truth/various_loads.json",
+      "ground_truth_hash": "793ebc521aa961d56da12302cf9e50d011dadc061cc944c882f8a931468c0152",
+      "response_fixture_path": "responses/various_loads.json",
+      "response_hash": "24484b14b60bbc5fb7d12d4e28915a6de04ea65979fbc33acc0397bfaadf1105",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_hash": "dfe38be2f85af444bf1f8c101a79f57c99f697d3d3f567ab3ea95d0aad9cc3ec",
+      "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+      "request_options": {
+        "max_tokens": 4000,
+        "temperature": 0.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "pipeline_hash": "eeb181da85d87e9b30d1d2ab1beb80030aa15bb121e20ef64c730a05021060d1",
+      "review_actions": true,
+      "action_prompt_hash": "d0f3817374fd1af6bcb2e9bf9a8056579fe6212e8a3efa4a073f9667e2ea2ff8",
+      "subset_labels": [
+        "independent-pilot",
+        "mixed-loads",
+        "symbolic-values",
+        "black-solid-beam"
+      ],
+      "gate": true,
+      "source": "https://commons.wikimedia.org/wiki/File:ABeamWithVariousLoads.jpg",
+      "license": "CC-BY-SA-3.0"
+    }
+  ]
+}

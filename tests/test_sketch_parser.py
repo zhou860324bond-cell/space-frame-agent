@@ -292,10 +292,8 @@ def test_from_env_deepseek(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
     parser = SketchParser.from_env("deepseek")
     assert parser._api_key == "deepseek-key"
-    # DeepSeek 平台上没有 deepseek-vl（那是开源权重名）。官方文档里可接收
-    # 图片的模型是 deepseek-v4-flash-vision-exp；用错名字报的是 model not
-    # found，很容易被误读成"多模态没跑通"。
-    assert parser._model == "deepseek-v4-flash-vision-exp"
+    # 默认模型必须对应当前官方视觉入口，避免已退役模型名导致接口报错。
+    assert parser._model == "deepseek-flash"
 
 
 def test_from_env_deepseek_falls_back_to_the_key_file(monkeypatch, tmp_path):
@@ -456,6 +454,122 @@ def test_loads_are_converted_from_drawing_units_by_code():
     assert "w" not in member_loads[2], "单位认不出时宁可不给，也不能猜一个数出来"
 
 
+@pytest.mark.parametrize("named", [True, False])
+def test_missing_nodal_load_keeps_original_observation_and_exact_binding(named):
+    """同节点多条缺值荷载必须可分别修正，换算失败前的原始值、单位和方向不能只留在文字里。"""
+    from copy import deepcopy
+    from sketch_parser import _fill_bookkeeping
+    entries = [{"node": 1, "value": 5, "unit": "未知", "direction": [0, 0, -1]}, {"node": 1}]
+    if named:
+        entries[0]["name"], entries[1]["name"] = "F", "G"
+    observed = deepcopy(entries)
+    draft = _fill_bookkeeping({"image_model": {"load_cases": [{"name": "D", "nodal_loads": entries}]}}, "h", "a.png")
+    for index, problem in enumerate(draft["issues"]):
+        name = observed[index].get("name", f"nodal_loads-{index+1}")
+        assert problem["load_target"] == {"case": "D", "collection": "nodal_loads", "name": name}
+        assert problem["observations"] == [observed[index]] and problem["status"] == "open"
+        assert "load" not in draft["image_model"]["load_cases"][0]["nodal_loads"][index]
+    assert "默认零值" in draft["issues"][-1]["message"] and "None" not in draft["issues"][-1]["message"]
+
+
+@pytest.mark.parametrize("unit", ["N·m", "N.m", "Nm", "kN·m", "kN.m", "kNm"])
+def test_concentrated_moment_does_not_become_a_force(unit):
+    """防止混合荷载图的集中矩三分量方向被旧换算写入力分量。"""
+    from sketch_parser import _convert_case_loads
+    case = {"nodal_loads": [{"node": 3, "value": 5, "unit": unit, "direction": [0, 1, 0]}]}
+    assert _convert_case_loads(case) == []
+    expected = 5000 if unit.lower().startswith("k") else 5
+    assert case["nodal_loads"][0] == {"node": 3, "load": [0, 0, 0, 0, expected, 0]}
+
+
+@pytest.mark.parametrize(("unit", "direction", "expected"), [
+    ("kN", [1, 0, 0, 0, 0, 0], [2000, 0, 0, 0, 0, 0]),
+    ("kN·m", [0, 0, 0, 0, -1, 0], [0, 0, 0, 0, -2000, 0]),
+])
+def test_six_component_directions_preserve_force_and_moment_positions(unit, direction, expected):
+    """完整六分量方向不能在修正三分量力矩时被挪动到另一组分量。"""
+    from sketch_parser import _convert_case_loads
+    case = {"nodal_loads": [{"node": 2, "value": 2, "unit": unit, "direction": direction}]}
+    assert _convert_case_loads(case) == []
+    assert case["nodal_loads"][0]["load"] == expected
+
+
+@pytest.mark.parametrize(("collection", "unit", "direction"), [
+    ("nodal_loads", "kN/m", [0, 0, -1]),
+    ("nodal_loads", "kN", [1, 0, 0, 0, 1, 0]),
+    ("nodal_loads", "kN·m", [0, 1, 0, 0, 1, 0]),
+    ("member_loads", "kN·m", [0, 1, 0]),
+    ("member_loads", "kN", [0, 0, -1]),
+])
+def test_incompatible_load_dimensions_are_blocked(collection, unit, direction):
+    """防止力、分布强度和力矩共用单位倍数后产生数值合法但物理量错误的荷载。"""
+    from sketch_parser import _convert_case_loads
+    ref = "node" if collection == "nodal_loads" else "member"
+    case = {collection: [{ref: 1, "value": 2, "unit": unit, "direction": direction}]}
+    issues = _convert_case_loads(case)
+    assert "load" not in case[collection][0] and "w" not in case[collection][0]
+    assert issues[0]["category"] == "load_incomplete" and issues[0]["severity"] == "blocking"
+    assert unit in issues[0]["message"]
+
+
+def test_partial_load_drawing_lengths_and_intensity_are_converted_by_code():
+    """局部荷载需保留图上毫米起止范围，不能误作为整跨荷载或将毫米当米。"""
+    from sketch_parser import _convert_case_loads
+    case = {"member_spans": [{"member": 1, "name": "q", "kind": "partial",
+        "value": 12, "unit": "kN/m", "direction": [0, 0, -1],
+        "range": {"start": 1000, "end": 3000, "unit": "mm"}}]}
+    assert _convert_case_loads(case) == []
+    assert case["member_spans"][0] == {"member": 1, "name": "q", "kind": "partial",
+        "w1": [0, 0, -12000], "a": 1, "b": 3}
+
+
+@pytest.mark.parametrize("observed_range", [None, {"start": 1, "end": 3, "unit": "px"},
+    {"start": 3, "end": 1, "unit": "m"}, {"start": 0, "end": True, "unit": "m"},
+    {"start": 0, "end": float("inf"), "unit": "m"}])
+def test_partial_load_unknown_or_bad_range_never_defaults_to_full_span(observed_range):
+    """无尺寸或坏范围不能借 SpanLoad 默认起点终点悄悄变成可施加荷载。"""
+    from sketch_parser import _convert_case_loads
+    item = {"member": 1, "kind": "partial", "w1": [0, 0, -12000]}
+    if observed_range is not None:
+        item["range"] = observed_range
+    case = {"member_spans": [item]}
+    issues = _convert_case_loads(case)
+    assert "a" not in item and "b" not in item
+    assert issues[0]["category"] == "load_incomplete" and issues[0]["severity"] == "blocking"
+
+
+def test_bad_range_observation_cannot_hide_behind_existing_endpoints():
+    """模型同时给范围和分量时，坏单位不能被已有 a/b 掩盖而绕过人工核实。"""
+    from sketch_parser import _convert_case_loads
+    case = {"member_spans": [{"member": 1, "kind": "partial", "w1": [0, 0, -10],
+        "a": 1, "b": 3, "range": {"start": 0.1, "end": 0.3, "unit": "ratio"}}]}
+    assert _convert_case_loads(case)[0]["severity"] == "blocking"
+
+
+def test_partial_range_and_moment_survive_materialization_without_scaffolding():
+    """防止局部荷载范围在物化时丢失或识别字段残留导致提交失败。"""
+    from sketch_parser import _fill_bookkeeping
+    from sketch_topology import materialize_geometry
+    from model_io import validate_payload
+    draft = _fill_bookkeeping({"image_model": {
+        "nodes": [{"id": 1, "u": 0, "v": 0.5}, {"id": 2, "u": 1, "v": 0.5}],
+        "members": [{"id": 1, "i": 1, "j": 2, "material": "", "section": ""}],
+        "supports": [], "load_cases": [{"name": "D",
+            "nodal_loads": [{"node": 2, "value": 5, "unit": "kN·m", "direction": [0, 1, 0]}],
+            "member_spans": [{"member": 1, "kind": "partial", "value": 12,
+                "unit": "kN/m", "direction": [0, 0, -1],
+                "range": {"start": 100, "end": 300, "unit": "cm"}}]}]}}, "a" * 64, "drawing.png")
+    draft["work_plane"]["status"] = "confirmed"
+    draft["scale"] = {"status": "confirmed", "length_per_pixel": 0.01,
+        "unit": "m/px", "anchor_node": 1, "anchor_coordinates_xyz": [0, 0, 0], "evidence_ids": []}
+    draft["source"].update(width_px=501, height_px=301)
+    case = materialize_geometry(draft)["load_cases"][0]
+    assert case["nodal_loads"][0]["load"] == [0, 0, 0, 0, 5000, 0]
+    assert case["member_spans"][0]["a"] == 1 and case["member_spans"][0]["b"] == 3
+    errors = validate_payload(materialize_geometry(draft)) or []
+    assert not [e for e in errors if "Additional properties" in e], errors
+
+
 def test_prompt_shows_how_to_express_a_load():
     """提示词必须给出荷载的具体写法。
 
@@ -483,6 +597,19 @@ def _recognized_draft(supports, member_loads):
         }}, "a" * 64, "drawing.png")
 
 
+@pytest.mark.parametrize(("value", "direction"), [
+    (float("inf"), [0, 0, -1]), (10, [0, float("nan"), -1]),
+    (10, [False, 0, -1]), (10, [0, -1]),
+])
+def test_invalid_load_components_are_reviewed_instead_of_silently_zeroed(value, direction):
+    """防止识别方向中的坏分量被换成零，或非有限荷载进入求解模型。"""
+    draft = _recognized_draft([], [{"member": 1, "value": value, "unit": "kN/m",
+                                    "direction": direction}])
+    assert "w" not in draft["image_model"]["load_cases"][0]["member_loads"][0]
+    assert any(issue["category"] == "load_incomplete" and issue["status"] == "open"
+               for issue in draft["issues"])
+
+
 def test_recognition_scaffolding_does_not_ride_into_the_model():
     """value/unit/direction 和 kind 是识别期的脚手架，翻译完必须拆掉。
 
@@ -504,7 +631,7 @@ def test_recognition_scaffolding_does_not_ride_into_the_model():
     draft["source"].update({"width_px": 601, "height_px": 401})
 
     item = draft["image_model"]["load_cases"][0]["member_loads"][0]
-    assert item == {"member": 1, "w": [0.0, 0.0, -18000.0]}
+    assert item == {"member": 1, "w": [0.0, 0.0, -18000.0], "name": "member_loads-1"}
     assert all("kind" not in s for s in draft["image_model"]["supports"])
 
     errors = validate_payload(materialize_geometry(draft)) or []
@@ -566,3 +693,46 @@ def test_model_reported_issues_keep_their_place_ahead_of_generated_ones():
     ids = [i["id"] for i in draft["issues"]]
     assert ids == ["I1", "I2", "I3"], draft["issues"]
     assert draft["issues"][0]["message"] == "模型自己报的一句话"
+
+
+def test_observed_support_name_binds_unnamed_image_model_support():
+    """公开悬臂图返回观察 S1 而支座未命名，旧默认名冲突曾拒收整份草稿。"""
+    from sketch_parser import _fill_bookkeeping
+    payload = {"image_model": {"nodes": [{"id": 1, "u": 0.2, "v": 0.5}],
+                                "members": [], "supports": [{"node": 1, "kind": "fixed"}]},
+               "entities": [{"id": "E1", "kind": "support", "confidence": 0.6,
+                             "target": {"support": {"node": 1, "name": "S1"}}}]}
+    draft = _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+    assert draft["image_model"]["supports"][0]["name"] == "S1"
+    assert draft["entities"][0]["verified"] is False
+
+
+def test_conflicting_explicit_support_name_is_not_silently_rebound():
+    """修复默认命名冲突不能把两个明确不同的支座名称偷偷合成一个。"""
+    from sketch_parser import _fill_bookkeeping
+    payload = {"image_model": {"nodes": [{"id": 1, "u": 0.2, "v": 0.5}],
+                                "members": [], "supports": [{"node": 1, "name": "S2", "kind": "fixed"}]},
+               "entities": [{"id": "E1", "kind": "support", "confidence": 0.6,
+                             "target": {"support": {"node": 1, "name": "S1"}}}]}
+    with pytest.raises(ValueError, match="审核对象"):
+        _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+
+
+@pytest.mark.parametrize("referenced", [True, False])
+def test_dimension_observation_preserves_evidence_without_becoming_structure(referenced):
+    """真实响应将尺寸放入 entities；已有尺寸的证据应保留，悬空标注仍须拒绝。"""
+    from sketch_parser import _fill_bookkeeping
+    payload = {"image_model": {"nodes": [{"id": 1, "u": 0.2, "v": 0.5}], "members": []},
+               "dimensions": [{"id": "D1", "text": "L", "value": None}] if referenced else [],
+               "entities": [{"id": "E1", "kind": "dimension", "confidence": None,
+                             "target": {"dimension": "D1"},
+                             "image_geometry": {"line": [[0.2, 0.6], [0.8, 0.6]]}}]}
+    if not referenced:
+        with pytest.raises(ValueError, match="尺寸观察"):
+            _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+        return
+    draft = _fill_bookkeeping(payload, "a" * 64, "drawing.png")
+    dimension = draft["dimensions"][0]
+    assert dimension["value"] is None and dimension["recognition_confidence"] is None
+    assert dimension["verified"] is False and dimension["image_geometry"]["line"][0] == [0.2, 0.6]
+    assert all(entity["kind"] != "dimension" for entity in draft["entities"])

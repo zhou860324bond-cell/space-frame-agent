@@ -1,0 +1,56 @@
+{
+  "fixture": "real-provider-response-v2",
+  "outcome": "FAIL",
+  "prediction": {
+    "image_id": "cantilever",
+    "width_px": 400,
+    "height_px": 190,
+    "nodes": [],
+    "members": [],
+    "intersections": [],
+    "supports": [],
+    "loads": [],
+    "issues": [],
+    "scale": {
+      "status": "unknown"
+    }
+  },
+  "errors": [
+    "第1次 v2 校验失败: 识别实体必须引用 image_model 中存在的审核对象，请检查 target。"
+  ],
+  "raw_responses": [
+    "{\n  \"image_model\": {\n    \"nodes\": [\n      {\"id\": 1, \"u\": 0.96, \"v\": 0.62},\n      {\"id\": 2, \"u\": 0.09, \"v\": 0.45}\n    ],\n    \"members\": [\n      {\"id\": 1, \"i\": 2, \"j\": 1}\n    ],\n    \"supports\": [\n      {\"node\": 2, \"kind\": \"fixed\"}\n    ],\n    \"load_cases\": []\n  },\n  \"entities\": [\n    {\"id\": \"E1\", \"kind\": \"node\", \"target\": {\"node\": 1}, \"confidence\": 0.6,\n     \"image_geometry\": {\"point\": [0.96, 0.62]}},\n    {\"id\": \"E2\", \"kind\": \"node\", \"target\": {\"node\": 2}, \"confidence\": 0.6,\n     \"image_geometry\": {\"point\": [0.09, 0.45]}},\n    {\"id\": \"E3\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": 0.7,\n     \"image_geometry\": {\"line\": [[0.09, 0.45], [0.96, 0.62]]}},\n    {\"id\": \"E4\", \"kind\": \"support\", \"target\": {\"support\": {\"node\": 2, \"name\": \"S1\"}},\n     \"confidence\": 0.75,\n     \"image_geometry\": {\"point\": [0.09, 0.45]}},\n    {\"id\": \"E5\", \"kind\": \"member\", \"target\": {\"member\": 1}, \"confidence\": null,\n     \"image_geometry\": {\"line\": [[0.11, 0.40], [0.98, 0.49]]}}\n  ],\n  \"dimensions\": [],\n  \"issues\": [\n    {\"id\": \"I1\", \"category\": \"missing_dimension\",\n     \"severity\": \"warning\", \"entity_refs\": [\"member:1\"],\n     \"message\": \"图中没有任何尺寸标注，杆件长度与截面高度未知；当前节点 u/v 只是相对比例，不能当作米使用，请用户标定实际跨度。\",\n     \"status\": \"open\"},\n    {\"id\": \"I2\", \"category\": \"ambiguous_geometry\",\n     \"severity\": \"warning\", \"entity_refs\": [\"member:1\", \"node:1\"],\n     \"message\": \"图中有两条几何线：浅灰细线（近似水平，应为未变形位形）与粗黑线（明显下挠并带锥度，应为变形示意）。本次按粗黑线取节点，但该图更像是悬臂梁变形示意图而非真实结构布置图，杆件轴线位置不确定。\",\n     \"status\": \"open\"},\n    {\"id\": \"I3\", \"category\": \"missing_load\",\n     \"severity\": \"warning\", \"entity_refs\": [\"load:undefined\"],\n     \"message\": \"图上除 Free end 文字外没有任何荷载符号、数值或单位，无法建立荷载工况；若该变形由荷载引起，请用户补充荷载类型、数值与作用位置。\",\n     \"status\": \"open\"},\n    {\"id\": \"I4\", \"category\": \"low_confidence\",\n     \"severity\": \"info\", \"entity_refs\": [\"support:S1\"],\n     \"message\": \"左端支座由左侧粗竖线（墙体/固定端）与文字 Fixed end 判定为固接，但图中没有矩形加地面阴影线的标准固接符号，识别置信度中等，请用户确认。\",\n     \"status\": \"open\"}\n  ]\n}"
+  ],
+  "redaction": {
+    "credentials": "not_recorded",
+    "user_metadata": "not_recorded"
+  },
+  "request_fingerprint": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "prompt_hash": "61f9a6d3f9299970f2b331111ac3c2c2cf7a87429b8a20c89fabe807f8919b82",
+    "schema_hash": "8b224ac331c0aafafaee13c2c5426d0538e6c9693db2235d1e90845fc69f9672",
+    "image_hash": "0d6fa69442792e12c2f3ff8afe822927a5b99c360f86d4d0f2aae26503da5744",
+    "derived_image_hash": "206391347f93aa29f6bbb6c58eff4005c086954c6422e8f90096c499cda3a1a4",
+    "input_context_hash": "abc86cb43e480f540480a29a1157c049caada4f6f8ecf8f6d7018a4692d70a07"
+  },
+  "preprocessing": {
+    "exif_orientation": 1,
+    "oriented_size_px": [
+      400,
+      190
+    ],
+    "crop": [
+      0,
+      0,
+      400,
+      190
+    ],
+    "rotation_quarters_cw": 0,
+    "perspective_status": "unconfirmed"
+  },
+  "runtime": {
+    "attempts": 1,
+    "duration_ms": 10264.999999999418
+  }
+}

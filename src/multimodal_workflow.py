@@ -34,12 +34,163 @@ _DRAFT_HASH_FIELDS = (
 
 
 def draft_digest(draft: Mapping[str, Any]) -> str:
-    return canonical_digest({key: draft.get(key) for key in _DRAFT_HASH_FIELDS})
+    payload = {key: draft.get(key) for key in _DRAFT_HASH_FIELDS}
+    # 有人工历史时一并绑定；旧草稿没有该字段，保持原冻结哈希。
+    if "edit_history" in draft:
+        payload["edit_history"] = draft["edit_history"]
+    if "joint_graph_review" in draft:
+        payload["joint_graph_review"] = draft["joint_graph_review"]
+    return canonical_digest(payload)
 
 
 def _finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) \
         and math.isfinite(float(value))
+
+
+def prepare_vision_entities(draft: dict) -> None:
+    """把识别观察绑定到审核对象；缺失置信度保持未知，模型不能替用户确认。"""
+    model = draft.get("image_model") or {}
+    if not isinstance(model, dict) or not isinstance(model.get("nodes"), list):
+        return
+    nodes = {item["id"]: item for item in model["nodes"]
+             if isinstance(item, dict) and isinstance(item.get("id"), int)
+             and not isinstance(item["id"], bool) and "u" in item and "v" in item}
+    expected = []
+    observations = draft.get("entities") or []
+    for ident, node in nodes.items():
+        expected.append(("node", {"node": ident}, {"point": [node["u"], node["v"]]}))
+    for member in model.get("members") or []:
+        if (not isinstance(member, dict) or "id" not in member
+                or not isinstance(member.get("i"), int) or not isinstance(member.get("j"), int)
+                or member["i"] not in nodes or member["j"] not in nodes):
+            continue
+        a, b = nodes[member["i"]], nodes[member["j"]]
+        expected.append(("member", {"member": member["id"]},
+                         {"line": [[a["u"], a["v"]], [b["u"], b["v"]]]}))
+    for index, support in enumerate(model.get("supports") or [], 1):
+        if (not isinstance(support, dict) or not isinstance(support.get("node"), int)
+                or support["node"] not in nodes):
+            continue
+        node = nodes[support["node"]]
+        if not support.get("name"):
+            observed_names = {
+                target["name"] for entity in observations if isinstance(entity, dict)
+                and entity.get("kind") == "support"
+                and isinstance(entity.get("target"), dict)
+                and isinstance(target := (entity.get("target") or {}).get("support"), dict)
+                and target.get("node") == support["node"]
+                and isinstance(target.get("name"), str) and target["name"].strip()
+            }
+            # 同一节点只有一个观察名称时沿用它，防止默认命名与真实响应冲突。
+            support["name"] = next(iter(observed_names)) if len(observed_names) == 1 else f"S{support['node']}-{index}"
+        expected.append(("support", {"support": {"node": support["node"], "name": support.get("name")}},
+                         {"point": [node["u"], node["v"]]}))
+    for case in model.get("load_cases") or []:
+        if not isinstance(case, dict):
+            continue
+        for collection in ("nodal_loads", "member_loads", "member_spans", "settlements"):
+            for index, load in enumerate(case.get(collection) or [], 1):
+                if isinstance(load, dict):
+                    if not load.get("name"):
+                        load["name"] = f"{collection}-{index}"
+                    geometry = {}
+                    if isinstance(load.get("node"), int) and load["node"] in nodes:
+                        node = nodes[load["node"]]
+                        geometry = {"point": [node["u"], node["v"]]}
+                    elif "member" in load:
+                        geometry = next((g for k, t, g in expected if k == "member"
+                                         and t["member"] == load["member"]), {})
+                    expected.append(("load", {"load": {"case": case.get("name"),
+                                     "collection": collection, "name": load.get("name")}}, geometry))
+    entities = draft.get("entities")
+    if not isinstance(entities, list):
+        return
+    unbound_loads = []
+    for entity in entities:
+        if not isinstance(entity, dict):
+            raise ValueError("识别实体必须是对象，请重新输出实体列表。")
+        confidence = entity.get("confidence")
+        if confidence is not None and (not _finite(confidence) or not 0 <= confidence <= 1):
+            raise ValueError("识别置信度必须为 0 到 1 的有限数或 null。")
+        geometry = entity.get("image_geometry") or {}
+        if not isinstance(geometry, dict):
+            raise ValueError("识别实体 image_geometry 必须为对象。")
+        for key, size in (("point", 2), ("bbox", 4), ("line", 2)):
+            if key not in geometry:
+                continue
+            values = geometry[key]
+            if not isinstance(values, (list, tuple)) or len(values) != size:
+                raise ValueError(f"识别位置 {key} 的分量数量无效。")
+            if key == "line":
+                if any(not isinstance(p, (list, tuple)) or len(p) != 2 for p in values):
+                    raise ValueError("识别线段必须包含两个二维端点。")
+                values = [component for point in values for component in point]
+            if any(not _finite(value) or not 0 <= value <= 1 for value in values):
+                raise ValueError("识别位置必须为 0 到 1 的有限归一化坐标。")
+        entity.update(source="vision", verified=False, recognition_confidence=confidence)
+        kind = entity.get("kind")
+        target = entity.get("target") or {}
+        if not isinstance(target, dict):
+            raise ValueError("识别实体 target 必须为对象。")
+        if kind == "dimension":
+            dimension = next((item for item in draft.get("dimensions") or []
+                              if isinstance(item, dict) and item.get("id") == target.get("dimension")), None)
+            if dimension is None:
+                raise ValueError("尺寸观察必须引用 dimensions 中存在的标注。")
+            # 尺寸证据属于尺寸审核，不作为结构对象；保留观察位置与未知置信度。
+            dimension.update(recognition_confidence=confidence, source="vision", verified=False)
+            if geometry:
+                dimension["image_geometry"] = deepcopy(geometry)
+            continue
+        if kind in {"node", "member"}:
+            ident = target.get(kind, entity.get(kind, entity.get("id")))
+            target = {kind: ident}
+        elif kind == "support" and "support" not in target:
+            ident = target.get("node", entity.get("node"))
+            candidate = next((t for k, t, _ in expected if k == kind
+                              and t["support"]["node"] == ident), None)
+            target = candidate or target
+        elif kind == "load" and "load" not in target:
+            candidate = next((t for k, t, _ in expected if k == kind
+                              and t["load"]["case"] == target.get("case", entity.get("case"))
+                              and t["load"]["name"] == target.get("name", entity.get("name"))), None)
+            target = candidate or target
+        entity["target"] = deepcopy(target)
+        if not any(kind == k and target == t for k, t, _ in expected):
+            if kind == "load":
+                # 无求解条目的符号观察单独隔离，不能补零，也不能令整份几何丢失。
+                unbound_loads.append(entity)
+                continue
+            raise ValueError("识别实体必须引用 image_model 中存在的审核对象，请检查 target。")
+    if unbound_loads:
+        issues = draft.setdefault("issues", [])
+        problem = next((issue for issue in issues if issue.get("category") == "load_incomplete"
+                        and not issue.get("entity_refs")), None)
+        symbols_only = problem is None
+        if problem is None:
+            ident = f"unbound-load-{len(issues) + 1}"
+            while any(issue.get("id") == ident for issue in issues):
+                ident += "-new"
+            problem = {"id": ident, "category": "load_incomplete", "entity_refs": [],
+                "message": "荷载符号观察没有对应的求解条目，可能缺少数值或属于反力。请核对作用位置、物理含义及数值；明确无需施加时选择忽略符号，原记录仍保留。"}
+            issues.append(problem)
+        problem.update(severity="blocking", status="open", resolution=None, resolved_by=None,
+                       observations=deepcopy(unbound_loads), unbound_symbols_only=symbols_only)
+    entities[:] = [entity for entity in entities if entity.get("kind") != "dimension"
+                   and not any(entity is unknown for unknown in unbound_loads)]
+    for index, (kind, target, geometry) in enumerate(expected, 1):
+        match = next((entity for entity in entities if entity.get("kind") == kind
+                      and entity.get("target") == target), None)
+        if match is None:
+            ident = f"review-{kind}-{index}"
+            while any(entity.get("id") == ident for entity in entities):
+                ident += "-missing"
+            entities.append({"id": ident, "kind": kind, "target": deepcopy(target),
+                             "image_geometry": geometry, "confidence": None,
+                             "recognition_confidence": None, "verified": False, "source": "derived"})
+        elif not match.get("image_geometry"):
+            match["image_geometry"] = geometry
 
 
 def _work_plane_errors(work_plane: Any) -> list[str]:
@@ -116,7 +267,7 @@ def validate_v2_draft(draft: Any) -> list[str]:
                 and 0.0 <= float(node["v"]) <= 1.0):
             errors.append(f"image_model 节点 {node_id} 的 u/v 无效")
     member_ids: set[int] = set()
-    edges: set[tuple[int, int]] = set()
+    edges: dict[tuple[int, int], int] = {}
     for member in members:
         if not isinstance(member, dict) or not isinstance(member.get("id"), int):
             errors.append("image_model 杆件必须包含整数 id")
@@ -130,9 +281,13 @@ def validate_v2_draft(draft: Any) -> list[str]:
             errors.append(f"image_model 杆件 {member_id} 引用悬空")
             continue
         edge = tuple(sorted((int(i), int(j))))
-        if i == j or edge in edges:
-            errors.append(f"image_model 杆件 {member_id} 自连接或重复")
-        edges.add(edge)
+        if i == j:
+            errors.append(f"image_model 杆件 {member_id} 自连接：两端均为节点 {i}。请核对原图端点。")
+        elif edge in edges:
+            errors.append(f"image_model 杆件 {member_id} 与杆件 {edges[edge]} 重复："
+                          f"两者连接节点 {edge[0]} 和 {edge[1]}，反向仍为同一杆件。请核对原图连接，修正端点或移除重复记录。")
+        else:
+            edges[edge] = member_id
 
     errors.extend(_work_plane_errors(draft.get("work_plane")))
     scale = draft.get("scale")

@@ -1,0 +1,52 @@
+[
+  {
+    "image_id": "overhang",
+    "title": "Beam cantilever.png",
+    "author": "Davius",
+    "license": "CC0-1.0",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Beam_cantilever.png",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/c/ce/Beam_cantilever.png",
+    "retrieved_on": "2026-10-09",
+    "modifications": "Original file; no alteration. Evaluation preprocessing recorded separately."
+  },
+  {
+    "image_id": "cantilever",
+    "title": "CantileverBeam.png",
+    "author": "Ben pcc",
+    "license": "Public domain",
+    "source_url": "https://commons.wikimedia.org/wiki/File:CantileverBeam.png",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/0/0b/CantileverBeam.png",
+    "retrieved_on": "2026-10-09",
+    "modifications": "Original file; no alteration. Evaluation preprocessing recorded separately."
+  },
+  {
+    "image_id": "end_load",
+    "title": "Beam Cantilevered Load end.png",
+    "author": "Daniel De Leon Martinez; modified by Natus37",
+    "license": "Public domain",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Beam_Cantilevered_Load_end.png",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/2/2d/Beam_Cantilevered_Load_end.png",
+    "retrieved_on": "2026-10-09",
+    "modifications": "Original file; no alteration. Evaluation preprocessing recorded separately."
+  },
+  {
+    "image_id": "point_load",
+    "title": "Simply supported beam with central point load.jpg",
+    "author": "Tkn20",
+    "license": "Public domain",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_central_point_load.jpg",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/9/99/Simply_supported_beam_with_central_point_load.jpg",
+    "retrieved_on": "2026-10-09",
+    "modifications": "Original file; no alteration. Evaluation preprocessing recorded separately."
+  },
+  {
+    "image_id": "udl",
+    "title": "Simply supported beam with universally distributed load.jpg",
+    "author": "Tkn20",
+    "license": "Public domain",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_universally_distributed_load.jpg",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/f/f2/Simply_supported_beam_with_universally_distributed_load.jpg",
+    "retrieved_on": "2026-10-09",
+    "modifications": "Original file; no alteration. Evaluation preprocessing recorded separately."
+  }
+]
