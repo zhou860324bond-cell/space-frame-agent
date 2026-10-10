@@ -9,6 +9,34 @@ from .result_inspector import global_extreme, probe_member, show_stress_dialog
 
 
 class WindowResultsMixin:
+    def query_node_displacement(self, node_id: int) -> None:
+        """读取当前工况的真实节点自由度，显示值不乘变形放大系数。"""
+        if self.runner.busy:
+            return
+        self._sync_result_validity()
+        frame, solution = self.session.frame, self.session.solution
+        if frame is None or solution is None or node_id not in frame.nodes:
+            return
+        from units import of
+
+        name = self.case or solution.primary
+        system = of(frame)
+        values = solution[name].U[frame.node_dofs(node_id)]
+        rows = [[component, float(value) * scale, unit, "全局坐标系"]
+                for component, value, scale, unit in zip(
+                    ("Ux", "Uy", "Uz", "URx", "URy", "URz"), values,
+                    (system.disp_scale,) * 3 + (1.0,) * 3,
+                    (system.disp_unit,) * 3 + ("rad",) * 3, strict=True)]
+        magnitude = float(sum(float(v) ** 2 for v in values[:3]) ** 0.5)
+        rows.append(["位移幅值", magnitude * system.disp_scale,
+                     system.disp_unit, "平移向量的长度"])
+        self.results.show_rows(
+            f"节点位移：节点 {node_id} · 工况/组合 {name}（实际值，未放大）",
+            ["结果量", "值", "单位", "约定"], rows,
+            [("node", node_id)] * len(rows))
+        self.results_dock.show()
+        self.results_dock.raise_()
+
     def clear_solid_query(self):
         """换档、失效或主动清除时撤去旧单元标记和查询表。"""
         self.viewport.select_solid("cell", None)

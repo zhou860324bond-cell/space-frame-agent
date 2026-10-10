@@ -1222,6 +1222,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.viewport.set_result_marker(None)
             self.redraw()
             self.lbl_solve.setText(self._solve_text())
+            if self._selected_kind == "node":
+                self.query_node_displacement(self._selected_id)
 
     def set_scale(self, value: float) -> None:
         """变形放大系数。0 表示按模型尺寸自动定。"""
@@ -1630,6 +1632,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         # 点中一根杆，内力图就切到它——**这是"在哪"和"多大"接起来的一步**
         if kind == "member" and self.diagram_dock.isVisible():
             self.diagram.member.setCurrentText(str(ident))
+        if kind == "node":
+            self.query_node_displacement(ident)
         self._resume_pending_command(kind)
 
     def _describe_selection(self, kind: str, ident: int) -> None:
