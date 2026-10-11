@@ -23,7 +23,7 @@ from typing import Any
 
 from frame3d import DEFAULT_CASE, LOCAL_DOF_NAMES
 from span_loads import KINDS as SPAN_KINDS
-from span_loads import POINT, TRAPEZOID
+from span_loads import MOMENT, PARTIAL, POINT, RAMP, TRAPEZOID
 from units import NAMES as UNIT_SYSTEMS  # noqa: F401  同上，gui_app 用 MT.UNIT_SYSTEMS
 from units import convert_model  # noqa: F401  界面从这里取，不必再 import units
 
@@ -37,7 +37,7 @@ SUPPORT_COLUMNS = ("name", "node") + LOCAL_DOF_NAMES
 NODAL_LOAD_COLUMNS = ("case", "name", "node", "Fx", "Fy", "Fz", "Mx", "My", "Mz")
 MEMBER_LOAD_COLUMNS = ("case", "name", "member", "wx", "wy", "wz")
 SPAN_LOAD_COLUMNS = ("case", "name", "member", "kind",
-                     "w1x", "w1y", "w1z", "w2x", "w2y", "w2z", "a", "note")
+                     "w1x", "w1y", "w1z", "w2x", "w2y", "w2z", "a", "b", "note")
 SETTLEMENT_COLUMNS = ("case", "name", "node") + LOCAL_DOF_NAMES
 
 TABLE_NAMES = ("nodes", "members", "supports", "nodal_loads", "member_loads",
@@ -122,7 +122,8 @@ def to_tables(model: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             row = {"case": case_name, "name": str(e.get("name", "")),
                    "member": int(e["member"]),
                    "kind": str(e.get("kind", "uniform")),
-                   "a": float(e.get("a", 0.0)), "note": str(e.get("note", ""))}
+                   "a": float(e.get("a", 0.0)), "b": e.get("b", ""),
+                   "note": str(e.get("note", ""))}
             row.update({k: float(v) for k, v in zip(("w1x", "w1y", "w1z"), e["w1"], strict=True)})
             row.update({k: float(v) for k, v in
                         zip(("w2x", "w2y", "w2z"), e.get("w2", (0.0, 0.0, 0.0)), strict=True)})
@@ -223,12 +224,14 @@ def from_tables(base: dict[str, Any],
     只做"读得成不成"的检查；模型本身合不合理（悬空节点、机构等）
     交给 validate_payload，不在这里重复一遍。
     """
-    model: dict[str, Any] = {
-        "units": base.get("units", "N-m-Pa"),
-        "materials": [dict(m) for m in base.get("materials", [])],
-        "sections": [dict(s) for s in base.get("sections", [])],
-        "nodes": [], "members": [], "supports": [],
-    }
+    from copy import deepcopy
+
+    model = deepcopy(base)
+    model.update(units=base.get("units", "N-m-Pa"),
+                 nodes=[], members=[], supports=[])
+    for key in ("nodal_loads", "member_loads", "member_spans", "settlements",
+                "load_cases", "combos"):
+        model.pop(key, None)
 
     for lineno, row in enumerate(tables.get("nodes") or [], 1):
         if _row_is_blank(row):
@@ -269,19 +272,36 @@ def from_tables(base: dict[str, Any],
     for lineno, row in enumerate(tables.get("supports") or [], 1):
         if _row_is_blank(row):
             continue
-        fix = [1 if bool(row.get(name)) else 0 for name in LOCAL_DOF_NAMES]
+        fix = []
+        for name in LOCAL_DOF_NAMES:
+            value = row.get(name)
+            if isinstance(value, str):
+                value = value.strip().lower()
+                if value not in {"", "0", "1", "false", "true", "no", "yes", "是", "否"}:
+                    raise TableError(f"约束表第 {lineno} 行：{name} 请填写 0/1 或 True/False")
+                value = value in {"1", "true", "yes", "是"}
+            fix.append(int(bool(value)))
         item = {"node": _int(row, "node", "supports", lineno), "fix": fix}
         if not _blank(row.get("name")):
             item["name"] = str(row["name"]).strip()
         model["supports"].append(item)
     _check_unique([s["node"] for s in model["supports"]], "supports", "节点号")
 
-    cases: dict[str, dict[str, list]] = {}
+    cases: dict[str, dict[str, Any]] = {}
+    metadata = {}
+    for original in base.get("load_cases") or []:
+        kept_case = deepcopy(original)
+        for key in ("nodal_loads", "member_loads", "member_spans", "settlements"):
+            kept_case[key] = []
+        metadata[str(original["name"])] = kept_case
+        if not any(original.get(key) for key in
+                   ("nodal_loads", "member_loads", "member_spans", "settlements")):
+            cases[str(original["name"])] = deepcopy(kept_case)
 
     def case_of(row: dict[str, Any]) -> dict[str, list]:
         name = str(row.get("case") or DEFAULT_CASE).strip() or DEFAULT_CASE
-        return cases.setdefault(name, {"nodal_loads": [], "member_loads": [],
-                                       "member_spans": [], "settlements": []})
+        return cases.setdefault(name, deepcopy(metadata.get(name, {
+            "nodal_loads": [], "member_loads": [], "member_spans": [], "settlements": []})))
 
     for lineno, row in enumerate(tables.get("nodal_loads") or [], 1):
         if _row_is_blank(row):
@@ -320,11 +340,18 @@ def from_tables(base: dict[str, Any],
                    for k in ("w1x", "w1y", "w1z")]}
         if not _blank(row.get("name")):
             item["name"] = str(row["name"]).strip()
-        if kind == TRAPEZOID:
+        if kind in (TRAPEZOID, RAMP):
             item["w2"] = [_num(row, k, "member_spans", lineno)
                           for k in ("w2x", "w2y", "w2z")]
-        if kind == POINT:
+        if kind in (POINT, MOMENT, PARTIAL, RAMP):
             item["a"] = _num(row, "a", "member_spans", lineno)
+        if kind in (PARTIAL, RAMP):
+            item["b"] = _num(row, "b", "member_spans", lineno)
+        elif kind == TRAPEZOID and not _blank(row.get("b")):
+            # 旧表中的满跨梯形无需 a/b；填写终点后转成真实区间梯形。
+            item["kind"] = RAMP
+            item["a"] = _num(row, "a", "member_spans", lineno)
+            item["b"] = _num(row, "b", "member_spans", lineno)
         note = row.get("note")
         if not _blank(note):
             item["note"] = str(note).strip()
@@ -342,7 +369,9 @@ def from_tables(base: dict[str, Any],
 
     if cases:
         model["load_cases"] = [
-            {"name": name,
+            {**{k: v for k, v in block.items()
+                if k not in {"nodal_loads", "member_loads", "member_spans", "settlements"}},
+             "name": name,
              **{k: v for k, v in block.items() if v}}
             for name, block in cases.items()]
         kept = {c["name"] for c in model["load_cases"]}
@@ -373,7 +402,7 @@ def from_csv(text: str, columns: tuple[str, ...]) -> list[dict[str, Any]]:
     reader = csv.DictReader(io.StringIO(text))
     # name 是后来加入的 Abaqus 式可读标识；旧项目导出的 CSV 没有这一列，
     # 仍应能导回。其它列继续严格检查，避免把数值悄悄补成空值。
-    missing = set(columns) - set(reader.fieldnames or []) - {"name"}
+    missing = set(columns) - set(reader.fieldnames or []) - {"name", "b"}
     if missing:
         raise TableError(f"CSV 缺少列：{', '.join(sorted(missing))}；"
                          f"需要的表头是 {', '.join(columns)}")

@@ -212,6 +212,7 @@ def member_polylines(frame, solution=None, case: str | None = None,
     chunks: list[np.ndarray] = []
     values: list[np.ndarray] = []
     owners: list[np.ndarray] = []
+    references: list[np.ndarray] = []
     name = case
     if solution is not None and name is None:
         name = solution.primary
@@ -233,6 +234,7 @@ def member_polylines(frame, solution=None, case: str | None = None,
                                     stations)
             t = np.linspace(0.0, 1.0, stations)[:, None]
         pts = pi + t * (pj - pi)
+        references.append(pts.copy())
 
         if scale and solution is not None:
             # 挠度用**高分辨率**积分再插到显示点上。两件事的分辨率要求不同：
@@ -261,6 +263,7 @@ def member_polylines(frame, solution=None, case: str | None = None,
     if values:
         merged[scalars] = np.concatenate(values)
     merged["member"] = np.concatenate(owners)
+    merged["reference"] = np.concatenate(references)
     return merged
 
 

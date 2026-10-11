@@ -953,6 +953,19 @@ class Viewport(QWidget):
         if self.pick_mode is None:
             return
         found = None
+        reference = pt
+        if self.pick_mode == "member" and _args:
+            picker = _args[0]
+            dataset = picker.GetDataSet()
+            point_id = int(picker.GetPointId())
+            owners = dataset.GetPointData().GetArray("member") if dataset is not None else None
+            coordinates = dataset.GetPointData().GetArray("reference") if dataset is not None else None
+            if (owners is not None and coordinates is not None
+                    and 0 <= point_id < owners.GetNumberOfTuples()):
+                candidate = int(owners.GetTuple1(point_id))
+                if candidate in self._frame.members:
+                    found = candidate
+                    reference = np.asarray(coordinates.GetTuple3(point_id), dtype=float)
         if self.pick_mode == "node" and _args:
             # 变形点云携带真实节点号。其显示坐标已放大，不能再用原始位置判断。
             picker = _args[0]
@@ -976,7 +989,7 @@ class Viewport(QWidget):
         self.set_selection(self.pick_mode, found)
         self.picked.emit(self.pick_mode, found)
         if self.pick_mode == "member":
-            self.probed.emit(found, pt.copy())
+            self.probed.emit(found, reference.copy())
 
     def _fit(self) -> None:
         """首次显示时摆好相机；之后保持用户转过的视角。

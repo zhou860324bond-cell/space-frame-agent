@@ -11,17 +11,116 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (QComboBox, QDialog, 
                                QDoubleSpinBox, QFormLayout, QGroupBox,
-                               QLabel, QLineEdit, QStackedWidget, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import dialog_styles
 
 
 NODE_LOAD_TYPES = [("集中力（节点）", "concentrated")]
 MEMBER_LOAD_TYPES = [
-    ("均布线载荷（杆件满跨）", "line"),
-    ("梯形线载荷（i 端 → j 端）", "trapezoid"),
+    ("均布线载荷（整杆或指定区间）", "line"),
+    ("梯形线载荷（起点 → 终点）", "trapezoid"),
     ("集中力（杆中指定位置）", "member_point"),
 ]
+
+
+class LoadPositionWidget(QWidget):
+    """用沿杆距离或原始全局坐标定义作用位置及受载区间。"""
+
+    def __init__(self, model, target_type, target_id, length_unit, parent=None):
+        super().__init__(parent)
+        self.model, self.target_type, self.target_id = model, target_type, target_id
+        self.length = None
+        form = QFormLayout(self)
+        self.mode = QComboBox(self)
+        if target_type == "node":
+            self.mode.addItem("当前节点", "full")
+        else:
+            self.mode.addItem("整根杆件", "full")
+            self.mode.addItem("距 i 端距离", "distance")
+            if model:
+                import numpy as np
+                from coordinates import model_member_ends
+                self.ends = model_member_ends(model, target_id)
+                self.length = float(np.linalg.norm(self.ends[1] - self.ends[0]))
+        if model:
+            self.mode.addItem("全局坐标", "coordinate")
+        form.addRow("位置输入", self.mode)
+        self.start = QDoubleSpinBox(self)
+        self.end = QDoubleSpinBox(self)
+        for spin in (self.start, self.end):
+            spin.setRange(0, self.length if self.length is not None else 1e9)
+            spin.setDecimals(6)
+            spin.setSuffix(f" {length_unit}")
+        self.end.setValue(self.length or 0)
+        self.start_coordinate = QLineEdit(self)
+        self.end_coordinate = QLineEdit(self)
+        for edit in (self.start_coordinate, self.end_coordinate):
+            edit.setPlaceholderText(f"X, Y, Z（{length_unit}，原始全局坐标）")
+        if target_type == "member" and model:
+            self.start_coordinate.setText(", ".join(f"{v:.12g}" for v in self.ends[0]))
+            self.end_coordinate.setText(", ".join(f"{v:.12g}" for v in self.ends[1]))
+        elif model:
+            node = next(n for n in model["nodes"] if n["id"] == target_id)
+            self.start_coordinate.setText(", ".join(str(node[key]) for key in "xyz"))
+        form.addRow("起点 a / 作用位置", self.start)
+        form.addRow("终点 b", self.end)
+        form.addRow("起点 / 作用点坐标", self.start_coordinate)
+        form.addRow("终点坐标", self.end_coordinate)
+        self.note = QLabel("集中力只使用作用位置；分布荷载需要起点和终点。", self)
+        self.note.setWordWrap(True)
+        form.addRow(self.note)
+        self.load_type = "line" if target_type == "member" else "concentrated"
+        self.mode.currentIndexChanged.connect(self.refresh)
+        self.refresh()
+
+    def refresh(self, *_args):
+        point = self.load_type in {"member_point", "concentrated"}
+        if self.load_type == "member_point" and self.mode.currentData() == "full":
+            self.mode.setCurrentIndex(self.mode.findData("distance"))
+        mode = self.mode.currentData()
+        self.start.setEnabled(mode == "distance")
+        self.end.setEnabled(mode == "distance" and not point)
+        self.start_coordinate.setEnabled(mode == "coordinate")
+        self.end_coordinate.setEnabled(mode == "coordinate" and not point)
+        form = self.layout()
+        form.setRowVisible(self.end, not point)
+        form.setRowVisible(self.end_coordinate, not point)
+        form.setRowVisible(self.start, self.target_type == "member")
+
+    def get_range(self):
+        from coordinates import parse_coordinate, station_on_segment
+
+        mode = self.mode.currentData()
+        if mode == "full":
+            return None, None
+        if mode == "distance":
+            a, b = self.start.value(), self.end.value()
+        else:
+            a = station_on_segment(parse_coordinate(self.start_coordinate.text()), *self.ends)
+            b = (a if self.load_type == "member_point" else
+                 station_on_segment(parse_coordinate(self.end_coordinate.text()), *self.ends))
+        if self.load_type == "member_point":
+            if self.length is not None and not 0 <= a <= self.length:
+                raise ValueError("作用位置超出杆长；请检查距 i 端距离。")
+            return a, None
+        if not a < b or (self.length is not None and b > self.length):
+            raise ValueError("分布荷载必须满足 0 ≤ 起点 a < 终点 b ≤ 杆长；请调整位置。")
+        return a, b
+
+    def get_node(self):
+        if self.mode.currentData() != "coordinate":
+            return self.target_id
+        import numpy as np
+        from coordinates import parse_coordinate
+
+        point = parse_coordinate(self.start_coordinate.text())
+        matches = [n["id"] for n in self.model.get("nodes", [])
+                   if np.linalg.norm(np.asarray([n[k] for k in "xyz"]) - point)
+                   <= (1e-5 if self.start.suffix().strip() == "mm" else 1e-8)]
+        if len(matches) != 1:
+            raise ValueError("坐标未唯一对应已有节点；请检查坐标，杆中位置请使用杆件集中力。")
+        return matches[0]
 
 
 class ConcentratedForceWidget(QWidget):
@@ -88,9 +187,9 @@ class TrapezoidLoadWidget(QWidget):
     def __init__(self, parent=None, line_unit: str = "N/m"):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        start = QGroupBox("i 端强度 w1（全局坐标）")
+        start = QGroupBox("起点强度 w1（全局坐标）")
         start_form = QFormLayout(start)
-        end = QGroupBox("j 端强度 w2（全局坐标）")
+        end = QGroupBox("终点强度 w2（全局坐标）")
         end_form = QFormLayout(end)
         self.start_spins = [self._make_spin(line_unit) for _ in range(3)]
         self.end_spins = [self._make_spin(line_unit) for _ in range(3)]
@@ -181,12 +280,12 @@ class LoadDialog(QDialog):
     def __init__(self, target_type: str = "node", target_id: int = 0,
                  parent=None, units: str = "N-m-Pa",
                  cases: list[str] | None = None,
-                 current_case: str | None = None):
+                 current_case: str | None = None, model: dict | None = None):
         super().__init__(parent)
         self.target_type = target_type
         self.target_id = target_id
         self.setWindowTitle(f"创建载荷 — {target_type} {target_id}")
-        self.resize(360, 320)
+        self.resize(480, 480)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -224,10 +323,28 @@ class LoadDialog(QDialog):
         self.stack.addWidget(self.ll_widget)
         self.stack.addWidget(self.trap_widget)
         self.stack.addWidget(self.point_widget)
-        layout.addWidget(self.stack)
+
+        self.position = LoadPositionWidget(
+            model, target_type, target_id, "mm" if millimetres else "m", self)
+        fields = QWidget(self)
+        fields_layout = QVBoxLayout(fields)
+        fields_layout.addWidget(self.position)
+        fields_layout.addWidget(self.stack)
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setMinimumHeight(120)
+        self.scroll.setWidget(fields)
+        layout.addWidget(self.scroll, 1)
+        # 保留旧部件接口；真实创建流程统一使用下面的定位区域。
+        self.point_widget.spn_a.valueChanged.connect(self.position.start.setValue)
+        self.point_widget.layout().labelForField(self.point_widget.spn_a).hide()
+        self.point_widget.spn_a.hide()
+        self.error = QLabel(self)
+        self.error.setWordWrap(True)
+        layout.addWidget(self.error)
 
         btns = dialog_styles.button_box(self)
-        btns.accepted.connect(self.accept)
+        btns.accepted.connect(self._accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
@@ -243,6 +360,26 @@ class LoadDialog(QDialog):
             self.stack.setCurrentWidget(self.trap_widget)
         elif load_type == "member_point":
             self.stack.setCurrentWidget(self.point_widget)
+        if hasattr(self, "position"):
+            self.position.load_type = load_type
+            self.position.refresh()
+
+    def _accept(self):
+        try:
+            if self.target_type == "node":
+                self.get_target_id()
+            else:
+                self.get_range()
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
+        self.accept()
+
+    def get_range(self):
+        return self.position.get_range()
+
+    def get_target_id(self):
+        return self.position.get_node() if self.target_type == "node" else self.target_id
 
     def get_load_type(self) -> str:
         return str(self.cmb_type.currentData())
@@ -259,7 +396,7 @@ class LoadDialog(QDialog):
     def get_position(self) -> float | None:
         if self.get_load_type() != "member_point":
             return None
-        return self.point_widget.get_position()
+        return self.position.get_range()[0]
 
     def get_name(self) -> str:
         return self.txt_name.text().strip()

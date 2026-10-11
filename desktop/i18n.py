@@ -25,6 +25,7 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "坐标查询": "Coordinate query", "导出全部 CSV": "Export all CSV",
     "工况与荷载名称": "Review case and load names",
     "修改工况名称": "Rename load case", "修改荷载名称": "Rename load",
     "整段均布荷载": "Full member uniform load", "跨间荷载": "Member span load",

@@ -647,6 +647,7 @@ def build(window) -> Ribbon:
     g.add_large(a["solid_contour"])
     g.add_small(a["open_solid_result"])
     g = p.group("查询")
+    g.add_small(a["coordinate_query"]); g.add_small(a["export_all_csv"])
     g.add_small(a["curve"]); g.add_small(a["deflection"])
     g.add_small(a["envelope"]); g.add_small(a["report"])
     # 校核单独成一组：它回答的是"够不够"，与"是多少"不是一回事，

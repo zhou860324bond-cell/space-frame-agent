@@ -202,6 +202,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.results.display_changed.connect(self._on_result_display_changed)
         self.results.extreme_requested.connect(self.locate_current_extreme)
         self.results.stress_requested.connect(self.show_section_stress)
+        self.results.coordinate_requested.connect(self.query_coordinate)
         self.result_display_options = self.results.display_options()
         self._last_probe = None
         self.results.setMinimumHeight(120)
@@ -212,6 +213,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.diagram_dock = self.bottom_drawer.add_page("diagram", "单杆内力图", self.diagram)
 
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
+        self.section_opt.completed.connect(self._remember_optimization)
         self.section_opt_dock = self.bottom_drawer.add_page(
             "section_opt", "截面优化", self.section_opt)
         self.section_opt_dock.prefer_floating = True
@@ -486,7 +488,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         """
         from PySide6.QtWidgets import QToolButton
 
-        menus = (("文件", ("new", "open", "save", None, "report", "learning_trace")),
+        menus = (("文件", ("new", "open", "save", None, "report", "export_all_csv", "learning_trace")),
                  ("建模", ("sketch", "frame", "portal", None,
                            "model_node", "model_member", "delete", "brace", None,
                            "tables", "json")),
@@ -499,7 +501,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                            "diagnose", "analysis_mesh")),
                  ("结果", ("model", "deformed", "contour", "force_diagram",
                            "utilization", "solid_contour", "open_solid_result",
-                           "diagram", None,
+                           "diagram", "coordinate_query", "export_all_csv", None,
                            "envelope", "clear_results", "labels")),
                  ("视图", ("iso", "front", "side", "top", "fit", None,
                            "bg_settings", "grid_floor", "labels", "load_labels",
@@ -658,6 +660,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.viewport.set_selection(None, None)
         self.viewport.set_problem_refs([])
         self._last_probe = None
+        self._analysis_exports = {}
         self.chat.session = session
         self.chat.conversation = None
         self.properties.session = session
@@ -961,6 +964,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                 from modal import modal
                 r = modal(frame, 6)
                 self._modal_view = (frame, r)
+                self._remember_analysis("modal", got.payload)
             f1 = r.frequencies[0]
             self.viewport.show_mode(frame, r.shapes, 0,
                                     f"第 1 阶　{f1:.3f} Hz　周期 {1 / f1:.4f} s")
@@ -1030,6 +1034,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self._last_probe = None
             self._utilization = None
             self._modal_view = None
+            self._analysis_exports = {}
             self.diagram.attach(self.session, self.case)
             self.viewport.set_result_marker(None)
         if stale or changed or (self.result is not None and self.result.ok
@@ -2193,10 +2198,13 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         shown_cases = available or ["Load-1"]
         dlg = LoadDialog(kind, ident, parent=self,
                          units=self.session.model.get("units", "N-m-Pa"),
-                         cases=shown_cases, current_case=self.case)
+                         cases=shown_cases, current_case=self.case,
+                         model=self.session.model)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         load_type = dlg.get_load_type()
+        ident = dlg.get_target_id()
+        start, end = dlg.get_range() if kind == "member" else (None, None)
         load = dlg.get_load()
         load_name = dlg.get_name()
         case_name = dlg.get_case()
@@ -2213,14 +2221,20 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             result = self.session.set_nodal_load(ident, load, case_name, load_name)
             description = f"节点 {ident} 已施加集中力：{load}"
         elif load_type == "line":
-            result = self.session.set_member_load(ident, load, case_name, load_name)
-            description = f"杆件 {ident} 已施加满跨均布载荷：{load}"
+            if start is None:
+                result = self.session.set_member_load(ident, load, case_name, load_name)
+            else:
+                result = self.session.set_member_span_load(
+                    ident, "partial", load, a=start, b=end,
+                    case_name=case_name, name=load_name)
+            description = f"杆件 {ident} 已施加均布载荷：{load}"
         elif load_type == "trapezoid":
             end_load = dlg.get_end_load()
             result = self.session.set_member_span_load(
-                ident, "trapezoid", load, w2=end_load,
+                ident, "trapezoid" if start is None else "partial_trapezoid",
+                load, w2=end_load, a=start, b=end,
                 case_name=case_name, name=load_name)
-            description = f"杆件 {ident} 已施加梯形载荷：i端 {load} → j端 {end_load}"
+            description = f"杆件 {ident} 已施加梯形载荷：起点 {load} → 终点 {end_load}"
         elif load_type == "member_point":
             position = dlg.get_position()
             result = self.session.set_member_span_load(
@@ -2837,6 +2851,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def _remember_strength(self, solution, payload: dict) -> None:
         """记下某次求解的验算结果，并把逐杆表填进结果页（不弹出）。"""
         self._utilization = (solution, payload)
+        self._remember_analysis("strength", payload)
         caption, cols, rows, loc = result_rows.to_rows("strength", payload)
         self.results.show_rows(f"强度验算　{caption}", cols, rows, loc,
                                result_rows.row_marks("strength", payload),
@@ -3022,6 +3037,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                     f"{title}未完成",
                     self._explain(result.payload))
             else:
+                self._remember_analysis(kind, result.payload)
                 if kind == "strength":
                     # 从「强度验算」按钮算过就记下，应力比图直接复用
                     self._utilization = (self.session.solution, result.payload)
@@ -3144,6 +3160,14 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         super().closeEvent(event)
 
     # --- 导出 ---
+
+    def show_coordinate_query(self) -> None:
+        """为命令注册表提供坐标查询入口，具体查询由结果模块处理。"""
+        super().show_coordinate_query()
+
+    def export_all_csv(self) -> None:
+        """为命令注册表提供完整 CSV 入口，复用结果模块的有效性检查。"""
+        super().export_all_csv()
 
     def _solve_text(self) -> str:
         if self.result is None:

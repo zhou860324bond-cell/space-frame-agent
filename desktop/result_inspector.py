@@ -9,6 +9,41 @@ FORCES = {"N", "Vy", "Vz", "V"}
 MOMENTS = {"T", "My", "Mz", "M"}
 
 
+def coordinate_target(frame, point, element_ids=None):
+    """原始坐标精确定位；交叉杆件必须由用户指定，不能任意取第一根。"""
+    from coordinates import station_on_segment
+    from frame3d import member_endpoints
+
+    point = np.asarray(point, dtype=float)
+    if point.shape != (3,) or not np.all(np.isfinite(point)):
+        raise ValueError("坐标必须包含三个有限数字；请检查 X、Y、Z。")
+    if element_ids is None:
+        coordinates = np.asarray([node.xyz for node in frame.nodes.values()])
+        extent = float(np.linalg.norm(np.ptp(coordinates, axis=0))) if len(coordinates) else 0
+        matches = [node_id for node_id, node in frame.nodes.items()
+                   if np.linalg.norm(node.xyz - point) <= max(extent * 1e-9, 1e-12)]
+        if len(matches) == 1:
+            return "node", matches[0]
+        if len(matches) > 1:
+            raise ValueError("坐标对应多个重合节点；请通过模型树选择节点，或指定杆件号。")
+    hits = []
+    for mid in (frame.members if element_ids is None else element_ids):
+        try:
+            station_on_segment(point, *member_endpoints(frame, frame.members[mid]))
+        except ValueError:
+            continue
+        hits.append(mid)
+    if len(hits) > 1 and element_ids is not None:
+        # 同一物理杆件的剖分接点读取右侧分析段，集中力跳变不跨段平均。
+        for mid in hits:
+            pi, pj = member_endpoints(frame, frame.members[mid])
+            if np.linalg.norm(point - pi) <= np.linalg.norm(pj - pi) * 1e-8:
+                return "member", mid
+    if len(hits) != 1:
+        raise ValueError("坐标未唯一对应杆件中心线；请检查坐标，交叉位置请填写杆件号。")
+    return "member", hits[0]
+
+
 def _display_system(frame):
     from units import of
     return of(frame)

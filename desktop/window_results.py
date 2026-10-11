@@ -2,13 +2,97 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from . import theme
 from .result_inspector import global_extreme, probe_member, show_stress_dialog
 
 
 class WindowResultsMixin:
+    def show_coordinate_query(self) -> None:
+        unit = ("mm（实体结果）" if self.mode == "实体云图" else
+                "mm" if self.session.model.get("units") == "N-mm-MPa" else "m")
+        self.results.coordinate.setPlaceholderText(f"原始全局坐标 X, Y, Z（{unit}）")
+        self.results_dock.show()
+        self.results_dock.raise_()
+        self.results.coordinate.setFocus()
+        self.statusBar().showMessage(
+            "输入原始全局坐标（当前模型长度单位）；交叉位置请填写杆件号。", 8000)
+
+    def query_coordinate(self, text: str, member_text: str = "") -> None:
+        if self.runner.busy:
+            return
+        self._sync_result_validity()
+        from coordinates import parse_coordinate
+        from .result_inspector import coordinate_target
+
+        try:
+            point = parse_coordinate(text)
+            if self.mode == "实体云图" and self._solid_grid is not None:
+                import numpy as np
+                grid = self._solid_grid
+                distances = np.linalg.norm(grid.points - point, axis=1)
+                index = int(np.argmin(distances))
+                if distances[index] <= max(float(grid.length) * 1e-9, 1e-9):
+                    self.query_solid_point(index, focus=True)
+                else:
+                    cell = int(grid.find_containing_cell(point))
+                    if cell < 0:
+                        raise ValueError("坐标不在当前实体网格内；请检查坐标（mm）。")
+                    self.query_solid_cell(cell, focus=True)
+                    self.results.notes.setPlainText(
+                        "坐标位于所选实体单元内；当前显示该单元原始应力和连接节点位移，"
+                        "未将节点位移插值为输入坐标的位移。")
+                    self.results.notes.show()
+                return
+            if not self._needs_solution():
+                return
+            elements = None
+            if member_text.strip():
+                physical = int(member_text.strip())
+                mapping = self.session.compilation.mapping
+                if physical not in mapping.physical_to_elements:
+                    raise ValueError("杆件号不存在；请检查模型树中的杆件编号。")
+                elements = mapping.element_ids(physical)
+            kind, ident = coordinate_target(self.session.frame, point, elements)
+            self._selected_kind, self._selected_id = kind, ident
+            if kind == "node":
+                self.query_node_displacement(ident)
+                self.viewport.set_result_marker(point, f"NODE {ident}")
+            else:
+                self.probe_member_result(ident, point)
+        except ValueError as exc:
+            QMessageBox.warning(self, "坐标查询未完成", str(exc))
+
+    def _remember_analysis(self, name, payload):
+        from copy import deepcopy
+
+        self._analysis_exports = getattr(self, "_analysis_exports", {})
+        self._analysis_exports[name] = (self.session._model_key(), deepcopy(payload))
+
+    def _remember_optimization(self, fingerprint, payload):
+        self._analysis_exports = getattr(self, "_analysis_exports", {})
+        self._analysis_exports["section_optimizer"] = (fingerprint, payload)
+
+    def export_all_csv(self) -> None:
+        if self.runner.busy:
+            return
+        self._sync_result_validity()
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出全部模块 CSV", "全部模块.csv", "CSV 文件 (*.csv)")
+        if not path:
+            return
+        from csv_export import export_csv
+        try:
+            text = export_csv(self.session, analyses=getattr(self, "_analysis_exports", {}),
+                              solid=self._solid_grid)
+            with open(path, "w", newline="", encoding="utf-8") as stream:
+                stream.write(text)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "CSV 导出失败", f"{exc}\n请检查模型或文件路径后重试。")
+            return
+        self.statusBar().showMessage(f"全部模块已导出：{path}", 8000)
+
     def query_node_displacement(self, node_id: int) -> None:
         """读取当前工况的真实节点自由度，显示值不乘变形放大系数。"""
         if self.runner.busy:
@@ -17,6 +101,7 @@ class WindowResultsMixin:
         frame, solution = self.session.frame, self.session.solution
         if frame is None or solution is None or node_id not in frame.nodes:
             return
+        self._last_probe = None
         from units import of
 
         name = self.case or solution.primary
@@ -30,6 +115,7 @@ class WindowResultsMixin:
         magnitude = float(sum(float(v) ** 2 for v in values[:3]) ** 0.5)
         rows.append(["位移幅值", magnitude * system.disp_scale,
                      system.disp_unit, "平移向量的长度"])
+        self._remember_analysis("node_query", {"node": node_id, "case": name, "rows": rows})
         self.results.show_rows(
             f"节点位移：节点 {node_id} · 工况/组合 {name}（实际值，未放大）",
             ["结果量", "值", "单位", "约定"], rows,
@@ -115,6 +201,15 @@ class WindowResultsMixin:
         data = probe_member(self.session.frame, self.session.solution,
                             member_id, point, self.case)
         self._last_probe = data
+        from copy import deepcopy
+        exported = deepcopy(data)
+        if exported["stress"]:
+            grid = exported["stress"]["grid"]
+            unit = "mm" if self.session.frame.units == "N-mm-MPa" else "m"
+            exported["stress"]["grid"] = {
+                key: {"unit": unit if key in {"y", "z"} else "MPa", "values": values}
+                for key, values in grid.items() if key != "circular"}
+        self._remember_analysis("member_query", exported)
         rows = []
         for component in ("N", "Vy", "Vz", "T", "My", "Mz"):
             unit = (data["moment_unit"] if component in {"T", "My", "Mz"}
@@ -135,7 +230,9 @@ class WindowResultsMixin:
         self.results_dock.raise_()
         self.results.show_rows(
             f"结果探针：杆件 {member_id}，工况 {data['case']}，"
-            f"距 i 端 x={data['x']:.4g}/{data['length']:.4g}",
+            f"距 i 端 x={data['x']:.4g}/{data['length']:.4g}\n"
+            "位置为未变形杆件中心线；位移由内力曲率积分恢复并插值，未乘显示放大系数。"
+            "应力为截面极端纤维正应力（轴力与双向弯曲），不含剪力和扭转剪应力。",
             ["结果量", "值", "单位", "约定"], rows,
             [("member", member_id)] * len(rows))
         self.viewport.set_result_marker(
