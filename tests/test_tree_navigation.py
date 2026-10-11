@@ -20,7 +20,7 @@ def app():
 
 
 def test_number_search_is_exact_and_name_search_keeps_ancestors(app):
-    """搜索节点 1 不得混入节点 10；名称筛选仍应保留可见的分类路径。"""
+    """节点编号搜索须精确，区间均布也须按真实类型可检索，不能统称梯形/集中。"""
     session = build_session()
     tree = ModelTree()
     panel = ModelTreePanel(tree)
@@ -35,6 +35,21 @@ def test_number_search_is_exact_and_name_search_keeps_ancestors(app):
     assert any(item.data(0, ACTION) == "locate_object" for item in panel.matches)
     panel.search.setText("节点 9999")
     assert not panel.matches and "没有匹配项" in panel.status.text()
+    assert session.set_load_cases(cases=[{
+        "name": "范围核对", "member_spans": [
+            {"member": 1, "name": "q1", "kind": "partial", "w1": [0, 0, -800], "a": 1, "b": 2},
+            {"member": 1, "name": "q2", "kind": "partial_trapezoid", "w1": [0, 0, -800],
+             "w2": [0, 0, -1600], "a": 1, "b": 2},
+            {"member": 1, "name": "P", "kind": "point", "w1": [4000, 0, 0], "a": 2},
+            {"member": 1, "name": "M", "kind": "moment", "w1": [0, 0, 1000], "a": 1},
+        ]}]).ok
+    tree.rebuild(session)
+    for label in ("区间均布", "区间梯形", "集中力矩"):
+        panel.search.setText(label)
+        assert len(panel.matches) == 1
+        item = panel.matches[0]
+        assert label in item.text(0) and "跨间4" in item.parent().text(0)
+        assert "梯形/集中" not in item.parent().text(0)
 
 
 def test_search_enter_and_viewport_pick_share_selection(app):

@@ -192,7 +192,7 @@ def _model_tree(fem: Session, result) -> None:
             bits = []
             for key, label in (("nodal_loads", "节点荷载"),
                                ("member_loads", "均布"),
-                               ("member_spans", "梯形/集中"),
+                               ("member_spans", "跨间"),
                                ("settlements", "沉降")):
                 if c.get(key):
                     bits.append(f"{label} {len(c[key])}")
@@ -646,7 +646,7 @@ with tab_pre:
                  "F 是力（N），M 是弯矩（N·m），全局坐标；case 是工况名"),
                 ("member_loads", "杆件均布荷载", MT.MEMBER_LOAD_COLUMNS,
                  "满跨均布，w 是全局坐标下的线荷载（N/m）。竖直向下就是 wz 填负值"),
-                ("member_spans", "梯形与集中荷载", MT.SPAN_LOAD_COLUMNS,
+                ("member_spans", "跨间荷载", MT.SPAN_LOAD_COLUMNS,
                  "kind=trapezoid 时 w1 是 i 端强度、w2 是 j 端强度（N/m，三角形把一端填 0）；"
                  "kind=point 时 w1 是集中力（N）、a 是距 i 端的距离（m）"),
                 ("settlements", "支座沉降", MT.SETTLEMENT_COLUMNS,

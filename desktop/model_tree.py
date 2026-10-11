@@ -193,7 +193,7 @@ class ModelTree(QTreeWidget):
         for c in cases:
             bits = []
             for key, label in (("nodal_loads", "节点"), ("member_loads", "均布"),
-                               ("member_spans", "梯形/集中"),
+                               ("member_spans", "跨间"),
                                ("settlements", "沉降")):
                 if c.get(key):
                     bits.append(f"{label}{len(c[key])}")
@@ -210,7 +210,9 @@ class ModelTree(QTreeWidget):
                 self._child(case_node, f"{name} · 杆件 {entry['member']} · 均布",
                             "load_object", {"case": c["name"], "kind": "member",
                                             "id": int(entry["member"])})
-            span_labels = {"uniform": "均布", "trapezoid": "梯形", "point": "集中"}
+            span_labels = {"uniform": "均布", "trapezoid": "梯形", "point": "集中力",
+                           "partial": "区间均布", "partial_trapezoid": "区间梯形",
+                           "moment": "集中力矩"}
             for entry in c.get("member_spans") or []:
                 name = entry.get("name") or "未命名杆间力"
                 shape = span_labels.get(entry.get("kind"), str(entry.get("kind")))

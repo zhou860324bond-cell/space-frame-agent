@@ -59,7 +59,7 @@ COLUMNS: dict[str, tuple[str, ...]] = {
 
 _LABELS = {"nodes": "节点", "members": "杆件", "supports": "约束",
            "nodal_loads": "节点荷载", "member_loads": "杆件均布荷载",
-           "member_spans": "梯形与集中荷载", "settlements": "支座沉降"}
+           "member_spans": "跨间荷载", "settlements": "支座沉降"}
 
 
 # 哪些列是勾选框，按**表**决定而不是按列名。约束表和沉降表都叫 ux…rz，
