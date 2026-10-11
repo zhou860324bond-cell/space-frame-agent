@@ -1,0 +1,356 @@
+{
+  "date": "2026-10-12",
+  "solver": "Abaqus/Standard 6.14-1",
+  "input_sha256": "e24653bc7082ac168cadba27c4c939e0abf1c44c04fd23daf1e066bce06ac569",
+  "global_comparison": [
+    {
+      "node": 3,
+      "native_U_mm": [
+        14.394388430213388,
+        -2.38243706596221,
+        -0.0023987221059164057
+      ],
+      "abaqus_U_mm": [
+        14.394388534128666,
+        -2.382437000051141,
+        -0.0023987220174603863
+      ],
+      "absolute_error_mm": [
+        1.0391527816011603e-07,
+        6.591106904707544e-08,
+        8.845601941892545e-11
+      ]
+    },
+    {
+      "node": 4,
+      "native_U_mm": [
+        10.238504109757137,
+        -2.3912125027157685,
+        7.826641169346412
+      ],
+      "abaqus_U_mm": [
+        10.23850403726101,
+        -2.391212387010455,
+        7.826641201972961
+      ],
+      "absolute_error_mm": [
+        7.249612821169649e-08,
+        1.1570531333049416e-07,
+        3.262654946212251e-08
+      ]
+    }
+  ],
+  "global_reaction_N": [
+    -4000.0,
+    -2000.0,
+    3400.0
+  ],
+  "local_results": {
+    "assumptions": [
+      "Solid D100 cylinders, union without weld/fillet geometry.",
+      "One cut prescribed from Abaqus beam U/UR; other cut loaded by force/moment.",
+      "Cut wrench includes the outer beam consistent distributed nodal load.",
+      "Node-3 2000 N force distributed over exposed y=0, z>0 semicircular cap.",
+      "Local q mapped as body force q/A over the original horizontal cylinder.",
+      "Linear elastic continuum includes shear deformation; B33 global beam does not.",
+      "Joint zone is element-centroid radius 135 mm, not a weld hot-spot extrapolation.",
+      "No formal Kt or engineering safety certification."
+    ],
+    "cut_length_mm": 200.0,
+    "global_element": "B33",
+    "global_units": "N-m-Pa",
+    "input_sha256": "e24653bc7082ac168cadba27c4c939e0abf1c44c04fd23daf1e066bce06ac569",
+    "local_element": "C3D10",
+    "local_node": 3,
+    "local_units": "N-mm-MPa",
+    "mesh_sensitivity": {
+      "convergence_claim": "Three mesh results only; sharp intersection and load patch require sensitivity assessment.",
+      "formal_Kt": null,
+      "joint_zone_p99_relative_changes": [
+        0.0138244586337917,
+        0.00801829678460919
+      ],
+      "joint_zone_peak_relative_changes": [
+        0.0103222402062686,
+        0.156756719880198
+      ]
+    },
+    "meshes": [
+      {
+        "anchor_RF_N": [
+          -1938.75,
+          412.269989013672,
+          1318.76477050781
+        ],
+        "anchor_RM_Nmm": [
+          196339.109375,
+          192366.0,
+          1147609.0
+        ],
+        "anchor_force_error_N": [
+          0.00146484375,
+          -0.004180908203125,
+          -0.0015869140625
+        ],
+        "anchor_moment_error_Nmm": [
+          1.0966796875,
+          0.246826171875,
+          -0.130859375
+        ],
+        "body_force_N_per_mm3": [
+          0.0,
+          0.0,
+          -0.000101859163578813
+        ],
+        "cell_info": [
+          {
+            "centroid": [
+              -1.64309517383887e-06,
+              109.247798803257,
+              2.62194808648002
+            ],
+            "index": 0,
+            "volume": 1404129.587994
+          },
+          {
+            "centroid": [
+              -3.18686964953014e-15,
+              22.0893224275395,
+              -22.0893242180005
+            ],
+            "index": 1,
+            "volume": 166666.655447831
+          },
+          {
+            "centroid": [
+              -1.76182126005843e-15,
+              -2.62195289303185,
+              -109.247798276144
+            ],
+            "index": 2,
+            "volume": 1404129.71786952
+          }
+        ],
+        "distorted_element_warning_count": 11,
+        "elements": 3256,
+        "job": "local_h20",
+        "joint_zone_stress": {
+          "integration_point_count": 7648,
+          "maximum_abs_principal_MPa": 25.9145336151123,
+          "maximum_mises_MPa": 28.7793769836426,
+          "p99_mises_MPa": 15.4173612594604,
+          "peak_mises_element": 3181,
+          "peak_mises_integration_point": 1
+        },
+        "load_centroid_mm": [
+          -1.46875736406985e-06,
+          99.9999973699911,
+          6.98941023879249e-07
+        ],
+        "loaded_volume_mm3": 1570796.24344183,
+        "max_displacement_mm_including_rigid_motion": 15.7974092056499,
+        "mesh_size_mm": 20.0,
+        "model": "Node3_C3D10_h20",
+        "node3_load_patch": "exposed y=0 semicircular cap, z>0",
+        "nodes": 5189,
+        "solver_warning_note": "Cut coupling notices and distorted-element warning; no numerical singularity.",
+        "whole_model_stress": {
+          "integration_point_count": 13024,
+          "maximum_abs_principal_MPa": 25.9145336151123,
+          "maximum_mises_MPa": 28.7793769836426,
+          "p99_mises_MPa": 14.0886516571045,
+          "peak_mises_element": 3181,
+          "peak_mises_integration_point": 1
+        }
+      },
+      {
+        "anchor_RF_N": [
+          -1938.75,
+          412.269989013672,
+          1318.76794433594
+        ],
+        "anchor_RM_Nmm": [
+          196339.40625,
+          192366.0,
+          1147609.0
+        ],
+        "anchor_force_error_N": [
+          0.00146484375,
+          -0.004180908203125,
+          0.0015869140625
+        ],
+        "anchor_moment_error_Nmm": [
+          1.3935546875,
+          0.246826171875,
+          -0.130859375
+        ],
+        "body_force_N_per_mm3": [
+          0.0,
+          0.0,
+          -0.000101859163578813
+        ],
+        "cell_info": [
+          {
+            "centroid": [
+              -1.64309517383887e-06,
+              109.247798803257,
+              2.62194808648002
+            ],
+            "index": 0,
+            "volume": 1404129.587994
+          },
+          {
+            "centroid": [
+              -3.18686964953014e-15,
+              22.0893224275395,
+              -22.0893242180005
+            ],
+            "index": 1,
+            "volume": 166666.655447831
+          },
+          {
+            "centroid": [
+              -1.76182126005843e-15,
+              -2.62195289303185,
+              -109.247798276144
+            ],
+            "index": 2,
+            "volume": 1404129.71786952
+          }
+        ],
+        "distorted_element_warning_count": 22,
+        "elements": 7106,
+        "job": "local_h15",
+        "joint_zone_stress": {
+          "integration_point_count": 17716,
+          "maximum_abs_principal_MPa": 25.9258041381836,
+          "maximum_mises_MPa": 29.0764446258545,
+          "p99_mises_MPa": 15.6304979324341,
+          "peak_mises_element": 6021,
+          "peak_mises_integration_point": 3
+        },
+        "load_centroid_mm": [
+          -1.46875736406985e-06,
+          99.9999973699911,
+          6.98941023879249e-07
+        ],
+        "loaded_volume_mm3": 1570796.24344183,
+        "max_displacement_mm_including_rigid_motion": 15.7984776639384,
+        "mesh_size_mm": 15.0,
+        "model": "Node3_C3D10_h15",
+        "node3_load_patch": "exposed y=0 semicircular cap, z>0",
+        "nodes": 10901,
+        "solver_warning_note": "Cut coupling notices and distorted-element warning; no numerical singularity.",
+        "whole_model_stress": {
+          "integration_point_count": 28424,
+          "maximum_abs_principal_MPa": 25.9258041381836,
+          "maximum_mises_MPa": 29.0764446258545,
+          "p99_mises_MPa": 14.3716068267822,
+          "peak_mises_element": 6021,
+          "peak_mises_integration_point": 3
+        }
+      },
+      {
+        "anchor_RF_N": [
+          -1938.75,
+          412.269989013672,
+          1318.76721191406
+        ],
+        "anchor_RM_Nmm": [
+          196339.53125,
+          192366.109375,
+          1147609.0
+        ],
+        "anchor_force_error_N": [
+          0.00146484375,
+          -0.004180908203125,
+          0.0008544921875
+        ],
+        "anchor_moment_error_Nmm": [
+          1.5185546875,
+          0.356201171875,
+          -0.130859375
+        ],
+        "body_force_N_per_mm3": [
+          0.0,
+          0.0,
+          -0.000101859163578813
+        ],
+        "cell_info": [
+          {
+            "centroid": [
+              -1.64309517383887e-06,
+              109.247798803257,
+              2.62194808648002
+            ],
+            "index": 0,
+            "volume": 1404129.587994
+          },
+          {
+            "centroid": [
+              -3.18686964953014e-15,
+              22.0893224275395,
+              -22.0893242180005
+            ],
+            "index": 1,
+            "volume": 166666.655447831
+          },
+          {
+            "centroid": [
+              -1.76182126005843e-15,
+              -2.62195289303185,
+              -109.247798276144
+            ],
+            "index": 2,
+            "volume": 1404129.71786952
+          }
+        ],
+        "distorted_element_warning_count": 33,
+        "elements": 22044,
+        "job": "local_h10",
+        "joint_zone_stress": {
+          "integration_point_count": 52268,
+          "maximum_abs_principal_MPa": 29.5025157928467,
+          "maximum_mises_MPa": 33.6343727111816,
+          "p99_mises_MPa": 15.7558279037476,
+          "peak_mises_element": 14512,
+          "peak_mises_integration_point": 4
+        },
+        "load_centroid_mm": [
+          -1.46875736406985e-06,
+          99.9999973699911,
+          6.98941023879249e-07
+        ],
+        "loaded_volume_mm3": 1570796.24344183,
+        "max_displacement_mm_including_rigid_motion": 15.7983981726609,
+        "mesh_size_mm": 10.0,
+        "model": "Node3_C3D10_h10",
+        "node3_load_patch": "exposed y=0 semicircular cap, z>0",
+        "nodes": 32569,
+        "solver_warning_note": "Cut coupling notices and distorted-element warning; no numerical singularity.",
+        "whole_model_stress": {
+          "integration_point_count": 88176,
+          "maximum_abs_principal_MPa": 29.5025157928467,
+          "maximum_mises_MPa": 33.6343727111816,
+          "p99_mises_MPa": 14.328667640686,
+          "peak_mises_element": 14512,
+          "peak_mises_integration_point": 4
+        }
+      }
+    ]
+  },
+  "cut_equilibrium": {
+    "force_residual_N": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "moment_residual_Nmm": [
+      0.014241536555346102,
+      0.018310547224245965,
+      -0.048828125
+    ],
+    "note": "NFORC\u52a0\u5916\u6bb5\u4e00\u81f4\u8282\u70b9\u8377\u8f7d\u540e\u8f6c\u4e3a\u5207\u53e3\u771f\u5b9e\u5916\u529b\uff1b\u542b\u8282\u70b9\u8377\u8f7d\u4e0e\u5c40\u90e8\u5747\u5e03\u8377\u8f7d\u3002"
+  },
+  "verification_scope": "Actual global + three local jobs; editable CAE reopened. Peak convergence unproven."
+}

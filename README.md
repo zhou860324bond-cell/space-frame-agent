@@ -6,6 +6,7 @@
 最近完整运行记录仍为 2026-10-11 的 2872 通过、1 跳过；2026-10-12 新增 2 项荷载显示专项及 1 项界面名称核对，本轮仅执行增量验证，未重新运行全量。
 后台线程收尾修复与三平台验收记录见 [工作进度](docs/PROGRESS.md) 和 [PR #25](https://github.com/zhou860324bond-cell/space-frame-agent/pull/25)。
 桌面安装使用已验收的 PySide6 6.11.2；CI 与 `.[desktop]` 共用版本声明。
+教材图IV-5新增 [Abaqus整体B33与节点3局部实体复算](examples/defense/教材图IV-5/Abaqus/README.md)：保留原题区间荷载，实际完成整体与三档C3D10求解；加载区为明确假设，局部峰值尚未证明收敛。
 多模态新增 [闭合梁轴、小图支座与独立试点实测](multimodal_eval/public_cases/OUTLINE_REPORT.md)：原 5 张开发图本轮几何全匹配，新增独立混合荷载图仍失败。未知位置、符号荷载和尺度必须人工校核，不能据开发图成绩声明通用准确率。
 新增 [真实数值桁架首测与尺度填写](multimodal_eval/public_cases/NUMERIC_REPORT.md)：参考长度不再默认 1 m，尺寸原文可见并保持待核对。两张新许可图首测仍有明显位置误差，完整验收未通过。
 新增 [多杆节点圆点与作用点绑定](multimodal_eval/public_cases/JOINT_NODES_REPORT.md)：清晰圆点和灰色杆线可提出未审核位置候选；两张已知开发图零调用回放几何匹配参考，完整验收仍失败，原在线成绩保留。

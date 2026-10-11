@@ -1,0 +1,9 @@
+{
+  "local_node": 3,
+  "cut_length_mm": 200.0,
+  "mesh_sizes_mm": [
+    20.0,
+    15.0,
+    10.0
+  ]
+}
