@@ -1,0 +1,96 @@
+{
+  "source": "真实MainWindow按export_screenshot相同路径连续采集：Qt原生界面、VTK实时视口及本软件原生面板；不采集桌面或其他应用。字幕置于软件画面下方，不覆盖数值",
+  "model_file": "examples/defense/拱形网格屋盖.json",
+  "model_sha256": "9edd7e6cd7f4b966a26838a4f3d9b4c4bbf94941010d734b0b2eaddc3e4838e8",
+  "fps": 15,
+  "requested_seconds": 60,
+  "events": [
+    {
+      "t_s": 0.566,
+      "name": "真实连续录屏开始",
+      "size": [
+        1920,
+        1080
+      ]
+    },
+    {
+      "t_s": 10.065,
+      "name": "真实后台求解开始"
+    },
+    {
+      "t_s": 21.054,
+      "name": "真实后台求解完成",
+      "elapsed_s": 11.003,
+      "cases": 10
+    },
+    {
+      "t_s": 25.66,
+      "name": "选择ULS-GW并显示变形"
+    },
+    {
+      "t_s": 33.859,
+      "name": "显示真实轴力N云图",
+      "case": "ULS-GW"
+    },
+    {
+      "t_s": 41.028,
+      "name": "模型树输入节点110"
+    },
+    {
+      "t_s": 43.103,
+      "name": "读取真实节点110位移",
+      "magnitude_mm": 99.21670178218474
+    },
+    {
+      "t_s": 46.194,
+      "name": "放大软件原生结果窗口，显示完整七项结果"
+    }
+  ],
+  "node110_ULS_GW": {
+    "Ux": {
+      "value": 25.100262183992566,
+      "unit": "mm"
+    },
+    "Uy": {
+      "value": 5.05036973454656e-13,
+      "unit": "mm"
+    },
+    "Uz": {
+      "value": -95.98922205555066,
+      "unit": "mm"
+    },
+    "URx": {
+      "value": -1.1415090402716034e-16,
+      "unit": "rad"
+    },
+    "URy": {
+      "value": 0.003173303557798394,
+      "unit": "rad"
+    },
+    "URz": {
+      "value": -9.55245318767629e-17,
+      "unit": "rad"
+    },
+    "位移幅值": {
+      "value": 99.21670178218474,
+      "unit": "mm"
+    }
+  },
+  "captured_frames": 716,
+  "encoded_frames": 900,
+  "wall_elapsed_s": 60.033,
+  "solve_elapsed_s": 11.002697199999602,
+  "errors": [],
+  "file": "空间刚架Agent_屋盖实机演示_60秒_1080p.mp4",
+  "sha256": "6603d117abc0033f25933347c7a9481b463cde34150670d0daa1801e04d83a46",
+  "bytes": 9979455,
+  "media": {
+    "codec": "h264",
+    "width": 1920,
+    "height": 1080,
+    "fps": "15/1",
+    "duration_s": 60.0,
+    "sar": "1:1",
+    "audio": "无旁白"
+  }
+}
