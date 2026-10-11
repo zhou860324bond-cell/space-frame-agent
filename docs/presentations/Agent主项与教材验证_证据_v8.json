@@ -1,0 +1,2979 @@
+{
+  "format": "agent-defense-evidence/v8",
+  "date": "2026-10-11",
+  "source_commit": "7804922d3909154d3681d1a94ba1a72bbb7090dd",
+  "scope": "正式录屏最终轮；Agent真实联网工具执行，图纸为既有真实AI草稿加人工审核；同教材同节点实体试算；不包含用户模型.json",
+  "agent": {
+    "date": "2026-10-11",
+    "scope": "当前源码、真实 DeepSeek 联网调用；预先定义材料和截面，其余由真实对话组织。",
+    "model_case": "两跨空间框架 / G",
+    "turns": [
+      {
+        "prompt": "建立两跨一层的空间框架，X向跨长为6m和6m，Y向一个4m开间，层高3.6m，柱底固接。采用已预设的Q355材料、柱截面COL-H350x350x12x19、梁截面BEAM-H350x175x7x11。全部梁施加全局Z向−5kN/m均布荷载，工况G，不计自重，保持刚接。只建模暂不求解，并简要说明是否缺失条件。",
+        "reply": "模型已建好并通过校验，**未求解**（按要求）。\n\n**模型概况**\n- 节点 12 个；杆件 13 根 = 6 根柱（两跨×两榀）+ 7 根梁（X 向框架梁 + Y 向连系梁）\n- X 向 6 m + 6 m，Y 向 1 个 4 m 开间，层高 3.6 m\n- 柱底 6 个支座全部固接（ENCASTRE，6 自由度全约束）\n- 梁柱节点保持刚接，未做任何端部释放\n- 材料 Q355，柱 COL-H350x350x12x19，梁 BEAM-H350x175x7x11（沿用预设定值）\n\n**荷载工况**\n- 工况 `G`：全部 7 根梁施加全局 Z 向均布线荷载。5 kN/m = 5000 N/m，重力方向为全局 −Z，故写作 `[0, 0, −5000]`。\n- 杆件用集合名「全部梁」（编号 7–13）统一加载，日后改截面/改荷载直接引用这个名字即可。\n- 未加重力（自重），符合\"不计自重\"。\n\n**校验结果**：validate_model 通过，无错误、无警告。\n\n**是否缺条件**\n就\"只建模、暂不求解\"这个目标而言，**不缺失**：几何、材料、截面、支座、荷载都齐了。\n\n需要留意的几点：\n1. 上面那 5 kN/m 是**特征值**，没有分项系数，也还没做荷载组合。要出设计结果还需定义恒/活/风等工况并组合。\n2. 若后续要算位移/内力，只需补一句\"求解\"即可；线性静力所需条件已全。\n3. 「全部梁」我按字面理解包含了 Y 向连系梁。如果你只想给两榀 X 向框架梁加载（连系梁不加载），说一声我改。\n4. 若要做抗震或自重参与的组合，需要材料密度与地震参数——现在都没给，到时再补。",
+        "rounds": 4,
+        "stopped_by_limit": false,
+        "metrics": {
+          "total_ms": 23486.717800002225,
+          "provider_ms": 23011.78219999565,
+          "tool_ms": 439.38469999920926,
+          "provider_calls": 4,
+          "prompt_chars": 19572,
+          "fast_path": false
+        },
+        "tool_calls": [
+          [
+            "generate_frame",
+            {
+              "spans": [
+                6,
+                6
+              ],
+              "bays": [
+                4
+              ],
+              "storeys": [
+                3.6
+              ],
+              "base": "fixed",
+              "material": "Q355",
+              "column_section": "COL-H350x350x12x19",
+              "beam_section": "BEAM-H350x175x7x11"
+            }
+          ],
+          [
+            "define_set",
+            {
+              "name": "全部梁",
+              "member_ids": [
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13
+              ],
+              "note": "框架全部 7 根梁（X 向框架梁 + Y 向连系梁），用于统一施加屋面均布线荷载"
+            }
+          ],
+          [
+            "set_load_cases",
+            {
+              "cases": [
+                {
+                  "name": "G",
+                  "member_loads": [
+                    {
+                      "member": 7,
+                      "w": [
+                        0,
+                        0,
+                        -5000
+                      ]
+                    },
+                    {
+                      "member": 8,
+                      "w": [
+                        0,
+                        0,
+                        -5000
+                      ]
+                    },
+                    {
+                      "member": 9,
+                      "w": [
+                        0,
+                        0,
+                        -5000
+                      ]
+                    },
+                    {
+                      "member": 10,
+                      "w": [
+                        0,
+                        0,
+                        -5000
+                      ]
+                    },
+                    {
+                      "member": 11,
+                      "w": [
+                        0,
+                        0,
+                        -5000
+                      ]
+                    },
+                    {
+                      "member": 12,
+                      "w": [
+                        0,
+                        0,
+                        -5000
+                      ]
+                    },
+                    {
+                      "member": 13,
+                      "w": [
+                        0,
+                        0,
+                        -5000
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          [
+            "validate_model",
+            {}
+          ]
+        ],
+        "elapsed_s": 24.127
+      },
+      {
+        "prompt": "求解G工况，用工具查询最大节点位移及其坐标、分量，不要把梁内最大挠度作为节点位移。",
+        "reply": "G 工况已求解，均衡与自检全部通过。\n\n**最大节点位移**\n\n| 项目 | 值 |\n|---|---|\n| 节点 | 8 号 |\n| 坐标 | (6.0, 0.0, 3.6) m —— 柱顶标高、X 向居中那一榀的柱顶节点 |\n| 合位移 | **0.04243 mm** |\n| ux | 0.000000 mm |\n| uy | 0.003042 mm |\n| uz | −0.042321 mm（向下） |\n\n**说明**\n- 这里的 0.04243 mm 是**节点位移**，按你的要求报的是节点量，不是梁内挠度。作为对比，求解器另外给出的杆件内最大挠度是 0.7696 mm（9 号梁，距 i 端 2.88 m 处）——**这个数不算节点位移**，跨中本来就未必有节点，此处正好没有，所以节点位移比杆内挠度小一个多量级。两者不是一回事，别混用。\n- 位移量级很小（0.04 mm），是因为荷载只有 5 kN/m 线荷载，且全部支座固接、无侧向力。\n- 支座约束 36 个自由度，6 个刚体运动方向全部被约束，刚度矩阵条件数 1.34e+02，数值稳定，无奇异。\n- silent_failures 自检 9 项全过，无 critical、无 warning。反力与外载荷合力平衡（残差 2.2e-16）。\n\n**一点提醒**：以上均为工况 G 单独的线弹性结果，荷载是特征值、未乘分项系数，也还没有工况组合。需要按规范出设计值或看包络，请再提供其余工况与组合要求。",
+        "rounds": 3,
+        "stopped_by_limit": false,
+        "metrics": {
+          "total_ms": 6374.294299999747,
+          "provider_ms": 6298.252299999149,
+          "tool_ms": 73.02509999863105,
+          "provider_calls": 3,
+          "prompt_chars": 27774,
+          "fast_path": false
+        },
+        "tool_calls": [
+          [
+            "solve_model",
+            {
+              "analysis": "linear"
+            }
+          ],
+          [
+            "query_results",
+            {
+              "what": "max_displacement",
+              "case": "G"
+            }
+          ]
+        ],
+        "elapsed_s": 6.743
+      },
+      {
+        "prompt": "将G工况荷载分别取原来的0.5、1、1.5、2倍，用参数扫描比较最大节点位移（mm）。扫描后保留当前模型及原G结果，不改写输入。",
+        "reply": "参数扫描完成，**模型未改动**，G 工况原始结果（0.04243 mm）仍保留在会话里。\n\n**G 工况荷载倍数 — 最大节点位移**\n\n| 荷载倍数 | 最大节点位移 (mm) | 相对 1.0 倍 |\n|---|---|---|\n| 0.5 | 0.021215 | 0.50 |\n| 1.0 | 0.042430 | 1.00 |\n| 1.5 | 0.063646 | 1.50 |\n| 2.0 | 0.084861 | 2.00 |\n\n**结论**\n- 位移与荷载倍数**严格成正比**（0.021215 : 0.042430 : 0.063646 : 0.084861 = 0.5 : 1 : 1.5 : 2，比值精确到给出的位数），比值 = 0.042430 mm/单位倍数。\n- 这符合预期：线弹性静力分析、几何线性（未开 P-Delta）、无材料非线性，也没有支座沉降或初应变一类非比例效应，所以叠加原理成立。\n- 各档均无 failed 项。\n- 注意：扫描里的指标是**节点位移**（max_displacement），与上一轮报的 0.04243 mm 同源；仍未使用梁内挠度。\n- 扫描只是试算，不写入模型。若要把某一档真正采用，需要单独改一次 G 工况的荷载强度。",
+        "rounds": 2,
+        "stopped_by_limit": false,
+        "metrics": {
+          "total_ms": 4951.26270000037,
+          "provider_ms": 4619.983900000079,
+          "tool_ms": 320.98770000084187,
+          "provider_calls": 2,
+          "prompt_chars": 23812,
+          "fast_path": false
+        },
+        "tool_calls": [
+          [
+            "sweep",
+            {
+              "what": "load_scale",
+              "target": "G",
+              "values": [
+                0.5,
+                1,
+                1.5,
+                2
+              ],
+              "metric": "max_displacement",
+              "case": "G"
+            }
+          ]
+        ],
+        "elapsed_s": 5.132
+      },
+      {
+        "prompt": "对当前G工况检查哪些杆件正应力比超限，并说明工具返回的验算范围。",
+        "reply": "**结论：全部 13 根杆件的正应力比均未超限，`failed_members` 为空，`inconclusive_members` 也为空。** 最不利的是 7、8、9 号梁，应力比 0.0737（约 7.4%），离限值还很远。\n\n**验算结果汇总（工况 G）**\n\n| 杆件 | 截面 | 长度 m | 控制 | 正应力比 | 位置 | 折算应力比 |\n|---|---|---|---|---|---|---|\n| 7、8、9 | BEAM-H350x175x7x11 | 6.0 | 受压 | **0.0737** | 极端纤维 | 0.0692（腹板边缘） |\n| 1、3、4、6 | COL-H350x350x12x19 | 3.6 | 受压 | 0.0423 | 极端纤维 | 0.0385 |\n| 2、5 | COL-H350x350x12x19 | 3.6 | 受压 | 0.0275 | 极端纤维 | 0.0250 |\n| 11、12、13 | BEAM-H350x175x7x11 | 4.0 | 受压 | 0.0245 | 极端纤维 | 0.0258（腹板边缘） |\n\n- 全结构最不利：7 号梁，正应力比 0.0737，控制工况 G，受压。\n- 所有杆件均为受压控制（梁因刚接框架受弯同时带小轴压，轴力 −5.05 ~ −24.4 kN 量级）。\n- 折算应力 √(σ²+3τ²)（GB 50017 §6.1.5）另算一条，最不利也在 7 号梁，比值 0.0692，未超。**注意 11–13 号梁的折算应力比（0.0258）反而略高于其正应力比（0.0245）**——剪切占比在短跨梁上更突出，两条结论都要看，不能只看正应力。\n\n**工具返回的验算范围（务必一并转达）**\n\n1. **正应力**按拉、压分别与各自许用值比。这里没有杆件进入 `inconclusive_members`——欧拉公式不适用的中小柔度段已由 GB 50017 的 φ 系数法覆盖。\n2. **折算应力**在极端纤维、中性轴、腹板边缘三处取最不利，用的是第四强度理论式。\n3. **仍不含扭转剪应力**（截面契约里没有扭转常数之外的壁厚分布），所以这**还不是完整的规范承载力验算**。工况 G 无扭矩来源，影响有限，但不能因此说\"已全面验算\"。\n4. **μ 警告**：本次 μ=0.5 是**由杆端释放推定**的，该推定**只对无侧移结构成立**。本框架是有侧移框架（刚接、无支撑），框架柱实际 μ>1，推定值偏小、Pcr 偏大，柱的欧拉判定偏不安全。要做柱的稳定校核，应显式给 mu_y/mu_z，或用特征值屈曲分析核对。\n5. **欧拉公式适用性**：梁的长细比 75.0（λp=75.7），柱仅 20.2，都属中小柔度段，**欧拉公式不适用**（算出的 σcr 已超屈服）。工具给出的各柱 Pcr 很大、N/Pcr 极小（0.0003~0.0023），那正是\"照着算会误判\"的情形，**不能用它判通过**；应以规范法为准——φ 分别为 0.9540（柱）、0.6065（6 m 梁）、0.7996（4 m 梁），N/(φA) 应力比 0.001~0.008，全部通过。\n6. 本次只针对**工况 G 单个工况**，荷载为特征值、未乘分项系数，也没有做荷载组合。要出设计结论需先定义组合再重算。",
+        "rounds": 2,
+        "stopped_by_limit": false,
+        "metrics": {
+          "total_ms": 7558.32079999891,
+          "provider_ms": 7516.541799999686,
+          "tool_ms": 22.07589999670745,
+          "provider_calls": 2,
+          "prompt_chars": 36206,
+          "fast_path": false
+        },
+        "tool_calls": [
+          [
+            "check_strength",
+            {
+              "cases": [
+                "G"
+              ]
+            }
+          ]
+        ],
+        "elapsed_s": 7.774
+      },
+      {
+        "prompt": "生成G工况的变形图，并将本次分析整理为Word和Markdown计算书，文件名Agent双跨框架_G。保持当前模型不变。",
+        "reply": "已生成，**当前模型未做任何改动**（仍为已求解状态，G 工况结果保留）。\n\n**输出文件**\n\n| 内容 | 路径 |\n|---|---|\n| 变形图（工况 G） | `results/deformed_G.png` |\n| Word 计算书 | `results/Agent双跨框架_G.docx` |\n| Markdown 计算书 | `results/Agent双跨框架_G.md` |\n\n**变形图要点**（数字来自工具返回值，非图上读数）\n- 显示放大系数 779.147（自动取，因位移极小）\n- 最大节点位移 0.04243 mm，节点 8 号\n- 图中标注的最大杆件中线位移 0.770072 mm，9 号梁距 i 端 2.88 m —— 这是**杆内挠度**，与节点位移不是一回事，报告里不要混用\n\n**计算书章节**：模型概况 / 求解与校验 / 位移 / 支座反力 / 内力极值与控制组合 / 自振特性 / 稳定 / 图（变形图、轴力图、弯矩图 Mz、剪力图 Vy）。\n\n**两点提醒**\n- 报告里的数与我前面查到的一致，可直接引用。\n- 报告基于**工况 G 单工况**，无荷载组合、无分项系数；稳定章节沿用上一次的提示——μ=0.5 为杆端释放推定值，仅对无侧移结构成立，本框架有侧移，柱的稳定判定需显式给 μ 或做特征值屈曲核对。",
+        "rounds": 2,
+        "stopped_by_limit": false,
+        "metrics": {
+          "total_ms": 8763.746500000707,
+          "provider_ms": 4425.306700002693,
+          "tool_ms": 4335.0484000038705,
+          "provider_calls": 2,
+          "prompt_chars": 44639,
+          "fast_path": false
+        },
+        "tool_calls": [
+          [
+            "plot_results",
+            {
+              "kind": "deformed",
+              "case": "G"
+            }
+          ],
+          [
+            "write_report",
+            {
+              "case": "G",
+              "filename": "Agent双跨框架_G",
+              "fmt": "both"
+            }
+          ]
+        ],
+        "elapsed_s": 9.013
+      }
+    ],
+    "manual_preset": {
+      "materials": [
+        {
+          "name": "Q355",
+          "E": 206000000000.0,
+          "nu": 0.3,
+          "density": 7850,
+          "yield_stress": 355000000.0,
+          "allow_tension": 305000000.0,
+          "allow_compression": 305000000.0
+        }
+      ],
+      "sections": [
+        {
+          "name": "COL-H350x350x12x19",
+          "A": 0.017044,
+          "Iy": 0.0001358157613333333,
+          "Iz": 0.00039506176133333296,
+          "J": 1.780145333333333e-06,
+          "cy": 0.175,
+          "cz": 0.175,
+          "Sz": 0.001246591,
+          "bz": 0.012,
+          "Sy": 0.0005818749999999999,
+          "by": 0.038,
+          "S_flange": 0.001100575,
+          "c_web": 0.156,
+          "circular": false
+        },
+        {
+          "name": "BEAM-H350x175x7x11",
+          "A": 0.0061459999999999996,
+          "Iy": 9.834896166666664e-06,
+          "Iz": 0.0001312346886666667,
+          "J": 1.9278466666666665e-07,
+          "cy": 0.175,
+          "cz": 0.0875,
+          "Sz": 0.0004204234999999999,
+          "bz": 0.007,
+          "Sy": 8.421874999999998e-05,
+          "by": 0.022,
+          "S_flange": 0.00032628749999999993,
+          "c_web": 0.16399999999999998,
+          "circular": false
+        }
+      ]
+    },
+    "tool_log": [
+      {
+        "tool": "generate_frame",
+        "arguments": {
+          "spans": [
+            6,
+            6
+          ],
+          "bays": [
+            4
+          ],
+          "storeys": [
+            3.6
+          ],
+          "base": "fixed",
+          "material": "Q355",
+          "column_section": "COL-H350x350x12x19",
+          "beam_section": "BEAM-H350x175x7x11"
+        },
+        "ok": true,
+        "payload": {
+          "summary": {
+            "nodes": 12,
+            "members": 13,
+            "supports": 6,
+            "load_cases": 0
+          },
+          "beam_member_ids": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "analysis_ready": true,
+          "warnings": [],
+          "note": "节点与杆件已按参数展开，不要再自行罗列坐标；要分工况加载就用 set_load_cases，并引用上面的梁编号"
+        }
+      },
+      {
+        "tool": "define_set",
+        "arguments": {
+          "name": "全部梁",
+          "member_ids": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "note": "框架全部 7 根梁（X 向框架梁 + Y 向连系梁），用于统一施加屋面均布线荷载"
+        },
+        "ok": true,
+        "payload": {
+          "name": "全部梁",
+          "members": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "note": "之后凡是要杆件编号的地方，都可以直接写这个名字。",
+          "replaced": false,
+          "sets": [
+            "全部梁"
+          ]
+        }
+      },
+      {
+        "tool": "set_load_cases",
+        "arguments": {
+          "cases": [
+            {
+              "name": "G",
+              "member_loads": [
+                {
+                  "member": 7,
+                  "w": [
+                    0,
+                    0,
+                    -5000
+                  ]
+                },
+                {
+                  "member": 8,
+                  "w": [
+                    0,
+                    0,
+                    -5000
+                  ]
+                },
+                {
+                  "member": 9,
+                  "w": [
+                    0,
+                    0,
+                    -5000
+                  ]
+                },
+                {
+                  "member": 10,
+                  "w": [
+                    0,
+                    0,
+                    -5000
+                  ]
+                },
+                {
+                  "member": 11,
+                  "w": [
+                    0,
+                    0,
+                    -5000
+                  ]
+                },
+                {
+                  "member": 12,
+                  "w": [
+                    0,
+                    0,
+                    -5000
+                  ]
+                },
+                {
+                  "member": 13,
+                  "w": [
+                    0,
+                    0,
+                    -5000
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "ok": true,
+        "payload": {
+          "cases": [
+            "G"
+          ],
+          "combos": []
+        }
+      },
+      {
+        "tool": "validate_model",
+        "arguments": {},
+        "ok": true,
+        "payload": {
+          "summary": {
+            "nodes": 12,
+            "members": 13,
+            "supports": 6,
+            "load_cases": 1
+          }
+        }
+      },
+      {
+        "tool": "solve_model",
+        "arguments": {
+          "analysis": "linear"
+        },
+        "ok": true,
+        "payload": {
+          "cases": {
+            "G": {
+              "max_displacement_mm": 0.04243,
+              "at_node": 8,
+              "equilibrium_ok": true,
+              "equilibrium_residual": 2.156e-16,
+              "max_deflection_mm": 0.769598,
+              "at_member": 9,
+              "at_x_m": 2.88
+            }
+          },
+          "analysis": {
+            "type": "linear_static"
+          },
+          "compilation": {
+            "physical_members": 13,
+            "analysis_elements": 13,
+            "generated_nodes": 0,
+            "diagnostics": []
+          },
+          "silent_failures": {
+            "summary": {
+              "overall": "pass",
+              "total_checks": 9,
+              "passed": 9,
+              "critical_issues": 0,
+              "warnings": 0,
+              "critical_details": [],
+              "warning_details": []
+            },
+            "findings": [
+              {
+                "id": "insufficient_supports",
+                "name": "支座约束不足",
+                "severity": "critical",
+                "status": "pass",
+                "message": "支座约束 36 个自由度，6 个刚体运动方向均有约束",
+                "detail": {
+                  "support_dofs": 36,
+                  "support_nodes": 6
+                },
+                "suggestion": ""
+              },
+              {
+                "id": "excessive_displacement",
+                "name": "位移过大",
+                "severity": "critical",
+                "status": "pass",
+                "message": "最大位移 0.0424 mm，结构尺寸 13151 mm，占比 0.000%（< 10%）",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "zero_reaction_with_load",
+                "name": "有载荷但反力为零",
+                "severity": "critical",
+                "status": "pass",
+                "message": "所有有载荷的工况都有非零支座反力",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "zero_internal_force",
+                "name": "有载荷但内力为零",
+                "severity": "critical",
+                "status": "pass",
+                "message": "所有有载荷的工况都有非零杆件内力",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "no_applied_load",
+                "name": "求解时没有任何荷载",
+                "severity": "critical",
+                "status": "pass",
+                "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+                "detail": {
+                  "loaded_cases": [
+                    "G"
+                  ]
+                },
+                "suggestion": ""
+              },
+              {
+                "id": "near_singular_stiffness",
+                "name": "刚度矩阵接近奇异",
+                "severity": "critical",
+                "status": "pass",
+                "message": "刚度矩阵条件数 1.34e+02（< 1e8），数值稳定",
+                "detail": {
+                  "condition_number": 133.64192640983177,
+                  "dof": 36
+                },
+                "suggestion": ""
+              },
+              {
+                "id": "reaction_load_balance",
+                "name": "反力与外载荷不平衡",
+                "severity": "critical",
+                "status": "pass",
+                "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "load_magnitude_anomaly",
+                "name": "载荷量级异常",
+                "severity": "warning",
+                "status": "pass",
+                "message": "所有工况载荷量级与材料弹性模量匹配",
+                "detail": {},
+                "suggestion": ""
+              },
+              {
+                "id": "section_orientation",
+                "name": "截面主轴方向风险",
+                "severity": "warning",
+                "status": "pass",
+                "message": "所有截面 Iz >= Iy，主轴方向正常",
+                "detail": {},
+                "suggestion": ""
+              }
+            ]
+          },
+          "capsule": "C:\\Users\\86318\\Desktop\\agent开发\\results\\ppt_revision_v8\\capsules\\20261011_213319_d5006d8b.json",
+          "result_identity": {
+            "solve_id": "e56b0635485e4283bb1fbb71b4958546",
+            "model_fingerprint": "56db1897bc4be1dd56216e11a6763c48",
+            "solved_at": "2026-10-11T13:33:19.709976+00:00",
+            "parameters": {
+              "analysis": "linear",
+              "increments": 10,
+              "max_iter": 40,
+              "tolerance": 1e-07,
+              "amplitudes": null
+            },
+            "analysis": {
+              "type": "linear_static"
+            }
+          }
+        }
+      },
+      {
+        "tool": "query_results",
+        "arguments": {
+          "what": "max_displacement",
+          "case": "G"
+        },
+        "ok": true,
+        "payload": {
+          "case": "G",
+          "node": 8,
+          "coordinates_xyz": [
+            6.0,
+            0.0,
+            3.6
+          ],
+          "coordinate_unit": "m",
+          "magnitude_mm": 0.04243,
+          "components_mm": {
+            "ux": 0.0,
+            "uy": 0.003042,
+            "uz": -0.042321
+          },
+          "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+          "node_kind": "physical_node"
+        }
+      },
+      {
+        "tool": "sweep",
+        "arguments": {
+          "what": "load_scale",
+          "target": "G",
+          "values": [
+            0.5,
+            1,
+            1.5,
+            2
+          ],
+          "metric": "max_displacement",
+          "case": "G"
+        },
+        "ok": true,
+        "payload": {
+          "what": "load_scale",
+          "target": "G",
+          "prop": null,
+          "metric": "max_displacement",
+          "unit": "mm",
+          "rows": [
+            {
+              "value": 0.5,
+              "metric": 0.021215,
+              "failed": null
+            },
+            {
+              "value": 1.0,
+              "metric": 0.04243,
+              "failed": null
+            },
+            {
+              "value": 1.5,
+              "metric": 0.063646,
+              "failed": null
+            },
+            {
+              "value": 2.0,
+              "metric": 0.084861,
+              "failed": null
+            }
+          ],
+          "note": "扫描没有改动当前模型；要真正采用某个取值，再单独调一次相应的工具把它写进模型。"
+        }
+      },
+      {
+        "tool": "check_strength",
+        "arguments": {
+          "cases": [
+            "G"
+          ]
+        },
+        "ok": true,
+        "payload": {
+          "cases": [
+            "G"
+          ],
+          "count": 13,
+          "ok": true,
+          "failed_members": [],
+          "inconclusive_members": [],
+          "members": [
+            {
+              "member": 1,
+              "section": "COL-H350x350x12x19",
+              "length_m": 3.6,
+              "stress_ratio": 0.0423,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 3.6,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.954，应力比 0.005；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 12.904,
+              "combined_ratio": 0.0385,
+              "combined_point": "极端纤维",
+              "combined_at_x_m": 3.6,
+              "equivalent_stress_MPa": {
+                "σr1": 10.045,
+                "σr2": 10.045,
+                "σr3": 12.904,
+                "σr4": 12.904
+              },
+              "axial_kN": -24.362,
+              "P_cr_kN": 85226.004,
+              "buckling_ratio": 0.0003,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 20.2,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.954,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0049,
+              "code_stability_ok": true
+            },
+            {
+              "member": 2,
+              "section": "COL-H350x350x12x19",
+              "length_m": 3.6,
+              "stress_ratio": 0.0275,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 3.6,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.954，应力比 0.008；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 8.393,
+              "combined_ratio": 0.025,
+              "combined_point": "极端纤维",
+              "combined_at_x_m": 3.6,
+              "equivalent_stress_MPa": {
+                "σr1": 3.55,
+                "σr2": 3.55,
+                "σr3": 8.393,
+                "σr4": 8.393
+              },
+              "axial_kN": -41.276,
+              "P_cr_kN": 85226.004,
+              "buckling_ratio": 0.0005,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 20.2,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.954,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0083,
+              "code_stability_ok": true
+            },
+            {
+              "member": 3,
+              "section": "COL-H350x350x12x19",
+              "length_m": 3.6,
+              "stress_ratio": 0.0423,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 3.6,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.954，应力比 0.005；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 12.904,
+              "combined_ratio": 0.0385,
+              "combined_point": "极端纤维",
+              "combined_at_x_m": 3.6,
+              "equivalent_stress_MPa": {
+                "σr1": 10.045,
+                "σr2": 10.045,
+                "σr3": 12.904,
+                "σr4": 12.904
+              },
+              "axial_kN": -24.362,
+              "P_cr_kN": 85226.004,
+              "buckling_ratio": 0.0003,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 20.2,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.954,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0049,
+              "code_stability_ok": true
+            },
+            {
+              "member": 4,
+              "section": "COL-H350x350x12x19",
+              "length_m": 3.6,
+              "stress_ratio": 0.0423,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 3.6,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.954，应力比 0.005；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 12.904,
+              "combined_ratio": 0.0385,
+              "combined_point": "极端纤维",
+              "combined_at_x_m": 3.6,
+              "equivalent_stress_MPa": {
+                "σr1": 10.045,
+                "σr2": 10.045,
+                "σr3": 12.904,
+                "σr4": 12.904
+              },
+              "axial_kN": -24.362,
+              "P_cr_kN": 85226.004,
+              "buckling_ratio": 0.0003,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 20.2,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.954,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0049,
+              "code_stability_ok": true
+            },
+            {
+              "member": 5,
+              "section": "COL-H350x350x12x19",
+              "length_m": 3.6,
+              "stress_ratio": 0.0275,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 3.6,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.954，应力比 0.008；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 8.393,
+              "combined_ratio": 0.025,
+              "combined_point": "极端纤维",
+              "combined_at_x_m": 3.6,
+              "equivalent_stress_MPa": {
+                "σr1": 3.55,
+                "σr2": 3.55,
+                "σr3": 8.393,
+                "σr4": 8.393
+              },
+              "axial_kN": -41.276,
+              "P_cr_kN": 85226.004,
+              "buckling_ratio": 0.0005,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 20.2,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.954,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0083,
+              "code_stability_ok": true
+            },
+            {
+              "member": 6,
+              "section": "COL-H350x350x12x19",
+              "length_m": 3.6,
+              "stress_ratio": 0.0423,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 3.6,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.954，应力比 0.005；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 12.904,
+              "combined_ratio": 0.0385,
+              "combined_point": "极端纤维",
+              "combined_at_x_m": 3.6,
+              "equivalent_stress_MPa": {
+                "σr1": 10.045,
+                "σr2": 10.045,
+                "σr3": 12.904,
+                "σr4": 12.904
+              },
+              "axial_kN": -24.362,
+              "P_cr_kN": 85226.004,
+              "buckling_ratio": 0.0003,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 20.2,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.954,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0049,
+              "code_stability_ok": true
+            },
+            {
+              "member": 7,
+              "section": "BEAM-H350x175x7x11",
+              "length_m": 6.0,
+              "stress_ratio": 0.0737,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 6.0,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.607，应力比 0.004；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 23.216,
+              "combined_ratio": 0.0692,
+              "combined_point": "腹板边缘",
+              "combined_at_x_m": 6.0,
+              "equivalent_stress_MPa": {
+                "σr1": 20.957,
+                "σr2": 21.399,
+                "σr3": 23.871,
+                "σr4": 23.216
+              },
+              "axial_kN": -5.051,
+              "P_cr_kN": 2221.745,
+              "buckling_ratio": 0.0023,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 75.0,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.6065,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0044,
+              "code_stability_ok": true
+            },
+            {
+              "member": 8,
+              "section": "BEAM-H350x175x7x11",
+              "length_m": 6.0,
+              "stress_ratio": 0.0737,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 0.0,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.607，应力比 0.004；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 23.216,
+              "combined_ratio": 0.0692,
+              "combined_point": "腹板边缘",
+              "combined_at_x_m": 0.0,
+              "equivalent_stress_MPa": {
+                "σr1": 20.957,
+                "σr2": 21.399,
+                "σr3": 23.871,
+                "σr4": 23.216
+              },
+              "axial_kN": -5.051,
+              "P_cr_kN": 2221.745,
+              "buckling_ratio": 0.0023,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 75.0,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.6065,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0044,
+              "code_stability_ok": true
+            },
+            {
+              "member": 9,
+              "section": "BEAM-H350x175x7x11",
+              "length_m": 6.0,
+              "stress_ratio": 0.0737,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 6.0,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.607，应力比 0.004；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 23.216,
+              "combined_ratio": 0.0692,
+              "combined_point": "腹板边缘",
+              "combined_at_x_m": 6.0,
+              "equivalent_stress_MPa": {
+                "σr1": 20.957,
+                "σr2": 21.399,
+                "σr3": 23.871,
+                "σr4": 23.216
+              },
+              "axial_kN": -5.051,
+              "P_cr_kN": 2221.745,
+              "buckling_ratio": 0.0023,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 75.0,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.6065,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0044,
+              "code_stability_ok": true
+            },
+            {
+              "member": 10,
+              "section": "BEAM-H350x175x7x11",
+              "length_m": 6.0,
+              "stress_ratio": 0.0737,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 0.0,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.607，应力比 0.004；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 23.216,
+              "combined_ratio": 0.0692,
+              "combined_point": "腹板边缘",
+              "combined_at_x_m": 0.0,
+              "equivalent_stress_MPa": {
+                "σr1": 20.957,
+                "σr2": 21.399,
+                "σr3": 23.871,
+                "σr4": 23.216
+              },
+              "axial_kN": -5.051,
+              "P_cr_kN": 2221.745,
+              "buckling_ratio": 0.0023,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 75.0,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.6065,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0044,
+              "code_stability_ok": true
+            },
+            {
+              "member": 11,
+              "section": "BEAM-H350x175x7x11",
+              "length_m": 4.0,
+              "stress_ratio": 0.0245,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 2.0,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.800，应力比 0.001；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 8.667,
+              "combined_ratio": 0.0258,
+              "combined_point": "腹板边缘",
+              "combined_at_x_m": 4.0,
+              "equivalent_stress_MPa": {
+                "σr1": 7.224,
+                "σr2": 7.748,
+                "σr3": 9.366,
+                "σr4": 8.667
+              },
+              "axial_kN": -1.926,
+              "P_cr_kN": 4998.927,
+              "buckling_ratio": 0.0004,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 50.0,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.7996,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0013,
+              "code_stability_ok": true
+            },
+            {
+              "member": 12,
+              "section": "BEAM-H350x175x7x11",
+              "length_m": 4.0,
+              "stress_ratio": 0.0245,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 2.0,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.800，应力比 0.001；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 8.667,
+              "combined_ratio": 0.0258,
+              "combined_point": "腹板边缘",
+              "combined_at_x_m": 4.0,
+              "equivalent_stress_MPa": {
+                "σr1": 7.224,
+                "σr2": 7.748,
+                "σr3": 9.366,
+                "σr4": 8.667
+              },
+              "axial_kN": -1.926,
+              "P_cr_kN": 4998.927,
+              "buckling_ratio": 0.0004,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 50.0,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.7996,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0013,
+              "code_stability_ok": true
+            },
+            {
+              "member": 13,
+              "section": "BEAM-H350x175x7x11",
+              "length_m": 4.0,
+              "stress_ratio": 0.0245,
+              "governs": "受压",
+              "worst_case": "G",
+              "at_x_m": 2.0,
+              "verdict": "通过（稳定按 GB 50017 b 类，φ=0.800，应力比 0.001；欧拉公式在此柔度段不适用）",
+              "combined_stress_MPa": 8.667,
+              "combined_ratio": 0.0258,
+              "combined_point": "腹板边缘",
+              "combined_at_x_m": 4.0,
+              "equivalent_stress_MPa": {
+                "σr1": 7.224,
+                "σr2": 7.748,
+                "σr3": 9.366,
+                "σr4": 8.667
+              },
+              "axial_kN": -1.926,
+              "P_cr_kN": 4998.927,
+              "buckling_ratio": 0.0004,
+              "buckling_status": "欧拉公式不适用",
+              "slenderness": 50.0,
+              "mu": 0.5,
+              "mu_source": "由杆端释放推定",
+              "phi": 0.7996,
+              "buckling_curve": "b",
+              "code_stability_ratio": 0.0013,
+              "code_stability_ok": true
+            }
+          ],
+          "worst_strength": {
+            "member": 7,
+            "ratio": 0.0737,
+            "ok": true,
+            "case": "G",
+            "governs": "受压"
+          },
+          "worst_combined": {
+            "member": 7,
+            "ratio": 0.0692,
+            "ok": true,
+            "point": "腹板边缘",
+            "basis": "GB 50017 §6.1.5 折算应力 √(σ²+3τ²) ≤ β·f，β=1.1，f 取材料的 allow_tension。"
+          },
+          "worst_buckling": {
+            "member": 7,
+            "ratio": 0.0023,
+            "slenderness": 75.0
+          },
+          "notes": [],
+          "warnings": [
+            "μ 由杆端释放推定，只对**无侧移**结构成立。有侧移的框架柱 μ>1（悬臂柱 2.0），此时推定值偏小、Pcr 偏大、判定偏不安全。请在杆件上显式给 mu_y / mu_z，或用特征值屈曲分析核对。",
+            "欧拉公式在这根杆上不适用，但规范法给出了结论：φ=0.9540（b 类截面），N/(φA)=1.5 MPa，应力比 0.005 —— 以这一条为准。",
+            "部分杆件的长细比小于 λp=75.7，属于中小柔度杆，欧拉公式不适用（算出的 σcr 已超过屈服应力）。这类杆的稳定由强度或经验公式控制，**不能用这里的 Pcr 判**；照着算出来的 N/Pcr 往往很小，正是「照着算就会误判通过」的情形。",
+            "欧拉公式在这根杆上不适用，但规范法给出了结论：φ=0.9540（b 类截面），N/(φA)=2.5 MPa，应力比 0.008 —— 以这一条为准。",
+            "欧拉公式在这根杆上不适用，但规范法给出了结论：φ=0.6065（b 类截面），N/(φA)=1.4 MPa，应力比 0.004 —— 以这一条为准。",
+            "欧拉公式在这根杆上不适用，但规范法给出了结论：φ=0.7996（b 类截面），N/(φA)=0.4 MPa，应力比 0.001 —— 以这一条为准。"
+          ],
+          "reading": "failed_members 是**真的超限**。inconclusive_members 现在只在**连规范法也给不出结论**时才有内容（缺屈服应力）——欧拉公式不适用的中小柔度段已由 GB 50017 的 φ 系数法覆盖，不再弃权。",
+          "limitation": "正应力校核按拉压分别比许用值；折算应力 √(σ²+3τ²) 另算一条，在极端纤维、中性轴、腹板边缘三处取最不利。**仍不含扭转剪应力**（截面契约里没有扭转常数之外的壁厚分布），所以还不是完整的规范承载力验算。逐杆欧拉校核回答「这一根会不会先屈」，特征值屈曲分析回答「整体什么时候失稳」，两者不能互相替代。"
+        }
+      },
+      {
+        "tool": "plot_results",
+        "arguments": {
+          "kind": "deformed",
+          "case": "G"
+        },
+        "ok": true,
+        "payload": {
+          "path": "results\\deformed_G.png",
+          "case": "G",
+          "scale": 779.147,
+          "max_displacement_mm": 0.04243,
+          "at_node": 8,
+          "max_centerline_displacement_mm": 0.770072,
+          "at_member": 9,
+          "at_x_m": 2.88,
+          "note": "图已保存供用户查看；引用数字请用 query_results，不要从图上读数"
+        }
+      },
+      {
+        "tool": "write_report",
+        "arguments": {
+          "case": "G",
+          "filename": "Agent双跨框架_G",
+          "fmt": "both"
+        },
+        "ok": true,
+        "payload": {
+          "files": {
+            "markdown": "results\\Agent双跨框架_G.md",
+            "docx": "results\\Agent双跨框架_G.docx"
+          },
+          "case": "G",
+          "sections": [
+            "模型概况",
+            "求解与校验",
+            "位移",
+            "支座反力",
+            "内力极值与控制组合",
+            "自振特性",
+            "稳定",
+            "图"
+          ],
+          "figures": [
+            "变形图",
+            "轴力图",
+            "弯矩图 Mz",
+            "剪力图 Vy"
+          ],
+          "note": "报告已写到 results/ 目录。里面的数与你查到的完全一致，回答里可以直接引用，不必重述整张表。"
+        }
+      }
+    ],
+    "node_displacement": {
+      "case": "G",
+      "node": 8,
+      "coordinates_xyz": [
+        6.0,
+        0.0,
+        3.6
+      ],
+      "coordinate_unit": "m",
+      "magnitude_mm": 0.04243,
+      "components_mm": {
+        "ux": 0.0,
+        "uy": 0.003042,
+        "uz": -0.042321
+      },
+      "note": "位置用上面的坐标描述，方向用 components_mm 判断，两者都不要靠节点编号推测",
+      "node_kind": "physical_node"
+    },
+    "sweep_restored_original": true,
+    "final_model_sha256": "98c7b8a7f1829e5b3eead5d965b0dbd60d8ebcf7331903eae71334d65584f741"
+  },
+  "actual_model_requests": 13,
+  "actual_agent_tool_calls": 10,
+  "recognition_and_manual_review": {
+    "source": {
+      "format": "space-frame-real-world-case/v1",
+      "image_id": "point_load",
+      "source": "https://commons.wikimedia.org/wiki/File:Simply_supported_beam_with_central_point_load.jpg",
+      "license": "Public domain",
+      "author": "Tkn20",
+      "consent_to_evaluate": true,
+      "subset_labels": [
+        "clear",
+        "missing_dimension"
+      ],
+      "work_plane": {
+        "status": "confirmed",
+        "plane": "XZ",
+        "offset": 0.0,
+        "axis_mapping": {
+          "first_axis": "X",
+          "second_axis": "Z",
+          "offset_axis": "Y",
+          "image_right_sign": 1,
+          "image_up_sign": 1
+        }
+      },
+      "preprocessing": {},
+      "notes": "用户选择许可明确的公开工程图评测。仅标注上方梁轴，在集中荷载作用点分段；排除下方剪力、弯矩图；三角支座按契约铰接，原图未明确区分滑动。"
+    },
+    "note": "真实历史AI草稿在当前原生界面人工审核；人工假设L6m、F10kN，不算自动识别结果；仅几何草稿导入，工程属性另补",
+    "events": [
+      {
+        "t": 3.507,
+        "action": "人工修正中点"
+      },
+      {
+        "t": 7.534,
+        "action": "明确人工尺度及支座假设"
+      },
+      {
+        "t": 12.525,
+        "action": "填写真实荷载编辑器"
+      },
+      {
+        "t": 18.689,
+        "action": "人工确认并真实原子导入"
+      }
+    ],
+    "actual_draft": {
+      "image_model": {
+        "nodes": [
+          {
+            "id": 1,
+            "u": 0.10300925925925926,
+            "v": 0.2631578947368421
+          },
+          {
+            "id": 2,
+            "u": 0.4918981481481482,
+            "v": 0.2631578947368421
+          },
+          {
+            "id": 3,
+            "u": 0.8807870370370371,
+            "v": 0.2631578947368421
+          }
+        ],
+        "members": [
+          {
+            "id": 1,
+            "i": 1,
+            "j": 2
+          },
+          {
+            "id": 2,
+            "i": 2,
+            "j": 3
+          }
+        ],
+        "supports": [
+          {
+            "node": 1,
+            "fix": [
+              1,
+              1,
+              1,
+              0,
+              0,
+              0
+            ],
+            "name": "S1"
+          },
+          {
+            "node": 3,
+            "fix": [
+              1,
+              1,
+              1,
+              0,
+              0,
+              0
+            ],
+            "name": "S2"
+          }
+        ],
+        "load_cases": [
+          {
+            "name": "F",
+            "nodal_loads": [
+              {
+                "name": "F",
+                "node": 2,
+                "load": [
+                  0.0,
+                  0.0,
+                  -10000.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            ],
+            "member_loads": [],
+            "member_spans": []
+          }
+        ]
+      },
+      "entities": [
+        {
+          "id": "E1",
+          "kind": "node",
+          "target": {
+            "node": 1
+          },
+          "confidence": null,
+          "source": "user",
+          "verified": true,
+          "recognition_confidence": null,
+          "image_geometry": {
+            "point": [
+              0.10300925925925926,
+              0.2631578947368421
+            ]
+          },
+          "original_observation": {
+            "image_geometry": {
+              "point": [
+                0.0857,
+                0.2857
+              ]
+            },
+            "confidence": 0.9
+          },
+          "position_refinement": {
+            "method": "filled-horizontal-pixel-band/v2",
+            "band_px": [
+              40.0,
+              100,
+              386.0,
+              110
+            ],
+            "original_nodes": [
+              {
+                "id": 1,
+                "u": 0.0857,
+                "v": 0.2857
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2857
+              },
+              {
+                "id": 3,
+                "u": 0.9143,
+                "v": 0.2857
+              }
+            ]
+          }
+        },
+        {
+          "id": "E2",
+          "kind": "node",
+          "target": {
+            "node": 2
+          },
+          "confidence": null,
+          "source": "user",
+          "verified": true,
+          "recognition_confidence": null,
+          "image_geometry": {
+            "point": [
+              0.4918981481481482,
+              0.2631578947368421
+            ]
+          },
+          "original_observation": {
+            "image_geometry": {
+              "point": [
+                0.5,
+                0.2857
+              ]
+            },
+            "confidence": 0.9
+          },
+          "position_refinement": {
+            "method": "filled-horizontal-pixel-band/v2",
+            "band_px": [
+              40.0,
+              100,
+              386.0,
+              110
+            ],
+            "original_nodes": [
+              {
+                "id": 1,
+                "u": 0.0857,
+                "v": 0.2857
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2857
+              },
+              {
+                "id": 3,
+                "u": 0.9143,
+                "v": 0.2857
+              }
+            ]
+          }
+        },
+        {
+          "id": "E3",
+          "kind": "node",
+          "target": {
+            "node": 3
+          },
+          "confidence": null,
+          "source": "user",
+          "verified": true,
+          "recognition_confidence": null,
+          "image_geometry": {
+            "point": [
+              0.8807870370370371,
+              0.2631578947368421
+            ]
+          },
+          "original_observation": {
+            "image_geometry": {
+              "point": [
+                0.9143,
+                0.2857
+              ]
+            },
+            "confidence": 0.9
+          },
+          "position_refinement": {
+            "method": "filled-horizontal-pixel-band/v2",
+            "band_px": [
+              40.0,
+              100,
+              386.0,
+              110
+            ],
+            "original_nodes": [
+              {
+                "id": 1,
+                "u": 0.0857,
+                "v": 0.2857
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2857
+              },
+              {
+                "id": 3,
+                "u": 0.9143,
+                "v": 0.2857
+              }
+            ]
+          }
+        },
+        {
+          "id": "E4",
+          "kind": "member",
+          "target": {
+            "member": 1
+          },
+          "confidence": null,
+          "source": "derived",
+          "verified": false,
+          "recognition_confidence": null,
+          "image_geometry": {
+            "line": [
+              [
+                0.10300925925925926,
+                0.2631578947368421
+              ],
+              [
+                0.4918981481481482,
+                0.2631578947368421
+              ]
+            ]
+          },
+          "original_observation": {
+            "image_geometry": {
+              "line": [
+                [
+                  0.0857,
+                  0.2857
+                ],
+                [
+                  0.5,
+                  0.2857
+                ]
+              ]
+            },
+            "confidence": 0.9
+          },
+          "position_refinement": {
+            "method": "filled-horizontal-pixel-band/v2",
+            "band_px": [
+              40.0,
+              100,
+              386.0,
+              110
+            ],
+            "original_nodes": [
+              {
+                "id": 1,
+                "u": 0.0857,
+                "v": 0.2857
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2857
+              },
+              {
+                "id": 3,
+                "u": 0.9143,
+                "v": 0.2857
+              }
+            ]
+          }
+        },
+        {
+          "id": "E5",
+          "kind": "member",
+          "target": {
+            "member": 2
+          },
+          "confidence": null,
+          "source": "derived",
+          "verified": false,
+          "recognition_confidence": null,
+          "image_geometry": {
+            "line": [
+              [
+                0.4918981481481482,
+                0.2631578947368421
+              ],
+              [
+                0.8807870370370371,
+                0.2631578947368421
+              ]
+            ]
+          },
+          "original_observation": {
+            "image_geometry": {
+              "line": [
+                [
+                  0.5,
+                  0.2857
+                ],
+                [
+                  0.9143,
+                  0.2857
+                ]
+              ]
+            },
+            "confidence": 0.9
+          },
+          "position_refinement": {
+            "method": "filled-horizontal-pixel-band/v2",
+            "band_px": [
+              40.0,
+              100,
+              386.0,
+              110
+            ],
+            "original_nodes": [
+              {
+                "id": 1,
+                "u": 0.0857,
+                "v": 0.2857
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2857
+              },
+              {
+                "id": 3,
+                "u": 0.9143,
+                "v": 0.2857
+              }
+            ]
+          }
+        },
+        {
+          "id": "E6",
+          "kind": "support",
+          "target": {
+            "support": {
+              "node": 1,
+              "name": "S1"
+            }
+          },
+          "confidence": null,
+          "image_geometry": {
+            "point": [
+              0.10300925925925926,
+              0.2631578947368421
+            ]
+          },
+          "source": "derived",
+          "verified": false,
+          "recognition_confidence": null,
+          "original_observation": {
+            "image_geometry": {
+              "line": [
+                [
+                  0.06,
+                  0.3
+                ],
+                [
+                  0.11,
+                  0.3
+                ]
+              ]
+            },
+            "confidence": 0.8
+          },
+          "position_refinement": {
+            "method": "filled-horizontal-pixel-band/v2",
+            "band_px": [
+              40.0,
+              100,
+              386.0,
+              110
+            ],
+            "original_nodes": [
+              {
+                "id": 1,
+                "u": 0.0857,
+                "v": 0.2857
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2857
+              },
+              {
+                "id": 3,
+                "u": 0.9143,
+                "v": 0.2857
+              }
+            ]
+          }
+        },
+        {
+          "id": "E7",
+          "kind": "support",
+          "target": {
+            "support": {
+              "node": 3,
+              "name": "S2"
+            }
+          },
+          "confidence": null,
+          "image_geometry": {
+            "point": [
+              0.8807870370370371,
+              0.2631578947368421
+            ]
+          },
+          "source": "derived",
+          "verified": false,
+          "recognition_confidence": null,
+          "original_observation": {
+            "image_geometry": {
+              "line": [
+                [
+                  0.89,
+                  0.3
+                ],
+                [
+                  0.94,
+                  0.3
+                ]
+              ]
+            },
+            "confidence": 0.8
+          },
+          "position_refinement": {
+            "method": "filled-horizontal-pixel-band/v2",
+            "band_px": [
+              40.0,
+              100,
+              386.0,
+              110
+            ],
+            "original_nodes": [
+              {
+                "id": 1,
+                "u": 0.0857,
+                "v": 0.2857
+              },
+              {
+                "id": 2,
+                "u": 0.5,
+                "v": 0.2857
+              },
+              {
+                "id": 3,
+                "u": 0.9143,
+                "v": 0.2857
+              }
+            ]
+          }
+        },
+        {
+          "kind": "load",
+          "id": "load-F-F",
+          "source": "user",
+          "confidence": null,
+          "recognition_confidence": null,
+          "verified": true,
+          "units": [
+            "N",
+            "N",
+            "N",
+            "N*m",
+            "N*m",
+            "N*m"
+          ],
+          "image_geometry": {
+            "point": [
+              0.4918981481481482,
+              0.2631578947368421
+            ]
+          },
+          "target": {
+            "load": {
+              "case": "F",
+              "collection": "nodal_loads",
+              "name": "F"
+            }
+          },
+          "payload": {
+            "name": "F",
+            "node": 2,
+            "load": [
+              0.0,
+              0.0,
+              -10000.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "original_observation": {
+            "loads": [
+              {
+                "node": 2,
+                "name": "F"
+              }
+            ],
+            "entities": [
+              {
+                "id": "E8",
+                "kind": "load",
+                "target": {
+                  "load": {
+                    "case": "F",
+                    "collection": "nodal_loads",
+                    "name": "F"
+                  }
+                },
+                "confidence": 0.7,
+                "image_geometry": {
+                  "line": [
+                    [
+                      0.5,
+                      0.05
+                    ],
+                    [
+                      0.5,
+                      0.28
+                    ]
+                  ]
+                },
+                "source": "vision",
+                "verified": false,
+                "recognition_confidence": 0.7
+              }
+            ]
+          }
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "D1",
+          "text": "6 m（演示人工设定）",
+          "unit": "m",
+          "image_geometry": {
+            "line": [
+              [
+                0.0857,
+                0.95
+              ],
+              [
+                0.9143,
+                0.95
+              ]
+            ]
+          },
+          "original_observation": {
+            "id": "D1",
+            "text": "L",
+            "unit": "mm",
+            "image_geometry": {
+              "line": [
+                [
+                  0.0857,
+                  0.95
+                ],
+                [
+                  0.9143,
+                  0.95
+                ]
+              ]
+            }
+          },
+          "kind": "node_distance",
+          "target": {
+            "nodes": [
+              1,
+              3
+            ]
+          },
+          "value": 6.0,
+          "status": "confirmed",
+          "source": "user",
+          "verified": true,
+          "confidence": null
+        }
+      ],
+      "issues": [
+        {
+          "id": "I1",
+          "category": "load_incomplete",
+          "severity": "blocking",
+          "entity_refs": [
+            "node:2"
+          ],
+          "message": "集中力 F 只有符号没有数值和单位，无法用于求解",
+          "status": "resolved",
+          "resolution": "已明确绑定节点2/F工况/F荷载，人工填写全局Fz=-10000N，其余五分量为0",
+          "resolved_by": "user"
+        },
+        {
+          "id": "I2",
+          "category": "dimension_incomplete",
+          "severity": "blocking",
+          "entity_refs": [
+            "dimension:D1"
+          ],
+          "message": "跨度只标注 L，没有具体数值，需要用户标定",
+          "status": "resolved",
+          "resolution": "原图L无值，演示人工设定总跨度6m，来源为用户假设",
+          "resolved_by": "user"
+        },
+        {
+          "id": "I3",
+          "category": "low_confidence",
+          "severity": "warning",
+          "entity_refs": [
+            "support:1",
+            "support:3"
+          ],
+          "message": "支座三角形符号较小，需确认是铰接还是滚动支座",
+          "status": "resolved",
+          "resolution": "用户已核对该对象的全部低置信度说明",
+          "resolved_by": "user",
+          "reviewed_together": [
+            "I3"
+          ]
+        },
+        {
+          "id": "I4",
+          "category": "load_incomplete",
+          "severity": "blocking",
+          "entity_refs": [
+            "node:2"
+          ],
+          "message": "节点 2 上这条荷载没能换算：值 None、单位 'kN'、方向 [0, 0, -1]。认得的单位是 N、kN、N/m、kN/m、N·m、kN·m。请确认图上写的是什么，或直接给出分量向量。",
+          "status": "resolved",
+          "resolution": "用户已填写节点荷载分量",
+          "resolved_by": "user",
+          "load_target": {
+            "case": "F",
+            "collection": "nodal_loads",
+            "name": "F"
+          },
+          "observations": [
+            {
+              "node": 2,
+              "name": "F",
+              "value": null,
+              "unit": "kN",
+              "direction": [
+                0,
+                0,
+                -1
+              ]
+            }
+          ]
+        },
+        {
+          "id": "pixel-axis-review",
+          "category": "low_confidence",
+          "severity": "blocking",
+          "status": "resolved",
+          "entity_refs": [
+            "node:1",
+            "node:2",
+            "node:3"
+          ],
+          "message": "已根据连续像素带提出水平梁轴候选位置，原始识别坐标已保留。请核对梁轴端点、支座附着点及中间节点，确认后再提交。",
+          "resolution": "用户已核对该对象的全部低置信度说明",
+          "resolved_by": "user",
+          "reviewed_together": [
+            "pixel-axis-review"
+          ]
+        },
+        {
+          "id": "scale_unknown",
+          "category": "scale_unknown",
+          "severity": "blocking",
+          "entity_refs": [],
+          "message": "缺少可用的线性尺寸证据",
+          "status": "resolved",
+          "resolution": "尺度状态已重新计算",
+          "resolved_by": "system"
+        }
+      ],
+      "format": "space-frame-recognition-draft/v2",
+      "model": {
+        "schema_version": 1,
+        "units": "N-m-Pa",
+        "materials": [],
+        "sections": [],
+        "nodes": [
+          {
+            "id": 1,
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          {
+            "id": 2,
+            "x": 3.0000000000000004,
+            "y": 0.0,
+            "z": 0.0
+          },
+          {
+            "id": 3,
+            "x": 6.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        ],
+        "members": [
+          {
+            "id": 1,
+            "i": 1,
+            "j": 2
+          },
+          {
+            "id": 2,
+            "i": 2,
+            "j": 3
+          }
+        ],
+        "supports": [
+          {
+            "node": 1,
+            "fix": [
+              1,
+              1,
+              1,
+              0,
+              0,
+              0
+            ],
+            "name": "S1"
+          },
+          {
+            "node": 3,
+            "fix": [
+              1,
+              1,
+              1,
+              0,
+              0,
+              0
+            ],
+            "name": "S2"
+          }
+        ],
+        "nodal_loads": [],
+        "member_loads": [],
+        "member_spans": [],
+        "settlements": [],
+        "load_cases": [
+          {
+            "name": "F",
+            "nodal_loads": [
+              {
+                "name": "F",
+                "node": 2,
+                "load": [
+                  0.0,
+                  0.0,
+                  -10000.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            ],
+            "member_loads": [],
+            "member_spans": []
+          }
+        ]
+      },
+      "merge_plan": {
+        "mode": "replace_empty",
+        "baseline_model_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "translation_ab_m": [
+          0.0,
+          0.0
+        ],
+        "node_actions": [
+          {
+            "draft_id": 1,
+            "action": "create",
+            "target_id": 1
+          },
+          {
+            "draft_id": 2,
+            "action": "create",
+            "target_id": 2
+          },
+          {
+            "draft_id": 3,
+            "action": "create",
+            "target_id": 3
+          }
+        ],
+        "topology_actions": [],
+        "member_id_map": {
+          "1": 1,
+          "2": 2
+        },
+        "support_name_map": {
+          "1:S1": "S1",
+          "3:S2": "S2"
+        },
+        "load_name_map": {
+          "F:nodal_loads:F": "F"
+        }
+      },
+      "revision": 6,
+      "confirmation": {
+        "revision": 6,
+        "draft_hash": "101c9a558c322b7d8d406def4ca60aacbf6ab27a95204b7c7481c1dfcb2eb261",
+        "baseline_model_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "preview_id": "mm_8f4b8eac93c5713a",
+        "diff_hash": "512fc65404342b5efc49608b8bc56858c325f975ee50339ba7cf76abb91bbb23",
+        "confirmed_at": "2026-10-11T13:24:09.275983+00:00"
+      },
+      "source": {
+        "original_path": "C:\\Users\\86318\\Desktop\\agent开发\\results\\defense_acceptance\\ai\\point_load.jpg",
+        "image_hash": "bd38e1191370920e5eb60e2d51648af7b9b2fbca3a12e00db5d1a80c88ba6995",
+        "preprocessing": {
+          "perspective_status": "accepted"
+        },
+        "width_px": 433,
+        "height_px": 400
+      },
+      "work_plane": {
+        "status": "confirmed",
+        "plane": "XZ",
+        "offset": 0.0,
+        "axis_mapping": {
+          "first_axis": "X",
+          "second_axis": "Z",
+          "offset_axis": "Y",
+          "image_right_sign": 1,
+          "image_up_sign": 1
+        }
+      },
+      "scale": {
+        "status": "confirmed",
+        "length_per_pixel": 0.017857142857142856,
+        "unit": "m/px",
+        "anchor_node": 1,
+        "anchor_coordinates_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "evidence_ids": [
+          "dimension:D1"
+        ]
+      },
+      "intersections": [
+        {
+          "id": "I-1-2",
+          "members": [
+            1,
+            2
+          ],
+          "point": [
+            0.4918981481481482,
+            0.2631578947368421
+          ],
+          "decision": "connect",
+          "node_id": 2,
+          "member_s": {
+            "1": 1.0,
+            "2": 0.0
+          }
+        }
+      ],
+      "edit_history": [
+        {
+          "action": "set_nodal_load",
+          "target": {
+            "case": "F",
+            "collection": "nodal_loads",
+            "name": "F"
+          },
+          "previous": {
+            "loads": [
+              {
+                "node": 2,
+                "name": "F"
+              }
+            ],
+            "entities": [
+              {
+                "id": "E8",
+                "kind": "load",
+                "target": {
+                  "load": {
+                    "case": "F",
+                    "collection": "nodal_loads",
+                    "name": "F"
+                  }
+                },
+                "confidence": 0.7,
+                "image_geometry": {
+                  "line": [
+                    [
+                      0.5,
+                      0.05
+                    ],
+                    [
+                      0.5,
+                      0.28
+                    ]
+                  ]
+                },
+                "source": "vision",
+                "verified": false,
+                "recognition_confidence": 0.7
+              }
+            ]
+          },
+          "replacement": {
+            "name": "F",
+            "node": 2,
+            "load": [
+              0.0,
+              0.0,
+              -10000.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      ]
+    },
+    "imported_model": {
+      "units": "N-m-Pa",
+      "materials": [],
+      "sections": [],
+      "nodal_loads": [],
+      "member_loads": [],
+      "member_spans": [],
+      "settlements": [],
+      "load_cases": [
+        {
+          "name": "F",
+          "nodal_loads": [
+            {
+              "name": "F",
+              "node": 2,
+              "load": [
+                0.0,
+                0.0,
+                -10000.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "member_loads": [],
+          "member_spans": []
+        }
+      ],
+      "nodes": [
+        {
+          "id": 1,
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        {
+          "id": 2,
+          "x": 3.0000000000000004,
+          "y": 0.0,
+          "z": 0.0
+        },
+        {
+          "id": 3,
+          "x": 6.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      ],
+      "members": [
+        {
+          "id": 1,
+          "i": 1,
+          "j": 2
+        },
+        {
+          "id": 2,
+          "i": 2,
+          "j": 3
+        }
+      ],
+      "supports": [
+        {
+          "node": 1,
+          "fix": [
+            1,
+            1,
+            1,
+            0,
+            0,
+            0
+          ],
+          "name": "S1"
+        },
+        {
+          "node": 3,
+          "fix": [
+            1,
+            1,
+            1,
+            0,
+            0,
+            0
+          ],
+          "name": "S2"
+        }
+      ]
+    }
+  },
+  "textbook_original_model_sha256": "e24653bc7082ac168cadba27c4c939e0abf1c44c04fd23daf1e066bce06ac569",
+  "textbook_current_calls": [
+    {
+      "tool": "set_model",
+      "args": {
+        "model": {
+          "units": "N-m-Pa",
+          "nodes": [
+            {
+              "id": 1,
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            {
+              "id": 2,
+              "x": 3.0,
+              "y": 9.0,
+              "z": 0.0
+            },
+            {
+              "id": 3,
+              "x": 0.0,
+              "y": 0.0,
+              "z": 3.0
+            },
+            {
+              "id": 4,
+              "x": 0.0,
+              "y": 6.0,
+              "z": 3.0
+            }
+          ],
+          "members": [
+            {
+              "id": 1,
+              "i": 3,
+              "j": 4,
+              "section": "实心圆D100",
+              "material": "题设材料E210GPa"
+            },
+            {
+              "id": 2,
+              "i": 1,
+              "j": 3,
+              "section": "实心圆D100",
+              "material": "题设材料E210GPa"
+            },
+            {
+              "id": 3,
+              "i": 4,
+              "j": 2,
+              "section": "实心圆D100",
+              "material": "题设材料E210GPa"
+            }
+          ],
+          "materials": [
+            {
+              "name": "题设材料E210GPa",
+              "E": 210000000000.0,
+              "nu": 0.3
+            }
+          ],
+          "sections": [
+            {
+              "name": "实心圆D100",
+              "A": 0.007853981633974483,
+              "Iy": 4.9087385212340526e-06,
+              "Iz": 4.9087385212340526e-06,
+              "J": 9.817477042468105e-06,
+              "cy": 0.05,
+              "cz": 0.05,
+              "Sz": 8.333333333333336e-05,
+              "bz": 0.1,
+              "Sy": 8.333333333333336e-05,
+              "by": 0.1,
+              "circular": true
+            }
+          ],
+          "supports": [
+            {
+              "name": "节点1固定支座",
+              "node": 1,
+              "fix": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "name": "节点2固定支座",
+              "node": 2,
+              "fix": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ],
+          "load_cases": [
+            {
+              "name": "图IV5",
+              "nodal_loads": [
+                {
+                  "name": "节点3沿Y集中力2kN",
+                  "node": 3,
+                  "load": [
+                    0,
+                    2000,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "name": "节点4竖向集中力1kN",
+                  "node": 4,
+                  "load": [
+                    0,
+                    0,
+                    -1000,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "name": "节点4绕负X力矩3kNm",
+                  "node": 4,
+                  "load": [
+                    0,
+                    0,
+                    0,
+                    -3000,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "member_spans": [
+                {
+                  "name": "横杆前3m均布荷载",
+                  "member": 1,
+                  "kind": "partial",
+                  "w1": [
+                    0,
+                    0,
+                    -800
+                  ],
+                  "a": 0,
+                  "b": 3
+                },
+                {
+                  "name": "横杆中点沿X集中力4kN",
+                  "member": 1,
+                  "kind": "point",
+                  "w1": [
+                    4000,
+                    0,
+                    0
+                  ],
+                  "a": 3
+                }
+              ]
+            }
+          ],
+          "schema_version": 1
+        }
+      },
+      "ok": true,
+      "payload": {
+        "summary": {
+          "nodes": 4,
+          "members": 3,
+          "supports": 2,
+          "load_cases": 1
+        },
+        "schema_version": 1
+      }
+    },
+    {
+      "tool": "validate_model",
+      "args": {},
+      "ok": true,
+      "payload": {
+        "summary": {
+          "nodes": 4,
+          "members": 3,
+          "supports": 2,
+          "load_cases": 1
+        }
+      }
+    },
+    {
+      "tool": "solve_model",
+      "args": {},
+      "ok": true,
+      "payload": {
+        "cases": {
+          "图IV5": {
+            "max_displacement_mm": 24.574781,
+            "at_node": 5,
+            "equilibrium_ok": true,
+            "equilibrium_residual": 7.99e-14,
+            "max_deflection_mm": 24.46789,
+            "at_member": 1,
+            "at_x_m": 2.94,
+            "warning": "最大位移达到最短杆件长度的 1/122，量级异常。常见原因：荷载方向写错（重力应为全局 -Z，即 w=[0,0,-w]）、单位没换算成 N-m-Pa、或截面惯性矩填小了。"
+          }
+        },
+        "analysis": {
+          "type": "linear_static"
+        },
+        "compilation": {
+          "physical_members": 3,
+          "analysis_elements": 4,
+          "generated_nodes": 1,
+          "diagnostics": [
+            "物理构件 1 因集中荷载编译为 2 个分析单元"
+          ]
+        },
+        "silent_failures": {
+          "summary": {
+            "overall": "pass",
+            "total_checks": 9,
+            "passed": 9,
+            "critical_issues": 0,
+            "warnings": 0,
+            "critical_details": [],
+            "warning_details": []
+          },
+          "findings": [
+            {
+              "id": "insufficient_supports",
+              "name": "支座约束不足",
+              "severity": "critical",
+              "status": "pass",
+              "message": "支座约束 12 个自由度，6 个刚体运动方向均有约束",
+              "detail": {
+                "support_dofs": 12,
+                "support_nodes": 2
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "excessive_displacement",
+              "name": "位移过大",
+              "severity": "critical",
+              "status": "pass",
+              "message": "最大位移 24.5748 mm，结构尺寸 9950 mm，占比 0.247%（< 10%）",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "zero_reaction_with_load",
+              "name": "有载荷但反力为零",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有有载荷的工况都有非零支座反力",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "zero_internal_force",
+              "name": "有载荷但内力为零",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有有载荷的工况都有非零杆件内力",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "no_applied_load",
+              "name": "求解时没有任何荷载",
+              "severity": "critical",
+              "status": "pass",
+              "message": "1 个工况有作用（外载荷、支座沉降或初应变）",
+              "detail": {
+                "loaded_cases": [
+                  "图IV5"
+                ]
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "near_singular_stiffness",
+              "name": "刚度矩阵接近奇异",
+              "severity": "critical",
+              "status": "pass",
+              "message": "刚度矩阵条件数 1.52e+04（< 1e8），数值稳定",
+              "detail": {
+                "condition_number": 15160.39102267474,
+                "dof": 18
+              },
+              "suggestion": ""
+            },
+            {
+              "id": "reaction_load_balance",
+              "name": "反力与外载荷不平衡",
+              "severity": "critical",
+              "status": "pass",
+              "message": "所有工况反力合力与外载荷合力平衡（残差 < 1%）",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "load_magnitude_anomaly",
+              "name": "载荷量级异常",
+              "severity": "warning",
+              "status": "pass",
+              "message": "所有工况载荷量级与材料弹性模量匹配",
+              "detail": {},
+              "suggestion": ""
+            },
+            {
+              "id": "section_orientation",
+              "name": "截面主轴方向风险",
+              "severity": "warning",
+              "status": "pass",
+              "message": "所有截面 Iz >= Iy，主轴方向正常",
+              "detail": {},
+              "suggestion": ""
+            }
+          ]
+        },
+        "capsule": "capsules\\20261011_211253_272c91d9.json",
+        "result_identity": {
+          "solve_id": "db309c9e7349474cb6b3845fecbf728e",
+          "model_fingerprint": "ef800620dd733b1c47d12df4618fc646",
+          "solved_at": "2026-10-11T13:12:53.751523+00:00",
+          "parameters": {
+            "analysis": "linear",
+            "increments": 10,
+            "max_iter": 40,
+            "tolerance": 1e-07,
+            "amplitudes": null
+          },
+          "analysis": {
+            "type": "linear_static"
+          }
+        }
+      }
+    },
+    {
+      "tool": "analyze_joint_solid",
+      "args": {
+        "node_id": 3,
+        "case": "图IV5",
+        "dry_run": true
+      },
+      "ok": true,
+      "payload": {
+        "node_id": 3,
+        "case": "图IV5",
+        "material": "题设材料E210GPa",
+        "elastic_modulus_mpa": 210000.0,
+        "poisson": 0.3,
+        "anchor_member": 2,
+        "hotspot_radius_mm": 135.0,
+        "nominal_normal_mpa": 12.336583650362392,
+        "arms": [
+          {
+            "member_id": 1,
+            "direction": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "outer_diameter_mm": 100.0,
+            "inner_diameter_mm": 0.0,
+            "length_mm": 200.0,
+            "force_n": [
+              1938.7514293001377,
+              -2412.274168239208,
+              -1318.7663555413233
+            ],
+            "moment_nmm": [
+              -278792.84180751006,
+              -580116.0396738806,
+              -1147609.180423804
+            ],
+            "nominal_normal_mpa": 12.336583650362392,
+            "wall_thickness_mm": null
+          },
+          {
+            "member_id": 2,
+            "direction": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "outer_diameter_mm": 100.0,
+            "inner_diameter_mm": 0.0,
+            "length_mm": 200.0,
+            "force_n": [
+              -1938.751429300138,
+              412.27416823952694,
+              1318.7663555413235
+            ],
+            "moment_nmm": [
+              278792.84180750913,
+              580116.0396738781,
+              1147609.1804238055
+            ],
+            "nominal_normal_mpa": 6.7238757798735715,
+            "wall_thickness_mm": null
+          }
+        ],
+        "warnings": [
+          "该节点存在直接节点荷载；局部模型按杆端截面力传递，未建加载头几何。"
+        ],
+        "note": "只建了规格，没有调用 Abaqus。名义正应力即 Kt 的分母，可以先手算核对再决定是否跑实体分析。"
+      }
+    }
+  ],
+  "textbook_current_displacements_m_rad": {
+    "3": [
+      0.014394388430213388,
+      -0.00238243706596221,
+      -2.398722105916406e-06,
+      0.0009883784924220105,
+      0.006775121825250732,
+      -0.004341796131523906
+    ],
+    "4": [
+      0.010238504109757138,
+      -0.0023912125027157685,
+      0.007826641169346412,
+      -0.0020528088741683746,
+      0.0023855689707487047,
+      0.005370592151758706
+    ]
+  },
+  "same_node_solid": {
+    "schema": "solid-joint-analysis/native-v1",
+    "backend": "native-c3d10+gmsh",
+    "node_id": 3,
+    "case": "图IV5",
+    "anchor_member": 2,
+    "nominal_normal_mpa": 12.336583650362392,
+    "peak_convergence": {
+      "verdict": "inconclusive",
+      "reason": "少于三档网格，无法分辨收敛与发散",
+      "levels": 1
+    },
+    "hot_spot_extrapolation": {
+      "1": {
+        "error": "该臂没有取到表面应力样本"
+      }
+    },
+    "hot_spot_convergence": {
+      "1": {
+        "verdict": "inconclusive",
+        "levels": 0,
+        "relative_changes": [],
+        "reason": "至少需要三档局部网格才能判断热点应力收敛",
+        "values": []
+      }
+    },
+    "governing_arm": null,
+    "stress_concentration_factor": null,
+    "stress_concentration_basis": null,
+    "stress_concentration_refused": "未给出正式应力集中系数：0.4t/1.0t 热点路径未覆盖，或三档局部网格下的热点应力尚未收敛。保留试算值供诊断，但不使用相贯线奇异峰值或未稳定外推值替代正式 Kt。",
+    "meshes": [
+      {
+        "mesh_size_mm": 12.0,
+        "global_mesh_size_mm": 30.0,
+        "hotspot_mesh_size_mm": 12.0,
+        "nodes": 4415,
+        "elements": 2500,
+        "max_mises_mpa": 30.07844422906272,
+        "p99_mises_mpa": 20.816428792166594,
+        "max_abs_principal_mpa": 24.393146199980713,
+        "p99_abs_principal_mpa": 16.71336438041594,
+        "max_displacement_mm": 0.07567616921264916,
+        "free_residual_norm_n": 4.970885124634048e-09,
+        "force_balance_n": [
+          -1.9754650693037945e-09,
+          2.861491668615379e-10,
+          -6.994806123206132e-10
+        ],
+        "moment_balance_nmm": [
+          -4.92982382611926e-08,
+          5.411109282073907e-08,
+          2.177212464804532e-07
+        ],
+        "vtu": "C:\\Users\\86318\\Desktop\\agent开发\\results\\ppt_revision_v8\\solid\\node_3_图IV5\\native_joint_0.vtu",
+        "contour_png": "C:\\Users\\86318\\Desktop\\agent开发\\results\\ppt_revision_v8\\solid\\node_3_图IV5\\native_joint_0.png",
+        "surface_samples": {},
+        "hot_spot_extrapolation": {
+          "1": {
+            "error": "该臂没有取到表面应力样本"
+          }
+        }
+      }
+    ],
+    "warnings": [
+      "该节点存在直接节点荷载；局部模型按杆端截面力传递，未建加载头几何。"
+    ],
+    "files": {
+      "directory": "C:\\Users\\86318\\Desktop\\agent开发\\results\\ppt_revision_v8\\solid\\node_3_图IV5",
+      "contour_png": "C:\\Users\\86318\\Desktop\\agent开发\\results\\ppt_revision_v8\\solid\\node_3_图IV5\\native_joint_0.png",
+      "finest_vtu": "C:\\Users\\86318\\Desktop\\agent开发\\results\\ppt_revision_v8\\solid\\node_3_图IV5\\native_joint_0.vtu"
+    }
+  },
+  "videos": [
+    {
+      "file": "Agent_自然语言建模_18秒.mp4",
+      "source_files": [
+        "raw-agent-1.mp4"
+      ],
+      "trim_intervals": [
+        [
+          1,
+          0,
+          5
+        ],
+        [
+          1,
+          16.133333333333333,
+          29.133333333333333
+        ]
+      ],
+      "subtitle": "真实Agent建模｜操作过程节选（等待剪短）；材料与截面为预设",
+      "sha256": "2a10fc0a90b418d15b33a296aa64f4c223156c803fadff8a8ec87d1f07697612",
+      "bytes": 621613,
+      "width": 1920,
+      "height": 1080,
+      "fps": 15,
+      "seconds": 18
+    },
+    {
+      "file": "Agent_连续查询与参数比较_18秒.mp4",
+      "source_files": [
+        "raw-agent-2.mp4",
+        "raw-agent-3.mp4"
+      ],
+      "trim_intervals": [
+        [
+          2,
+          0,
+          2
+        ],
+        [
+          2,
+          5.933333333333334,
+          11.933333333333334
+        ],
+        [
+          3,
+          0,
+          2
+        ],
+        [
+          3,
+          2.2666666666666675,
+          10.266666666666667
+        ]
+      ],
+      "subtitle": "真实Agent查询与四档扫描｜操作过程节选（等待剪短）；沿用同一G模型",
+      "sha256": "ab74411a1714e9f995625fe878d5406343ce6b5b141420397922fdaaad9b1e87",
+      "bytes": 878546,
+      "width": 1920,
+      "height": 1080,
+      "fps": 15,
+      "seconds": 18
+    },
+    {
+      "file": "Agent_图纸人工审核导入_25秒.mp4",
+      "source_files": [
+        "raw-review.mp4"
+      ],
+      "trim_intervals": [],
+      "subtitle": "既有真实AI草稿＋人工审核｜L=6m、F=10kN为演示人工设定，不计为自动识别",
+      "sha256": "881e21969234573c9c47226731e0043b9050d7a84163ed9559ca42c8282e9adf",
+      "bytes": 1387986,
+      "width": 1920,
+      "height": 1080,
+      "fps": 15,
+      "seconds": 25
+    }
+  ],
+  "presentation_plan": {
+    "visible": 13,
+    "hidden": [
+      14,
+      15,
+      16
+    ],
+    "seconds": 285,
+    "buffer": 15,
+    "spoken": [
+      [
+        8,
+        "各位老师好。本项目以空间刚架智能计算Agent为主项，下面介绍其任务组织方式与配套计算成果。"
+      ],
+      [
+        18,
+        "项目主选第二题，重点是通过自然语言组织空间刚架分析。同时配套实现整体位移、杆件内力和节点实体分析等第一题相关功能。结构化模型承接输入，人工确认不确定信息，确定性程序计算并记录结果来源。"
+      ],
+      [
+        25,
+        "Agent按任务、模型理解、工具执行和结果反馈形成连续交互。大模型负责理解目标、生成参数及选择工具，程序执行建模和计算；条件不明确时由用户补充和确认。当前有63个注册接口，覆盖六类任务，数量表示可调用程序功能，不等于每项能力均获得工程验证。"
+      ],
+      [
+        25,
+        "【单击播放18秒；可配合解说】先看自然语言建模。给出两跨几何、柱底固接和梁荷载，沿用预设材料与截面，Agent实际调用建模和校验工具，生成12节点、13杆件模型。等待部分已剪短。"
+      ],
+      [
+        30,
+        "【单击播放25秒；可配合解说】图纸先形成可编辑草稿，再核对位置、尺度、支座与荷载。原图只有F和L符号，本段人工设为10千牛、6米，不能计为自动识别。审核与预演通过后，真实导入3节点、2杆件几何模型，属性另行指定。"
+      ],
+      [
+        35,
+        "【单击播放18秒】沿用同一框架，先查询最大节点位移，再要求荷载取四档并比较。Agent调用扫描工具完成四次真实试算，表格和曲线来自实际回包；扫描后原模型及原结果保持一致。这展示Agent帮助组织分析，而不只是代替一次按钮点击。指标是节点平移幅值，与梁内挠度不同。"
+      ],
+      [
+        30,
+        "继续用指令生成变形图和计算书。这里是实际软件结果与Word报告局部，模型、工况和求解编号可以追踪。报告数值由程序计算，研究者仍需审核解释及工程假设。下面集中介绍这些成果背后的力学方法与教材验证。"
+      ],
+      [
+        20,
+        "空间梁每节点六自由度、单元刚度十二乘十二，经过坐标变换、组装、释放和约束处理求解Ku等于F，再恢复反力与内力。本次教材采用忽略剪切的Euler–Bernoulli分支，计剪切分支需使用对应参数及基准。"
+      ],
+      [
+        25,
+        "用图IV-5统一条件对照。四个物理节点、三根实心圆杆，位移先统一成毫米。节点3、4全局平移最大绝对差约零点零零零二五九毫米。内力方向与正号仍需教材局部轴定义，不能把量值接近表述为所有分量已一致。"
+      ],
+      [
+        20,
+        "继续选择同一例题的节点3，把整体截面六个内力分量传到局部圆杆实体，Gmsh划网格，自研C3D10求解。节点3还有直接荷载，未建立加载头几何，因此局部载荷传递假设仍需复核。"
+      ],
+      [
+        20,
+        "本轮已实际完成节点3的实体计算：4415节点、2500单元，Mises峰值约30.08兆帕。软件显示完整色标。只有一档网格，尚无收敛与教材局部应力对照，本次不报告正式应力集中系数。"
+      ],
+      [
+        15,
+        "已经形成Agent、整体计算和局部试算的贯通流程。规模和回归数量按日期注明，不能等同识别准确率。前期缺失荷载被补零的问题，现通过留空、单位校验和确认前阻断导入修复。"
+      ],
+      [
+        14,
+        "后三周先冻结验收，再做Agent与图纸留出任务评测，最后开展局部收敛及独立对标。MMC节点建模或优化作为探索方向，先明确变量、约束与基准。谢谢各位老师。"
+      ]
+    ],
+    "media_sha256": [
+      "2a10fc0a90b418d15b33a296aa64f4c223156c803fadff8a8ec87d1f07697612",
+      "6603d117abc0033f25933347c7a9481b463cde34150670d0daa1801e04d83a46",
+      "881e21969234573c9c47226731e0043b9050d7a84163ed9559ca42c8282e9adf",
+      "ab74411a1714e9f995625fe878d5406343ce6b5b141420397922fdaaad9b1e87"
+    ],
+    "removed_empty_media_relations": 4
+  },
+  "limitations": [
+    "未知F/L数值为人工假设，不计识别成果",
+    "同图IV5整体对照EB；内力分量的教材局部轴与正号未统一",
+    "实体同节点3，单档，未建直接荷载加载头；无正式Kt或局部教材对照",
+    "报告解释与工程假设仍需研究者审核",
+    "MMC为待研究方向，未实施节点优化"
+  ]
+}
