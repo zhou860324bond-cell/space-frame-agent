@@ -2,6 +2,14 @@
 
 本例以原题三杆 JSON 为输入，已在本机 Abaqus/Standard 6.14-1 实际完成整体求解和三档局部实体求解。脚本兼容 Abaqus Python 2.7；不修改原 JSON，不依赖本项目虚拟环境。它是针对图 IV-5 的算例，不是任意 JSON 的通用实体转换器。
 
+## 保留参考图原网格的显示版
+
+用户另行要求截图保持原软件参考图的网格。`render_native_mesh.py` 专用于将已存节点、C3D10连接、位移与单元最大Mises标量导入可查看的ODB，再通过真实Abaqus/CAE导出PNG；它不重划网格、不调用Abaqus求解器，不能把这些导入数值写成新的Abaqus独立对标结果。
+
+参考图为4415节点、2500单元，原软件Mises最大值30.078444MPa。保存重开后逐个核验连接表完全相同；ODB单精度坐标存储误差小于0.000008mm，标量误差小于0.000001MPa，原NPZ指纹未变。为兼容6.14显示接口，同一单元的最大Mises统计值复制到四个显示采样位置，采用QUILT着色；它不是四个独立的真实积分点应力值。显示变量名为`Mises_MPa`，和下面Abaqus实算的`S → Mises`有明确区别。
+
+脚本输入为ASCII路径中的`native_mesh.json`，包含`nodes`（mm）、零基`elements`、`displacement`（mm）、`element_mises`（MPa）及来源指纹。在该目录执行`abaqus cae noGUI=render_native_mesh.py`，生成原网格ODB、默认背景无边线/有边线两张1920×1080截图及核验记录。背景直接读取`session.defaultGraphicsOptions`，本机为顶部`#1B2D46`到底部`#A3B1C6`的渐变；变形倍率为0，色标完整，不做P99裁剪。
+
 ## 打开已求解文件
 
 1. 将交付压缩包解压到纯英文目录，例如 `C:\IV5_Abaqus`。Abaqus 6.14 对中文目录的兼容性有限。
