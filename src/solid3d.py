@@ -241,6 +241,32 @@ def nodal_abs_principal_envelope(mesh: SolidMesh,
     return out
 
 
+def nodal_display_stress(mesh: SolidMesh, gauss_stress: np.ndarray):
+    """积分点张量外推后按单元体积节点平均，仅用于连续云图显示。"""
+    field = np.asarray(gauss_stress, dtype=float)
+    if field.shape != (len(mesh.elements), 4, 6):
+        raise Solid3DError("积分点应力数量与实体网格不一致")
+    sums = np.zeros((len(mesh.nodes), 6))
+    weights = np.zeros(len(mesh.nodes))
+    for conn, values in zip(mesh.elements, field, strict=True):
+        corners = mesh.nodes[conn[:4]]
+        volume = abs(float(np.linalg.det((corners[1:]-corners[0]).T)))/6
+        sums[conn] += extrapolate_element_nodal_stress(values)*volume
+        weights[conn] += volume
+    if np.any(weights <= 0):
+        raise Solid3DError("实体节点没有有效单元体积，不能平均显示应力。")
+    s = sums/weights[:, None]
+    sx, sy, sz, xy, yz, xz = s.T
+    mises = np.sqrt(np.maximum(0, .5*((sx-sy)**2+(sy-sz)**2+(sz-sx)**2)+3*(xy**2+yz**2+xz**2)))
+    tensor = np.zeros((len(s), 3, 3))
+    tensor[:, 0, 0], tensor[:, 1, 1], tensor[:, 2, 2] = sx, sy, sz
+    tensor[:, 0, 1] = tensor[:, 1, 0] = xy
+    tensor[:, 1, 2] = tensor[:, 2, 1] = yz
+    tensor[:, 0, 2] = tensor[:, 2, 0] = xz
+    principal = np.max(np.abs(np.linalg.eigvalsh(tensor)), axis=1)
+    return mises, principal
+
+
 def boundary_nodes(mesh: SolidMesh) -> np.ndarray:
     """由只出现一次的角点面识别二次四面体外表面节点。"""
     faces: dict[tuple[int, int, int], tuple[int, ...] | None] = {}

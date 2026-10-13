@@ -1418,7 +1418,8 @@ class Viewport(QWidget):
     @_batched
     def show_solid_result(self, grid, caption: str, *, field="Mises_MPa",
                           percentile=99, scale=0.0, show_edges=False,
-                          reset_camera=False) -> dict:
+                          reset_camera=False, averaging=True,
+                          palette="engineering") -> dict:
         """在主视口绘制真实实体单元结果，保留单元应力与节点位移的关联。"""
         from .solid_result import FIELDS
 
@@ -1429,6 +1430,13 @@ class Viewport(QWidget):
         high = float(np.percentile(values, percentile)) if percentile else peak
         high = max(high, np.finfo(float).eps)
         displayed = grid.copy(deep=True)
+        display_field, display_association = field, association
+        if averaging and association == "cell":
+            display_field = "Display_" + field
+            if display_field not in displayed.point_data:
+                averaged = displayed.cell_data_to_point_data(pass_cell_data=True)
+                displayed.point_data[display_field] = averaged.point_data[field]
+            display_association = "point"
         displayed.points += float(scale) * np.asarray(grid.point_data["Displacement_mm"])
         current_camera = self.plotter.camera_position
         self.clear()
@@ -1437,14 +1445,16 @@ class Viewport(QWidget):
         self._first_render = False
         self._solid_last = dict(field=field, association=association, peak=peak,
                                 clim=(0.0, high), scale=float(scale),
-                                show_edges=bool(show_edges), mesh=displayed)
+                                show_edges=bool(show_edges), mesh=displayed,
+                                averaging=bool(averaging), palette=palette)
         clipped = peak > high
         self.result_overlay.set_content(
             title=f"实体云图 · {label}", peak=f"真实峰值：{peak:.6g} {unit}",
             range_text=f"色标范围：0 ～ {high:.6g} {unit}",
-            status=f"{caption} · {'P99 截色' if clipped else '完整范围'} · 变形 ×{scale:g}",
+            status=f"{caption} · {'节点平均显示' if averaging and association == 'cell' else '原始结果'} · "
+                   f" {'P99 截色' if clipped else '完整范围'} · 变形 ×{scale:g}",
             details=(f"{grid.n_points} 个节点，{grid.n_cells} 个 C3D10 单元。"
-                     "应力按单元保存，不进行跨单元平均；位移按节点保存。"
+                     "应力原始值按单元保存；节点平均仅用于显示，峰值使用原始值。位移按节点保存。"
                      "色标截断仅影响颜色，真实峰值取全部结果。坐标单位为 mm。"),
             light=self._is_light_bg())
         self._place_overlays()
@@ -1452,11 +1462,11 @@ class Viewport(QWidget):
             return self._solid_last
         self.plotter.remove_actor("_grid_floor", reset_camera=False, render=False)
         self.plotter.add_mesh(
-            displayed, scalars=field, preference=association,
-            cmap=theme.palette_cmap(self.contour_palette, "M"), clim=(0.0, high),
+            displayed, scalars=display_field, preference=display_association,
+            cmap=theme.solid_cmap(palette), clim=(0.0, high),
             show_edges=show_edges, edge_color=theme.VIEWPORT_INK_MUTED,
             line_width=0.5, show_scalar_bar=False, smooth_shading=False,
-            interpolate_before_map=association == "point", lighting=self.contour_shading,
+            interpolate_before_map=display_association == "point", lighting=False,
             ambient=0.42, diffuse=0.58, name="_solid_result")
         self.plotter.add_scalar_bar(
             title="", n_labels=7, vertical=True, fmt="%.3g",

@@ -59,6 +59,11 @@ def read_result(path: str | Path):
             grid.cell_data["Mises_MPa"] = data["element_mises"]
             grid.cell_data["AbsPrincipal_MPa"] = data["element_abs_principal"]
             grid.point_data["Displacement_mm"] = data["displacement"]
+            if "gauss_stress" in data:
+                from solid3d import SolidMesh, nodal_display_stress
+                vm, principal = nodal_display_stress(SolidMesh(nodes, elements), data["gauss_stress"])
+                grid.point_data["Display_Mises_MPa"] = vm
+                grid.point_data["Display_AbsPrincipal_MPa"] = principal
     elif suffix == ".vtu":
         grid = pv.read(path)
     else:
@@ -107,6 +112,16 @@ class SolidResultPanel(QWidget):
             self.field.addItem(f"{label} ({unit})", key)
         self.field.currentIndexChanged.connect(self._changed)
         form.addRow("结果量", self.field)
+        self.palette = QComboBox()
+        for label, value in (("柔和蓝红", "engineering"), ("蓝绿黄", "viridis"), ("蓝黄", "cividis")):
+            self.palette.addItem(label, value)
+        self.palette.currentIndexChanged.connect(self._changed)
+        form.addRow("实体配色", self.palette)
+        self.averaging = QCheckBox("节点平均着色")
+        self.averaging.setChecked(True)
+        self.averaging.setToolTip("仅改变连续云图显示；原始单元峰值和单元查询数值保留。")
+        self.averaging.toggled.connect(self._changed)
+        form.addRow("应力显示", self.averaging)
         self.range = QComboBox()
         self.range.addItem("P99 色标", 99)
         self.range.addItem("完整范围", None)
@@ -152,7 +167,8 @@ class SolidResultPanel(QWidget):
 
     def options(self):
         return dict(field=self.field.currentData(), percentile=self.range.currentData(),
-                    scale=self.scale.value(), show_edges=self.edges.isChecked())
+                    scale=self.scale.value(), show_edges=self.edges.isChecked(),
+                    averaging=self.averaging.isChecked(), palette=self.palette.currentData())
 
     def _changed(self, *_args):
         if not self._filling:

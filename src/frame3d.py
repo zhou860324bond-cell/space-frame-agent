@@ -73,6 +73,8 @@ class Section:
     # 此时折算应力只在极端纤维与中性轴两处取值。
     S_flange: float | None = None     # 单个翼缘对中性轴的静矩
     c_web: float | None = None        # 中性轴到腹板边缘的距离
+    # 真实轮廓随builder保留；刚度仍只读取显式数值特性。
+    geometry: dict | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

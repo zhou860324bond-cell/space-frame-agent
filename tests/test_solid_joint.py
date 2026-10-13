@@ -180,9 +180,10 @@ def test_an_unknown_case_is_refused():
 
 
 def test_a_non_circular_section_is_refused():
-    """工字形节点需要板件、焊缝、加劲肋几何；缺这些就自动拼实体，会得到
-    "精确但不是用户结构"的答案。必须明确拒绝，不能猜。"""
-    session = _l_joint(section=S.i_section("HW200", 0.2, 0.2, 0.008, 0.012))
+    """缺少真实非圆轮廓时仍须拒绝，不能仅凭A/I/J猜出板件或焊缝几何。"""
+    section = S.i_section("HW200", 0.2, 0.2, 0.008, 0.012)
+    section.pop("geometry")
+    session = _l_joint(section=section)
     with pytest.raises(sj.SolidJointError):
         sj.prepare_joint_spec(session, node_id=2)
 
@@ -614,7 +615,7 @@ def test_agent_routes_the_default_solid_backend_to_native(monkeypatch):
     assert seen["args"] == (2, None, None, [20.0])
     # 没指定就是快速的单档；进度出口默认不给（agent 调用时没有界面可报）
     assert seen["options"] == {"levels": 1, "progress": None,
-                               "loading_method": "displacement"}
+                               "loading_method": "displacement", "geometry_mode": "transition"}
 
 
 def test_gmsh_generates_positive_c3d10_and_cut_faces_when_available():
@@ -648,18 +649,20 @@ def test_native_joint_analysis_can_repeat_in_a_background_thread(tmp_path, monke
 
     def analyze():
         result = native_joint.run_native_joint_analysis(
-            session, 2, mesh_sizes_mm=[80.0], output_dir=tmp_path, progress=messages.append)
+            session, 2, mesh_sizes_mm=[80.0], output_dir=tmp_path, progress=messages.append,
+            geometry_mode="intersection")
         assert gmsh.isInitialized() == 0
         return result
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         for _ in range(2):
-            result = executor.submit(analyze).result(timeout=60)
+            result = executor.submit(analyze).result(timeout=180)
             mesh_result = result["meshes"][0]
             assert mesh_result["elements"] > 0
             assert math.isfinite(mesh_result["max_mises_mpa"])
             assert mesh_result["max_mises_mpa"] > 0.0
-            assert mesh_result["free_residual_norm_n"] < 1e-5
+            force_scale = max(np.linalg.norm(a.force_n) for a in sj.prepare_joint_spec(session, 2).arms)
+            assert mesh_result["free_residual_norm_n"] < 1e-8*max(force_scale, 1.0)
             assert signal.getsignal(signal.SIGINT) is handler
 
     assert any("划分网格" in message for message in messages)

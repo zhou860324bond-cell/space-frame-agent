@@ -54,7 +54,7 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
                         hotspot_size_mm: float | None = None,
                         gmsh_options: dict[str, float] | None = None
                         ) -> tuple[solid3d.SolidMesh, dict[int, np.ndarray]]:
-    """用 Gmsh OpenCASCADE 建圆钢/圆管布尔并集并输出二次四面体。"""
+    """用 Gmsh OpenCASCADE 建真实截面连接实体并输出二次四面体。"""
     gmsh = _gmsh_module()
     size = float(mesh_size_mm)
     if not math.isfinite(size) or size <= 0.0:
@@ -67,31 +67,8 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.model.add(f"native_joint_{spec.node_id}")
-        occ = gmsh.model.occ
-        volumes: list[tuple[int, int]] = []
-        for arm in spec.arms:
-            d = arm.direction
-            outer = occ.addCylinder(0.0, 0.0, 0.0,
-                                    d[0] * arm.length_mm,
-                                    d[1] * arm.length_mm,
-                                    d[2] * arm.length_mm,
-                                    0.5 * arm.outer_diameter_mm)
-            current = [(3, outer)]
-            if arm.inner_diameter_mm > 1e-9:
-                # 内孔向节点内外各伸一点，避免布尔运算在共面端部留下薄片。
-                eps = max(1e-5 * arm.length_mm, 1e-5)
-                inner = occ.addCylinder(-d[0] * eps, -d[1] * eps, -d[2] * eps,
-                                        d[0] * (arm.length_mm + 2.0 * eps),
-                                        d[1] * (arm.length_mm + 2.0 * eps),
-                                        d[2] * (arm.length_mm + 2.0 * eps),
-                                        0.5 * arm.inner_diameter_mm)
-                current, _ = occ.cut(current, [(3, inner)],
-                                     removeObject=True, removeTool=True)
-            volumes.extend(current)
-        if len(volumes) > 1:
-            volumes, _ = occ.fuse([volumes[0]], volumes[1:],
-                                  removeObject=True, removeTool=True)
-        occ.synchronize()
+        from joint_geometry import build_occ_joint
+        build_occ_joint(gmsh, spec)
         gmsh.option.setNumber("Mesh.MeshSizeMin", local_size)
         gmsh.option.setNumber("Mesh.MeshSizeMax", size)
         if local_size < size:
@@ -136,7 +113,13 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
                 rows.append(_canonical_tet10(raw, xyz))
         if not rows:
             raise SolidJointError("Gmsh 没有生成 10 节点四面体单元")
-        mesh = solid3d.SolidMesh(xyz, np.asarray(rows, dtype=np.int64))
+        connectivity = np.asarray(rows, dtype=np.int64)
+        # 布尔运算的辅助面可能留下未用于实体单元的节点，不能带入刚度与切面约束。
+        used = np.unique(connectivity)
+        remap = np.full(len(xyz), -1, dtype=np.int64)
+        remap[used] = np.arange(len(used))
+        xyz = xyz[used]
+        mesh = solid3d.SolidMesh(xyz, remap[connectivity])
 
         cut_faces: dict[int, np.ndarray] = {}
         for arm in spec.arms:
@@ -166,13 +149,19 @@ def _write_vtu_and_png(mesh: solid3d.SolidMesh, result: solid3d.SolidResult,
         grid.cell_data["Mises_MPa"] = result.element_mises
         grid.cell_data["AbsPrincipal_MPa"] = result.element_abs_principal
         grid.point_data["Displacement_mm"] = result.displacement
+        nodal_mises, nodal_principal = solid3d.nodal_display_stress(mesh, result.gauss_stress)
+        grid.point_data["Display_Mises_MPa"] = nodal_mises
+        grid.point_data["Display_AbsPrincipal_MPa"] = nodal_principal
         vtu = str(stem.with_suffix(".vtu"))
         grid.save(vtu)
         png = str(stem.with_suffix(".png"))
         plotter = pv.Plotter(off_screen=True, window_size=(1400, 900))
         upper = float(np.percentile(result.element_mises, 99.0))
-        plotter.add_mesh(grid, scalars="Mises_MPa", clim=(0.0, upper),
-                         cmap="turbo", show_edges=False,
+        from matplotlib.colors import LinearSegmentedColormap
+        cmap = LinearSegmentedColormap.from_list("solid", ["#213b65", "#397fba", "#75c5d0",
+                                                          "#f2e8bb", "#efaa6d", "#c75552"])
+        plotter.add_mesh(grid, scalars="Display_Mises_MPa", clim=(0.0, upper),
+                         cmap=cmap, show_edges=False, lighting=False,
                          scalar_bar_args={"title": "Mises stress (MPa) - P99 clipped"})
         plotter.add_axes()
         plotter.view_isometric()
@@ -186,6 +175,9 @@ def surface_samples(spec: JointSpec, mesh: solid3d.SolidMesh,
                     result: solid3d.SolidResult,
                     mesh_size_mm: float) -> dict[str, list[list[float]]]:
     """按 Abaqus 后端同一几何规则提取各管臂焊趾外表面应力路径。"""
+    if spec.geometry_mode == "transition" or any(
+            a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
+        return {}
     stress = solid3d.nodal_abs_principal_envelope(mesh, result.gauss_stress)
     boundary = solid3d.boundary_nodes(mesh)
     xyz = mesh.nodes
@@ -193,6 +185,8 @@ def surface_samples(spec: JointSpec, mesh: solid3d.SolidMesh,
     arms = list(spec.arms)
     output: dict[str, list[list[float]]] = {}
     for arm in arms:
+        if arm.profile_mm and arm.profile_mm["type"] not in ("circle", "tube"):
+            continue
         thickness = arm.wall_thickness_mm
         if not thickness:
             continue
@@ -289,7 +283,7 @@ def _fit_default_mesh(spec, size: float, reference: float,
     first = size
     for _attempt in range(_DEFAULT_MESH_RETRIES + 1):
         checkpoint()
-        hotspot = max(reference, 0.4 * size)
+        hotspot = max(0.75 * reference, 0.15 * size)
         # 放粗之后网格比壁厚粗好几倍，二次单元的边中节点若贴到弯曲管壁上，
         # 薄壁处的单元会被拧翻（实测 detJ = -1.8，求解器直接拒算；Gmsh 的
         # HighOrderOptimize 也修不回来）。放粗档改为边中节点取直线：单元
@@ -325,7 +319,7 @@ def _default_plan(spec, reference: float, levels: int,
     各放粗 1.5 倍、2.25 倍——比最细档粗，必然也在上限以内，不用再试。
     放粗过的档边中节点一律取直线（理由见 ``_fit_default_mesh``）。
     """
-    first = 2.5 * reference
+    first = 2.0 * reference
     size, hotspot, mesh, cut_faces, note = _fit_default_mesh(
         spec, first, reference, max_elements, max_dof)
     options = {"Mesh.SecondOrderLinear": 1} if size > first else None
@@ -341,7 +335,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               *, max_elements: int = 80000,
                               max_dof: int = 180000, levels: int = 1,
                               progress=None,
-                              loading_method: str = "displacement") -> dict[str, Any]:
+                              loading_method: str = "displacement",
+                              geometry_mode: str = "transition") -> dict[str, Any]:
     """使用自研 C3D10 求解器运行一档或多档节点实体网格。
 
     没有显式给 ``mesh_sizes_mm`` 时，默认那一档若超过求解规模上限，会按
@@ -360,7 +355,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         checkpoint()
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member,
-                              loading_method=loading_method)
+                              loading_method=loading_method, geometry_mode=geometry_mode)
     reference = mesh_reference_length(spec)
     # native-v1 默认先给一档可交互的工程网格。Python 稀疏直接解比 Abaqus
     # 慢，默认就上 h=t 会让桌面一次作业跨进几十万自由度；用户需要收敛判断时
@@ -386,7 +381,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         else:
             # 三档远场网格 40/30/20 mm 对应焊趾 16/12/8 mm；C3D10 的
             # 边中点使最细档表面取样间距约为 0.5t，同时守住直接解规模。
-            hotspot_size = max(reference, 0.4 * size)
+            hotspot_size = max(0.75 * reference, 0.15 * size)
             say(f"{tag}：划分网格（全局 {size:.1f} mm）…")
             try:
                 mesh, cut_faces = generate_joint_mesh(
@@ -524,6 +519,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         "schema": "solid-joint-analysis/native-v1",
         "backend": "native-c3d10+gmsh",
         "loading_method": spec.loading_method,
+        "geometry_mode": spec.geometry_mode,
+        "connection_depth_mm": 0.35*min(a.length_mm for a in spec.arms) if spec.geometry_mode == "transition" else 0.0,
         "boundary_spec": spec.to_dict(),
         "source_result_identity": session.result_identity,
         "node_id": spec.node_id,

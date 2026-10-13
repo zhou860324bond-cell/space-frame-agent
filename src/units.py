@@ -23,6 +23,7 @@
 """
 
 from __future__ import annotations
+from section_geometry import scale_geometry
 
 from dataclasses import dataclass
 
@@ -160,6 +161,8 @@ def convert_model(model: dict, to: str) -> dict:
                             if "allow_compression" in m else {})}
                         for m in model.get("materials", [])]
     out["sections"] = [{**s, "A": s["A"] * f["area"],
+                        **({"geometry": scale_geometry(
+                            s["geometry"], f["length"])} if "geometry" in s else {}),
                         "Iy": s["Iy"] * f["inertia"], "Iz": s["Iz"] * f["inertia"],
                         "J": s["J"] * f["inertia"],
                         **({"Ay": s["Ay"] * f["area"]} if "Ay" in s else {}),

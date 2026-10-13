@@ -25,6 +25,11 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "实体配色": "Solid contour palette", "节点平均着色": "Nodal averaged contour",
+    "柔和蓝红": "Soft blue to red", "蓝绿黄": "Blue green yellow", "蓝黄": "Blue yellow",
+    "自动连接过渡实体": "Automatic joint transition solid",
+    "原始杆件交汇": "Original member intersection", "求解后端": "Solver backend",
+    "节点几何": "Joint geometry", "网格尺寸": "Mesh size",
     "建模设置": "Modeling settings", "停靠回工作区": "Dock to workspace",
     "高级参数": "Advanced parameters", "说明": "Details",
     # --- 功能区页签 ---

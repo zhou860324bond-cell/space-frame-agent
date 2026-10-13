@@ -187,6 +187,10 @@ def main(report_path: Path | None = None) -> int:
         settle()
         check("实体云图：画面有彩色", _colourful_fraction(shot()) > 0.003)
         actor = plotter.actors["_solid_result"]
+        check("实体云图：平均应力按节点着色", actor.GetMapper().GetScalarMode() == 1)
+        window.solid_panel.averaging.setChecked(False)
+        settle()
+        actor = plotter.actors["_solid_result"]
         check("实体云图：应力按单元着色", actor.GetMapper().GetScalarMode() == 2)
         # VTK 图层合成后，Qt 绘制的坐标指示器也必须保留在导出画面中。
         from PySide6.QtCore import QPoint

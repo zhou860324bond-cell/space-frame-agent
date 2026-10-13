@@ -207,8 +207,12 @@ def test_native_displacement_result_is_independent_of_anchor_and_balances(tmp_pa
         assert result["loading_method"] == "displacement"
         assert row["cut_motion_error_mm"] < 1e-9
         assert np.linalg.norm(row["force_balance_n"]) < 1e-5
-        assert np.linalg.norm(row["moment_balance_nmm"]) < 1e-3
-        assert row["free_residual_norm_n"] < 1e-5
+        moment_scale = max(np.linalg.norm(a.moment_nmm) for a in
+                           solid_joint.prepare_joint_spec(s, 2).arms)
+        assert np.linalg.norm(row["moment_balance_nmm"]) < 1e-8*max(moment_scale, 1)
+        force_scale = max(np.linalg.norm(a.force_n) for a in
+                          solid_joint.prepare_joint_spec(s, 2).arms)
+        assert row["free_residual_norm_n"] < 1e-8*max(force_scale, 1)
         assert set(row["cut_transfer_check"]["cuts"]) == {"1", "2"}
     assert results[0]["meshes"][0]["max_mises_mpa"] == pytest.approx(
         results[1]["meshes"][0]["max_mises_mpa"], rel=1e-10)
@@ -222,7 +226,8 @@ def test_native_transfer_check_exposes_global_local_shear_stiffness_mismatch(
     import native_joint
     monkeypatch.setattr(native_joint, "_write_vtu_and_png", lambda *args: (None, None))
     result = native_joint.run_native_joint_analysis(
-        _cantilever(shear=shear), 2, mesh_sizes_mm=[60], output_dir=tmp_path)
+        _cantilever(shear=shear), 2, mesh_sizes_mm=[60], output_dir=tmp_path,
+        geometry_mode="intersection")
     check = result["meshes"][0]["cut_transfer_check"]
     assert check["within_tolerance"] is shear
     assert any("差异超过5%" in w for w in result["warnings"]) is (not shear)

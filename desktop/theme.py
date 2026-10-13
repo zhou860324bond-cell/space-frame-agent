@@ -85,6 +85,16 @@ def sequential_cmap(steps: int = 256):
         "viewport_sequential", SEQUENTIAL_ANCHORS, N=steps)
 
 
+def solid_cmap(palette="engineering", steps=256):
+    """实体顺序色标：柔和蓝红为默认，另可选感知均匀色标。"""
+    from matplotlib import colormaps
+    from matplotlib.colors import LinearSegmentedColormap
+    if palette in ("viridis", "cividis"):
+        return colormaps[palette].resampled(steps)
+    return LinearSegmentedColormap.from_list(
+        "solid_engineering", ["#213b65", "#397fba", "#75c5d0", "#f2e8bb", "#efaa6d", "#c75552"], N=steps)
+
+
 def diverging_cmap(steps: int = 256):
     """发散色标：受压蓝 — 中性灰 — 受拉红，**取自 viz_theme**。
 

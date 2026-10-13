@@ -177,3 +177,40 @@ def test_window_cleanup_releases_native_objects_on_the_main_thread(app):
     assert not shiboken6.isValid(window)
     assert not shiboken6.isValid(standalone)
     assert destroyed_on == [get_ident()] * 2
+
+
+def test_solid_display_controls_keep_raw_results_and_expose_average_and_palette(app, files):
+    """防止更换配色或节点平均显示后改写原单元峰值、应力和查询数据。"""
+    from desktop.solid_result import SolidResultPanel
+    directory, _ = files
+    grid, *_ = read_result(directory/"summary.json")
+    raw = grid.cell_data["Mises_MPa"].copy()
+    panel = SolidResultPanel()
+    assert panel.options()["palette"] == "engineering"
+    assert panel.options()["averaging"] is True
+    panel.averaging.setChecked(False)
+    panel.palette.setCurrentIndex(1)
+    assert panel.options()["palette"] == "viridis"
+    assert panel.options()["averaging"] is False
+    assert grid.cell_data["Mises_MPa"] == pytest.approx(raw)
+    assert grid.cell_data["Mises_MPa"][1] == 2000
+    panel.close()
+
+
+def test_solid_analysis_dialog_exposes_geometry_mesh_and_backend(app, monkeypatch):
+    """防止用户只能接受自动粗网格，或所选连接几何和后端未进入分析参数。"""
+    from PySide6.QtWidgets import QComboBox, QDialog, QDoubleSpinBox, QWidget
+    host = QWidget()
+    def choose(box):
+        for combo in box.findChildren(QComboBox):
+            if combo.findData("abaqus") >= 0:
+                combo.setCurrentIndex(combo.findData("abaqus"))
+            if combo.findData("intersection") >= 0:
+                combo.setCurrentIndex(combo.findData("intersection"))
+        box.findChild(QDoubleSpinBox).setValue(5)
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(QDialog,"exec",choose)
+    assert MainWindow._ask_joint_levels(host,2) == 3
+    assert host._joint_analysis_options == {
+        "backend":"abaqus", "geometry_mode":"intersection", "mesh_sizes_mm":[11.25,7.5,5.]}
+    host.close()

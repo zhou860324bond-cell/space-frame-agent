@@ -195,7 +195,23 @@ MODEL_SCHEMA: dict[str, Any] = {
                                # 腹板边缘：折算应力的控制点常在这里
                                "S_flange": {"type": "number", "exclusiveMinimum": 0},
                                "c_web": {"type": "number", "exclusiveMinimum": 0},
-                               "circular": {"type": "boolean"}},
+                               "circular": {"type": "boolean"},
+                               "geometry": {
+                                   "type": "object", "required": ["type"],
+                                   "additionalProperties": False,
+                                   "properties": {
+                                       "type": {"enum": ["rectangle", "box", "circle", "tube", "i",
+                                                         "channel", "angle", "tee", "polygon"]},
+                                       "dimensions": {"type": "object", "additionalProperties":
+                                                      {"type": "number", "exclusiveMinimum": 0}},
+                                       "outer": {"type": "array", "minItems": 3, "items": {
+                                           "type": "array", "minItems": 2, "maxItems": 2,
+                                           "items": {"type": "number"}}},
+                                       "holes": {"type": "array", "items": {"type": "array",
+                                                 "minItems": 3, "items": {"type": "array",
+                                                 "minItems": 2, "maxItems": 2,
+                                                 "items": {"type": "number"}}}},
+                                   }}},
             },
         },
         "nodes": {
@@ -430,7 +446,8 @@ def from_dict(data: dict[str, Any]) -> Frame:
             float(s["Sy"]) if s.get("Sy") is not None else None,
             float(s["by"]) if s.get("by") is not None else None,
             float(s["S_flange"]) if s.get("S_flange") is not None else None,
-            float(s["c_web"]) if s.get("c_web") is not None else None)
+            float(s["c_web"]) if s.get("c_web") is not None else None,
+            geometry=s.get("geometry"))
     for n in data["nodes"]:
         f.nodes[int(n["id"])] = Node(int(n["id"]), float(n["x"]), float(n["y"]), float(n["z"]))
     for m in data["members"]:

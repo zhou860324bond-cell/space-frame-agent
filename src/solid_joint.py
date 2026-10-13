@@ -1,13 +1,12 @@
 """梁模型节点的 Abaqus 局部实体子模型。
 
 整体结构继续使用快速、可验证的空间梁内核；用户选中一个节点后，本模块把与它
-相连的圆形杆件截取为短臂，在 Abaqus/Standard 中做 C3D10 实体分析。默认通过
+相连的杆件按真实截面截取为短臂，在 Abaqus/Standard 中做 C3D10 实体分析。默认通过
 分布耦合传入整体梁切面的平均平移和转角，允许切面变形；保留六分量内力加载
 用于对照。ODB 中只统计节点附近 ``HOTSPOT`` 单元集，排除加载端局部峰值。
 
-第一版有意只支持实心圆和圆管，而且要求同一种各向同性材料。I/H 型节点需要板件、
-焊缝、加劲肋和倒圆参数，若缺这些几何就自动拼实体会得到“精确但不是用户结构”的
-答案；因此明确拒绝，不做猜测。
+支持八类参数截面与带孔多边形轮廓，要求同一种各向同性材料。自动连接包络只补
+节点附近的空缺，新增材料须按真实节点核对；焊缝、螺栓、接触与加劲肋仍需另行定义。
 """
 
 from __future__ import annotations
@@ -48,6 +47,10 @@ class JointArm:
     rotation_rad: tuple[float, float, float] | None = None
     source_element: int | None = None
     source_x_mm: float | None = None
+    profile_mm: dict[str, Any] | None = None
+    axis_y: tuple[float, float, float] | None = None
+    axis_z: tuple[float, float, float] | None = None
+    probe_yz_mm: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,7 @@ class JointSpec:
     arms: tuple[JointArm, ...]
     warnings: tuple[str, ...] = ()
     loading_method: str = "force"
+    geometry_mode: str = "intersection"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -169,7 +173,9 @@ def mesh_reference_length(spec: JointSpec) -> float:
     """
     lengths = []
     for arm in spec.arms:
-        if arm.wall_thickness_mm:
+        if arm.profile_mm is not None:
+            lengths.append(float(arm.profile_mm["feature_size"]))
+        elif arm.wall_thickness_mm:
             lengths.append(float(arm.wall_thickness_mm))
         else:
             lengths.append(float(arm.outer_diameter_mm) / 10.0)
@@ -179,6 +185,8 @@ def mesh_reference_length(spec: JointSpec) -> float:
 
 
 def _mesh_reference_reason(spec: JointSpec) -> str:
+    if any(a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
+        return "参考尺寸取自截面最小壁厚、板厚或实心截面的局部尺度。"
     thin = [arm for arm in spec.arms if arm.wall_thickness_mm]
     if thin:
         arm = min(thin, key=lambda item: item.wall_thickness_mm)
@@ -304,7 +312,10 @@ def _physical_end_force(session, member: dict[str, Any], node_id: int,
 def prepare_joint_spec(session, node_id: int, case: str | None = None,
                        anchor_member: int | None = None,
                        arm_length_factor: float = 2.0,
-                       loading_method: str = "force") -> JointSpec:
+                       loading_method: str = "force",
+                       geometry_mode: str = "intersection") -> JointSpec:
+    if geometry_mode not in ("intersection", "transition"):
+        raise SolidJointError("节点几何应为intersection原始交汇或transition连接过渡实体。")
     if loading_method not in ("force", "displacement"):
         raise SolidJointError("加载方式应为 displacement 位移驱动或 force 内力加载。")
     if session.solution is None or session.frame is None or session.compilation is None:
@@ -354,7 +365,30 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
             raise SolidJointError(f"杆件 {item['id']} 长度为零")
         direction = vector / member_length
         section = sections[item["section"]]
-        outer, inner = infer_circular_dimensions(section)
+        from section_geometry import material_probe, profile, scale_geometry
+        geometry = section.get("geometry")
+        if geometry is None:
+            try:
+                outer, inner = infer_circular_dimensions(section)
+            except SolidJointError as exc:
+                raise SolidJointError(f"截面{section['name']}缺少真实轮廓尺寸；请在截面对话框重新定义几何，"
+                                      "或提供geometry外轮廓和孔洞，不能仅由A/I/J猜测截面。") from exc
+            geometry = {"type": "tube" if inner else "circle",
+                        "dimensions": {"d": outer, **({"t": (outer-inner)/2} if inner else {})}}
+        try:
+            p = profile(geometry)
+            if abs(p["area"]-float(section["A"])) > 1e-4*float(section["A"]):
+                raise ValueError("截面面积与真实轮廓不一致，请核对尺寸和单位。")
+            p_mm = profile(scale_geometry(geometry, length_to_mm))
+            probe = tuple(material_probe(p_mm))
+        except (ValueError, KeyError) as exc:
+            raise SolidJointError(f"截面{section['name']}几何无效：{exc}") from exc
+        round_section = p["type"] in ("tube", "circle")
+        outer = p["dimensions"]["d"] if round_section else 2*float(np.linalg.norm(p["outer"], axis=1).max())
+        inner = outer-2*p["dimensions"]["t"] if p["type"] == "tube" else 0.0
+        pi = np.array([nodes[int(item['i'])][key] for key in "xyz"])
+        pj = np.array([nodes[int(item['j'])][key] for key in "xyz"])
+        _, member_axes = local_axes(pi, pj, item.get("ref_vector"))
         arm_length = min(arm_length_factor * outer, 0.35 * member_length)
         if arm_length < 1.5 * outer:
             raise SolidJointError(
@@ -369,6 +403,13 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
                                float(moment @ np.asarray(local_axes(origin, other)[1][2]))
                                * c / float(section["Iz"])))
         normal_mpa = normal * modulus_to_mpa
+        if not round_section:
+            extents = np.abs(np.asarray(p["outer"])).max(axis=0)
+            normal_mpa = (abs(float(force @ direction))/float(section["A"])
+                          + abs(float(moment @ member_axes[1]))*extents[1]/float(section["Iy"])
+                          + abs(float(moment @ member_axes[2]))*extents[0]/float(section["Iz"])) * modulus_to_mpa
+            warnings.append(f"杆件{item['id']}按真实{p['type']}轮廓建立实体，整体截面惯性和主轴一致性"
+                            "仍需核对；该截面尚未定义IIW热点路径，暂不给正式Kt。")
         motion = {}
         if loading_method == "displacement":
             from joint_transfer import cut_motion
@@ -391,6 +432,8 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
             wall_thickness_mm=(0.5 * (outer - inner) * length_to_mm
                                if inner > 1e-9 * outer else None),
             **motion,
+            profile_mm=p_mm, axis_y=tuple(member_axes[1]), axis_z=tuple(member_axes[2]),
+            probe_yz_mm=probe,
         ))
 
     if loading_method == "displacement":
@@ -424,13 +467,16 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
     if nominal <= 1e-12:
         warnings.append("非锚固臂名义正应力接近零，不能给出有意义的应力集中系数。")
     max_diameter = max(arm.outer_diameter_mm for arm in arms)
+    if geometry_mode == "transition":
+        warnings.append("节点连接过渡实体由截面包络自动生成，保留各杆件远端截面及孔洞；"
+                        "新增材料代表明确的连接几何假设，未包含真实焊缝、螺栓或接触，须核对其刚度影响。")
     return JointSpec(
         node_id=node_id, case=chosen, material=material_name,
         elastic_modulus_mpa=float(material["E"]) * modulus_to_mpa,
         poisson=float(material["nu"]), anchor_member=int(anchor_member),
         hotspot_radius_mm=1.35 * max_diameter,
         nominal_normal_mpa=float(nominal), arms=tuple(arms), warnings=tuple(warnings),
-        loading_method=loading_method)
+        loading_method=loading_method, geometry_mode=geometry_mode)
 
 
 def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str,
@@ -464,7 +510,7 @@ def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str,
 if 'MKL_DEBUG_CPU_TYPE' not in os.environ:
     os.environ['MKL_DEBUG_CPU_TYPE'] = '5'
 """ if (is_amd_cpu() if amd is None else amd) else "")
-    return r'''# -*- coding: ascii -*-
+    script = r'''# -*- coding: ascii -*-
 from abaqus import mdb, session
 from abaqusConstants import *
 from odbAccess import openOdb
@@ -769,9 +815,11 @@ def post(index, size, job_name):
         viewport.odbDisplay.setPrimaryVariable(variableLabel='S',
             outputPosition=INTEGRATION_POINT, refinement=(INVARIANT, 'Mises'))
         viewport.odbDisplay.display.setValues(plotState=(CONTOURS_ON_UNDEF,))
+        session.Spectrum(name='FrameLabSolid', colors=('#213B65', '#397FBA', '#75C5D0',
+                         '#F2E8BB', '#EFAA6D', '#C75552'))
         # Clip the contour at P99 so a singular toe does not flatten the map.
         viewport.odbDisplay.contourOptions.setValues(
-            maxAutoCompute=OFF, maxValue=p99_mises)
+            maxAutoCompute=OFF, maxValue=p99_mises, spectrum='FrameLabSolid')
         viewport.viewportAnnotationOptions.setValues(title=OFF, state=OFF,
             annotations=OFF, compass=ON)
         viewport.view.fitView()
@@ -790,6 +838,26 @@ with open(OUTPUT_JSON, 'w') as handle:
 ''' % (mkl_block,
        repr(json.dumps(data, ensure_ascii=True)),
        repr([float(v) for v in mesh_sizes_mm]), output_json, phase)
+    if spec.geometry_mode == "transition" or any(
+            a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
+        start = script.index("    instances = []", script.index("def build("))
+        end = script.index("    material = model.Material", start)
+        script = script[:start] + (
+            "    geometry = mdb.openStep('joint_geometry.step', scale=1.0)\n"
+            "    part = model.PartFromGeometryFile(name='Joint', geometryFile=geometry,\n"
+            "        combine=True, dimensionality=THREE_D, type=DEFORMABLE_BODY)\n"
+            "    assembly.Instance(name='Joint-1', part=part, dependent=ON)\n"
+        ) + script[end:]
+        old = "        probe = tuple(end[k]+radius*rv[k] for k in range(3))"
+        new = ("        yz = arm['probe_yz_mm']\n"
+               "        probe = tuple(end[k]+yz[0]*arm['axis_y'][k]+yz[1]*arm['axis_z'][k] for k in range(3))")
+        script = script.replace(old, new)
+    # 连接包络改变焊趾几何，不能沿用原圆管相贯线热点路径。
+    if spec.geometry_mode == "transition" or any(
+            a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
+        script = script.replace("def surface_samples(odb, frame, size):",
+                                "def surface_samples(odb, frame, size):\n    return {}")
+    return script
 
 
 def run_joint_analysis(session, node_id: int, case: str | None = None,
@@ -797,13 +865,14 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
                        mesh_sizes_mm: list[float] | None = None,
                        output_dir: Path | str = "results/solid_joint",
                        timeout: float = 1800.0, *,
-                       loading_method: str = "displacement") -> dict[str, Any]:
-    """建立、运行并验证两档网格的局部实体节点模型。"""
+                       loading_method: str = "displacement",
+                       geometry_mode: str = "transition") -> dict[str, Any]:
+    """建立、运行并验证至少三档网格的局部实体节点模型。"""
     from abaqus_backend import (find_abaqus, scan_log, solver_environment,
                                 write_env_file)
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member,
-                              loading_method=loading_method)
+                              loading_method=loading_method, geometry_mode=geometry_mode)
     reference = mesh_reference_length(spec)
     # 三档，不是两档。两档只能算出"最后一次变化有多大"，而奇异点上相邻两档
     # 的变化本来就可以很小——三档才能看出这个变化是在缩小还是不缩小。
@@ -814,13 +883,11 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
     sizes = sorted(set(sizes), reverse=True)
     if len(sizes) < 3:
         raise SolidJointError("三档网格尺寸不能有重复")
-    if sizes[0] > reference * 1.0001:
+    if sizes[-1] > reference * 1.0001:
         raise SolidJointError(
-            f"最粗一档 {sizes[0]:.3g} mm 超过参考尺寸 {reference:.3g} mm。"
+            f"最细一档 {sizes[-1]:.3g} mm 超过参考尺寸 {reference:.3g} mm。"
             f"{_mesh_reference_reason(spec)}"
-            "壁厚方向连一个单元都放不下时，网格器只能铺出退化四面体，"
-            "求解器会直接崩而不是报错——实测 65.8 mm 单元配 8 mm 壁厚时"
-            "1837 个单元里有 725 个畸变。请改用不超过参考尺寸的档位。")
+            "网格过粗可能无法解析薄壁或局部应力梯度。请将最细档设为不超过参考尺寸。")
     executable = find_abaqus()
     if executable is None:
         raise SolidJointError("找不到 Abaqus 6.14 命令，无法运行局部实体分析")
@@ -879,6 +946,10 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
     with tempfile.TemporaryDirectory(prefix="solid_joint_") as temp:
         run_dir = Path(temp)
         write_env_file(run_dir)
+        if spec.geometry_mode == "transition" or any(
+                a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
+            from joint_geometry import export_step
+            export_step(spec, run_dir / "joint_geometry.step")
 
         build_script = run_dir / "build_joint.py"
         build_script.write_text(
@@ -922,7 +993,7 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
         payload = json.loads(result_path.read_text(encoding="utf-8"))
         for path in run_dir.iterdir():
             if path.is_file() and path.suffix.lower() in {
-                    ".inp", ".odb", ".sta", ".msg", ".dat", ".log", ".png", ".json", ".py"}:
+                    ".inp", ".odb", ".sta", ".msg", ".dat", ".log", ".png", ".json", ".py", ".step"}:
                 shutil.copy2(path, target / path.name)
 
     meshes = payload["meshes"]
@@ -975,6 +1046,7 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
         "schema": "solid-joint-analysis/v2",
         "backend": "abaqus-6.14",
         "loading_method": spec.loading_method,
+        "geometry_mode": spec.geometry_mode,
         "boundary_spec": spec.to_dict(),
         "source_result_identity": session.result_identity,
         "node_id": spec.node_id,
@@ -994,7 +1066,7 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
              "并与force内力加载对照后再解释局部应力。"]
             if spec.loading_method == "displacement"
             and not fine["cut_transfer_check"]["within_tolerance"] else []),
-        "scope": ("圆钢/圆管节点的线弹性 C3D10 局部实体子模型；切割面采用整体梁模型"
+        "scope": ("已定义真实截面轮廓的线弹性 C3D10 局部实体子模型；切割面采用整体梁模型"
                   f"{'切面平均平移与转角的分布耦合' if spec.loading_method == 'displacement' else '六分量截面力'}。"
                   "几何**不含焊缝与倒圆**，相贯线是应力奇异点，"
                   "因此峰值与 P99 仅供观察应力分布，Kt 一律以 IIW 0.4t/1.0t "

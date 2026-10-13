@@ -2906,11 +2906,13 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         levels = self._ask_joint_levels(node_id)
         if levels is None:
             return
+        options = getattr(self, "_joint_analysis_options", {})
         title = f"节点 {node_id} 局部实体（{'收敛判断 3 档' if levels > 1 else '快速 1 档'}）"
         self._analyse(
             "solid_joint", title,
             lambda report: self.session.analyze_joint_solid(
                 node_id=node_id, case=case, levels=levels,
+                **options,
                 progress=lambda text: report(text, None, True)),
             with_progress=True)
 
@@ -2921,24 +2923,53 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         单档网格判不了热点应力是否收敛，正式的应力集中系数 Kt 只有多档才给。
         不问一句就开算，用户等了几分钟才发现拿不到想要的那个数。
         """
-        box = QMessageBox(self)
+        from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QFormLayout
+        box = QDialog(self)
         box.setWindowTitle("节点实体")
-        box.setText(f"对节点 {node_id} 做局部实体分析，选择网格档位：")
-        box.setInformativeText(
-            "切面采用整体梁位移和转角驱动，分布耦合允许截面局部变形。\n"
-            "快速（1 档）：几分钟，看应力分布与峰值；不给正式 Kt。\n"
-            "收敛判断（3 档）：约 3 倍时间，热点应力收敛时给出正式 Kt。")
-        quick = box.addButton("快速（1 档）", QMessageBox.ButtonRole.AcceptRole)
-        full = box.addButton("收敛判断（3 档）", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(quick)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is quick:
-            return 1
-        if clicked is full:
-            return 3
-        return None
+        box.resize(460, 300)
+        layout = QVBoxLayout(box)
+        note = QLabel(f"节点{node_id}：切面位移与转角驱动。\n连接过渡实体保留杆件截面和孔洞，新增材料须按实际节点核对。")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        backend = QComboBox()
+        backend.addItem("自研C3D10", "native")
+        backend.addItem("Abaqus细网格", "abaqus")
+        form.addRow("求解后端", backend)
+        geometry = QComboBox()
+        geometry.addItem("自动连接过渡实体", "transition")
+        geometry.addItem("原始杆件交汇", "intersection")
+        form.addRow("节点几何", geometry)
+        levels = QComboBox()
+        levels.addItem("快速（1 档）", 1)
+        levels.addItem("收敛判断（3 档）", 3)
+        form.addRow("网格档位", levels)
+        size = QDoubleSpinBox()
+        size.setRange(0, 10000)
+        size.setDecimals(2)
+        size.setSuffix(" mm")
+        size.setSpecialValueText("自动（局部细化）")
+        size.setToolTip("指定全局网格尺寸；节点连接附近进一步细化。多档时此值为最细档全局尺寸。")
+        form.addRow("网格尺寸", size)
+        backend.currentIndexChanged.connect(
+            lambda: levels.setCurrentIndex(1) if backend.currentData() == "abaqus" else None)
+        levels.currentIndexChanged.connect(
+            lambda: levels.setCurrentIndex(1) if backend.currentData() == "abaqus" else None)
+        layout.addLayout(form)
+        warning = QLabel("较细网格增加计算时间和内存。自研规模不足时可选择Abaqus；三档结果稳定后再判断应力。")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        buttons = dialog_styles.button_box(box)
+        buttons.accepted.connect(box.accept)
+        buttons.rejected.connect(box.reject)
+        layout.addWidget(buttons)
+        if box.exec() != QDialog.DialogCode.Accepted:
+            return None
+        count = int(levels.currentData())
+        self._joint_analysis_options = dict(
+            backend=backend.currentData(), geometry_mode=geometry.currentData(),
+            mesh_sizes_mm=([size.value()*1.5**k for k in range(count-1, -1, -1)] if size.value() else None))
+        return count
 
     # --- 校核 ---
 
