@@ -345,7 +345,7 @@ def test_dry_run_returns_the_spec_without_needing_abaqus():
     """本机没装 Abaqus 时，这个工具仍应给出杆端力和名义应力——
     那是 Kt 的分母，能手算核对。"""
     session = _l_joint()
-    result = session.analyze_joint_solid(node_id=2, dry_run=True)
+    result = session.analyze_joint_solid(node_id=2, dry_run=True, loading_method="force")
     assert result.ok, result.payload
     _area, inertia = _tube_properties()
     expected = (TIP_LOAD * SPAN) * (TUBE_D / 2.0) / inertia / 1e6
@@ -613,7 +613,8 @@ def test_agent_routes_the_default_solid_backend_to_native(monkeypatch):
     assert result.ok and result.payload["backend"] == "native"
     assert seen["args"] == (2, None, None, [20.0])
     # 没指定就是快速的单档；进度出口默认不给（agent 调用时没有界面可报）
-    assert seen["options"] == {"levels": 1, "progress": None}
+    assert seen["options"] == {"levels": 1, "progress": None,
+                               "loading_method": "displacement"}
 
 
 def test_gmsh_generates_positive_c3d10_and_cut_faces_when_available():

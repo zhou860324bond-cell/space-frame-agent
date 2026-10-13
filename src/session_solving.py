@@ -487,11 +487,11 @@ class SolvingMixin:
                             mesh_sizes_mm: list[float] | None = None,
                             backend: str = "native",
                             dry_run: bool = False, levels: int = 1,
-                            progress=None) -> ToolResult:
+                            progress=None, loading_method: str = "displacement") -> ToolResult:
         """节点局部实体子模型：看杆件相交处的应力集中。
 
-        分两段，是有意的。**建规格**（把梁模型的杆端力翻译成实体子模型的
-        边界条件、反演圆管尺寸、算名义应力）是纯计算；**跑实体**默认调用
+        分两段，是有意的。**建规格**（恢复梁切面运动或杆端力、反演圆管尺寸、
+        算名义应力）是纯计算；**跑实体**默认调用
         自研 C3D10 内核，也可切换 Abaqus 对标。dry_run 不是调试开关，而是
         在划网格前先审查几何和载荷映射的入口。
         """
@@ -499,7 +499,7 @@ class SolvingMixin:
 
         try:
             spec = solid_joint.prepare_joint_spec(
-                self, int(node_id), case, anchor_member)
+                self, int(node_id), case, anchor_member, loading_method=loading_method)
         except solid_joint.SolidJointError as exc:
             return ToolResult(False, {"error": str(exc)})
         except (KeyError, ValueError) as exc:
@@ -507,18 +507,19 @@ class SolvingMixin:
 
         if dry_run:
             payload = spec.to_dict()
-            payload["note"] = ("只建了规格，没有调用 Abaqus。名义正应力即 Kt 的分母，"
-                               "可以先手算核对再决定是否跑实体分析。")
+            payload["note"] = ("仅建立规格，尚未调用实体求解器；切面运动来自整体梁结果。"
+                               "名义正应力为 Kt 的分母，请先核对边界与单位。")
             return ToolResult(True, payload)
         try:
             if backend == "native":
                 import native_joint
                 summary = native_joint.run_native_joint_analysis(
                     self, int(node_id), case, anchor_member, mesh_sizes_mm,
-                    levels=int(levels), progress=progress)
+                    levels=int(levels), progress=progress, loading_method=loading_method)
             elif backend == "abaqus":
                 summary = solid_joint.run_joint_analysis(
-                    self, int(node_id), case, anchor_member, mesh_sizes_mm)
+                    self, int(node_id), case, anchor_member, mesh_sizes_mm,
+                    loading_method=loading_method)
             else:
                 return ToolResult(False, {"error": f"未知实体求解后端 {backend!r}"})
         except solid_joint.SolidJointError as exc:

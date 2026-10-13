@@ -2923,8 +2923,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         """
         box = QMessageBox(self)
         box.setWindowTitle("节点实体")
-        box.setText(f"对节点 {node_id} 做局部实体分析，选择算法：")
+        box.setText(f"对节点 {node_id} 做局部实体分析，选择网格档位：")
         box.setInformativeText(
+            "切面采用整体梁位移和转角驱动，分布耦合允许截面局部变形。\n"
             "快速（1 档）：几分钟，看应力分布与峰值；不给正式 Kt。\n"
             "收敛判断（3 档）：约 3 倍时间，热点应力收敛时给出正式 Kt。")
         quick = box.addButton("快速（1 档）", QMessageBox.ButtonRole.AcceptRole)

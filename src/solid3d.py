@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import numpy as np
-from scipy.sparse import coo_matrix, csr_matrix
+from scipy.sparse import bmat, coo_matrix, csr_matrix, diags
 from scipy.sparse.linalg import spsolve
 
 
@@ -258,13 +258,14 @@ def boundary_nodes(mesh: SolidMesh) -> np.ndarray:
 
 def solve(mesh: SolidMesh, E: float, nu: float,
           fixed_nodes: Iterable[int], nodal_loads: np.ndarray,
-          *, chunk_size: int = 250) -> SolidResult:
+          *, chunk_size: int = 250, linear_constraints=None) -> SolidResult:
     """组装并求解线弹性实体模型。节点编号均为零基。"""
     loads = np.asarray(nodal_loads, dtype=float)
-    if loads.shape != mesh.nodes.shape:
+    if loads.shape != mesh.nodes.shape or not np.all(np.isfinite(loads)):
         raise Solid3DError("节点荷载必须与节点坐标同为 n×3")
     fixed = np.unique(np.asarray(tuple(fixed_nodes), dtype=np.int64))
-    if fixed.size == 0 or fixed.min() < 0 or fixed.max() >= len(mesh.nodes):
+    if ((fixed.size == 0 and linear_constraints is None)
+            or (fixed.size and (fixed.min() < 0 or fixed.max() >= len(mesh.nodes)))):
         raise Solid3DError("固定节点集合为空或含无效编号")
     K = assemble(mesh, E, nu, chunk_size=chunk_size)
     f = loads.ravel()
@@ -274,11 +275,37 @@ def solve(mesh: SolidMesh, E: float, nu: float,
     if free.size == 0:
         raise Solid3DError("模型没有自由自由度")
     u = np.zeros_like(f)
-    u[free] = spsolve(K[free][:, free].tocsc(), f[free])
+    constraint_force = np.zeros_like(f)
+    if linear_constraints is None:
+        u[free] = spsolve(K[free][:, free].tocsc(), f[free])
+    else:
+        # 混合方程用乘子施加切面平均运动；不逐点锁定，也不加人工弹簧。
+        C, given = linear_constraints
+        C, given = csr_matrix(C), np.asarray(given, dtype=float)
+        if (C.shape[1] != len(f) or C.shape[0] == 0 or given.shape != (C.shape[0],)
+                or not np.all(np.isfinite(C.data)) or not np.all(np.isfinite(given))):
+            raise Solid3DError("线性约束矩阵或给定运动无效。")
+        Kff, Cf = K[free][:, free], C[:, free]
+        diagonal = Kff.diagonal()
+        if np.any(diagonal <= 0.0):
+            raise Solid3DError("实体网格存在零刚度自由度。")
+        D = diags(1.0 / np.sqrt(diagonal))
+        CD = Cf @ D
+        norms = np.sqrt(np.asarray(CD.multiply(CD).sum(axis=1)).ravel())
+        if np.any(norms <= 0.0):
+            raise Solid3DError("线性约束没有关联自由节点。")
+        S = diags(1.0 / norms)
+        Cs = S @ CD
+        system = bmat([[D @ Kff @ D, Cs.T], [Cs, None]], format="csc")
+        solution = spsolve(system, np.r_[D @ f[free], S @ given])
+        if not np.all(np.isfinite(solution)):
+            raise Solid3DError("实体约束重复或约束不足，混合方程无法求解。")
+        u[free] = D @ solution[:len(free)]
+        constraint_force = -C.T @ (S @ solution[len(free):])
     if not np.all(np.isfinite(u)):
         raise Solid3DError("实体刚度矩阵奇异或求解结果非有限")
     residual = K @ u - f
-    free_residual = float(np.linalg.norm(residual[free]))
+    free_residual = float(np.linalg.norm((residual - constraint_force)[free]))
 
     D = elasticity_matrix(E, nu)
     stresses = np.empty((len(mesh.elements), 4, 6), dtype=float)

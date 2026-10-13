@@ -139,11 +139,14 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
         mesh = solid3d.SolidMesh(xyz, np.asarray(rows, dtype=np.int64))
 
         cut_faces: dict[int, np.ndarray] = {}
-        tolerance = max(size * 0.08, 1e-5)
         for arm in spec.arms:
             direction = np.asarray(arm.direction)
             axial = xyz @ direction
-            indices = np.flatnonzero(np.abs(axial - arm.length_mm) <= tolerance)
+            tolerance = max(arm.length_mm * 1e-7, 1e-6)
+            radial = np.linalg.norm(xyz - axial[:, None] * direction, axis=1)
+            indices = np.flatnonzero(
+                (np.abs(axial - arm.length_mm) <= tolerance)
+                & (radial <= 0.5 * arm.outer_diameter_mm + tolerance))
             if len(indices) < 3:
                 raise SolidJointError(
                     f"Gmsh 未识别出杆件 {arm.member_id} 的切割面节点")
@@ -337,7 +340,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               output_dir: Path | str = "results/native_solid_joint",
                               *, max_elements: int = 80000,
                               max_dof: int = 180000, levels: int = 1,
-                              progress=None) -> dict[str, Any]:
+                              progress=None,
+                              loading_method: str = "displacement") -> dict[str, Any]:
     """使用自研 C3D10 求解器运行一档或多档节点实体网格。
 
     没有显式给 ``mesh_sizes_mm`` 时，默认那一档若超过求解规模上限，会按
@@ -355,7 +359,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             progress(text)
         checkpoint()
 
-    spec = prepare_joint_spec(session, node_id, case, anchor_member)
+    spec = prepare_joint_spec(session, node_id, case, anchor_member,
+                              loading_method=loading_method)
     reference = mesh_reference_length(spec)
     # native-v1 默认先给一档可交互的工程网格。Python 稀疏直接解比 Abaqus
     # 慢，默认就上 h=t 会让桌面一次作业跨进几十万自由度；用户需要收敛判断时
@@ -399,16 +404,23 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                 f"{3 * len(mesh.nodes)}。请增大网格尺寸，或使用 Abaqus 后端跑细网格。")
         say(f"{tag}：求解 {3 * len(mesh.nodes)} 个自由度（{len(mesh.elements)} 个 C3D10）…")
         loads = np.zeros_like(mesh.nodes)
-        for arm in spec.arms:
-            if arm.member_id == spec.anchor_member:
-                continue
-            ids = cut_faces[arm.member_id]
-            loads[ids] += solid3d.equivalent_nodal_wrench(
-                mesh.nodes[ids], arm.force_n, arm.moment_nmm, (0.0, 0.0, 0.0))
+        if spec.loading_method == "force":
+            for arm in spec.arms:
+                if arm.member_id == spec.anchor_member:
+                    continue
+                ids = cut_faces[arm.member_id]
+                loads[ids] += solid3d.equivalent_nodal_wrench(
+                    mesh.nodes[ids], arm.force_n, arm.moment_nmm, (0.0, 0.0, 0.0))
         try:
+            options_solve = {}
+            fixed = cut_faces[spec.anchor_member]
+            if spec.loading_method == "displacement":
+                from joint_transfer import joint_constraints
+                fixed = []
+                options_solve["linear_constraints"] = joint_constraints(spec, mesh, cut_faces)
             result = solid3d.solve(
                 mesh, spec.elastic_modulus_mpa, spec.poisson,
-                cut_faces[spec.anchor_member], loads)
+                fixed, loads, **options_solve)
         except solid3d.Solid3DError as exc:
             raise SolidJointError(f"自研 C3D10 求解失败：{exc}") from exc
         checkpoint()
@@ -437,11 +449,25 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             "vtu": vtu,
             "contour_png": png,
         }
+        if spec.loading_method == "displacement":
+            C, prescribed = options_solve["linear_constraints"]
+            row["cut_motion_error_mm"] = float(
+                np.max(np.abs(C @ result.displacement.ravel() - prescribed)))
+            row["cut_resultants"] = {
+                str(arm.member_id): {
+                    "force_n": result.reaction[cut_faces[arm.member_id]].sum(axis=0).tolist(),
+                    "moment_at_cut_nmm": np.cross(
+                        mesh.nodes[cut_faces[arm.member_id]]
+                        - np.asarray(arm.direction) * arm.length_mm,
+                        result.reaction[cut_faces[arm.member_id]]).sum(axis=0).tolist(),
+                } for arm in spec.arms}
+            from joint_transfer import evaluate_cut_transfer
+            row["cut_transfer_check"] = evaluate_cut_transfer(spec, row)
         samples = surface_samples(spec, mesh, result, hotspot_size)
         row["surface_samples"] = samples
         row_hotspots: dict[str, Any] = {}
         for arm in spec.arms:
-            if arm.member_id == spec.anchor_member:
+            if spec.loading_method == "force" and arm.member_id == spec.anchor_member:
                 continue
             arm_samples = samples.get(str(arm.member_id))
             if not arm_samples:
@@ -466,7 +492,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
     hot_spots = levels_out[-1]["hot_spot_extrapolation"]
     hotspot_convergence: dict[str, Any] = {}
     for arm in spec.arms:
-        if arm.member_id == spec.anchor_member:
+        if spec.loading_method == "force" and arm.member_id == spec.anchor_member:
             continue
         mid = str(arm.member_id)
         values = []
@@ -497,6 +523,9 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
     summary = {
         "schema": "solid-joint-analysis/native-v1",
         "backend": "native-c3d10+gmsh",
+        "loading_method": spec.loading_method,
+        "boundary_spec": spec.to_dict(),
+        "source_result_identity": session.result_identity,
         "node_id": spec.node_id,
         "case": spec.case,
         "anchor_member": spec.anchor_member,
@@ -509,7 +538,11 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         "stress_concentration_basis": kt_basis,
         "stress_concentration_refused": kt_refused,
         "meshes": levels_out,
-        "warnings": list(spec.warnings) + ([auto_note] if auto_note else []),
+        "warnings": list(spec.warnings) + ([auto_note] if auto_note else []) + (
+            ["实体切面反力与整体梁内力差异超过5%；请检查剪切变形、平均刚度及短臂长度，"
+             "并与force内力加载对照后再解释局部应力。"]
+            if spec.loading_method == "displacement"
+            and not levels_out[-1]["cut_transfer_check"]["within_tolerance"] else []),
         "files": {
             "directory": str(target),
             "contour_png": levels_out[-1]["contour_png"],

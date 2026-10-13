@@ -2,7 +2,7 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **2316 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
+当前回归基线为 **2335 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
 后台线程收尾修复与三平台验收记录见 [工作进度](docs/PROGRESS.md) 和 [PR #25](https://github.com/zhou860324bond-cell/space-frame-agent/pull/25)。
 桌面安装使用已验收的 PySide6 6.11.2；CI 与 `.[desktop]` 共用版本声明。
 核心原则只有一条：
@@ -82,7 +82,8 @@ python examples\agent_demo.py
 src/frame3d.py        求解内核：3D 梁单元、坐标变换、杆端释放、多工况求解、
                       内力回算、静力平衡校核、奇异诊断
 src/solid3d.py        自研 C3D10 实体内核：形函数、积分、稀疏组装与应力恢复
-src/native_joint.py   Gmsh圆管节点网格、六分量切割面载荷与 native-solid 结果输出
+src/native_joint.py   Gmsh圆管节点网格、切面分布耦合位移驱动与 native-solid 结果输出
+src/joint_transfer.py 整体梁切面运动恢复、面积权重与允许截面变形的分布耦合
 src/model_io.py       版本化 Domain IR：JSON Schema、v0→v1 迁移与校验
 src/model_compiler.py 物理构件→分析单元编译、集中荷载自动剖分与双向映射
 src/result_db.py      统一结果层：Step / Frame / FieldOutput 与结果元数据
@@ -137,7 +138,7 @@ examples/             示例模型、端到端脚本、离线演示、探针题
 | `preview_change` | 在模型副本上预演写操作，返回实体级差异与前后哈希 |
 | `apply_preview` | 只应用经后续用户消息确认且尚未失效的预演 |
 | `preview_analysis_mesh` | 只读预览自动剖分、分析节点/单元与物理构件映射 |
-| `analyze_joint_solid` | **实验性**。选定圆管节点做 C3D10 局部实体分析；默认自研求解，Abaqus作为可选对标后端 |
+| `analyze_joint_solid` | **实验性**。选定圆管节点做 C3D10 局部实体分析；默认分布耦合位移驱动，`loading_method="force"` 保留原内力加载对照；自研与 Abaqus 后端均支持 |
 | `solve_model` | 先校验再求解，失败时直接附上奇异诊断 |
 | `query_results` | 最大位移、支座反力、杆端力（带坐标与符号约定） |
 | `plot_results` | 变形图 / 轴力图 |

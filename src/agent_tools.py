@@ -1402,7 +1402,10 @@ TOOLS: list[dict[str, Any]] = [
                            "几何不含焊缝倒圆，相贯线是应力奇异点，因此峰值应力只用于"
                            "观察分布；应力集中系数一律以 IIW 0.4t/1.0t 线性外推的"
                            "热点应力为分子，外推拿不到就不给系数。"
-                           "dry_run 只建规格、返回杆端力与名义应力，不需要本机装 Abaqus。",
+                           "默认 displacement：整体梁切面平均平移和转角通过分布耦合驱动实体，"
+                           "保留截面局部变形；force 保留原内力加载供对照。"
+                           "位移驱动暂不支持保留区域内未重建的直接载荷及温度场。"
+                           "dry_run 只建规格、返回切面运动、杆端力与名义应力，不需要本机装 Abaqus。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1411,8 +1414,11 @@ TOOLS: list[dict[str, Any]] = [
                     "case": {"type": "string",
                              "description": "工况或组合名；留空取控制工况"},
                     "anchor_member": {"type": "integer",
-                                      "description": "作为固定端的杆件；"
+                                      "description": "force 模式中作为固定端的杆件；"
                                                      "留空优先取通向支座的那根"},
+                    "loading_method": {"type": "string", "enum": ["displacement", "force"],
+                                       "description": "默认 displacement 分布耦合位移驱动；"
+                                                      "force 为原六分量内力加载"},
                     "mesh_sizes_mm": {
                         "type": "array", "items": {"type": "number"},
                         "minItems": 1,
