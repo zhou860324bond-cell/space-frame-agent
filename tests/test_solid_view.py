@@ -210,6 +210,9 @@ def test_solid_display_controls_keep_raw_results_and_expose_average_and_palette(
     assert '未形成圆角' in panel.source.text()
     panel.bind([directory/'summary.json'],0,'示例',geometry={'algorithm':'g2-bezier-sweep'})
     assert '几何记录无效' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'column-host-butt-joint','host_member_id':1,'head_extension_mm':100.})
+    assert '柱截面保持' in panel.source.text() and '梁端贴合' in panel.source.text()
     panel.close()
 
 

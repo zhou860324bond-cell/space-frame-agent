@@ -121,6 +121,100 @@ def build_sweep(gmsh, spec, plan):
     return [v for v in occ.addPipe([(2, _section_face(occ, a))], wire, trihedron='CorrectedFrenet') if v[0] == 3]
 
 
+def column_host_plan(spec):
+    """识别柱顶节点；保持柱截面，梁端接到实际翼缘/腹板面，不对柱做角平分裁切。"""
+    from joint_geometry import _basis, _profile
+    from section_geometry import contains
+    vertical = [a for a in spec.arms if abs(abs(a.direction[2])-1.) < 1e-7]
+    if len(spec.arms) < 3 or len(vertical) != 1:
+        return None
+    host = vertical[0]
+    hd, hy, hz = _basis(host)
+    beams = [a for a in spec.arms if a is not host]
+    if any(abs(np.dot(a.direction, hd)) > 1e-7 for a in beams):
+        return None
+    profile = _profile(host)
+    if profile['type'] in ('circle', 'tube'):
+        return None
+    loop = np.asarray(profile['outer'])
+    starts, head = {}, 0.
+    for arm in beams:
+        d, y, z = _basis(arm)
+        ray = np.array([d @ hy, d @ hz])
+        hits = []
+        for a, b in zip(loop, np.roll(loop, -1, axis=0), strict=True):
+            edge = b-a
+            matrix = np.column_stack((ray, -edge))
+            if abs(np.linalg.det(matrix)) < 1e-10:
+                continue
+            station, fraction = np.linalg.solve(matrix, a)
+            if station > 1e-7 and -1e-7 <= fraction <= 1+1e-7:
+                hits.append((float(station), edge))
+        if not hits:
+            raise ValueError(f'杆件{arm.member_id}未找到柱材料连接面，请明确梁柱连接细节。')
+        start, edge = max(hits, key=lambda hit: hit[0])
+        if abs(edge @ ray) > 1e-7*np.linalg.norm(edge) or start >= arm.length_mm:
+            raise ValueError(f'杆件{arm.member_id}无法贴合柱的平直材料面，请选择原始杆件交汇或定义连接实体。')
+        p = _profile(arm)
+        outer = np.asarray(p['outer'])
+        # 柱截面沿轴向恒定，端面覆盖等价于梁宽投影落在柱材料线段内。
+        # 枚举外轮廓和孔洞的全部交点分段检查，避免网格取样漏掉薄壁或狭窄缺口。
+        transverse = np.array([-ray[1], ray[0]])
+        width = (outer[:, :1]*y+outer[:, 1:]*z) @ (transverse[0]*hy+transverse[1]*hz)
+        limits = [float(width.min()), float(width.max())]
+        origin = ray*(start-1e-5)
+        breaks = list(limits)
+        for contour in [profile['outer'], *profile['holes']]:
+            coordinates = np.asarray(contour)
+            for a, b in zip(coordinates, np.roll(coordinates, -1, axis=0), strict=True):
+                matrix = np.column_stack((transverse, a-b))
+                if abs(np.linalg.det(matrix)) < 1e-10:
+                    continue
+                t, fraction = np.linalg.solve(matrix, a-origin)
+                if -1e-7 <= fraction <= 1+1e-7 and limits[0] < t < limits[1]:
+                    breaks.append(float(t))
+        breaks = np.unique(breaks)
+        for low, high in zip(breaks[:-1], breaks[1:], strict=True):
+            if high-low < 1e-7:
+                continue
+            point = origin+transverse*(low+high)/2
+            if not contains(profile['outer'], point) or any(contains(h, point) for h in profile['holes']):
+                raise ValueError(f'杆件{arm.member_id}端面超出柱材料面，请补充连接板或调整截面朝向。')
+        head = max(head, float(np.max((outer[:, :1]*y+outer[:, 1:]*z) @ (-hd))))
+        starts[str(arm.member_id)] = start
+    if head > .35*min(a.length_mm for a in spec.arms):
+        raise ValueError('柱顶延长区接近驱动切面，请增大短臂范围或明确连接尺寸。')
+    return {'algorithm': 'column-host-butt-joint', 'host_member_id': host.member_id,
+            'head_extension_mm': head, 'beam_start_mm': starts,
+            'host_material_preserved': True, 'fillet_status': 'not_requested',
+            'applied_fillet_radius_mm': 0.,
+            'connection_assumption': '柱顶延长至梁外缘，梁端与柱实际材料面理想粘结；未建立焊缝或连接板。'}
+
+
+def build_column_host(gmsh, spec, plan):
+    """先建立完整柱体，再并入贴合梁端；孔洞仅从所属杆件内扣除。"""
+    from joint_geometry import _basis, _extrude_loop, _profile
+    occ = gmsh.model.occ
+    solids = []
+    for arm in spec.arms:
+        p = _profile(arm)
+        start = (-plan['head_extension_mm'] if arm.member_id == plan['host_member_id']
+                 else plan['beam_start_mm'][str(arm.member_id)])
+        length = arm.length_mm-start
+        if p['type'] in ('circle', 'tube'):
+            d = _basis(arm)[0]
+            solid = [(3, occ.addCylinder(*(start*d), *(length*d), arm.outer_diameter_mm/2))]
+            holes = ([] if not arm.inner_diameter_mm else
+                     [(3, occ.addCylinder(*(start*d), *(length*d), arm.inner_diameter_mm/2))])
+        else:
+            solid = _extrude_loop(occ, arm, p['outer'], start, length)
+            holes = [v for loop in p['holes'] for v in _extrude_loop(occ, arm, loop, start, length)]
+        if holes:
+            solid, _ = occ.cut(solid, holes, removeObject=True, removeTool=True)
+        solids.extend(solid)
+    return occ.fuse(solids[:1], solids[1:], removeObject=True, removeTool=True)[0]
+
+
 def build_miter(gmsh, spec):
     """沿角平分半空间分配各杆件实体与孔洞，避免凸包填满翼缘间凹槽。"""
     from joint_geometry import _basis, _extrude_loop, _polygon_surface, _profile

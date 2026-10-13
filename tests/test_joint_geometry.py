@@ -1,6 +1,8 @@
 """真实截面、连接补齐、网格和连续应力显示的回归。"""
 
 from dataclasses import replace
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,6 +16,62 @@ import solid3d
 import solid_joint
 from test_solid3d import _unit_tet
 from test_solid_joint import _l_joint
+
+
+def _teaching_column_joint():
+    from agent import Session
+    path = Path(__file__).resolve().parents[1]/'examples/空间刚架_简单整体复杂实体.json'
+    session = Session(model=json.loads(path.read_text(encoding='utf-8')))
+    assert session.solve_model().ok
+    return solid_joint.prepare_joint_spec(session,5,case='W_侧向',geometry_mode='transition')
+
+
+@pytest.mark.parametrize('point, expected', [
+    ([90.,80.,-40.],1), ([-90.,80.,-40.],1),
+    ([50.,-40.,90.],0), ([150.,30.,30.],0)])
+def test_column_top_preserves_flange_material_and_does_not_extend_beams_into_voids(point,expected):
+    """防止教学柱顶被角平分面削掉柱翼缘，或把梁向后延拓填进柱截面空隙。"""
+    gmsh=pytest.importorskip('gmsh')
+    spec=_teaching_column_joint()
+    gmsh.initialize(interruptible=False)
+    try:
+        gmsh.option.setNumber('General.Terminal',0)
+        gmsh.model.add('column_top')
+        record=joint_geometry.build_occ_joint(gmsh,spec)
+        volume=gmsh.model.getEntities(3)
+        assert len(volume)==1
+        assert gmsh.model.isInside(3,volume[0][1],point)==expected
+        assert record['algorithm']=='column-host-butt-joint'
+        assert record['host_member_id']==1
+        assert record['beam_start_mm']=={'5':100.,'7':6.}
+    finally:
+        gmsh.finalize()
+
+
+def test_column_host_requires_the_full_beam_face_to_fit_the_column_material():
+    """防止仅按梁中心线判接触，实际宽翼缘悬空却被自动声明为完整梁柱连接。"""
+    spec=_teaching_column_joint()
+    beam=spec.arms[1]
+    wide=sg.profile(sg.descriptor('i',h=200.,b=500.,tw=10.,tf=14.))
+    spec=replace(spec,arms=(spec.arms[0],replace(beam,profile_mm=wide),spec.arms[2]))
+    with pytest.raises(ValueError,match='端面超出柱材料面'):
+        joint_blend.column_host_plan(spec)
+
+
+def test_column_host_mesh_keeps_three_original_cut_sections_and_areas():
+    """防止柱顶修正虽外观正常，却缩窄远端H型切面并改变位移载荷传递面积。"""
+    pytest.importorskip('gmsh')
+    from joint_transfer import cut_area_weights
+    spec=_teaching_column_joint()
+    mesh,cuts=native_joint.generate_joint_mesh(spec,60.,9.)
+    assert mesh.geometry_record['algorithm']=='column-host-butt-joint'
+    for arm in spec.arms:
+        assert cut_area_weights(mesh,cuts[arm.member_id]).sum()==pytest.approx(arm.profile_mm['area'],rel=1e-6)
+        cut=mesh.nodes[cuts[arm.member_id]]
+        yz=np.column_stack((cut@arm.axis_y,cut@arm.axis_z))
+        outer=np.asarray(arm.profile_mm['outer'])
+        assert yz.min(axis=0)==pytest.approx(outer.min(axis=0),abs=1e-5)
+        assert yz.max(axis=0)==pytest.approx(outer.max(axis=0),abs=1e-5)
 
 
 SHAPES = [sg.descriptor("rectangle", b=.12, h=.18), sg.descriptor("box", b=.12, h=.18, t=.02),
@@ -200,7 +258,7 @@ def test_three_arm_joint_builds_one_miter_body_with_actual_algorithm_record():
     gmsh = pytest.importorskip('gmsh')
     spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.rectangle('R',.12,.18)),2)
     third = replace(spec.arms[1],member_id=3,direction=(-1.,0.,0.))
-    spec = replace(spec,arms=(*spec.arms,third),geometry_mode='transition')
+    spec = replace(spec,arms=(*spec.arms,third),geometry_mode='miter')
     gmsh.initialize(interruptible=False)
     try:
         gmsh.option.setNumber('General.Terminal',0)
@@ -208,7 +266,7 @@ def test_three_arm_joint_builds_one_miter_body_with_actual_algorithm_record():
         record = joint_geometry.build_occ_joint(gmsh,spec)
         assert record['algorithm'] == 'halfspace-miter+rolling-ball'
         assert record['volumes'] == 1
-        assert '多臂' in record['sweep_unavailable_reason']
+        assert record['sweep_unavailable_reason'] is None
     finally:
         gmsh.finalize()
 

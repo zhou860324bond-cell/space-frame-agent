@@ -72,9 +72,13 @@ def _hull_volume(occ, coordinates):
 def build_occ_joint(gmsh, spec):
     """构造真实CAD并记录实际算法与曲率，圆角失败不会替换成凸包。"""
     if spec.geometry_mode in ('transition', 'miter'):
-        from joint_blend import build_miter, build_sweep, fillet_miter, sweep_plan
+        from joint_blend import (build_column_host, build_miter, build_sweep,
+                                 column_host_plan, fillet_miter, sweep_plan)
+        column = column_host_plan(spec) if spec.geometry_mode == 'transition' else None
         plan, reason = sweep_plan(spec) if spec.geometry_mode == 'transition' else (None, None)
-        if plan:
+        if column:
+            solids, record = build_column_host(gmsh, spec, column), column
+        elif plan:
             solids = build_sweep(gmsh, spec, plan)
             record = plan
         else:

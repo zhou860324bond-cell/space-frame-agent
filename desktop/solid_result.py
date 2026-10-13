@@ -170,7 +170,13 @@ class SolidResultPanel(QWidget):
             details = ""
             if isinstance(geometry, dict):
                 try:
-                    if geometry.get("algorithm") == "g2-bezier-sweep":
+                    if geometry.get("algorithm") == "column-host-butt-joint":
+                        host = int(geometry['host_member_id'])
+                        height = float(geometry['head_extension_mm'])
+                        if host < 1 or not np.isfinite(height) or height < 0:
+                            raise ValueError("invalid column host")
+                        details = f"\n柱截面保持 · 柱杆件 {host} · 梁端贴合"
+                    elif geometry.get("algorithm") == "g2-bezier-sweep":
                         radius = float(geometry['minimum_centerline_radius_mm'])
                         if not np.isfinite(radius) or radius <= 0:
                             raise ValueError("invalid radius")
