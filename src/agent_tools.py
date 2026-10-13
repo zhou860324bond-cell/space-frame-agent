@@ -1401,11 +1401,12 @@ TOOLS: list[dict[str, Any]] = [
                            "也可指定 Abaqus 作为独立商软对标。"
                            "支持真实尺寸定义的矩形、矩形管、圆钢、圆管、I/H、槽钢、角钢、T及"
                            "自定义polygon外轮廓/孔洞；要求同材料、无刚域偏移。缺轮廓时拒绝猜测。"
-                           "默认transition在节点附近生成连接包络并保留切面及孔洞；原始交汇可选intersection。"
-                           "几何不含焊缝倒圆，相贯线是应力奇异点，因此峰值应力只用于"
+                           "默认transition对匹配两臂使用曲率约束G2扫掠，其余采用半空间斜接与局部圆角；"
+                           "miter可直接选斜接，envelope保留旧凸包方式，intersection保留原始交汇。"
+                           "过渡与圆角是几何假设，未定义真实焊缝，因此峰值应力只用于"
                            "观察分布；应力集中系数一律以 IIW 0.4t/1.0t 线性外推的"
                            "热点应力为分子，外推拿不到就不给系数。"
-                           "自动连接包络或非圆轮廓未定义焊趾路径，不给正式Kt。"
+                           "自动过渡或非圆轮廓未定义焊趾路径，不给正式Kt。"
                            "默认 displacement：整体梁切面平均平移和转角通过分布耦合驱动实体，"
                            "保留截面局部变形；force 保留原内力加载供对照。"
                            "位移驱动暂不支持保留区域内未重建的直接载荷及温度场。"
@@ -1423,9 +1424,9 @@ TOOLS: list[dict[str, Any]] = [
                     "loading_method": {"type": "string", "enum": ["displacement", "force"],
                                        "description": "默认 displacement 分布耦合位移驱动；"
                                                       "force 为原六分量内力加载"},
-                    "geometry_mode": {"type": "string", "enum": ["transition", "intersection"],
-                                      "description": "默认transition，节点附近补连接包络并保留孔洞；"
-                                                     "intersection仅保留原始杆件交汇，便于对照"},
+                    "geometry_mode": {"type": "string", "enum": ["transition", "miter", "envelope", "intersection"],
+                                      "description": "transition优先G2曲率连续扫掠；miter半空间斜接与局部圆角；"
+                                                     "envelope旧凸包；intersection原始交汇。保留远端截面与孔洞，记录实际算法和圆角状态。"},
                     "mesh_sizes_mm": {
                         "type": "array", "items": {"type": "number"},
                         "minItems": 1,

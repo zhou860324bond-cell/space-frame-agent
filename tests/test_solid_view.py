@@ -194,6 +194,14 @@ def test_solid_display_controls_keep_raw_results_and_expose_average_and_palette(
     assert panel.options()["averaging"] is False
     assert grid.cell_data["Mises_MPa"] == pytest.approx(raw)
     assert grid.cell_data["Mises_MPa"][1] == 2000
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'g2-bezier-sweep','minimum_centerline_radius_mm':140.5})
+    assert 'G2曲率连续' in panel.source.text() and '140.5 mm' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'halfspace-miter+rolling-ball','applied_fillet_radius_mm':0.,'fillet_status':'kernel_unavailable'})
+    assert '未形成圆角' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={'algorithm':'g2-bezier-sweep'})
+    assert '几何记录无效' in panel.source.text()
     panel.close()
 
 

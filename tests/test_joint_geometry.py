@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import joint_geometry
+import joint_blend
 import native_joint
 import section_geometry as sg
 import sections
@@ -60,6 +61,12 @@ def test_all_profile_shapes_mesh_with_original_cut_material_area(geometry):
     for arm in spec.arms:
         assert cut_area_weights(mesh, cuts[arm.member_id]).sum() == pytest.approx(
             sg.profile(geometry)["area"]*1e6, rel=.04)
+        if geometry['type'] not in ('circle','tube'):
+            coordinates = mesh.nodes[cuts[arm.member_id]]
+            yz = np.column_stack((coordinates @ arm.axis_y,coordinates @ arm.axis_z))
+            expected = np.asarray(arm.profile_mm['outer'])
+            assert yz.min(axis=0) == pytest.approx(expected.min(axis=0),abs=1e-4)
+            assert yz.max(axis=0) == pytest.approx(expected.max(axis=0),abs=1e-4)
 
 
 def test_transition_fills_only_joint_and_adds_material_to_rectangular_corner():
@@ -67,7 +74,7 @@ def test_transition_fills_only_joint_and_adds_material_to_rectangular_corner():
     gmsh = pytest.importorskip("gmsh")
     spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.rectangle("R", .12, .18)), 2)
     volumes = []
-    for mode in ("intersection", "transition"):
+    for mode in ("intersection", "miter"):
         gmsh.initialize(interruptible=False)
         try:
             gmsh.option.setNumber("General.Terminal", 0)
@@ -75,7 +82,7 @@ def test_transition_fills_only_joint_and_adds_material_to_rectangular_corner():
             record = joint_geometry.build_occ_joint(gmsh, replace(spec, geometry_mode=mode))
             volumes.append(record["volume_mm3"])
             assert record["volumes"] == 1
-            assert record["connection_depth_mm"] < min(a.length_mm for a in spec.arms)
+            assert record.get("fillet_region_radius_mm", 0) < min(a.length_mm for a in spec.arms)
         finally:
             gmsh.finalize()
     assert volumes[1] > volumes[0]*1.01
@@ -130,3 +137,130 @@ def test_step_geometry_script_keeps_true_profile_probe_and_refuses_fake_hotspot(
     assert "def surface_samples(odb, frame, size):\n    return {}" in script
     script.encode("ascii")
     compile(script, "generic_joint.py", "exec")
+
+
+@pytest.mark.parametrize("kind", ["i", "tube", "rectangle"])
+def test_g2_sweep_keeps_straight_end_tangents_and_zero_endpoint_curvature(kind):
+    """防止所谓平滑仅改变显示，真实CAD曲线在直杆接口仍存在折角或曲率跳变。"""
+    geometry = next(g for g in SHAPES if g['type'] == kind)
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=_section(geometry)), 2)
+    plan, reason = joint_blend.sweep_plan(spec)
+    assert reason is None
+    control = np.asarray(plan['control_points_mm'])
+    assert np.linalg.norm(np.cross(control[1]-control[0], spec.arms[0].direction)) < 1e-9
+    assert np.linalg.norm(np.cross(control[-1]-control[-2], spec.arms[1].direction)) < 1e-9
+    assert joint_blend.curvature(control, [0., 1.]) == pytest.approx([0., 0.], abs=1e-12)
+    radius = 1/joint_blend.curvature(control, np.linspace(0,1,10001)).max()
+    assert radius >= .999*1.3*max(a.outer_diameter_mm for a in spec.arms)/2
+    assert plan['transition_length_mm'] < .8*min(a.length_mm for a in spec.arms)
+
+
+def test_g2_h_profile_keeps_flange_void_that_the_convex_hull_filled():
+    """复现用户指出的H节点大块填充：新CAD须保留翼缘间凹槽，不能只修饰云图。"""
+    gmsh = pytest.importorskip('gmsh')
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.i_section('H',.18,.12,.02,.025)),2)
+    occupancy = []
+    for mode in ('envelope','transition'):
+        gmsh.initialize(interruptible=False)
+        try:
+            gmsh.option.setNumber('General.Terminal',0)
+            gmsh.model.add(mode)
+            record = joint_geometry.build_occ_joint(gmsh, replace(spec,geometry_mode=mode))
+            volume = gmsh.model.getEntities(3)[0][1]
+            occupancy.append(gmsh.model.isInside(3,volume,[60.,35.,-60.]))
+            if mode == 'transition':
+                assert record['algorithm'] == 'g2-bezier-sweep'
+                assert record['volumes'] == 1
+        finally:
+            gmsh.finalize()
+    assert occupancy == [1,0]
+
+
+def test_equal_area_tubes_with_different_diameters_do_not_use_one_profile_sweep():
+    """防止两圆管仅面积相同就被认定为同截面扫掠，导致另一切面直径被替换。"""
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.circular_tube('T',.16,.02)),2)
+    p = sg.profile(sg.descriptor('tube',d=200.,t=100.-np.sqrt(7200.)))
+    arm = replace(spec.arms[1],outer_diameter_mm=200.,inner_diameter_mm=2*np.sqrt(7200.),profile_mm=p)
+    plan, reason = joint_blend.sweep_plan(replace(spec,arms=(spec.arms[0],arm)))
+    assert plan is None and '直径' in reason
+
+
+def test_rotated_h_profiles_select_miter_instead_of_silently_twisting_the_cut():
+    """防止扫掠端部截面朝向不匹配，损坏原杆件局部轴与边界运动关系。"""
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.i_section('H',.18,.12,.02,.025)),2)
+    a = spec.arms[1]
+    y,z = np.asarray(a.axis_y),np.asarray(a.axis_z)
+    a = replace(a,axis_y=tuple((y+z)/np.sqrt(2)),axis_z=tuple((z-y)/np.sqrt(2)))
+    plan, reason = joint_blend.sweep_plan(replace(spec,arms=(spec.arms[0],a)))
+    assert plan is None and '朝向' in reason
+
+
+def test_three_arm_joint_builds_one_miter_body_with_actual_algorithm_record():
+    """防止新算法只处理示例两臂，多臂节点仍被自动填成凸包大块。"""
+    gmsh = pytest.importorskip('gmsh')
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.rectangle('R',.12,.18)),2)
+    third = replace(spec.arms[1],member_id=3,direction=(-1.,0.,0.))
+    spec = replace(spec,arms=(*spec.arms,third),geometry_mode='transition')
+    gmsh.initialize(interruptible=False)
+    try:
+        gmsh.option.setNumber('General.Terminal',0)
+        gmsh.model.add('three_arm')
+        record = joint_geometry.build_occ_joint(gmsh,spec)
+        assert record['algorithm'] == 'halfspace-miter+rolling-ball'
+        assert record['volumes'] == 1
+        assert '多臂' in record['sweep_unavailable_reason']
+    finally:
+        gmsh.finalize()
+
+
+def test_failed_cad_fillet_is_recorded_without_replacing_h_voids_by_a_hull(monkeypatch):
+    """防止圆角失败后悄悄退回被用户否定的块状填充，并误称已经形成光顺曲面。"""
+    gmsh = pytest.importorskip('gmsh')
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.i_section('H',.18,.12,.02,.025)),2,geometry_mode='miter')
+    def unavailable(*args,**kw):
+        raise RuntimeError('CAD fillet unavailable')
+    monkeypatch.setattr(gmsh.model.occ,'fillet',unavailable)
+    gmsh.initialize(interruptible=False)
+    try:
+        gmsh.option.setNumber('General.Terminal',0)
+        gmsh.model.add('unavailable')
+        record = joint_geometry.build_occ_joint(gmsh,spec)
+        assert record['fillet_status'] == 'kernel_unavailable'
+        assert record['applied_fillet_radius_mm'] == 0
+        assert gmsh.model.isInside(3,gmsh.model.getEntities(3)[0][1],[60.,35.,-60.]) == 0
+    finally:
+        gmsh.finalize()
+
+
+def test_g2_step_round_trip_preserves_body_volume_and_mm_bounds(tmp_path):
+    """防止曲面只可显示，导出的STEP却失去体积、孔洞或毫米尺度，无法进入Abaqus。"""
+    gmsh = pytest.importorskip('gmsh')
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.circular_tube('T',.16,.02)),2,geometry_mode='transition')
+    path = tmp_path/'g2_joint.step'
+    record = joint_geometry.export_step(spec,path)
+    gmsh.initialize(interruptible=False)
+    try:
+        gmsh.option.setNumber('General.Terminal',0)
+        gmsh.option.setString('Geometry.OCCTargetUnit','MM')
+        gmsh.model.add('imported')
+        volumes = gmsh.model.occ.importShapes(str(path))
+        gmsh.model.occ.synchronize()
+        assert len(volumes) == 1
+        assert set(gmsh.model.getEntities(2)) == set(gmsh.model.getBoundary(volumes,combined=False,oriented=False))
+        assert gmsh.model.occ.getMass(*volumes[0]) == pytest.approx(record['volume_mm3'],rel=1e-6)
+        bounds = np.asarray(gmsh.model.getBoundingBox(*volumes[0]))
+        assert np.max(abs(bounds)) > 300 and np.max(abs(bounds)) < 1000
+    finally:
+        gmsh.finalize()
+
+
+def test_cad_error_becomes_actionable_tool_error_and_releases_gmsh(monkeypatch):
+    """防止曲面CAD失败直接抛到工具外，且必须释放Gmsh以允许用户切换几何重试。"""
+    gmsh = pytest.importorskip('gmsh')
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=sections.rectangle('R',.12,.18)),2,geometry_mode='transition')
+    def invalid(*args,**kw):
+        raise ValueError('invalid curve')
+    monkeypatch.setattr(joint_geometry,'build_occ_joint',invalid)
+    with pytest.raises(solid_joint.SolidJointError,match='切换节点几何'):
+        native_joint.generate_joint_mesh(spec,30)
+    assert gmsh.isInitialized() == 0

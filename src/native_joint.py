@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,11 @@ from task_control import checkpoint
 from solid_joint import (JointSpec, SolidJointError, diagnose_peak_convergence,
                          hot_spot_stress_linear, mesh_reference_length,
                          prepare_joint_spec)
+
+
+@dataclass(frozen=True)
+class JointMesh(solid3d.SolidMesh):
+    geometry_record: dict[str, Any] | None = None
 
 
 def _gmsh_module():
@@ -68,7 +74,15 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.model.add(f"native_joint_{spec.node_id}")
         from joint_geometry import build_occ_joint
-        build_occ_joint(gmsh, spec)
+        try:
+            geometry_record = build_occ_joint(gmsh, spec)
+        except Exception as exc:  # noqa: BLE001  Gmsh以通用Exception报告CAD错误，保留原因并转为工具错误。
+            raise SolidJointError(f"节点曲面几何生成失败：{exc}。请核对截面朝向与短臂范围，或切换节点几何方式。") from exc
+        fillet_radius = geometry_record.get("applied_fillet_radius_mm", 0.)
+        if fillet_radius:
+            local_size = min(local_size, .5*fillet_radius)
+        if spec.geometry_mode in ("transition", "miter"):
+            gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
         gmsh.option.setNumber("Mesh.MeshSizeMin", local_size)
         gmsh.option.setNumber("Mesh.MeshSizeMax", size)
         if local_size < size:
@@ -119,7 +133,7 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
         remap = np.full(len(xyz), -1, dtype=np.int64)
         remap[used] = np.arange(len(used))
         xyz = xyz[used]
-        mesh = solid3d.SolidMesh(xyz, remap[connectivity])
+        mesh = JointMesh(xyz, remap[connectivity], geometry_record)
 
         cut_faces: dict[int, np.ndarray] = {}
         for arm in spec.arms:
@@ -175,7 +189,7 @@ def surface_samples(spec: JointSpec, mesh: solid3d.SolidMesh,
                     result: solid3d.SolidResult,
                     mesh_size_mm: float) -> dict[str, list[list[float]]]:
     """按 Abaqus 后端同一几何规则提取各管臂焊趾外表面应力路径。"""
-    if spec.geometry_mode == "transition" or any(
+    if spec.geometry_mode != "intersection" or any(
             a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
         return {}
     stress = solid3d.nodal_abs_principal_envelope(mesh, result.gauss_stress)
@@ -520,7 +534,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         "backend": "native-c3d10+gmsh",
         "loading_method": spec.loading_method,
         "geometry_mode": spec.geometry_mode,
-        "connection_depth_mm": 0.35*min(a.length_mm for a in spec.arms) if spec.geometry_mode == "transition" else 0.0,
+        "geometry": getattr(mesh, "geometry_record", None),
         "boundary_spec": spec.to_dict(),
         "source_result_identity": session.result_identity,
         "node_id": spec.node_id,
@@ -539,7 +553,9 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             ["实体切面反力与整体梁内力差异超过5%；请检查剪切变形、平均刚度及短臂长度，"
              "并与force内力加载对照后再解释局部应力。"]
             if spec.loading_method == "displacement"
-            and not levels_out[-1]["cut_transfer_check"]["within_tolerance"] else []),
+            and not levels_out[-1]["cut_transfer_check"]["within_tolerance"] else []) + (
+            ["当前CAD未形成有效圆角，结果使用斜接实体；请核对实际连接细节，或对匹配两臂选择曲率连续过渡。"]
+            if (getattr(mesh, "geometry_record", None) or {}).get("fillet_status") == "kernel_unavailable" else []),
         "files": {
             "directory": str(target),
             "contour_png": levels_out[-1]["contour_png"],

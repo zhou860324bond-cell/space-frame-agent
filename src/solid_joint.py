@@ -5,8 +5,8 @@
 分布耦合传入整体梁切面的平均平移和转角，允许切面变形；保留六分量内力加载
 用于对照。ODB 中只统计节点附近 ``HOTSPOT`` 单元集，排除加载端局部峰值。
 
-支持八类参数截面与带孔多边形轮廓，要求同一种各向同性材料。自动连接包络只补
-节点附近的空缺，新增材料须按真实节点核对；焊缝、螺栓、接触与加劲肋仍需另行定义。
+支持八类参数截面与带孔多边形轮廓，要求同一种各向同性材料。连接区域采用G2
+曲率连续扫掠或半空间斜接圆角，须按真实节点核对；焊缝、螺栓、接触与加劲肋需另行定义。
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def infer_circular_dimensions(section: dict[str, Any]) -> tuple[float, float]:
     if not circular and not matches_circle:
         raise SolidJointError(
             f"截面 {section.get('name')!r} 不是可识别的圆钢/圆管；"
-            "局部实体第一版只支持圆形截面。")
+            "缺少可确定截面的真实尺寸，请补充尺寸或外轮廓后再分析。")
     sum_sq = 16.0 * inertia / area
     diff_sq = 4.0 * area / math.pi
     outer_sq = 0.5 * (sum_sq + diff_sq)
@@ -314,8 +314,8 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
                        arm_length_factor: float = 2.0,
                        loading_method: str = "force",
                        geometry_mode: str = "intersection") -> JointSpec:
-    if geometry_mode not in ("intersection", "transition"):
-        raise SolidJointError("节点几何应为intersection原始交汇或transition连接过渡实体。")
+    if geometry_mode not in ("intersection", "transition", "miter", "envelope"):
+        raise SolidJointError("节点几何应为transition曲率连续过渡、miter斜接、envelope截面包络或intersection原始交汇。")
     if loading_method not in ("force", "displacement"):
         raise SolidJointError("加载方式应为 displacement 位移驱动或 force 内力加载。")
     if session.solution is None or session.frame is None or session.compilation is None:
@@ -467,9 +467,9 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
     if nominal <= 1e-12:
         warnings.append("非锚固臂名义正应力接近零，不能给出有意义的应力集中系数。")
     max_diameter = max(arm.outer_diameter_mm for arm in arms)
-    if geometry_mode == "transition":
-        warnings.append("节点连接过渡实体由截面包络自动生成，保留各杆件远端截面及孔洞；"
-                        "新增材料代表明确的连接几何假设，未包含真实焊缝、螺栓或接触，须核对其刚度影响。")
+    if geometry_mode != "intersection":
+        warnings.append("连接区域采用明确的几何假设，保留远端截面与孔洞；G2扫掠会改变节点中心线形状，"
+                        "斜接与圆角也须核对实际尺寸，未包含真实焊缝、螺栓或接触，请校核其刚度影响。")
     return JointSpec(
         node_id=node_id, case=chosen, material=material_name,
         elastic_modulus_mpa=float(material["E"]) * modulus_to_mpa,
@@ -838,7 +838,7 @@ with open(OUTPUT_JSON, 'w') as handle:
 ''' % (mkl_block,
        repr(json.dumps(data, ensure_ascii=True)),
        repr([float(v) for v in mesh_sizes_mm]), output_json, phase)
-    if spec.geometry_mode == "transition" or any(
+    if spec.geometry_mode != "intersection" or any(
             a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
         start = script.index("    instances = []", script.index("def build("))
         end = script.index("    material = model.Material", start)
@@ -853,7 +853,7 @@ with open(OUTPUT_JSON, 'w') as handle:
                "        probe = tuple(end[k]+yz[0]*arm['axis_y'][k]+yz[1]*arm['axis_z'][k] for k in range(3))")
         script = script.replace(old, new)
     # 连接包络改变焊趾几何，不能沿用原圆管相贯线热点路径。
-    if spec.geometry_mode == "transition" or any(
+    if spec.geometry_mode != "intersection" or any(
             a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
         script = script.replace("def surface_samples(odb, frame, size):",
                                 "def surface_samples(odb, frame, size):\n    return {}")
@@ -946,10 +946,14 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
     with tempfile.TemporaryDirectory(prefix="solid_joint_") as temp:
         run_dir = Path(temp)
         write_env_file(run_dir)
-        if spec.geometry_mode == "transition" or any(
+        geometry_record = None
+        if spec.geometry_mode != "intersection" or any(
                 a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
             from joint_geometry import export_step
-            export_step(spec, run_dir / "joint_geometry.step")
+            try:
+                geometry_record = export_step(spec, run_dir / "joint_geometry.step")
+            except Exception as exc:  # noqa: BLE001  CAD接口使用通用Exception；保留原因并给出可执行的下一步。
+                raise SolidJointError(f"节点曲面或STEP生成失败：{exc}。请核对截面朝向与短臂范围，或切换节点几何方式。") from exc
 
         build_script = run_dir / "build_joint.py"
         build_script.write_text(
@@ -1047,6 +1051,7 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
         "backend": "abaqus-6.14",
         "loading_method": spec.loading_method,
         "geometry_mode": spec.geometry_mode,
+        "geometry": geometry_record,
         "boundary_spec": spec.to_dict(),
         "source_result_identity": session.result_identity,
         "node_id": spec.node_id,

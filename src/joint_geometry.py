@@ -1,4 +1,4 @@
-"""真实截面挤出与有限范围连接包络；保留切面轮廓和截面孔洞。"""
+"""真实截面连接：G2扫掠、斜接圆角及原凸包对照，保留远端截面和孔洞。"""
 
 from __future__ import annotations
 
@@ -70,7 +70,23 @@ def _hull_volume(occ, coordinates):
 
 
 def build_occ_joint(gmsh, spec):
-    """构造CAD并返回记录：连接包络仅在节点附近，孔洞继续贯穿对应杆段。"""
+    """构造真实CAD并记录实际算法与曲率，圆角失败不会替换成凸包。"""
+    if spec.geometry_mode in ('transition', 'miter'):
+        from joint_blend import build_miter, build_sweep, fillet_miter, sweep_plan
+        plan, reason = sweep_plan(spec) if spec.geometry_mode == 'transition' else (None, None)
+        if plan:
+            solids = build_sweep(gmsh, spec, plan)
+            record = plan
+        else:
+            solids, record = fillet_miter(gmsh, spec, build_miter(gmsh, spec))
+            record['sweep_unavailable_reason'] = reason
+        gmsh.model.occ.synchronize()
+        if len(solids) != 1:
+            raise ValueError('截面相贯后未形成连续节点，请核对截面朝向或选择原始杆件交汇。')
+        return {**record, 'mode': spec.geometry_mode, 'volumes': 1,
+                'volume_mm3': float(gmsh.model.occ.getMass(*solids[0])),
+                'sections': [{'member_id': a.member_id, 'profile': _profile(a)['type']} for a in spec.arms],
+                'holes_preserved': True}
     occ = gmsh.model.occ
     solids, holes, sections, hull_points = [], [], [], []
     minimum_length = min(a.length_mm for a in spec.arms)
@@ -105,7 +121,7 @@ def build_occ_joint(gmsh, spec):
         sections.append({"member_id": arm.member_id, "profile": p["type"]})
     noncollinear = any(np.linalg.norm(np.cross(spec.arms[0].direction, a.direction)) > 1e-8
                       for a in spec.arms[1:])
-    if spec.geometry_mode == "transition" and noncollinear:
+    if spec.geometry_mode == "envelope" and noncollinear:
         solids.extend(_hull_volume(occ, np.asarray(hull_points)))
     if len(solids) > 1:
         solids, _ = occ.fuse(solids[:1], solids[1:], removeObject=True, removeTool=True)
@@ -119,9 +135,24 @@ def build_occ_joint(gmsh, spec):
         raise ValueError("连接实体布尔运算没有留下有效体积，请检查截面与杆件方向。")
     if len(solids) != 1:
         raise ValueError("截面与孔洞未形成连续节点，请调整杆件方向或节点连接几何。")
-    return {"mode": spec.geometry_mode, "connection_depth_mm": depth if spec.geometry_mode == "transition" and noncollinear else 0,
+    return {"mode": spec.geometry_mode, "algorithm": "convex-envelope" if spec.geometry_mode == "envelope" else "intersection",
+            "connection_depth_mm": depth if spec.geometry_mode == "envelope" and noncollinear else 0,
             "volumes": len(solids), "volume_mm3": float(sum(occ.getMass(*v) for v in solids)),
             "sections": sections, "holes_preserved": True}
+
+
+def _remove_auxiliary_entities(gmsh):
+    """STEP只保留实体闭包，移除扫掠用的截面和中心线，避免CAE导入游离面。"""
+    keep = set(gmsh.model.getEntities(3))
+    frontier = list(keep)
+    for _ in range(3):
+        frontier = gmsh.model.getBoundary(frontier, combined=False, oriented=False)
+        keep.update(frontier)
+    for dimension in (2, 1, 0):
+        auxiliary = [entity for entity in gmsh.model.getEntities(dimension) if entity not in keep]
+        if auxiliary:
+            gmsh.model.occ.remove(auxiliary, recursive=False)
+    gmsh.model.occ.synchronize()
 
 
 def export_step(spec, path):
@@ -132,6 +163,7 @@ def export_step(spec, path):
         gmsh.option.setString("Geometry.OCCTargetUnit", "MM")
         gmsh.model.add("local_joint_geometry")
         record = build_occ_joint(gmsh, spec)
+        _remove_auxiliary_entities(gmsh)
         gmsh.write(str(path))
         return record
     finally:

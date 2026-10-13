@@ -2732,7 +2732,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             return False
         self._solid_grid, self._solid_binding = grid, binding
         self._solid_info = (summary, paths, index, caption)
-        self.solid_panel.bind(paths, index, caption, saved=binding is None)
+        self.solid_panel.bind(paths, index, caption, saved=binding is None, geometry=summary.get("geometry"))
         if summary:
             title, columns, rows, locators = result_rows.to_rows("solid_joint", summary)
             self.results.show_rows(title, columns, rows,
@@ -2744,8 +2744,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def _switch_solid_level(self, path) -> None:
         if not self._load_solid_result(path, self._solid_binding) and self._solid_info:
-            _summary, paths, index, caption = self._solid_info
-            self.solid_panel.bind(paths, index, caption, saved=self._solid_binding is None)
+            summary, paths, index, caption = self._solid_info
+            self.solid_panel.bind(paths, index, caption, saved=self._solid_binding is None, geometry=summary.get("geometry"))
 
     def _redraw_solid_result(self) -> None:
         if self.mode == "实体云图" and self._solid_grid is not None and not self.runner.busy:
@@ -2928,7 +2928,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         box.setWindowTitle("节点实体")
         box.resize(460, 300)
         layout = QVBoxLayout(box)
-        note = QLabel(f"节点{node_id}：切面位移与转角驱动。\n连接过渡实体保留杆件截面和孔洞，新增材料须按实际节点核对。")
+        note = QLabel(f"节点{node_id}：切面位移与转角驱动。\n过渡区域保留远端截面与孔洞，曲线和圆角尺寸须按实际节点核对。")
         note.setWordWrap(True)
         layout.addWidget(note)
         form = QFormLayout()
@@ -2937,8 +2937,11 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         backend.addItem("Abaqus细网格", "abaqus")
         form.addRow("求解后端", backend)
         geometry = QComboBox()
-        geometry.addItem("自动连接过渡实体", "transition")
+        geometry.addItem("曲率连续过渡（自动）", "transition")
+        geometry.addItem("斜接裁切与圆角", "miter")
+        geometry.addItem("截面包络填充（原方式）", "envelope")
         geometry.addItem("原始杆件交汇", "intersection")
+        geometry.setToolTip("匹配两臂优先使用保持截面的G2曲线扫掠；多臂或截面朝向不匹配时采用斜接。焊接节点可直接选斜接裁切与圆角。")
         form.addRow("节点几何", geometry)
         levels = QComboBox()
         levels.addItem("快速（1 档）", 1)

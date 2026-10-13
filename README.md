@@ -2,7 +2,7 @@
 
 自然语言 → 结构模型 → 求解 → 自校验 → 出图，全流程可验证。
 
-当前回归基线为 **2361 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
+当前回归基线为 **2371 项通过、1 项按环境跳过**，Agent 注册 **63 个确定性工具**。
 后台线程收尾修复与三平台验收记录见 [工作进度](docs/PROGRESS.md) 和 [PR #25](https://github.com/zhou860324bond-cell/space-frame-agent/pull/25)。
 桌面安装使用已验收的 PySide6 6.11.2；CI 与 `.[desktop]` 共用版本声明。
 核心原则只有一条：
@@ -82,6 +82,7 @@ python examples\agent_demo.py
 src/frame3d.py        求解内核：3D 梁单元、坐标变换、杆端释放、多工况求解、
                       内力回算、静力平衡校核、奇异诊断
 src/solid3d.py        自研 C3D10 实体内核：形函数、积分、稀疏组装与应力恢复
+src/joint_blend.py    曲率约束G2截面扫掠、半空间斜接和自适应CAD圆角
 src/native_joint.py   Gmsh真实截面连接实体网格、切面分布耦合位移驱动与 native-solid 结果输出
 src/joint_transfer.py 整体梁切面运动恢复、面积权重与允许截面变形的分布耦合
 src/model_io.py       版本化 Domain IR：JSON Schema、v0→v1 迁移与校验

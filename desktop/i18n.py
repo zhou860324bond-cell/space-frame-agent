@@ -25,6 +25,9 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "曲率连续过渡（自动）": "Automatic curvature continuous transition",
+    "斜接裁切与圆角": "Miter intersection and fillet",
+    "截面包络填充（原方式）": "Original profile envelope fill",
     "实体配色": "Solid contour palette", "节点平均着色": "Nodal averaged contour",
     "柔和蓝红": "Soft blue to red", "蓝绿黄": "Blue green yellow", "蓝黄": "Blue yellow",
     "自动连接过渡实体": "Automatic joint transition solid",

@@ -152,7 +152,7 @@ class SolidResultPanel(QWidget):
             box.addWidget(button)
         box.addStretch(1)
 
-    def bind(self, paths, index, caption, *, saved=False):
+    def bind(self, paths, index, caption, *, saved=False, geometry=None):
         self._filling = True
         try:
             self.caption.setText(caption + ("\n已保存结果，独立于当前整体模型" if saved else ""))
@@ -160,7 +160,24 @@ class SolidResultPanel(QWidget):
             for i, path in enumerate(paths):
                 self.levels.addItem(f"第 {i + 1} 档", str(path))
             self.levels.setCurrentIndex(index)
-            self.source.setText(f"结果文件：{paths[index].name}")
+            details = ""
+            if isinstance(geometry, dict):
+                try:
+                    if geometry.get("algorithm") == "g2-bezier-sweep":
+                        radius = float(geometry['minimum_centerline_radius_mm'])
+                        if not np.isfinite(radius) or radius <= 0:
+                            raise ValueError("invalid radius")
+                        details = f"\nG2曲率连续过渡 · 最小中心线半径 {radius:.6g} mm"
+                    elif geometry.get("algorithm") == "halfspace-miter+rolling-ball":
+                        radius = float(geometry.get("applied_fillet_radius_mm", 0.))
+                        if not np.isfinite(radius) or radius < 0:
+                            raise ValueError("invalid radius")
+                        details = f"\n斜接裁切 · 圆角半径 {radius:.6g} mm" if radius else "\n斜接裁切 · 未形成圆角"
+                    elif geometry.get("algorithm") == "convex-envelope":
+                        details = "\n截面包络填充（原方式）"
+                except (KeyError, TypeError, ValueError):
+                    details = "\n几何记录无效，请核对原始结果文件。"
+            self.source.setText(f"结果文件：{paths[index].name}"+details)
             self.source.setToolTip(str(paths[index]))
         finally:
             self._filling = False
