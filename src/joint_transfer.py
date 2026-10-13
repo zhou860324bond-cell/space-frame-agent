@@ -67,6 +67,15 @@ def validate_local_sources(session, node_id: int, arms, case: str) -> None:
     frame = session.frame
     origin = frame.nodes[node_id].xyz
     scale = session.units.length_to_m * 1000.0
+    for arm in arms:
+        direction = np.asarray(arm.direction)
+        for nid, fixed in frame.supports.items():
+            rel = frame.nodes[nid].xyz - origin
+            axial = float(rel @ direction)
+            if (any(fixed) and -1e-10 <= axial < arm.length_mm / scale - 1e-10
+                    and np.linalg.norm(rel - axial * direction) < 1e-9):
+                raise ValueError("实体保留区域存在整体支座约束；请先明确实体支承区域，"
+                                 "不能只传切面运动而遗漏内部支承。")
     sources = frame.combos[case].items() if case in frame.combos else [(case, 1.0)]
     for base, factor in sources:
         if factor == 0.0:

@@ -157,13 +157,18 @@ def test_area_weights_integrate_a_quadratic_tetrahedron_cut_face():
 
 
 def test_direct_joint_load_cannot_be_silently_omitted_in_displacement_mode():
-    """防止整体节点集中力被误当作已经在局部实体内施加的载荷。"""
+    """防止直接集中力或内部支承被误当作已在局部实体中重建的条件。"""
     result = _l_joint(load_at_joint=True).analyze_joint_solid(2, dry_run=True)
     assert not result.ok
     assert "直接集中载荷" in result.payload["error"]
     result = _l_joint(load_at_joint=True).analyze_joint_solid(
         2, dry_run=True, loading_method="force")
     assert result.ok and result.payload["loading_method"] == "force"
+    supported = _cantilever()
+    assert supported.set_supports([2], fix=[1]*6).ok
+    assert supported.solve_model().ok
+    result = supported.analyze_joint_solid(2, dry_run=True)
+    assert not result.ok and "内部支承" in result.payload["error"]
 
 
 def test_distributed_load_inside_local_domain_is_explicitly_rejected():
