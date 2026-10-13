@@ -222,3 +222,37 @@ def test_solid_analysis_dialog_exposes_geometry_mesh_and_backend(app, monkeypatc
     assert host._joint_analysis_options == {
         "backend":"abaqus", "geometry_mode":"intersection", "mesh_sizes_mm":[11.25,7.5,5.]}
     host.close()
+
+
+def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatch):
+    """防止截面轮廓成为最后一个图层后，MPa色标错误绑定轮廓数组或默认色谱。"""
+    import pyvista as pv
+    from desktop import viewport
+    view=viewport.Viewport()
+    class LegendPlotter(viewport._NullPlotter):
+        def __init__(self):
+            super().__init__()
+            self.actors={}
+            self.last_mapper=None
+            self.legend_range=None
+        def add_mesh(self,dataset,**options):
+            mapper=pv.DataSetMapper(dataset=dataset)
+            mapper.scalar_range=options.get('clim',(-1.,1.))
+            actor=pv.Actor(mapper=mapper)
+            self.actors[options.get('name')]=actor
+            self.last_mapper=mapper
+            return actor
+        def add_scalar_bar(self,**options):
+            self.legend_range=options.get('mapper',self.last_mapper).scalar_range
+    plotter=LegendPlotter()
+    view.plotter=plotter
+    monkeypatch.setattr(viewport,'CAN_RENDER',True)
+    monkeypatch.setattr(view,'_apply_view',lambda *args:None)
+    monkeypatch.setattr(view,'_inset_camera',lambda:None)
+    grid,*_=read_result(files[0]/'native_joint_1.npz')
+    result=view.show_solid_result(grid,'节点65',show_edges=False)
+    assert '_solid_feature_edges' in plotter.actors
+    assert plotter.last_mapper.scalar_range == (-1.,1.)
+    assert plotter.legend_range == pytest.approx(result['clim'])
+    assert plotter.legend_range[1]>1000
+    view.close()

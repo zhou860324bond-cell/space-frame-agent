@@ -157,10 +157,10 @@ def test_area_weights_integrate_a_quadratic_tetrahedron_cut_face():
 
 
 def test_direct_joint_load_cannot_be_silently_omitted_in_displacement_mode():
-    """防止直接集中力或内部支承被误当作已在局部实体中重建的条件。"""
+    """防止直接集中力仍被拒绝或漏载；未重建的内部支承仍应明确阻止。"""
     result = _l_joint(load_at_joint=True).analyze_joint_solid(2, dry_run=True)
-    assert not result.ok
-    assert "直接集中载荷" in result.payload["error"]
+    assert result.ok
+    assert result.payload['local_loads']
     result = _l_joint(load_at_joint=True).analyze_joint_solid(
         2, dry_run=True, loading_method="force")
     assert result.ok and result.payload["loading_method"] == "force"
@@ -172,12 +172,14 @@ def test_direct_joint_load_cannot_be_silently_omitted_in_displacement_mode():
 
 
 def test_distributed_load_inside_local_domain_is_explicitly_rejected():
-    """防止均布荷载进入切面运动后，遗漏实体内同一保留杆段的分布载荷。"""
+    """防止重建均布荷载后仍以存在外载为理由阻止本可求解的节点。"""
     s = _cantilever()
     s.frame.load_cases["LC"].member_loads[1] = (0, -100, 0)
     spec = solid_joint.prepare_joint_spec(s, 2)
-    with pytest.raises(ValueError, match="实体保留杆段"):
-        jt.validate_local_sources(s, 2, spec.arms, "LC")
+    jt.validate_local_sources(s, 2, spec.arms, "LC")
+    from joint_loading import collect_local_loads, local_load_resultant
+    force, _moment = local_load_resultant(collect_local_loads(s, 2, spec.arms, 'LC'))
+    assert force[1] == pytest.approx(-100*spec.arms[0].length_mm/1000)
 
 
 def test_abaqus_displacement_script_uses_deformable_coupling_and_all_cut_motions():

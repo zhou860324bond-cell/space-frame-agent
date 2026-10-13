@@ -1461,15 +1461,21 @@ class Viewport(QWidget):
         if not CAN_RENDER:
             return self._solid_last
         self.plotter.remove_actor("_grid_floor", reset_camera=False, render=False)
-        self.plotter.add_mesh(
-            displayed, scalars=display_field, preference=display_association,
+        surface = theme.V.solid_surface(displayed)
+        solid_actor = self.plotter.add_mesh(
+            surface, scalars=display_field, preference=display_association,
             cmap=theme.solid_cmap(palette), clim=(0.0, high),
             show_edges=show_edges, edge_color=theme.VIEWPORT_INK_MUTED,
-            line_width=0.5, show_scalar_bar=False, smooth_shading=False,
-            interpolate_before_map=display_association == "point", lighting=False,
-            ambient=0.42, diffuse=0.58, name="_solid_result")
+            line_width=0.5, show_scalar_bar=False, smooth_shading=True,
+            split_sharp_edges=True, feature_angle=40,
+            interpolate_before_map=display_association == "point", lighting=True,
+            ambient=0.5, diffuse=0.5, specular=0.04, name="_solid_result")
+        if not show_edges:
+            features = surface.extract_feature_edges(feature_angle=40, manifold_edges=False)
+            self.plotter.add_mesh(features, color=theme.VIEWPORT_INK_MUTED, opacity=0.32,
+                                  line_width=1, name='_solid_feature_edges', pickable=False)
         self.plotter.add_scalar_bar(
-            title="", n_labels=7, vertical=True, fmt="%.3g",
+            mapper=solid_actor.mapper, title="", n_labels=7, vertical=True, fmt="%.3g",
             color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
             width=0.040, height=0.58, position_x=0.905, position_y=0.14)
         bar_label = {"Mises_MPa": "Mises [MPa]", "AbsPrincipal_MPa": "|Principal| [MPa]",

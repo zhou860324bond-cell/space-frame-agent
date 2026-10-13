@@ -12,6 +12,27 @@ from __future__ import annotations
 
 import math
 
+
+def solid_cmap(palette="engineering", steps=256):
+    """实体色谱同时用于静态导出和桌面，低值蓝青、高值橙红。"""
+    from matplotlib import colormaps
+    from matplotlib.colors import LinearSegmentedColormap
+    if palette in ('viridis', 'cividis'):
+        return colormaps[palette].resampled(steps)
+    return LinearSegmentedColormap.from_list(
+        'solid_engineering', ['#244c87', '#238fbd', '#52c6b5', '#e4ed97', '#ffba59', '#d95243'], N=steps)
+
+
+def solid_surface(grid):
+    """以二次单元中点提取显示曲面；保留原体单元序号，不平滑或改写真实网格。"""
+    surface_source = grid.copy(deep=True)
+    surface_source.cell_data.pop('vtkOriginalCellIds', None)
+    surface_source.cell_data['_FrameLabSolidCellId'] = list(range(grid.n_cells))
+    surface = surface_source.extract_surface(nonlinear_subdivision=1)
+    # 非线性细分的VTK来源号可能是父表面而非体单元号，使用随单元数据插值复制的编号。
+    surface.cell_data['vtkOriginalCellIds'] = surface.cell_data.pop('_FrameLabSolidCellId')
+    return surface
+
 # 面与墨
 SURFACE = "#fcfcfb"
 PAGE = "#f9f9f7"

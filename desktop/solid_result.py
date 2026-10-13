@@ -85,6 +85,12 @@ def read_result(path: str | Path):
     index = next((i for i, p in enumerate(paths) if p.stem == path.stem), len(paths) - 1)
     caption = (f"节点 {summary.get('node_id')} · 工况 {summary.get('case')}"
                if summary else path.stem)
+    if summary.get('loading_method') == 'displacement':
+        caption += ' · 位移驱动'
+        if (summary.get('boundary_spec') or {}).get('local_loads'):
+            caption += ' · 保留区外载已重建'
+    elif summary.get('loading_method') == 'force':
+        caption += ' · 内力加载对照'
     return grid, summary, paths, index, caption
 
 

@@ -51,6 +51,8 @@ class JointArm:
     axis_y: tuple[float, float, float] | None = None
     axis_z: tuple[float, float, float] | None = None
     probe_yz_mm: tuple[float, float] | None = None
+    cut_force_n: tuple[float, float, float] | None = None
+    cut_moment_nmm: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ class JointSpec:
     warnings: tuple[str, ...] = ()
     loading_method: str = "force"
     geometry_mode: str = "intersection"
+    local_loads: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -412,15 +415,18 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
                             "仍需核对；该截面尚未定义IIW热点路径，暂不给正式Kt。")
         motion = {}
         if loading_method == "displacement":
-            from joint_transfer import cut_motion
+            from joint_transfer import cut_motion, cut_resultant
             try:
                 u, theta, eid, x = cut_motion(
                     session, int(item["id"]), origin + arm_length * direction, chosen)
+                cut_f, cut_m = cut_resultant(session, int(item['id']), node_id,
+                                            origin+arm_length*direction, chosen)
             except ValueError as exc:
                 raise SolidJointError(str(exc)) from exc
             motion = {"translation_mm": tuple(float(v) * length_to_mm for v in u),
                       "rotation_rad": tuple(float(v) for v in theta),
-                      "source_element": eid, "source_x_mm": x * length_to_mm}
+                      "source_element": eid, "source_x_mm": x * length_to_mm,
+                      "cut_force_n": tuple(cut_f), "cut_moment_nmm": tuple(cut_m*length_to_mm)}
         arms.append(JointArm(
             member_id=int(item["id"]), direction=tuple(float(v) for v in direction),
             outer_diameter_mm=outer * length_to_mm,
@@ -436,14 +442,20 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
             probe_yz_mm=probe,
         ))
 
+    local_loads = ()
     if loading_method == "displacement":
         from joint_transfer import validate_local_sources
+        from joint_loading import collect_local_loads
         try:
             validate_local_sources(session, node_id, arms, chosen)
+            local_loads = collect_local_loads(session, node_id, arms, chosen)
         except ValueError as exc:
             raise SolidJointError(str(exc)) from exc
         warnings.append("位移驱动采用整体梁切面平均平移与转角，允许截面局部变形；"
                         "请检查整体与实体刚度一致性，并改变短臂长度检查边界影响。")
+        if local_loads:
+            warnings.append("实体保留区的集中力、力矩和线荷载已重建为表面积加权的等效加载区，"
+                            "保留原合力与合矩；加载区尺寸属于施力假设，区内峰值不代表真实加载头或接触应力。")
 
     if anchor_member is None:
         # 优先把通向支座的杆件作为锚固臂；没有时取编号最小者，保证结果可复现。
@@ -458,7 +470,7 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
     # 节点域中如何扩散；明确告警，避免把连接板/加载头几何假装成已知。
     source_case = next((c for c in session.model.get("load_cases") or []
                         if c.get("name") == chosen), session.model)
-    if any(int(load.get("node", -1)) == node_id
+    if loading_method == 'force' and any(int(load.get("node", -1)) == node_id
            for load in source_case.get("nodal_loads") or []):
         warnings.append("该节点存在直接节点荷载；局部模型按杆端截面力传递，未建加载头几何。")
     nominal = max((arm.nominal_normal_mpa for arm in arms
@@ -476,7 +488,7 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
         poisson=float(material["nu"]), anchor_member=int(anchor_member),
         hotspot_radius_mm=1.35 * max_diameter,
         nominal_normal_mpa=float(nominal), arms=tuple(arms), warnings=tuple(warnings),
-        loading_method=loading_method, geometry_mode=geometry_mode)
+        loading_method=loading_method, geometry_mode=geometry_mode, local_loads=local_loads)
 
 
 def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str,
@@ -857,6 +869,43 @@ with open(OUTPUT_JSON, 'w') as handle:
             a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
         script = script.replace("def surface_samples(odb, frame, size):",
                                 "def surface_samples(odb, frame, size):\n    return {}")
+    if spec.loading_method == 'displacement' and spec.local_loads:
+        from joint_loading import abaqus_load_helper
+        script = script.replace('def build(index, size):', abaqus_load_helper()+'\ndef build(index, size):', 1)
+        script = script.replace('    job.writeInput(consistencyChecking=OFF)\n', r'''    job.writeInput(consistencyChecking=OFF)
+    coordinates = [list(n.coordinates) for n in part.nodes]
+    elements = [list(e.connectivity) for e in part.elements]
+    applied, regions = regional_load_forces(coordinates, elements, SPEC['arms'], SPEC['local_loads'])
+    lines = ['*CLOAD']
+    total_force, total_moment = [0.0]*3, [0.0]*3
+    for index_node, vector in enumerate(applied):
+        position = coordinates[index_node]
+        moment = cross(position, vector)
+        for k in range(3):
+            total_force[k] += vector[k]
+            total_moment[k] += moment[k]
+            if vector[k] != 0.0:
+                lines.append('Joint-1.%d, %d, %.17g' % (part.nodes[index_node].label, k+1, vector[k]))
+    with open(job_name+'.inp', 'r') as handle:
+        deck = handle.read()
+    offset = deck.upper().rfind('*END STEP')
+    if offset < 0:
+        raise RuntimeError('No static step available for local loads.')
+    with open(job_name+'.inp', 'w') as handle:
+        handle.write(deck[:offset]+'\n'.join(lines)+'\n'+deck[offset:])
+    with open('local_load_audit_%d.json' % index, 'w') as handle:
+        for region in regions:
+            region['node_labels'] = [part.nodes[i].label for i in region.pop('node_indices')]
+        json.dump(dict(force_n=total_force, moment_nmm=total_moment, regions=regions), handle)
+''', 1)
+        script = script.replace("        out['force_balance_n'] = force", r'''        with open('local_load_audit_%d.json' % index, 'r') as handle:
+            applied = json.load(handle)
+        out['local_applied_force_n'] = applied['force_n']
+        out['local_applied_moment_nmm'] = applied['moment_nmm']
+        out['local_load_regions'] = applied['regions']
+        force = [a+b for a,b in zip(force, applied['force_n'])]
+        moment = [a+b for a,b in zip(moment, applied['moment_nmm'])]
+        out['force_balance_n'] = force''', 1)
     return script
 
 
@@ -912,7 +961,7 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
         """
         try:
             proc = subprocess.run(argv, cwd=str(run_dir), capture_output=True,
-                                  text=True, timeout=float(timeout),
+                                  text=True, errors='replace', timeout=float(timeout),
                                   env=solver_environment())
         except subprocess.TimeoutExpired as exc:
             keep_everything(run_dir)

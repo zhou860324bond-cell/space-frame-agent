@@ -170,14 +170,21 @@ def _write_vtu_and_png(mesh: solid3d.SolidMesh, result: solid3d.SolidResult,
         grid.save(vtu)
         png = str(stem.with_suffix(".png"))
         plotter = pv.Plotter(off_screen=True, window_size=(1400, 900))
+        import viz_theme
+        plotter.set_background(viz_theme.VIEWPORT_BG)
         upper = float(np.percentile(result.element_mises, 99.0))
-        from matplotlib.colors import LinearSegmentedColormap
-        cmap = LinearSegmentedColormap.from_list("solid", ["#213b65", "#397fba", "#75c5d0",
-                                                          "#f2e8bb", "#efaa6d", "#c75552"])
-        plotter.add_mesh(grid, scalars="Display_Mises_MPa", clim=(0.0, upper),
-                         cmap=cmap, show_edges=False, lighting=False,
-                         scalar_bar_args={"title": "Mises stress (MPa) - P99 clipped"})
-        plotter.add_axes()
+        surface = viz_theme.solid_surface(grid)
+        plotter.add_mesh(surface, scalars="Display_Mises_MPa", clim=(0.0, upper),
+                         cmap=viz_theme.solid_cmap(), show_edges=False, lighting=True,
+                         smooth_shading=True, split_sharp_edges=True, feature_angle=40,
+                         ambient=.5, diffuse=.5, specular=.04,
+                         scalar_bar_args={"title": "Mises [MPa] - P99", "color": viz_theme.VIEWPORT_INK,
+                                          "position_x": .15, "width": .7})
+        features = surface.extract_feature_edges(feature_angle=40, manifold_edges=False)
+        plotter.add_mesh(features, color=viz_theme.VIEWPORT_INK_MUTED, opacity=.32, line_width=1)
+        plotter.add_text(f"Raw peak: {result.element_mises.max():.6g} MPa", position='upper_left',
+                         color=viz_theme.VIEWPORT_INK, font_size=12)
+        plotter.add_axes(color=viz_theme.VIEWPORT_INK)
         plotter.view_isometric()
         plotter.show(screenshot=png, auto_close=True)
         return vtu, png
@@ -413,6 +420,16 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                 f"{3 * len(mesh.nodes)}。请增大网格尺寸，或使用 Abaqus 后端跑细网格。")
         say(f"{tag}：求解 {3 * len(mesh.nodes)} 个自由度（{len(mesh.elements)} 个 C3D10）…")
         loads = np.zeros_like(mesh.nodes)
+        local_load_regions = []
+        if spec.loading_method == 'displacement' and spec.local_loads:
+            from joint_loading import regional_load_forces
+            try:
+                local, local_load_regions = regional_load_forces(
+                    mesh.nodes.tolist(), mesh.elements.tolist(),
+                    [a.__dict__ for a in spec.arms], spec.local_loads)
+            except ValueError as exc:
+                raise SolidJointError(f'实体加载区生成失败：{exc}。请细化网格或核对施力位置。') from exc
+            loads += np.asarray(local)
         if spec.loading_method == "force":
             for arm in spec.arms:
                 if arm.member_id == spec.anchor_member:
@@ -455,6 +472,9 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             "force_balance_n": [float(v) for v in equilibrium.sum(axis=0)],
             "moment_balance_nmm": [float(v) for v in
                                      np.cross(mesh.nodes, equilibrium).sum(axis=0)],
+            "local_applied_force_n": loads.sum(axis=0).tolist() if spec.loading_method == 'displacement' else None,
+            "local_applied_moment_nmm": np.cross(mesh.nodes, loads).sum(axis=0).tolist() if spec.loading_method == 'displacement' else None,
+            "local_load_regions": local_load_regions,
             "vtu": vtu,
             "contour_png": png,
         }
@@ -495,7 +515,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             displacement=result.displacement, reaction=result.reaction,
             element_mises=result.element_mises,
             element_abs_principal=result.element_abs_principal,
-            gauss_stress=result.gauss_stress)
+            gauss_stress=result.gauss_stress, applied_load_n=loads)
         levels_out.append(row)
 
     hot_spots = levels_out[-1]["hot_spot_extrapolation"]

@@ -7,8 +7,27 @@ from scipy.sparse import coo_matrix
 
 import solid3d
 from frame3d import local_axes, span_loads_of
-from internal_forces import _result_local_displacements, member_diagram, member_length
-from span_loads import MOMENT, PARTIAL, POINT, RAMP
+from internal_forces import _result_local_displacements, member_diagram
+
+
+def cut_resultant(session, member_id, node_id, point, case):
+    """取真实切面的内力；切面恰在剖分节点时取靠近保留区的分析单元。"""
+    origin = session.frame.nodes[node_id].xyz
+    direction = (point-origin)/np.linalg.norm(point-origin)
+    for eid in session.compilation.mapping.element_ids(member_id):
+        member = session.frame.members[eid]
+        pi, pj = session.frame.nodes[member.i].xyz, session.frame.nodes[member.j].xyz
+        length, rotation = local_axes(pi, pj, member.ref_vector)
+        x = float((rotation @ (point-pi))[0])
+        if not -1e-9 <= x <= length+1e-9:
+            continue
+        if min(abs(x), abs(length-x)) < 1e-9 and ((pi+pj)/2-point) @ direction >= 0:
+            continue
+        d = member_diagram(session.frame, session.solution, eid, case, at_x=[np.clip(x, 0, length)])
+        sign = direction @ rotation[0]
+        return (sign*rotation.T @ np.array([d.N[0], d.Vy[0], d.Vz[0]]),
+                sign*rotation.T @ np.array([d.T[0], d.My[0], d.Mz[0]]))
+    raise ValueError(f'杆件{member_id}切面内力未能定位，请重新求解整体模型。')
 
 
 def cut_motion(session, member_id: int, point: np.ndarray, case: str):
@@ -61,7 +80,7 @@ def cut_motion(session, member_id: int, point: np.ndarray, case: str):
 
 
 def validate_local_sources(session, node_id: int, arms, case: str) -> None:
-    """拒绝未在实体内重建的区域载荷及本征应变，防止漏载后给出应力。"""
+    """外载由加载区重建；仍拒绝未重建的内部支承及本征应变。"""
     if session.solution.analysis.get("type", "linear_static") != "linear_static":
         raise ValueError("位移驱动当前需要线性静力整体结果；请先完成线性求解。")
     frame = session.frame
@@ -84,39 +103,14 @@ def validate_local_sources(session, node_id: int, arms, case: str) -> None:
         for arm in arms:
             direction = np.asarray(arm.direction)
             cut = arm.length_mm / scale
-            for nid, value in loads.nodal_loads.items():
-                rel = frame.nodes[nid].xyz - origin
-                axial = float(rel @ direction)
-                if (np.any(np.asarray(value) != 0.0) and -1e-10 <= axial <= cut + 1e-10
-                        and np.linalg.norm(rel - axial * direction) < 1e-9):
-                    raise ValueError("实体保留区域内存在直接集中载荷；请先定义实体加载区域，"
-                                     "或选择 force 内力加载进行原方案对照。")
             for eid in session.compilation.mapping.element_ids(arm.member_id):
                 member = frame.members[eid]
-                length = member_length(frame, eid)
                 start = float((frame.nodes[member.i].xyz - origin) @ direction)
                 end = float((frame.nodes[member.j].xyz - origin) @ direction)
                 if min(start, end) >= cut or max(start, end) < 0.0:
                     continue
                 if loads.member_strains.get(eid) or any(loads.member_curvatures.get(eid, ())):
                     raise ValueError("实体保留区域存在温度或初应变；请先在实体内重建相应场。")
-                for load in span_loads_of(loads, eid):
-                    if not any(load.w1) and not any(load.w2):
-                        continue
-                    if load.kind in (POINT, MOMENT):
-                        a = b = load.a
-                    elif load.kind in (PARTIAL, RAMP):
-                        a, b = load.a, load.b
-                    else:
-                        a, b = 0.0, length
-                    sign = 1.0 if end > start else -1.0
-                    lo, hi = sorted((start + sign * a, start + sign * b))
-                    overlaps = (max(lo, 0.0) <= min(hi, cut)
-                                if load.kind in (POINT, MOMENT)
-                                else max(lo, 0.0) < min(hi, cut))
-                    if overlaps:
-                        raise ValueError("实体保留杆段内存在分布载荷或集中载荷；"
-                                         "请先定义实体加载区域，或选择 force 内力加载对照。")
 
 
 def cut_area_weights(mesh, indices: np.ndarray) -> np.ndarray:
@@ -187,9 +181,10 @@ def evaluate_cut_transfer(spec, row, tolerance=0.05):
     """核对实体切面反力与整体梁内力，揭示位移一致但平均刚度不一致的情况。"""
     expected = {}
     for arm in spec.arms:
-        f = np.asarray(arm.force_n)
+        f = np.asarray(arm.cut_force_n if arm.cut_force_n is not None else arm.force_n)
         center = np.asarray(arm.direction) * arm.length_mm
-        m = np.asarray(arm.moment_nmm) - np.cross(center, f)
+        m = (np.asarray(arm.cut_moment_nmm) if arm.cut_moment_nmm is not None
+             else np.asarray(arm.moment_nmm) - np.cross(center, f))
         expected[str(arm.member_id)] = (f, m)
     force_scale = float(max(np.linalg.norm(f) for f, m in expected.values()))
     moment_scale = float(max(np.linalg.norm(m) for f, m in expected.values()))
