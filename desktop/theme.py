@@ -85,8 +85,8 @@ def sequential_cmap(steps: int = 256):
         "viewport_sequential", SEQUENTIAL_ANCHORS, N=steps)
 
 
-def solid_cmap(palette="engineering", steps=256):
-    """实体顺序色标：柔和蓝红为默认，另可选感知均匀色标。"""
+def solid_cmap(palette="abaqus", steps=256):
+    """实体色标默认采用Abaqus十二级彩虹谱，另保留柔和与感知均匀配色。"""
     return V.solid_cmap(palette, steps)
 
 

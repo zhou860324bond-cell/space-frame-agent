@@ -827,11 +827,10 @@ def post(index, size, job_name):
         viewport.odbDisplay.setPrimaryVariable(variableLabel='S',
             outputPosition=INTEGRATION_POINT, refinement=(INVARIANT, 'Mises'))
         viewport.odbDisplay.display.setValues(plotState=(CONTOURS_ON_UNDEF,))
-        session.Spectrum(name='FrameLabSolid', colors=('#213B65', '#397FBA', '#75C5D0',
-                         '#F2E8BB', '#EFAA6D', '#C75552'))
         # Clip the contour at P99 so a singular toe does not flatten the map.
         viewport.odbDisplay.contourOptions.setValues(
-            maxAutoCompute=OFF, maxValue=p99_mises, spectrum='FrameLabSolid')
+            minAutoCompute=OFF, minValue=0.0, maxAutoCompute=OFF, maxValue=p99_mises,
+            spectrum='Rainbow', numIntervals=12, intervalType=UNIFORM, contourStyle=DISCRETE)
         viewport.viewportAnnotationOptions.setValues(title=OFF, state=OFF,
             annotations=OFF, compass=ON)
         viewport.view.fitView()

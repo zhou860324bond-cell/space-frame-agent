@@ -28,7 +28,7 @@ ZH_EN: dict[str, str] = {
     "曲率连续过渡（自动）": "Automatic curvature continuous transition",
     "斜接裁切与圆角": "Miter intersection and fillet",
     "截面包络填充（原方式）": "Original profile envelope fill",
-    "实体配色": "Solid contour palette", "节点平均着色": "Nodal averaged contour",
+    "实体配色": "Solid contour palette", "Abaqus彩虹": "Abaqus rainbow", "节点平均着色": "Nodal averaged contour",
     "柔和蓝红": "Soft blue to red", "蓝绿黄": "Blue green yellow", "蓝黄": "Blue yellow",
     "自动连接过渡实体": "Automatic joint transition solid",
     "原始杆件交汇": "Original member intersection", "求解后端": "Solver backend",

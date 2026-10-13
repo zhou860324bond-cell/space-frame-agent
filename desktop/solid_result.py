@@ -119,7 +119,8 @@ class SolidResultPanel(QWidget):
         self.field.currentIndexChanged.connect(self._changed)
         form.addRow("结果量", self.field)
         self.palette = QComboBox()
-        for label, value in (("柔和蓝红", "engineering"), ("蓝绿黄", "viridis"), ("蓝黄", "cividis")):
+        for label, value in (("Abaqus彩虹", "abaqus"), ("柔和蓝红", "engineering"),
+                             ("蓝绿黄", "viridis"), ("蓝黄", "cividis")):
             self.palette.addItem(label, value)
         self.palette.currentIndexChanged.connect(self._changed)
         form.addRow("实体配色", self.palette)

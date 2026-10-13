@@ -13,10 +13,17 @@ from __future__ import annotations
 import math
 
 
-def solid_cmap(palette="engineering", steps=256):
-    """实体色谱同时用于静态导出和桌面，低值蓝青、高值橙红。"""
+# 从本机Abaqus 6.14的session.spectrums['Rainbow']读取，按低值到高值排列。
+ABAQUS_RAINBOW = ("#0000FF", "#005CFF", "#00B9FF", "#00FFE7", "#00FF8B", "#00FF2E",
+                  "#2EFF00", "#8BFF00", "#E7FF00", "#FFB900", "#FF5C00", "#FF0000")
+
+
+def solid_cmap(palette="abaqus", steps=256):
+    """桌面和静态导出默认采用Abaqus Rainbow的十二级离散色谱。"""
     from matplotlib import colormaps
-    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.colors import LinearSegmentedColormap, ListedColormap
+    if palette == 'abaqus':
+        return ListedColormap(ABAQUS_RAINBOW, name='abaqus_rainbow')
     if palette in ('viridis', 'cividis'):
         return colormaps[palette].resampled(steps)
     return LinearSegmentedColormap.from_list(

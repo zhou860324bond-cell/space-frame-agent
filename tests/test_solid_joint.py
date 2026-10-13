@@ -289,6 +289,8 @@ def test_the_generated_script_is_valid_python_with_no_leftover_placeholders():
     compile(text, "generated_joint_script.py", "exec")
     assert "%%" not in text, "%% 没有展开，脚本里会留下字面量"
     assert "surface_samples" in text, "缺少表面取样，热点外推就没有输入"
+    assert "spectrum='Rainbow', numIntervals=12, intervalType=UNIFORM, contourStyle=DISCRETE" in text
+    assert "FrameLabSolid" not in text, "CAE导出应使用原生Rainbow而非自定义柔和色谱"
 
 
 def test_sampling_failure_is_contained_and_does_not_lose_the_solve():

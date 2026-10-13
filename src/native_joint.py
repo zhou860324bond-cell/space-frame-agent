@@ -175,10 +175,10 @@ def _write_vtu_and_png(mesh: solid3d.SolidMesh, result: solid3d.SolidResult,
         upper = float(np.percentile(result.element_mises, 99.0))
         surface = viz_theme.solid_surface(grid)
         plotter.add_mesh(surface, scalars="Display_Mises_MPa", clim=(0.0, upper),
-                         cmap=viz_theme.solid_cmap(), show_edges=False, lighting=True,
+                         cmap=viz_theme.solid_cmap(), n_colors=12, show_edges=False, lighting=True,
                          smooth_shading=True, split_sharp_edges=True, feature_angle=40,
                          ambient=.5, diffuse=.5, specular=.04,
-                         scalar_bar_args={"title": "Mises [MPa] - P99", "color": viz_theme.VIEWPORT_INK,
+                         scalar_bar_args={"title": "Mises [MPa] - P99", "n_labels": 13, "color": viz_theme.VIEWPORT_INK,
                                           "position_x": .15, "width": .7})
         features = surface.extract_feature_edges(feature_angle=40, manifold_edges=False)
         plotter.add_mesh(features, color=viz_theme.VIEWPORT_INK_MUTED, opacity=.32, line_width=1)

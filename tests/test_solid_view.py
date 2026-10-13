@@ -180,16 +180,24 @@ def test_window_cleanup_releases_native_objects_on_the_main_thread(app):
 
 
 def test_solid_display_controls_keep_raw_results_and_expose_average_and_palette(app, files):
-    """防止更换配色或节点平均显示后改写原单元峰值、应力和查询数据。"""
+    """防止默认色谱偏离Abaqus十二级Rainbow，或换配色与平均显示改写原应力。"""
     from desktop.solid_result import SolidResultPanel
     directory, _ = files
     grid, *_ = read_result(directory/"summary.json")
     raw = grid.cell_data["Mises_MPa"].copy()
     panel = SolidResultPanel()
-    assert panel.options()["palette"] == "engineering"
+    assert panel.options()["palette"] == "abaqus"
+    from desktop.theme import solid_cmap
+    from matplotlib.colors import to_rgba
+    expected = ["#0000FF", "#005CFF", "#00B9FF", "#00FFE7", "#00FF8B", "#00FF2E",
+                "#2EFF00", "#8BFF00", "#E7FF00", "#FFB900", "#FF5C00", "#FF0000"]
+    cmap = solid_cmap()
+    assert cmap.N == 12
+    np.testing.assert_allclose(cmap(np.arange(12)), [to_rgba(color) for color in expected])
+    assert panel.palette.findData("engineering") >= 0
     assert panel.options()["averaging"] is True
     panel.averaging.setChecked(False)
-    panel.palette.setCurrentIndex(1)
+    panel.palette.setCurrentIndex(panel.palette.findData("viridis"))
     assert panel.options()["palette"] == "viridis"
     assert panel.options()["averaging"] is False
     assert grid.cell_data["Mises_MPa"] == pytest.approx(raw)
@@ -235,7 +243,11 @@ def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatc
             self.actors={}
             self.last_mapper=None
             self.legend_range=None
+            self.solid_options=None
+            self.legend_options=None
         def add_mesh(self,dataset,**options):
+            if options.get('name') == '_solid_result':
+                self.solid_options=options
             mapper=pv.DataSetMapper(dataset=dataset)
             mapper.scalar_range=options.get('clim',(-1.,1.))
             actor=pv.Actor(mapper=mapper)
@@ -243,6 +255,7 @@ def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatc
             self.last_mapper=mapper
             return actor
         def add_scalar_bar(self,**options):
+            self.legend_options=options
             self.legend_range=options.get('mapper',self.last_mapper).scalar_range
     plotter=LegendPlotter()
     view.plotter=plotter
@@ -251,6 +264,9 @@ def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatc
     monkeypatch.setattr(view,'_inset_camera',lambda:None)
     grid,*_=read_result(files[0]/'native_joint_1.npz')
     result=view.show_solid_result(grid,'节点65',show_edges=False)
+    assert plotter.solid_options['cmap'].N == 12
+    assert plotter.solid_options['n_colors'] == 12
+    assert plotter.legend_options['n_labels'] == 13
     assert '_solid_feature_edges' in plotter.actors
     assert plotter.last_mapper.scalar_range == (-1.,1.)
     assert plotter.legend_range == pytest.approx(result['clim'])

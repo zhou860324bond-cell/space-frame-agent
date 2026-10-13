@@ -1419,7 +1419,7 @@ class Viewport(QWidget):
     def show_solid_result(self, grid, caption: str, *, field="Mises_MPa",
                           percentile=99, scale=0.0, show_edges=False,
                           reset_camera=False, averaging=True,
-                          palette="engineering") -> dict:
+                          palette="abaqus") -> dict:
         """在主视口绘制真实实体单元结果，保留单元应力与节点位移的关联。"""
         from .solid_result import FIELDS
 
@@ -1465,6 +1465,7 @@ class Viewport(QWidget):
         solid_actor = self.plotter.add_mesh(
             surface, scalars=display_field, preference=display_association,
             cmap=theme.solid_cmap(palette), clim=(0.0, high),
+            n_colors=12 if palette == "abaqus" else 256,
             show_edges=show_edges, edge_color=theme.VIEWPORT_INK_MUTED,
             line_width=0.5, show_scalar_bar=False, smooth_shading=True,
             split_sharp_edges=True, feature_angle=40,
@@ -1475,7 +1476,7 @@ class Viewport(QWidget):
             self.plotter.add_mesh(features, color=theme.VIEWPORT_INK_MUTED, opacity=0.32,
                                   line_width=1, name='_solid_feature_edges', pickable=False)
         self.plotter.add_scalar_bar(
-            mapper=solid_actor.mapper, title="", n_labels=7, vertical=True, fmt="%.3g",
+            mapper=solid_actor.mapper, title="", n_labels=13 if palette == "abaqus" else 7, vertical=True, fmt="%.3g",
             color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
             width=0.040, height=0.58, position_x=0.905, position_y=0.14)
         bar_label = {"Mises_MPa": "Mises [MPa]", "AbsPrincipal_MPa": "|Principal| [MPa]",
