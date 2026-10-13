@@ -206,12 +206,12 @@ def test_native_displacement_result_is_independent_of_anchor_and_balances(tmp_pa
         row = result["meshes"][0]
         assert result["loading_method"] == "displacement"
         assert row["cut_motion_error_mm"] < 1e-9
-        assert np.linalg.norm(row["force_balance_n"]) < 1e-5
+        force_scale = max(np.linalg.norm(a.force_n) for a in
+                          solid_joint.prepare_joint_spec(s, 2).arms)
+        assert np.linalg.norm(row["force_balance_n"]) < 1e-8*max(force_scale, 1)
         moment_scale = max(np.linalg.norm(a.moment_nmm) for a in
                            solid_joint.prepare_joint_spec(s, 2).arms)
         assert np.linalg.norm(row["moment_balance_nmm"]) < 1e-8*max(moment_scale, 1)
-        force_scale = max(np.linalg.norm(a.force_n) for a in
-                          solid_joint.prepare_joint_spec(s, 2).arms)
         assert row["free_residual_norm_n"] < 1e-8*max(force_scale, 1)
         assert set(row["cut_transfer_check"]["cuts"]) == {"1", "2"}
     assert results[0]["meshes"][0]["max_mises_mpa"] == pytest.approx(
