@@ -150,6 +150,24 @@ def prune_sets(model: dict[str, Any]) -> tuple[dict[str, int], list[str]]:
     return pruned, emptied
 
 
+def prune_mesh_seeds(model: dict[str, Any]) -> list[int]:
+    """删掉指向已不存在杆件的逐杆布种，返回被删的杆件编号。
+
+    和集合一样随杆件删除一起清理；不清的话下一次校验会因为悬空的布种
+    拒绝整个模型，而报错指向的却不是删杆那一步。
+    """
+    mesh = model.get("mesh")
+    if not mesh or not mesh.get("members"):
+        return []
+    alive = {str(int(m["id"])) for m in model.get("members") or []}
+    stale = sorted(int(k) for k in mesh["members"] if k not in alive)
+    if stale:
+        mesh["members"] = {k: v for k, v in mesh["members"].items() if k in alive}
+        if not mesh["members"]:
+            del mesh["members"]
+    return stale
+
+
 def prune_orphan_nodes(model: dict[str, Any]) -> list[int]:
     """删掉不再与任何杆件相连的节点，并连带清掉它们的约束。
 
@@ -196,5 +214,7 @@ def apply(model: dict[str, Any], change: Change, *,
             report["pruned_sets"] = pruned
         if emptied:
             report["emptied_sets"] = emptied
+        if stale := prune_mesh_seeds(model):
+            report["pruned_mesh_seeds"] = stale
 
     return report

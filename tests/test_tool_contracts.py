@@ -66,6 +66,8 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "raise_nodes": (("moved_nodes", "dz", "summary"), "抬高了哪些节点"),
     "select_members": (("member_ids", "count"), "按几何条件挑出的编号"),
     "define_set": (("name", "sets"), "集合名与当前全部集合"),
+    "seed_mesh": (("global_divisions", "member_divisions", "analysis_elements"),
+                  "布种结果与编译后的分析单元数"),
     "list_sets": (("sets", "count"), "各集合的规模概览"),
     "set_model": (("summary",), "整体提交模型"),
     "set_load_cases": (("cases",), "定义了哪些工况"),

@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 
 from frame3d import diagnose_singularity
-from model_compiler import CompilationError, compile_model
+from model_compiler import ANALYSIS_MIN_DIVISIONS, CompilationError, compile_model
 from model_io import from_dict, validate_payload
 from session_base import ToolResult
 
@@ -104,7 +104,25 @@ class ChecksMixin:
     # 偏差方向永远是**偏高**（形函数比真实振型硬），也就是偏不安全那一侧。
     # generate_frame 生成的恰好是每构件一个单元，所以这条会在最常见的
     # 模型上触发——那不是误报，那正是它要拦的情形。
-    COARSE_MESH_ELEMENTS = 4
+    COARSE_MESH_ELEMENTS = ANALYSIS_MIN_DIVISIONS
+
+    def _eigen_compilation(self):
+        """频率、屈曲、反应谱用的分析模型：每根物理杆件至少剖成
+        ``ANALYSIS_MIN_DIVISIONS`` 段（布种要求更细时按布种）。
+
+        原来这三项直接在物理模型上算，一杆一单元，只在结果里附一条
+        「网格太粗」的提醒，让用户自己去加节点。提醒是对的，但默认值是错的：
+        参数化生成的模型恰好就是一杆一单元，最常见的情形拿到的就是偏不安全
+        的数。现在默认就剖够，提醒只在布种被显式压低时才可能出现。
+        """
+        return compile_model(self.model, validated=True,
+                             min_divisions=ANALYSIS_MIN_DIVISIONS)
+
+    @staticmethod
+    def _mesh_summary(compiled) -> dict[str, int]:
+        return {"physical_members": len(compiled.mapping.physical_to_elements),
+                "analysis_elements": len(compiled.analysis_model.members),
+                "min_divisions_per_member": ANALYSIS_MIN_DIVISIONS}
 
     def _coarse_mesh_note(self, what: str, frame=None) -> dict[str, Any] | None:
         """网格太粗时给一条带**实测数字**的提醒，够密就不啰嗦。"""
@@ -122,7 +140,7 @@ class ChecksMixin:
                 "偏高 102%：前者在说「还有 66% 余量」，后者意味着它已经失稳。"
                 "两个单元就收敛。8 m 梁一个单元则是屈曲 +21.6%、模态 +11.0%（简支）。"
                 "要稳妥，每跨至少 4 个单元。"),
-            "how_to_fix": "在那一跨里加中间节点，让它至少有 4 个单元，再重算。",
+            "how_to_fix": "用 seed_mesh 给这一跨的杆件布种，至少 4 段，再重算。",
         }
 
     def modal_analysis(self, num_modes: int = 6) -> ToolResult:
@@ -132,12 +150,18 @@ class ChecksMixin:
             return ToolResult(False, {"errors": errors})
         try:
             from modal import modal
-            physical = from_dict(self.model)
+            compiled = self._eigen_compilation()
+            physical = compiled.analysis_model
             r = modal(physical, int(num_modes))
         except ImportError as exc:
             return ToolResult(False, {"error": f"模态模块不可用：{exc}"})
+        except CompilationError as exc:
+            return ToolResult(False, {"errors": list(exc.diagnostics)})
         except (ValueError, np.linalg.LinAlgError) as exc:
             return ToolResult(False, {"error": str(exc)})
+        # 界面画振型要用**同一个**分析模型和同一份结果，不能自己再算一遍：
+        # 界面手里的 Frame 是静力用的，剖分不同，频率就对不上表格里的数。
+        self.modal_view = (self._model_key(), int(num_modes), physical, r)
         # 参与质量比的分母是**能参与振动的**质量 rᵀM_ff r，不是 Σ ρAL。
         # 压在支座上的那部分永远不参与：拿 Σ ρAL 当分母，一根剖成 4 段的
         # 悬臂柱把振型取满也只报得出 84%，而"加大 num_modes"这条建议在那里
@@ -161,6 +185,7 @@ class ChecksMixin:
                                      for v in r.participable_mass],
             "cumulative_mass_ratio_xyz": [round(float(v), 4)
                                           for v in cumulative],
+            "mesh": self._mesh_summary(compiled),
             "note": "一致质量矩阵，频率略高于精确解；每跨四个单元时误差 0.2% 以内。"
                     "**参与质量比的分母是 participable_mass（能参与振动的质量），"
                     "不是 total_mass**——压在支座上的质量永远不参与，"
@@ -207,7 +232,7 @@ class ChecksMixin:
         try:
             from spectrum import (gb50011_spectrum, response_spectrum,
                                   table_spectrum)
-            physical = from_dict(self.model)
+            physical = self._eigen_compilation().analysis_model
             if spectrum_points:
                 curve = table_spectrum(spectrum_points)
             else:
@@ -227,6 +252,8 @@ class ChecksMixin:
                 damping=float(damping))
         except ImportError as exc:
             return ToolResult(False, {"error": f"反应谱模块不可用：{exc}"})
+        except CompilationError as exc:
+            return ToolResult(False, {"errors": list(exc.diagnostics)})
         except (ValueError, np.linalg.LinAlgError) as exc:
             return ToolResult(False, {"error": str(exc)})
 
@@ -269,22 +296,30 @@ class ChecksMixin:
         name = case or self._controlling_case()
         try:
             from buckling import buckling
-            r = buckling(self.frame, name, int(num_modes), solution=self.solution)
+            from frame3d import solve
+            # 参考轴力在加密后的模型上重新做一次线性静力：几何刚度阵要和
+            # 它装配在同一套单元上。线性静力的杆端力与剖分无关，所以这一步
+            # 不会让参考荷载变样，只是把单元对齐。
+            compiled = self._eigen_compilation()
+            refined = compiled.analysis_model
+            r = buckling(refined, name, int(num_modes), solution=solve(refined))
         except ImportError as exc:
             return ToolResult(False, {"error": f"屈曲模块不可用：{exc}"})
+        except CompilationError as exc:
+            return ToolResult(False, {"errors": list(exc.diagnostics)})
         except (ValueError, np.linalg.LinAlgError) as exc:
             # 网格太粗时这里报的是"没有找到正的临界荷载因子，检查荷载方向与
             # 约束"——把人指向荷载和约束，而真实原因常常是**一个单元根本没有
             # 可屈曲的自由度**（两端固接单单元实测就是这样）。照那句话去查
             # 荷载方向永远查不出问题，所以粗网格时要把这一条摆在前面。
             payload: dict[str, Any] = {"error": str(exc)}
-            coarse = self._coarse_mesh_note("屈曲的几何刚度阵")
+            coarse = self._coarse_mesh_note("屈曲的几何刚度阵", refined)
             if coarse is not None:
                 payload["likely_cause"] = (
                     f"构件 {coarse['member_in_that_span']} 所在的那一跨只有 "
                     f"{coarse['elements_in_span']} 个单元。单元太少时跨内"
                     "没有可屈曲的自由度，解不出正的临界因子——这比荷载方向或"
-                    "约束更可能是原因。先把构件拆细再试。")
+                    "约束更可能是原因。先用 seed_mesh 加密布种再试。")
                 payload["mesh"] = coarse
             return ToolResult(False, payload)
         U = self.units
@@ -293,10 +328,12 @@ class ChecksMixin:
             "case": r.case,
             "critical_factor": round(float(r.critical), 6),
             "factors": [round(float(v), 6) for v in r.factors],
-            "most_compressed_member": worst,
+            # 报物理杆件编号：加密生成的单元编号用户在模型里找不到。
+            "most_compressed_member": compiled.mapping.physical_member_id(worst),
             "its_axial_kN": round(r.axial[worst] * U.force_scale, 6),
+            "mesh": self._mesh_summary(compiled),
             **({"mesh_warning": _coarse} if (_coarse := self._coarse_mesh_note(
-                "屈曲的几何刚度阵")) else {}),
+                "屈曲的几何刚度阵", refined)) else {}),
             "note": "λ 是该工况荷载的临界放大倍数：λ=3 表示放大三倍才失稳。"
                     "这是**线性特征值屈曲**，假定失稳前保持线弹性、变形小、"
                     "轴力不随变形改变。真实结构有初始缺陷与残余应力，"

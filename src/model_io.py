@@ -152,6 +152,21 @@ MODEL_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        # 布种：每根物理杆件剖成几个分析单元。全局默认 + 逐杆覆盖，键是杆件
+        # 编号的字符串（JSON 的对象键只能是字符串）。语义见
+        # model_compiler.member_divisions；不写等于每杆 1 段。
+        "mesh": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "divisions": {"type": "integer", "minimum": 1, "maximum": 200},
+                "members": {
+                    "type": "object", "additionalProperties": False,
+                    "patternProperties": {
+                        "^[1-9][0-9]*$": {"type": "integer", "minimum": 1,
+                                          "maximum": 200}},
+                },
+            },
+        },
         "materials": {
             "type": "array", "minItems": 1,
             "items": {
@@ -536,6 +551,14 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
                 f"[语义] 节点 {s.get('node')} 的方向 {clash} 既写了 fix=1 又给了"
                 "弹簧刚度。刚性约束会让弹簧完全失效，两者只能取一个："
                 "要刚接就把 spring 那一项设为 0，要弹性支承就把 fix 那一项设为 0。")
+    seeded = {int(k) for k in ((data.get("mesh") or {}).get("members") or {})}
+    stale = sorted(seeded - {int(m["id"]) for m in data.get("members") or []})
+    if stale:
+        # 布种指向不存在的杆件本身算不错什么，但它说明模型被改过而布种没跟上：
+        # 用户以为某根杆分了 8 段，实际那根杆已经换了编号。
+        errors.append(
+            f"[语义] mesh/members 给不存在的杆件 {stale} 设置了布种。"
+            "删掉这几项，或改成现在的杆件编号。")
     unique(data.get("materials") or [], "name", "材料名")
     unique(data.get("sections") or [], "name", "截面名")
     unique(data.get("nodes") or [], "id", "节点编号")

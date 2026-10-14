@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 
 from frame3d import check_equilibrium, solve
-from model_compiler import compile_model
+from model_compiler import ANALYSIS_MIN_DIVISIONS, compile_model
 from model_io import validate_payload
 from result_db import from_solution as result_db_from_solution
 from session_base import ToolResult
@@ -194,7 +194,13 @@ class SolvingMixin:
         if errors:
             return ToolResult(False, {"errors": errors,
                                       "hint": "先按上面的清单修正模型，再重新求解"})
-        self.compilation = compile_model(self.model, validated=True)
+        # P-Δ（含按幅值加载的 step）在单元上装配几何刚度阵，和屈曲一样
+        # 一杆一单元会偏刚，所以同样默认剖够；线性静力与轴向塑性不需要
+        # （前者内力解析恢复，后者轴力沿杆不变），保持布种原样。
+        refine = analysis in ("pdelta", "step")
+        self.compilation = compile_model(
+            self.model, validated=True,
+            min_divisions=ANALYSIS_MIN_DIVISIONS if refine else 1)
         self.frame = self.compilation.analysis_model
         self.result_db = None
         checkpoint()

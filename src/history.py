@@ -40,6 +40,8 @@ MUTATING = frozenset({
     # 属性面板的就地修改。**必须登记**——不登记的话用户改完按 Ctrl+Z
     # 什么也不会发生，而他完全预期能撤销
     "edit_member", "edit_node", "assign_properties", "set_supports", "define_set",
+    # 布种改的是分析网格，不改几何；但它改了模型（存盘后仍在），撤销要能退回
+    "seed_mesh",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -173,6 +175,12 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
     if tool == "define_set":
         n = len(payload.get("members") or payload.get("nodes") or [])
         return f"定义集合「{args.get('name')}」，{n} 个对象"
+    if tool == "seed_mesh":
+        if args.get("clear"):
+            return "清除布种"
+        target = args.get("members")
+        where = f"杆件 {target}" if target is not None else "全部杆件"
+        return f"布种：{where}每杆 {args.get('divisions')} 段"
     if tool == "apply_draft":
         s = payload.get("summary") or {}
         return (f"手工修改：{s.get('nodes', 0)} 个节点、{s.get('members', 0)} 根杆件"

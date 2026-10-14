@@ -58,6 +58,8 @@ DIMENSIONS = {
     "supports.name": None, "supports.node": None, "supports.fix": None,
     "supports.spring": "support_spring",
     "sets": None,
+    "mesh.divisions": None,               # 段数，纯计数
+    "mesh.members": None,                 # 杆件编号 → 段数，纯计数
     "nodal_loads.name": None, "nodal_loads.node": None,
     "nodal_loads.load": "force_and_moment",
     "member_loads.name": None, "member_loads.member": None,
