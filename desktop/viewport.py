@@ -657,6 +657,13 @@ class Viewport(QWidget):
             self._rubber.hide()
         self._refresh_region()
 
+    def highlight_region(self, kind: str, ids: list[int]) -> None:
+        """只高亮一个对象的区域（模型树单击），不进入拾取。"""
+        if self.region_pick is not None:
+            return                      # 正在选区域时不打扰用户的选择集
+        self.region_selection.apply(kind, list(ids))
+        self._refresh_region()
+
     def _refresh_region(self) -> None:
         if self._frame is not None and CAN_RENDER:
             self.plotter.remove_actor("_region_selection", reset_camera=False)
@@ -753,6 +760,11 @@ class Viewport(QWidget):
         return super().eventFilter(watched, event)
 
     def set_selection(self, kind: str | None, ident: int | None) -> None:
+        if self.region_pick is None and self.region_selection:
+            # 模型树高亮的区域是临时的：一回到逐个点选就收起
+            self.region_selection.clear()
+            if self._frame is not None and CAN_RENDER:
+                self.plotter.remove_actor("_region_selection", reset_camera=False)
         self.selection = (kind, ident) if kind and ident is not None else None
         if self._frame is not None and CAN_RENDER:
             for name in ("_selection", "_local_axis_x", "_local_axis_y",

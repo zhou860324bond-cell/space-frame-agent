@@ -155,6 +155,8 @@ class MainWindow(WindowObjectsMixin, WindowCommandsMixin, WindowPreferencesMixin
 
         self.tree = ModelTree(self)
         self.tree.activated_item.connect(self._on_tree_action)
+        self.tree.feature_action.connect(self._on_feature_action)
+        self.tree.feature_selected.connect(self._on_feature_selected)
         self.tree_dock = self.left_drawer.add_page("tree", "模型树", self.tree)
         # 开局视作"自动收起"状态：第一次刷新时若已有模型，就把树展开
         self._tree_auto_hidden = True
@@ -3201,6 +3203,15 @@ class MainWindow(WindowObjectsMixin, WindowCommandsMixin, WindowPreferencesMixin
     # --- 树的动作 ---
 
     def _on_tree_action(self, action: str, payload) -> None:
+        if action == "feature_branch":
+            self.open_object_manager(str(payload))
+            return
+        if action == "sets":
+            self.open_model_sets()
+            return
+        if action == "steps":
+            self.open_step_manager()
+            return
         if action == "materials":
             self.create_material()
         elif action == "sections":

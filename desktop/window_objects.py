@@ -126,6 +126,30 @@ class WindowObjectsMixin:
         result = self.session.create_section_assignment(name, region, section, material)
         self._object_result(result, f"已创建截面指派「{name}」。")
 
+    # --- 模型树 ---
+
+    def _on_feature_action(self, kind: str, action: str, name) -> None:
+        """模型树右键菜单：与管理器同一组动作。"""
+        if action == "manager":
+            self.open_object_manager(kind)
+        else:
+            self.manage_object(kind, action, name)
+
+    def _on_feature_selected(self, kind: str, name: str) -> None:
+        """单击模型树里的对象：在视口里高亮它的区域，状态栏说明范围。"""
+        alias = _KIND_ALIAS[kind]
+        listed = self.session.list_features(alias).payload["features"][kind]
+        feature = next((f for f in listed if f["name"] == name), None)
+        if feature is None:
+            return
+        what = "node" if "nodes" in feature else "member"
+        ids = feature.get("nodes") or feature.get("members") or []
+        self.viewport.highlight_region(what, ids)
+        noun = "节点" if what == "node" else "杆件"
+        self.statusBar().showMessage(
+            f"「{name}」作用在 {len(ids)} 个{noun}上" +
+            (f"：{feature['problem']}" if feature.get("problem") else ""), 5000)
+
     # --- 管理器 ---
 
     def open_object_manager(self, kind: str) -> None:

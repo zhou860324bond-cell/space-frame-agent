@@ -145,7 +145,9 @@ def test_the_tree_lists_every_part(qt_app):
     assert w.empty_state.isHidden()
     labels = [w.tree.topLevelItem(k).text(0)
               for k in range(w.tree.topLevelItemCount())]
-    for want in ("材料", "截面", "几何", "约束", "荷载工况", "建模过程"):
+    # 与 Abaqus 模型树同序：对象分支（截面指派、边界条件、荷载）放在几何与分析步之后
+    for want in ("材料", "截面", "截面指派", "集合", "几何", "分析步", "边界条件", "荷载",
+                 "建模过程"):
         assert any(want in lab for lab in labels), (want, labels)
 
 
@@ -1017,3 +1019,37 @@ def test_result_marker_imports_pyvista_itself(qt_app):
     assert meshes[0]["name"] == "_result_marker"
     # 真造出了一个球，而不是 None 混过去
     assert meshes[0]["mesh"].n_points > 0
+
+
+def _tree_items(tree):
+    out, stack = [], [tree.topLevelItem(k) for k in range(tree.topLevelItemCount())]
+    while stack:
+        item = stack.pop()
+        out.append(item)
+        stack.extend(item.child(k) for k in range(item.childCount()))
+    return out
+
+
+def test_model_tree_shows_objects_with_the_manager_context_menu(qt_app, monkeypatch):
+    """对象进模型树：单击高亮区域，右键是管理器的同一组操作（Abaqus 模型树的用法）。"""
+    from desktop import model_tree, window_objects
+    s = built()
+    s.define_set(name="椽", member_ids=[m["id"] for m in s.model["members"]][:2])
+    assert s.create_section_assignment("SA-椽", "椽", "RAFTER", "Q355").ok
+    w = MainWindow(s)
+    feature = next(i for i in _tree_items(w.tree)
+                   if i.data(0, model_tree.ACTION) == "feature")
+    assert feature.data(0, model_tree.PAYLOAD) == ("section_assignments", "SA-椽", False)
+    assert [a for a, _ in w.tree.context_actions(feature)] == [
+        "edit", "region", "copy", "rename", "suppress", "delete"]
+    branch = feature.parent()
+    assert [a for a, _ in w.tree.context_actions(branch)] == ["create", "manager"]
+
+    w.tree.feature_selected.emit("section_assignments", "SA-椽")
+    assert w.viewport.region_selection.kind == "member"
+    assert len(w.viewport.region_selection.ids) == 2
+
+    monkeypatch.setattr(window_objects.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: window_objects.QMessageBox.StandardButton.Yes))
+    w.tree.feature_action.emit("section_assignments", "delete", "SA-椽")
+    assert not (s.model.get("features") or {}).get("section_assignments")
