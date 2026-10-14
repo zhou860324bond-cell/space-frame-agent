@@ -204,10 +204,13 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._last_probe = None
         self.results.setMinimumHeight(120)
         self.results_dock = self.bottom_drawer.add_page("results", "结果表", self.results)
+        # 明细表默认独立查看，避免打开结果时覆盖模型的下半部。
+        self.results_dock.prefer_floating = True
 
         self.diagram = DiagramPanel(self)
         self.diagram.locate.connect(self.locate)
         self.diagram_dock = self.bottom_drawer.add_page("diagram", "单杆内力图", self.diagram)
+        self.diagram_dock.prefer_floating = True
 
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
         self.section_opt_dock = self.bottom_drawer.add_page(
@@ -3249,6 +3252,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         except OSError:
             pass
         self._save_preferences()
+        # QDialog 不会因父窗口 close() 自动隐藏，退出时同步关闭各独立面板。
+        for name in self.PANELS:
+            getattr(self, name).hide()
         try:
             self.viewport.shutdown()
         except Exception:                       # noqa: BLE001

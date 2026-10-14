@@ -141,6 +141,9 @@ def main(report_path: Path | None = None) -> int:
     window.tree_dock.show()
     window.chat_dock.show()
     window.results_dock.show()
+    check("结果默认独立且不占底部", window.results_dock._floating
+          and not window.bottom_drawer.is_open() and window.drawers.insets()[2] == 0)
+    window.results_dock.dock_panel()    # 继续验证用户主动停靠后的三侧抽屉布局
     settle()
     area = window.drawers.viewport_rect()
     geometry = {side: d.geometry() for side, d in window.drawers.drawers.items()}

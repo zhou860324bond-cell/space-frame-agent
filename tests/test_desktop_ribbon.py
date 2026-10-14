@@ -203,8 +203,10 @@ def test_rail_buttons_follow_the_real_drawer_state(qt_app):
     results = w.left_rail.buttons["results"]
     diagram = w.left_rail.buttons["diagram"]
     results.click()
+    w.results_dock.dock_panel()          # 此用例验证用户主动停靠后的抽屉换页
     assert results.isChecked() and w.results_dock.isVisible()
-    diagram.click()                      # 同一个抽屉换页
+    diagram.click()
+    w.diagram_dock.dock_panel()          # 同一个抽屉换页
     assert diagram.isChecked() and not results.isChecked()
     w.bottom_drawer.close_button.click()
     assert not diagram.isChecked() and w.diagram_dock.isHidden()
@@ -212,9 +214,9 @@ def test_rail_buttons_follow_the_real_drawer_state(qt_app):
 
 def test_escape_folds_a_drawer_when_there_is_nothing_else_to_cancel(qt_app):
     w = MainWindow()
-    w.results_dock.show()
+    w.tree_dock.show()
     w.cancel_interaction()
-    assert w.results_dock.isHidden()
+    assert w.tree_dock.isHidden()
 
 
 def test_opening_a_drawer_moves_viewport_overlays_out_from_under_it(qt_app):
@@ -556,7 +558,6 @@ def test_floating_panel_rail_tracks_close_and_reopen(qt_app):
     w.resize(1200, 800)
     w.show()
     w.results_dock.show()
-    w.bottom_drawer.float_button.click()
     qt_app.processEvents()
     button = w.left_rail.buttons["results"]
     assert button.isChecked() and w.results_dock.isVisible()
@@ -584,6 +585,81 @@ def test_section_optimization_opens_independently_and_can_dock(qt_app):
     button.click()
     assert not w.section_opt_dock._floating and w.bottom_drawer.is_open()
     w.close()
+
+
+@pytest.mark.parametrize("key,name", [("results", "results_dock"),
+                                      ("diagram", "diagram_dock")])
+def test_result_windows_default_to_nonmodal_without_covering_bottom(qt_app, key, name):
+    """结果表与单杆曲线曾覆盖整个下半屏；默认打开不得占用底部或改变相机。"""
+    w = MainWindow()
+    w.resize(911, 512)
+    w.show()
+    qt_app.processEvents()
+    size = w.viewport.size()
+    insets = w.drawers.insets()
+    camera = w.viewport.plotter.camera_position if w.viewport.plotter else None
+    button = w.left_rail.buttons[key]
+    button.click()
+    qt_app.processEvents()
+    handle = getattr(w, name)
+    assert handle._floating and handle.isVisible() and button.isChecked()
+    assert not handle._window.isModal()
+    assert handle._window.parentWidget() is w
+    assert not w.bottom_drawer.is_open()
+    assert w.viewport.size() == size and w.drawers.insets() == insets
+    if camera is not None:
+        assert w.viewport.plotter.camera_position == camera
+    handle._window.close()
+    assert not button.isChecked()
+    button.click()
+    assert handle.isVisible() and not w.bottom_drawer.is_open()
+    handle._window.dock_button.click()
+    assert not handle._floating and w.bottom_drawer.is_open()
+    w.close()
+
+
+def test_result_popup_reopens_same_table_and_keeps_locators(qt_app):
+    """结果弹窗关闭再开不能清空明细、排序、选择或丢失真实杆件定位。"""
+    w = MainWindow()
+    w.show()
+    w.results.show_rows("杆端力", ["杆件", "轴力"], [[2, 12], [1, 20]],
+                        [("member", 2), ("member", 1)])
+    w.left_rail.buttons["results"].click()
+    table = w.results.table
+    table.sortItems(0, Qt.SortOrder.AscendingOrder)
+    table.selectRow(0)
+    selected = table.currentRow()
+    located = []
+    w.results.locate.connect(lambda *target: located.append(target))
+    popup = w.results_dock._window
+    popup.close()
+    w.left_rail.buttons["results"].click()
+    assert w.results_dock._window is popup and w.results.table is table
+    assert table.currentRow() == selected and table.item(0, 0).text() == "1"
+    table.clearSelection()
+    table.selectRow(0)
+    assert located[-1] == ("member", 1)
+    w.close()
+
+
+@pytest.mark.parametrize("key,name", [("results", "results_dock"),
+                                      ("diagram", "diagram_dock")])
+def test_result_popup_escape_updates_rail_and_parent_close_hides_it(qt_app, key, name):
+    """独立结果窗口的 Esc 与主窗口关闭必须同步入口，不能残留一个结果窗口。"""
+    from PySide6.QtTest import QTest
+
+    w = MainWindow()
+    w.show()
+    button = w.left_rail.buttons[key]
+    button.click()
+    popup = getattr(w, name)._window
+    QTest.keyClick(popup, Qt.Key.Key_Escape)
+    assert not popup.isVisible() and not button.isChecked()
+    button.click()
+    assert popup.isVisible()
+    w.close()
+    qt_app.processEvents()
+    assert not popup.isVisible()
 
 
 def test_narrow_workspace_buttons_are_not_clipped_and_keep_current_mode(qt_app):
@@ -715,6 +791,7 @@ def test_closing_a_drawer_window_by_the_system_keeps_its_state_honest(qt_app):
 
     w = MainWindow()
     w.results_dock.show()
+    w.results_dock.dock_panel()          # 独立窗口不经过抽屉的系统关闭事件
     assert w.left_rail.buttons["results"].isChecked()
     event = QCloseEvent()
     w.bottom_drawer.closeEvent(event)
