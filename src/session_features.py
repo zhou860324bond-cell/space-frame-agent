@@ -22,10 +22,13 @@ import numpy as np
 import features as _features
 from session_base import ToolResult, _records
 
-_LABEL = {"section_assignments": "截面指派", "bcs": "边界条件", "loads": "荷载"}
+_LABEL = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
+          "bcs": "边界条件", "loads": "荷载"}
 #: 工具参数里的类别名 → features 里的键
 KIND_ALIASES = {"section_assignment": "section_assignments",
                 "section_assignments": "section_assignments",
+                "beam_orientation": "beam_orientations",
+                "beam_orientations": "beam_orientations",
                 "bc": "bcs", "bcs": "bcs", "boundary_condition": "bcs",
                 "load": "loads", "loads": "loads"}
 
@@ -102,6 +105,19 @@ class FeaturesMixin:
         feature = {"name": str(name).strip(), "region": _region(region, "members"),
                    "section": str(section), "material": str(material)}
         return self._create_feature("section_assignments", feature)
+
+    @_records
+    def create_beam_orientation(self, name: str, region, n1: list[float]) -> ToolResult:
+        """梁方向（Property 模块 Assign Beam Orientation）：给一组杆件指定截面局部 y 轴的近似方向。
+
+        ``n1`` 是全局分量，只看方向；它与杆轴平行时截面朝向无法确定，会被拒绝。
+        """
+        vector = [float(v) for v in n1]
+        if len(vector) != 3 or not all(np.isfinite(vector)) or not any(vector):
+            return ToolResult(False, {"error": "n1 必须是三个有限数，且不全为零"})
+        feature = {"name": str(name).strip(), "region": _region(region, "members"),
+                   "n1": vector}
+        return self._create_feature("beam_orientations", feature)
 
     @_records
     def create_boundary_condition(self, name: str, region, fix: list[int] | None = None,

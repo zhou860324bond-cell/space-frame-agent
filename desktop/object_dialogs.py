@@ -31,7 +31,8 @@ LOAD_REGION = {"concentrated_force": "node", "moment": "node",
                "line_load": "member", "gravity": "member"}
 LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
               "gravity": "g"}
-KIND_LABEL = {"section_assignments": "截面指派", "bcs": "边界条件", "loads": "荷载"}
+KIND_LABEL = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
+              "bcs": "边界条件", "loads": "荷载"}
 
 
 def next_name(prefix: str, existing: set[str]) -> str:
@@ -174,6 +175,54 @@ class EditLoadDialog(QDialog):
         return [s.value() for s in self.values_]
 
 
+class OrientationDialog(QDialog):
+    """梁方向：截面局部 y 轴（n1）的近似方向，全局分量。"""
+
+    PRESETS = (("全局 X", (1.0, 0.0, 0.0)), ("全局 Y", (0.0, 1.0, 0.0)),
+               ("全局 Z", (0.0, 0.0, 1.0)))
+
+    def __init__(self, name: str, n1: list[float], count_text: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("梁方向")
+        layout = QVBoxLayout(self)
+        layout.addWidget(DialogHeader("梁方向（n1）", count_text + "　截面高度方向沿 n1 在截面内的投影。"))
+        form = QFormLayout()
+        self.name = QLineEdit(name, self)
+        form.addRow("名称", self.name)
+        self.values_ = []
+        for k, axis in enumerate(("X", "Y", "Z")):
+            spin = QDoubleSpinBox(self)
+            spin.setRange(-1.0e6, 1.0e6)
+            spin.setDecimals(4)
+            spin.setValue(float(n1[k]))
+            form.addRow(f"n1 的 {axis} 分量", spin)
+            self.values_.append(spin)
+        layout.addLayout(form)
+        row = QHBoxLayout()
+        for label, vec in self.PRESETS:
+            button = QPushButton(label, self)
+            button.clicked.connect(lambda _=False, v=vec: [s.setValue(x) for s, x in
+                                                            zip(self.values_, v, strict=True)])
+            row.addWidget(button)
+        layout.addLayout(row)
+        self.hint = HintLabel("", self)
+        layout.addWidget(self.hint)
+        box = button_box(self)
+        box.accepted.connect(self._accept)
+        box.rejected.connect(self.reject)
+        layout.addWidget(box)
+        style_dialog(self, 380, 300)
+
+    def _accept(self) -> None:
+        if not any(s.value() for s in self.values_):
+            self.hint.setText("n1 不能是零向量：请给出截面高度方向的近似方向。")
+            return
+        self.accept()
+
+    def values(self) -> tuple[str, list[float]]:
+        return self.name.text().strip(), [s.value() for s in self.values_]
+
+
 class AssignSectionDialog(QDialog):
     """截面指派：选截面与材料（区域已在视口选好）。"""
 
@@ -220,6 +269,8 @@ def describe_region(feature: dict[str, Any], expanded: dict[str, Any]) -> str:
 def describe_values(kind: str, feature: dict[str, Any]) -> str:
     if kind == "section_assignments":
         return f"{feature['section']} / {feature['material']}"
+    if kind == "beam_orientations":
+        return "n1 = (" + ", ".join(f"{v:g}" for v in feature["n1"]) + ")"
     if kind == "bcs":
         fixed = [DOF_LABELS[k] for k, v in enumerate(feature["fix"]) if v]
         text = "固定 " + ("、".join(fixed) if fixed else "无")
@@ -235,6 +286,7 @@ class ObjectManagerDialog(QDialog):
     """一类对象的管理器：Abaqus 的 … Manager。按钮动作交给窗口执行。"""
 
     COLUMNS = {"section_assignments": ("名称", "区域", "截面 / 材料", "状态"),
+               "beam_orientations": ("名称", "区域", "方向", "状态"),
                "bcs": ("名称", "区域", "约束", "分析步", "状态"),
                "loads": ("名称", "区域", "荷载", "工况", "状态")}
 

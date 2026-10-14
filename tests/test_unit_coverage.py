@@ -85,7 +85,12 @@ DIMENSIONS = {
     "features.loads.force": "force", "features.loads.moment": "moment",
     "features.loads.w": "line_load", "features.loads.g": "acceleration",
     # 派生条目的来源标记，都是对象名
-    "members.assignment": None, "supports.owners": None,
+    "members.assignment": None, "members.orientation": None, "supports.owners": None,
+    "features.beam_orientations.name": None, "features.beam_orientations.suppressed": None,
+    "features.beam_orientations.region.set": None,
+    "features.beam_orientations.region.nodes": None,
+    "features.beam_orientations.region.members": None,
+    "features.beam_orientations.n1": None,      # 方向，只看比例
     "nodal_loads.owner": None, "member_loads.owner": None, "member_spans.owner": None,
     "imperfection.mode": None,
     "imperfection.case": None,              # 工况名

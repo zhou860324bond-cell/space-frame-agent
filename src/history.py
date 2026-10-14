@@ -48,7 +48,8 @@ MUTATING = frozenset({
     # 节点质量只进质量阵，但同样是模型的一部分
     "set_nodal_mass", "masses_from_loads", "set_imperfection",
     # 建模对象（Abaqus 式截面指派、边界条件、荷载）的创建与管理器操作
-    "create_section_assignment", "create_boundary_condition", "create_load",
+    "create_section_assignment", "create_beam_orientation", "create_boundary_condition",
+    "create_load",
     "edit_feature", "rename_feature", "copy_feature", "suppress_feature", "delete_feature",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
@@ -193,9 +194,10 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
     if tool == "define_set":
         n = len(payload.get("members") or payload.get("nodes") or [])
         return f"定义集合「{args.get('name')}」，{n} 个对象"
-    if tool in ("create_section_assignment", "create_boundary_condition", "create_load"):
-        label = {"create_section_assignment": "截面指派", "create_boundary_condition": "边界条件",
-                 "create_load": "荷载"}[tool]
+    if tool in ("create_section_assignment", "create_beam_orientation",
+                "create_boundary_condition", "create_load"):
+        label = {"create_section_assignment": "截面指派", "create_beam_orientation": "梁方向",
+                 "create_boundary_condition": "边界条件", "create_load": "荷载"}[tool]
         return f"创建{label}「{args.get('name')}」"
     if tool in ("edit_feature", "rename_feature", "copy_feature", "suppress_feature",
                 "delete_feature"):

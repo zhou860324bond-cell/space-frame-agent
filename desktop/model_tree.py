@@ -152,6 +152,8 @@ class ModelTree(QTreeWidget):
             where = f"{len(region.get('nodes') or region.get('members') or [])} 个{noun}"
         if kind == "section_assignments":
             what = f"{feature['section']}/{feature['material']}"
+        elif kind == "beam_orientations":
+            what = "n1=(" + ",".join(f"{v:g}" for v in feature["n1"]) + ")"
         elif kind == "bcs":
             what = "".join(str(v) for v in feature["fix"])
         else:
@@ -206,6 +208,7 @@ class ModelTree(QTreeWidget):
 
         features = model.get("features") or {}
         self._feature_branch("截面指派", "section_assignments", features)
+        self._feature_branch("梁方向", "beam_orientations", features)
 
         sets = model.get("sets") or {}
         set_node = self._child(self, f"集合（{len(sets)}）", "sets")

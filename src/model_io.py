@@ -284,6 +284,8 @@ MODEL_SCHEMA: dict[str, Any] = {
                     "i": {"type": "integer"}, "j": {"type": "integer"},
                     # 截面与材料来自哪个截面指派对象（features.section_assignments）
                     "assignment": {"type": "string", "minLength": 1},
+                    # 参考向量来自哪个梁方向对象（features.beam_orientations）
+                    "orientation": {"type": "string", "minLength": 1},
                     "section": {"type": "string"}, "material": {"type": "string"},
                     "ref_vector": _VEC3,
                     "offset_i": _VEC3,

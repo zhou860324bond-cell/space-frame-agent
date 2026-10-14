@@ -1990,9 +1990,6 @@ class MainWindow(WindowObjectsMixin, WindowCommandsMixin, WindowPreferencesMixin
         if not result.payload.get("no_change"):
             self._after_manual_edit("梁截面方向已更新。" if orientation else "杆端连接已更新，请复核机构与传力路径。")
 
-    def set_member_orientation(self) -> None:
-        self._configure_member_group(orientation=True)
-
     def set_member_connections(self) -> None:
         self._configure_member_group()
 

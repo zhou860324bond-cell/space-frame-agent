@@ -10,7 +10,7 @@ Abaqus/CAE 里截面指派、边界条件、荷载都是**有名字的对象**�
 
 * ``model["features"]`` 是这些对象的**唯一定义**；
 * 逐节点、逐杆件条目由 :func:`regenerate` 从对象**派生**，带上来源标记
-  （支座 ``owners``、荷载 ``owner``、杆件 ``assignment``）；
+  （支座 ``owners``、荷载 ``owner``、杆件 ``assignment`` 与 ``orientation``）；
 * 没有来源标记的条目是「直接定义」（旧模型、旧工具写入的），原样保留。
 
 求解内核、结果库和所有读逐条目的代码都不需要改：它们看到的仍是 v1 条目。
@@ -23,7 +23,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-KINDS = ("section_assignments", "bcs", "loads")
+KINDS = ("section_assignments", "beam_orientations", "bcs", "loads")
 LOAD_TYPES = ("concentrated_force", "moment", "line_load", "gravity")
 INITIAL = "Initial"
 
@@ -49,6 +49,16 @@ SCHEMA = {
                 "region": _REGION,
                 "section": {"type": "string", "minLength": 1},
                 "material": {"type": "string", "minLength": 1},
+                "suppressed": {"type": "boolean"},
+            }}},
+        "beam_orientations": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["name", "region", "n1"],
+            "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "region": _REGION,
+                # 截面局部 y 轴（Abaqus 的 n1 方向）的近似方向，全局分量；只看方向不看长度
+                "n1": _VEC3,
                 "suppressed": {"type": "boolean"},
             }}},
         "bcs": {"type": "array", "items": {
@@ -81,7 +91,8 @@ SCHEMA = {
     },
 }
 
-_LABELS = {"section_assignments": "截面指派", "bcs": "边界条件", "loads": "荷载"}
+_LABELS = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
+           "bcs": "边界条件", "loads": "荷载"}
 _LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
                "gravity": "g"}
 
@@ -92,7 +103,7 @@ def _features(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
 def region_kind(kind: str, feature: dict[str, Any]) -> str:
     """对象需要哪一类实体：截面指派要杆件，边界条件要节点，荷载看类型。"""
-    if kind == "section_assignments":
+    if kind in ("section_assignments", "beam_orientations"):
         return "members"
     if kind == "bcs":
         return "nodes"
@@ -136,6 +147,7 @@ def regenerate(payload: dict[str, Any]) -> list[str]:
     """
     problems: list[str] = []
     _regenerate_sections(payload, problems)
+    _regenerate_orientations(payload, problems)
     _regenerate_bcs(payload, problems)
     _regenerate_loads(payload, problems)
     return problems
@@ -162,6 +174,44 @@ def _regenerate_sections(payload, problems):
             member = members[mid]
             member["section"], member["material"] = feature["section"], feature["material"]
             member["assignment"] = feature["name"]
+
+
+def _regenerate_orientations(payload, problems):
+    """梁方向（Abaqus 的 Assign Beam Orientation）：把 n1 写成杆件的参考向量。
+
+    参考向量与杆轴平行时局部轴无法确定，求解会失败；这里逐杆检查并报出杆号，
+    不把错误留到求解时才以「参考向量与杆轴平行」的形式出现。
+    """
+    import numpy as np
+    members = {int(m["id"]): m for m in payload.get("members") or []}
+    nodes = {int(n["id"]): np.array([n["x"], n["y"], n["z"]], dtype=float)
+             for n in payload.get("nodes") or []}
+    for member in members.values():
+        if member.pop("orientation", None) is not None:
+            member.pop("ref_vector", None)
+    claimed: dict[int, str] = {}
+    for feature in _active("beam_orientations", payload):
+        ids, problem = region_ids(payload, feature["region"], "members")
+        if problem:
+            problems.append(f"梁方向「{feature['name']}」：{problem}")
+            continue
+        n1 = np.asarray(feature["n1"], dtype=float)
+        for mid in ids:
+            if mid in claimed:
+                problems.append(f"杆件 {mid} 被梁方向「{claimed[mid]}」与「{feature['name']}」"
+                                "重复指定；请从其中一个的区域里去掉它。")
+                continue
+            member = members[mid]
+            if int(member["i"]) in nodes and int(member["j"]) in nodes:
+                axis = nodes[int(member["j"])] - nodes[int(member["i"])]
+                if np.linalg.norm(np.cross(axis, n1)) <= 1e-9 * max(
+                        np.linalg.norm(axis) * np.linalg.norm(n1), 1e-300):
+                    problems.append(f"梁方向「{feature['name']}」的 n1 与杆件 {mid} 的轴线平行，"
+                                    "无法确定截面朝向；请换一个垂直于杆轴的方向。")
+                    continue
+            claimed[mid] = feature["name"]
+            member["ref_vector"] = [float(v) for v in n1]
+            member["orientation"] = feature["name"]
 
 
 def _merge_support(entry: dict[str, Any], feature: dict[str, Any]) -> str | None:
@@ -328,4 +378,4 @@ def owner_of(entry: dict[str, Any]) -> str | None:
     """条目来自哪个对象；直接定义返回 None。界面据此把条目归到对象下。"""
     if entry.get("owners"):
         return entry["owners"][0]
-    return entry.get("owner") or entry.get("assignment")
+    return entry.get("owner") or entry.get("assignment") or entry.get("orientation")

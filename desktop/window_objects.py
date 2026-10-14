@@ -17,12 +17,14 @@ from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
 from .object_dialogs import (BC_TYPES, LOAD_FIELD, LOAD_REGION, LOAD_TYPES,
                              AssignSectionDialog, CreateObjectDialog, EditBCDialog,
-                             EditLoadDialog, ObjectManagerDialog, next_name)
+                             EditLoadDialog, ObjectManagerDialog, OrientationDialog,
+                             next_name)
 
 _PRESET_FIX = {"ENCASTRE": [1] * 6, "PINNED": [1, 1, 1, 0, 0, 0],
                "XSYMM": [1, 0, 0, 0, 1, 1], "YSYMM": [0, 1, 0, 1, 0, 1],
                "ZSYMM": [0, 0, 1, 1, 1, 0], "SPRING": [0] * 6}
-_KIND_ALIAS = {"section_assignments": "section_assignment", "bcs": "bc", "loads": "load"}
+_KIND_ALIAS = {"section_assignments": "section_assignment",
+               "beam_orientations": "beam_orientation", "bcs": "bc", "loads": "load"}
 
 
 class WindowObjectsMixin:
@@ -150,6 +152,30 @@ class WindowObjectsMixin:
             f"「{name}」作用在 {len(ids)} 个{noun}上" +
             (f"：{feature['problem']}" if feature.get("problem") else ""), 5000)
 
+    # --- 梁方向 ---
+
+    def assign_beam_orientation(self) -> None:
+        """Abaqus 式 Assign Beam Orientation：先选杆件区域，再给 n1。"""
+        if not self.session.model.get("members"):
+            self.statusBar().showMessage("还没有杆件：请先建立几何，再指定梁方向。", 5000)
+            return
+        self.region_pick.start("member", "梁方向", self._finish_orientation,
+                               self._initial_region("member"))
+
+    def _finish_orientation(self, region: dict) -> None:
+        count = (f"区域：集合「{region['set']}」" if "set" in region
+                 else f"区域：{len(region['members'])} 根杆件")
+        dialog = OrientationDialog(next_name("Ori", self._feature_names("beam_orientations")),
+                                   [0.0, 0.0, 1.0], count, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, n1 = dialog.values()
+        self._object_result(self.session.create_beam_orientation(name, region, n1),
+                            f"已指定梁方向「{name}」。")
+
+    def open_orientation_manager(self) -> None:
+        self.open_object_manager("beam_orientations")
+
     # --- 管理器 ---
 
     def open_object_manager(self, kind: str) -> None:
@@ -173,7 +199,8 @@ class WindowObjectsMixin:
             if manager is not None:
                 manager.accept()
             {"bcs": self.create_bc, "loads": self.create_load,
-             "section_assignments": self.assign_section}[kind]()
+             "section_assignments": self.assign_section,
+             "beam_orientations": self.assign_beam_orientation}[kind]()
             return
         if name is None:
             return
@@ -227,6 +254,13 @@ class WindowObjectsMixin:
             if editor.exec() == QDialog.DialogCode.Accepted:
                 self._object_result(self.session.edit_feature(
                     alias, name, {field: editor.vector()}), f"「{name}」已更新。")
+        elif kind == "beam_orientations":
+            dialog = OrientationDialog(name, feature["n1"], "修改方向", self)
+            dialog.name.setEnabled(False)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                _, n1 = dialog.values()
+                self._object_result(self.session.edit_feature(alias, name, {"n1": n1}),
+                                    f"「{name}」已更新。")
         else:
             sections = [s["name"] for s in self.session.model.get("sections") or []]
             materials = [m["name"] for m in self.session.model.get("materials") or []]

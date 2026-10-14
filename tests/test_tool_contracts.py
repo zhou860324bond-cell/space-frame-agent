@@ -67,6 +67,7 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "select_members": (("member_ids", "count"), "按几何条件挑出的编号"),
     "define_set": (("name", "sets"), "集合名与当前全部集合"),
     "create_section_assignment": (("kind", "name", "region", "members"), "对象名与展开后的杆件"),
+    "create_beam_orientation": (("kind", "name", "region", "members"), "对象名与展开后的杆件"),
     "create_boundary_condition": (("kind", "name", "region", "nodes"), "对象名与展开后的节点"),
     "create_load": (("kind", "name", "region"), "对象名与区域"),
     "edit_feature": (("kind", "name", "changed"), "改了哪些键"),

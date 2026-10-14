@@ -64,7 +64,9 @@ COMMANDS: tuple[Command, ...] = (
     Command("batch_assignment", "批量属性指派", "assign_section",
             "按编号、方向或集合选择多根杆件，同时指派材料和截面", "assign_member_group"),
     Command("beam_orientation", "梁截面方向", "iso",
-            "设置一组杆件的局部y轴参考方向，复核截面强弱轴", "set_member_orientation"),
+            "Abaqus 式 Assign Beam Orientation：先在视口选杆件区域（Shift 加选、Ctrl 减选、拖框，"
+            "或使用集合），再给截面高度方向 n1；方向是一个对象，区域是集合时随集合更新",
+            "assign_beam_orientation"),
     Command("member_connections", "杆端连接", "hinge",
             "逐个局部转动方向设置刚接、释放或有依据的弹簧刚度", "set_member_connections"),
     Command("model_check", "完整性校验", "geometry",

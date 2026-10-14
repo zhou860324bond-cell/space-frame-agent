@@ -1062,3 +1062,16 @@ def test_the_prompt_resets_after_a_region_is_delivered(qt_app):
     w.viewport.region_selection.apply("node", [1])
     w.region_pick.finish()
     assert "选择" not in w.lbl_prompt.text()
+
+
+def test_assign_beam_orientation_follows_the_region_first_flow(qt_app, monkeypatch):
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "OrientationDialog", values=("Ori-1", [0.0, 1.0, 0.0]))
+    w.actions_by_name["beam_orientation"].trigger()
+    assert w.region_pick.active and w.viewport.region_pick == "member"
+    target = s.model["members"][0]["id"]
+    w.viewport.region_selection.apply("member", [target])
+    w.region_pick.finish()
+    member = next(m for m in s.model["members"] if m["id"] == target)
+    assert member["ref_vector"] == [0.0, 1.0, 0.0] and member["orientation"] == "Ori-1"

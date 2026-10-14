@@ -190,3 +190,26 @@ def test_gravity_object_matches_add_self_weight():
     assert b.create_load("自重", "DL", "gravity", "梁", g=[0, 0, -9.80665]).ok
     assert b.edit_feature("load", "自重", {"region": {"members": [1, 2, 3, 4, 5]}}).ok
     np.testing.assert_allclose(_u(b), _u(a), rtol=1e-9, atol=1e-15)
+
+
+def test_beam_orientation_object_matches_direct_reference_vectors():
+    """梁方向对象与逐杆写参考向量求解结果逐位一致；集合区域是活引用。"""
+    a = _with_objects()
+    assert a.define_set(name="柱", member_ids=[1, 2, 3]).ok
+    assert a.create_beam_orientation("Ori-柱", "柱", [0, 1, 0]).ok
+    assert {m["id"]: m.get("ref_vector") for m in a.model["members"]}[1] == [0.0, 1.0, 0.0]
+    b = _with_objects()
+    for mid in (1, 2, 3):
+        assert b.edit_member(mid, ref_vector=[0, 1, 0]).ok
+    np.testing.assert_allclose(_u(a), _u(b), rtol=1e-12, atol=1e-15)
+
+    assert a.delete_feature("beam_orientation", "Ori-柱").ok
+    assert all("ref_vector" not in m for m in a.model["members"] if m["id"] in (1, 2, 3))
+
+
+def test_a_beam_orientation_parallel_to_a_member_is_rejected_with_its_id():
+    """n1 与杆轴平行时截面朝向无法确定；原来要到求解时才以难懂的形式报出。"""
+    s = _geometry()
+    got = s.create_beam_orientation("Ori-错", "柱", [0, 0, 1])     # 柱沿 Z
+    assert not got.ok
+    assert any("杆件 1" in e and "平行" in e for e in got.payload["errors"])
