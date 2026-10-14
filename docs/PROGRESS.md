@@ -1,5 +1,12 @@
 # 工作进度
 
+## 圆形截面实际补全预览（2026-10-14）
+
+- 用户要求查看当前圆形截面补全外形；调用现有生产CAD算法，生成直径160mm实心圆与外径160mm、壁厚20mm圆管的原始两杆交汇、两杆补全及三向补全六幅对照。样例参数用于几何展示，未求解局部应力。
+- 两杆使用G2 Bezier扫掠，实际最小中心线半径104mm；三向使用半空间斜接，两种截面的滚动球圆角均未成功，实际圆角半径为0，图中明确标注未形成圆角，不将斜接外形称为光顺补全。
+- 六份毫米STEP回读均为单实体，体积与生成记录一致；远端实心材料、圆管孔洞及管壁探针检查通过。预览来自实际CAD表面三角网格，已检查图片完整性；不代表制造构造或局部应力收敛验证。
+- 图片、STEP与算法/校核记录位于桌面新建文件夹/圆形截面补全预览_20261014。本轮未改源码、测试或用户模型，回归基线不变；开工已读进度并成功git pull公开分支，按约定重新导出Word，继续由独立PR #28交付记录。
+
 ## Abaqus工字钢实体子模型方法核对（2026-10-14）
 
 - 用户询问Abaqus如何进行工字钢节点局部实体分析。本轮核对官方[子模型总览](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEANLRefMap/simaanl-c-submodeloverview.htm)、[梁子模型](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEANLRefMap/simaanl-c-beamtosurfacesubmodel.htm)和[节点式/壳到实体子模型](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEANLRefMap/simaanl-c-submodeldisp.htm)，未改源码或模型。
