@@ -1,5 +1,13 @@
 # 工作进度
 
+## Abaqus工字钢实体子模型方法核对（2026-10-14）
+
+- 用户询问Abaqus如何进行工字钢节点局部实体分析。本轮核对官方[子模型总览](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEANLRefMap/simaanl-c-submodeloverview.htm)、[梁子模型](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEANLRefMap/simaanl-c-beamtosurfacesubmodel.htm)和[节点式/壳到实体子模型](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEANLRefMap/simaanl-c-submodeldisp.htm)，未改源码或模型。
+- 梁子模型由切面与整体梁参考线的交点定义参考节点，插值得到位移/转角，再以分布耦合驱动切面平均运动，允许截面翘曲；截面尺寸、主轴、偏置须一致。该路线读取SIM结果，不能笼统写成所有子模型都读取ODB。
+- 官方[版本说明](https://docs.software.vt.edu/abaqusv2025/English/SIMACAERNGRefMap/simaanl-r-wn.htm)明确梁到实体专用功能在2023 FD03引入；本机6.14不可直接使用该新版接口。旧版本可手动恢复切面运动并分布耦合，或用已有壳/实体整体模型进行壳到实体/实体到实体子模型；当前软件的自定义传递不等于6.14原生Beam-to-Solid。
+- Abaqus传递边界响应，不自动从杆件中心线生成真实钢节点构造。局部几何须先按型钢、切口、连接板和实际连接定义；局部原有荷载另行保留。切面应远离研究区，并以网格及截取范围变化检查误差；局部细节显著影响整体响应时，一向子模型假设须重新评估。
+- 开工已读进度并成功git pull公开分支；本轮只更新方法记录，回归基线不变，Word按约定重新导出。
+
 ## 真实工字钢外形与节点图片核对（2026-10-14）
 
 - 用户指出连续体版仍不像现实工字钢节点，要求查图片及现成函数；本轮只核对来源，不再以几何连通、圆角成功或求解通过作为实际外形正确的证据，未改节点、用户模型或求解器。
