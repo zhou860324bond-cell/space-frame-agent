@@ -78,6 +78,35 @@ def _next_bc_name(existing: list[dict]) -> str:
     return f"BC-{index}"
 
 
+def _checked_ref_vector(model: dict, member: dict, ref_vector) -> tuple[list[float] | None,
+                                                                   dict | None]:
+    """校验一根杆件的局部 y 参考向量，返回 (规范化后的向量或 None, 错误或 None)。
+
+    单根编辑与批量设置共用这一处：原来批量设置靠浅复制整个 Session 去调
+    edit_member 的未装饰版本，复制品与真实会话共享历史与缓存，一旦
+    edit_member 写到它们就会悄悄改到真实会话。
+    """
+    if ref_vector is None or ref_vector == []:
+        return None, None
+    try:
+        vector = [float(v) for v in ref_vector]
+    except (TypeError, ValueError):
+        return None, {"error": "梁方向参考向量必须是三个数字，例如 [0, 0, 1]"}
+    if len(vector) != 3 or not all(np.isfinite(vector)):
+        return None, {"error": "梁方向参考向量必须是三个有限数字，例如 [0, 0, 1]"}
+    if float(np.linalg.norm(vector)) < 1e-12:
+        return None, {"error": "梁方向参考向量不能是零向量"}
+    nodes = {int(n["id"]): n for n in model.get("nodes") or []}
+    ni, nj = nodes.get(int(member["i"])), nodes.get(int(member["j"]))
+    if ni is None or nj is None:
+        return None, {"error": "杆件端点不存在，无法设置梁方向"}
+    axis = np.array([float(nj[k]) - float(ni[k]) for k in ("x", "y", "z")])
+    if float(np.linalg.norm(np.cross(axis, vector))) < 1e-12:
+        return None, {"error": "梁方向参考向量不能与杆件轴线平行",
+                      "hint": "请换一个垂直于杆件轴线的方向，例如 [0, 0, 1]。"}
+    return vector, None
+
+
 class ModelingMixin:
     """建模：几何生成与图元增删改。见模块 docstring。"""
     # --- 工具实现 ---
@@ -624,28 +653,9 @@ class ModelingMixin:
 
         if ref_vector is not _UNSET:
             before = target.get("ref_vector")
-            if ref_vector is None or ref_vector == []:
-                vector = None
-            else:
-                try:
-                    vector = [float(v) for v in ref_vector]
-                except (TypeError, ValueError):
-                    return ToolResult(False, {
-                        "error": "梁方向参考向量必须是三个数字，例如 [0, 0, 1]"})
-                if len(vector) != 3 or not all(np.isfinite(vector)):
-                    return ToolResult(False, {
-                        "error": "梁方向参考向量必须是三个有限数字，例如 [0, 0, 1]"})
-                if float(np.linalg.norm(vector)) < 1e-12:
-                    return ToolResult(False, {"error": "梁方向参考向量不能是零向量"})
-                nodes = {int(n["id"]): n for n in candidate.get("nodes") or []}
-                ni, nj = nodes.get(int(target["i"])), nodes.get(int(target["j"]))
-                if ni is None or nj is None:
-                    return ToolResult(False, {"error": "杆件端点不存在，无法设置梁方向"})
-                axis = np.array([float(nj[k]) - float(ni[k]) for k in ("x", "y", "z")])
-                if float(np.linalg.norm(np.cross(axis, vector))) < 1e-12:
-                    return ToolResult(False, {
-                        "error": "梁方向参考向量不能与杆件轴线平行",
-                        "hint": "请换一个垂直于杆件轴线的方向，例如 [0, 0, 1]。"})
+            vector, problem = _checked_ref_vector(candidate, target, ref_vector)
+            if problem is not None:
+                return ToolResult(False, problem)
             if before != vector:
                 changed["ref_vector"] = (before, vector)
                 if vector is None:
@@ -898,7 +908,7 @@ class ModelingMixin:
                                rotations: dict | None = None,
                                ref_vector: list[float] | None | object = _UNSET) -> ToolResult:
         """人工批量设置局部轴与连接；全部检查通过才形成一个撤销步骤。"""
-        from copy import copy, deepcopy
+        from copy import deepcopy
 
         try:
             ids = self._expand_members(member_ids)
@@ -924,17 +934,20 @@ class ModelingMixin:
                 if not np.isfinite(value) or value <= 0:
                     return ToolResult(False, {"error": "转动刚度必须是有限正数；理想铰请选释放。"})
 
-        # 浅复制只用于隔离候选状态；不调用带历史装饰器的工具，也不复制数值结果。
-        shadow = copy(self)
-        shadow.model = deepcopy(self.model)
+        # 候选状态只是模型字典的深拷贝：全部检查通过才替换，形成一个撤销步骤。
+        candidate = deepcopy(self.model)
         ends = ("i", "j") if end == "both" else (end,)
         for mid in ids:
+            entry = next(m for m in candidate["members"] if int(m["id"]) == mid)
             if ref_vector is not _UNSET:
-                checked = type(self).edit_member.__wrapped__(shadow, mid, ref_vector=ref_vector)
-                if not checked.ok:
-                    return ToolResult(False, {**checked.payload, "member": mid,
+                vector, problem = _checked_ref_vector(candidate, entry, ref_vector)
+                if problem is not None:
+                    return ToolResult(False, {**problem, "member": mid,
                                               "hint": "整组改动未写入，请修正参考方向后重新提交。"})
-            entry = next(m for m in shadow.model["members"] if int(m["id"]) == mid)
+                if vector is None:
+                    entry.pop("ref_vector", None)
+                else:
+                    entry["ref_vector"] = vector
             for side in ends:
                 releases = list((entry.get("releases") or {}).get(side) or [])
                 springs = dict((entry.get("connections") or {}).get(side) or {})
@@ -953,9 +966,9 @@ class ModelingMixin:
                         table.pop(side, None)
                     if not table:
                         entry.pop(key, None)
-        if shadow.model == self.model:
+        if candidate == self.model:
             return ToolResult(True, {"members": ids, "no_change": True})
-        self.model = shadow.model
+        self.model = candidate
         self._invalidate()
         return ToolResult(True, {"members": ids, "end": end,
                                  "analysis_ready": not self.validation_errors(),

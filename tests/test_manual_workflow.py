@@ -271,3 +271,54 @@ def test_draft_edit_rejects_invalid_existing_data_without_partial_write(mutation
         candidate["members"][0]["connections"] = {"i": {"rz": 1e6}}
     assert not session.replace_editing_model(candidate).ok
     assert session.model == before
+
+
+def test_workflow_timer_does_not_recheck_an_unchanged_model(qt_app, monkeypatch):
+    """清单每秒刷新一次；原来每次都完整检查，1331 节点框架每次 2 秒，界面一直卡住。
+
+    模型与状态不变时必须复用上次结果，模型一变就要重算。
+    """
+    from PySide6.QtGui import QAction
+    from PySide6.QtWidgets import QWidget
+    from desktop import modeling_workflow
+    from desktop.commands import COMMANDS
+    window = QWidget()
+    window.session = frame_session()
+    window.runner = SimpleNamespace(busy=False)
+    window.analysis_type = "linear"
+    window._modeling_reviews = {}
+    window._analysis_mesh_key = None
+    window._show_ribbon_page = lambda _: None
+    window.actions_by_name = {cmd.name: QAction(cmd.label, window) for cmd in COMMANDS}
+    window.statusBar = lambda: SimpleNamespace(currentMessage=lambda: "")
+    dialog = modeling_workflow.ModelingWorkflowDialog(window)
+    calls = []
+    real = modeling_workflow.inspect_modeling
+    monkeypatch.setattr(modeling_workflow, "inspect_modeling",
+                        lambda w: calls.append(1) or real(w))
+    for _ in range(5):
+        dialog.refresh()
+    assert calls == []
+    window.session.model["nodes"][1]["x"] = 3
+    dialog.refresh()
+    assert calls == [1]
+
+
+def test_editing_validation_shares_the_formal_rules():
+    """编辑态原来另写一套检查：同一工况的同名荷载被正式校验拒绝，编辑态却放行。
+
+    放宽的只能是「还没做完」：未指派属性、未加约束、悬空节点。
+    """
+    from model_io import validate_editing_payload
+    session = frame_session()
+    duplicate = deepcopy(session.model)
+    duplicate["load_cases"][0]["nodal_loads"] = [
+        {"name": "P", "node": 2, "load": [0, 1, 0, 0, 0, 0]},
+        {"name": "P", "node": 3, "load": [0, 2, 0, 0, 0, 0]}]
+    assert any("载荷名称重复" in e for e in validate_editing_payload(duplicate))
+
+    unfinished = deepcopy(session.model)
+    unfinished["supports"] = []
+    unfinished["members"][0]["section"] = unfinished["members"][0]["material"] = ""
+    unfinished["nodes"].append({"id": 9, "x": 5, "y": 5, "z": 0})
+    assert validate_editing_payload(unfinished) == []

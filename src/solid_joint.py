@@ -70,6 +70,10 @@ class JointSpec:
     loading_method: str = "force"
     geometry_mode: str = "intersection"
     local_loads: tuple[dict[str, Any], ...] = ()
+    #: 过渡圆角半径（mm）。None 按截面特征尺寸自动取值并在结果里标明来源；
+    #: 0 表示不加圆角；正数为用户按实际焊缝或构造给定的半径。热点应力与 Kt
+    #: 随它变化，所以它必须是可追溯的输入，不能只藏在几何算法里。
+    fillet_radius_mm: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -316,7 +320,11 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
                        anchor_member: int | None = None,
                        arm_length_factor: float = 2.0,
                        loading_method: str = "force",
-                       geometry_mode: str = "intersection") -> JointSpec:
+                       geometry_mode: str = "intersection",
+                       fillet_radius_mm: float | None = None) -> JointSpec:
+    if fillet_radius_mm is not None and (not math.isfinite(float(fillet_radius_mm))
+                                         or float(fillet_radius_mm) < 0.0):
+        raise SolidJointError("过渡圆角半径应为非负有限数（mm）；0 表示不加圆角，留空按截面自动取值。")
     if geometry_mode not in ("intersection", "transition", "miter", "envelope"):
         raise SolidJointError("节点几何应为transition曲率连续过渡、miter斜接、envelope截面包络或intersection原始交汇。")
     if loading_method not in ("force", "displacement"):
@@ -488,7 +496,8 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
         poisson=float(material["nu"]), anchor_member=int(anchor_member),
         hotspot_radius_mm=1.35 * max_diameter,
         nominal_normal_mpa=float(nominal), arms=tuple(arms), warnings=tuple(warnings),
-        loading_method=loading_method, geometry_mode=geometry_mode, local_loads=local_loads)
+        loading_method=loading_method, geometry_mode=geometry_mode, local_loads=local_loads,
+        fillet_radius_mm=None if fillet_radius_mm is None else float(fillet_radius_mm))
 
 
 def _script_text(spec: JointSpec, mesh_sizes_mm: list[float], output_json: str,
@@ -914,13 +923,15 @@ def run_joint_analysis(session, node_id: int, case: str | None = None,
                        output_dir: Path | str = "results/solid_joint",
                        timeout: float = 1800.0, *,
                        loading_method: str = "displacement",
-                       geometry_mode: str = "transition") -> dict[str, Any]:
+                       geometry_mode: str = "transition",
+                       fillet_radius_mm: float | None = None) -> dict[str, Any]:
     """建立、运行并验证至少三档网格的局部实体节点模型。"""
     from abaqus_backend import (find_abaqus, scan_log, solver_environment,
                                 write_env_file)
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member,
-                              loading_method=loading_method, geometry_mode=geometry_mode)
+                              loading_method=loading_method, geometry_mode=geometry_mode,
+                              fillet_radius_mm=fillet_radius_mm)
     reference = mesh_reference_length(spec)
     # 三档，不是两档。两档只能算出"最后一次变化有多大"，而奇异点上相邻两档
     # 的变化本来就可以很小——三档才能看出这个变化是在缩小还是不缩小。

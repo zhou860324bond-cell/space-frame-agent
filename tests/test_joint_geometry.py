@@ -355,3 +355,43 @@ def test_cad_error_becomes_actionable_tool_error_and_releases_gmsh(monkeypatch):
     with pytest.raises(solid_joint.SolidJointError,match='切换节点几何'):
         native_joint.generate_joint_mesh(spec,30)
     assert gmsh.isInitialized() == 0
+
+
+@pytest.mark.parametrize('radius, status, source', [
+    (None, 'rounded', 'auto'), (0., 'not_requested', 'user'), (4., 'rounded', 'user')])
+def test_fillet_radius_is_a_traceable_input(radius, status, source):
+    """圆角半径直接改变热点应力与 Kt，原来只按截面特征尺寸自动取值，用户既看不到也改不了。
+
+    留空仍自动取值但记下来源；0 按平接实体建立（明确声明不加圆角，不算失败后退回）；
+    正数按用户给的半径建立。
+    """
+    gmsh = pytest.importorskip('gmsh')
+    spec = replace(_teaching_column_joint(), fillet_radius_mm=radius)
+    gmsh.initialize(interruptible=False)
+    try:
+        gmsh.option.setNumber('General.Terminal', 0)
+        gmsh.model.add('fillet_input')
+        record = joint_geometry.build_occ_joint(gmsh, spec)
+        assert record['fillet_status'] == status
+        assert record['fillet_radius_source'] == source
+        if radius == 0.:
+            assert record['applied_fillet_radius_mm'] == 0.
+            assert len(gmsh.model.getEntities(3)) == 1
+        elif radius:
+            assert record['applied_fillet_radius_mm'] in (pytest.approx(4.), pytest.approx(2.))
+    finally:
+        gmsh.finalize()
+    warning = native_joint._auto_fillet_warning(record)
+    assert (warning is not None) == (source == 'auto' and status == 'rounded')
+    if warning:
+        assert 'fillet_radius_mm' in warning and 'Kt' in warning
+
+
+def test_negative_fillet_radius_is_rejected_before_meshing():
+    from agent import Session
+    path = Path(__file__).resolve().parents[1]/'examples/空间刚架_简单整体复杂实体.json'
+    session = Session(model=json.loads(path.read_text(encoding='utf-8')))
+    assert session.solve_model().ok
+    with pytest.raises(solid_joint.SolidJointError, match='非负有限数'):
+        solid_joint.prepare_joint_spec(session, 5, case='W_侧向', geometry_mode='transition',
+                                       fillet_radius_mm=-1.)

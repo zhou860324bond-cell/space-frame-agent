@@ -238,8 +238,15 @@ def _validate_additive_blend(occ, original, rounded, radius):
 
 
 def build_continuous_column(gmsh, spec, plan):
-    """柱顶连续体模板：完整柱截面、贴合梁端、局部增材滚动球过渡。"""
+    """柱顶连续体模板：完整柱截面、贴合梁端、局部增材滚动球过渡。
+
+    用户把圆角半径明确设为 0 时按平接实体建立，不加过渡——那是对实际构造的
+    明确声明，不属于「圆角失败后悄悄退回」。
+    """
     solids = build_column_host(gmsh, spec, plan)
+    if getattr(spec, 'fillet_radius_mm', None) == 0:
+        return solids, {**plan, 'fillet_status': 'not_requested', 'fillet_radius_source': 'user',
+                        'fillet_radius_rule': '用户指定不加圆角', 'applied_fillet_radius_mm': 0.}
     solids, blend = fillet_miter(gmsh, spec, solids, preserve_material=True)
     if blend['fillet_status'] != 'rounded':
         raise ValueError('柱顶连续体未形成有效曲面过渡，请核对截面朝向或增大短臂范围。')
@@ -326,10 +333,20 @@ def fillet_miter(gmsh, spec, solids, preserve_material=False):
         points = point+feature*1e-3*(np.cos(phi)[:, None]*u+np.sin(phi)[:, None]*v)
         if sum(gmsh.model.isInside(3, volume, p.tolist()) for p in points)/24 > .56:
             selected.append(tag)
-    requested_radius = (.9 if preserve_material else .45)*feature
+    given = getattr(spec, 'fillet_radius_mm', None)
+    if given is None:
+        rule = '0.9×截面特征尺寸' if preserve_material else '0.45×截面特征尺寸'
+        requested_radius = (.9 if preserve_material else .45)*feature
+    else:
+        rule, requested_radius = '用户指定', float(given)
     record = {'algorithm': 'halfspace-miter+rolling-ball', 'concave_edges': len(selected),
               'requested_fillet_radius_mm': requested_radius, 'applied_fillet_radius_mm': 0.,
+              'fillet_radius_source': 'auto' if given is None else 'user',
+              'fillet_radius_rule': rule,
               'fillet_region_radius_mm': reach, 'fillet_status': 'not_required'}
+    if requested_radius <= 0.:
+        record['fillet_status'] = 'not_requested'
+        return solids, record
     if not selected:
         return solids, record
     for factor in (1., .5):

@@ -374,3 +374,46 @@ def test_the_invariant_survives_random_drawing_sequences():
                     f"节点 {d.nodes}\n杆件 {d.members}\n支座 {d.supports}")
 
     assert checked > 50, f"只有 {checked} 次真正走到可提交状态，这个测试没测到什么"
+
+
+def test_coincident_grouping_matches_the_pairwise_definition_and_scales():
+    """重合节点改为网格分桶后，分组必须与逐对比较的定义完全相同。
+
+    原实现是 O(n²) 双循环，1331 节点的框架一次 2 秒，建模流程窗口每秒调用一次。
+    """
+    import math
+    import random
+    import time
+
+    from draft import FrameDraft
+
+    def pairwise(nodes, tol):
+        groups, taken = [], set()
+        for a in nodes:
+            if a["id"] in taken:
+                continue
+            same = [a["id"]] + [b["id"] for b in nodes if b["id"] != a["id"]
+                                and b["id"] not in taken and math.dist(
+                                    (a["x"], a["y"], a["z"]), (b["x"], b["y"], b["z"])) <= tol]
+            if len(same) > 1:
+                groups.append(sorted(same))
+                taken.update(same)
+        return groups
+
+    rng = random.Random(7)
+    tol = 1e-3
+    nodes = []
+    for k in range(1, 301):
+        base = (rng.randint(0, 5) * 1.0, rng.randint(0, 5) * 1.0, rng.randint(0, 3) * 1.0)
+        jitter = [rng.uniform(-tol, tol) for _ in range(3)]
+        nodes.append({"id": k, "x": base[0] + jitter[0], "y": base[1] + jitter[1],
+                      "z": base[2] + jitter[2]})
+    draft = FrameDraft.from_model({"nodes": nodes, "members": []})
+    assert draft.coincident_nodes(tol=tol) == pairwise(nodes, tol)
+
+    grid = [{"id": k + 1, "x": float(k % 11), "y": float(k // 11 % 11), "z": float(k // 121)}
+            for k in range(1331)]
+    big = FrameDraft.from_model({"nodes": grid, "members": []})
+    start = time.perf_counter()
+    assert big.coincident_nodes(tol=1e-6) == []
+    assert time.perf_counter() - start < 1.0

@@ -1142,8 +1142,12 @@ def diagnose_singularity(model: Frame, tol: float = 1e-8) -> list[dict]:
     return modes
 
 
-def check_model(model: Frame) -> list[str]:
-    """几何、拓扑与荷载定义的合法性。返回问题清单，空列表表示通过。"""
+def check_model(model: Frame, *, allow_incomplete: bool = False) -> list[str]:
+    """几何、拓扑与荷载定义的合法性。返回问题清单，空列表表示通过。
+
+    ``allow_incomplete=True`` 用于人工建模的编辑阶段：截面或材料名为空（尚未
+    指派）和悬空节点（还没连杆）不算错；写了名字却指向不存在的定义仍然算错。
+    """
     issues: list[str] = []
     used: set[int] = set()
     seen: dict[tuple[int, int], int] = {}
@@ -1169,9 +1173,9 @@ def check_model(model: Frame) -> list[str]:
                 issues.append(f"杆件 {m.id} 引用了不存在的节点 {nid}")
         if m.i == m.j:
             issues.append(f"杆件 {m.id} 首尾为同一节点 {m.i}")
-        if m.section not in model.sections:
+        if m.section not in model.sections and not (allow_incomplete and m.section == ""):
             issues.append(f"杆件 {m.id} 引用了未定义的截面 {m.section!r}")
-        if m.material not in model.materials:
+        if m.material not in model.materials and not (allow_incomplete and m.material == ""):
             issues.append(f"杆件 {m.id} 引用了未定义的材料 {m.material!r}")
         for name in m.releases_i + m.releases_j:
             if name not in LOCAL_DOF_NAMES:
@@ -1214,7 +1218,7 @@ def check_model(model: Frame) -> list[str]:
                     if float(np.linalg.norm(node.xyz - projection)) <= tolerance:
                         used.add(nid)
                         break
-        if nid not in used:
+        if nid not in used and not allow_incomplete:
             issues.append(f"节点 {nid} 未被任何杆件引用（悬空节点）")
     # 注意：不检查"没有支座"——人工建模时先建几何再加支座是正常流程，
     # 求解时无支座会自然报错（刚度矩阵奇异），不需要在这里拦

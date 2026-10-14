@@ -349,6 +349,17 @@ def _default_plan(spec, reference: float, levels: int,
     return coarser + [(size, (size, hotspot, mesh, cut_faces))], options, note
 
 
+def _auto_fillet_warning(record: dict[str, Any] | None) -> str | None:
+    """自动取值的圆角半径会改变热点应力和 Kt，结果里必须点名它的来源。"""
+    record = record or {}
+    if record.get("fillet_status") != "rounded" or record.get("fillet_radius_source") != "auto":
+        return None
+    return (f"过渡圆角半径 {float(record.get('applied_fillet_radius_mm', 0.)):.1f} mm 为自动取值"
+            f"（{record.get('fillet_radius_rule', '按截面特征尺寸')}），不是实际焊缝或构造尺寸；"
+            "热点应力与 Kt 随该半径变化。按实际构造复核时请用 fillet_radius_mm 指定半径，"
+            "0 表示不加圆角。")
+
+
 def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               anchor_member: int | None = None,
                               mesh_sizes_mm: list[float] | None = None,
@@ -357,7 +368,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               max_dof: int = 180000, levels: int = 1,
                               progress=None,
                               loading_method: str = "displacement",
-                              geometry_mode: str = "transition") -> dict[str, Any]:
+                              geometry_mode: str = "transition",
+                              fillet_radius_mm: float | None = None) -> dict[str, Any]:
     """使用自研 C3D10 求解器运行一档或多档节点实体网格。
 
     没有显式给 ``mesh_sizes_mm`` 时，默认那一档若超过求解规模上限，会按
@@ -376,7 +388,8 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         checkpoint()
 
     spec = prepare_joint_spec(session, node_id, case, anchor_member,
-                              loading_method=loading_method, geometry_mode=geometry_mode)
+                              loading_method=loading_method, geometry_mode=geometry_mode,
+                              fillet_radius_mm=fillet_radius_mm)
     reference = mesh_reference_length(spec)
     # native-v1 默认先给一档可交互的工程网格。Python 稀疏直接解比 Abaqus
     # 慢，默认就上 h=t 会让桌面一次作业跨进几十万自由度；用户需要收敛判断时
@@ -575,7 +588,9 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             if spec.loading_method == "displacement"
             and not levels_out[-1]["cut_transfer_check"]["within_tolerance"] else []) + (
             ["当前CAD未形成有效圆角，结果使用斜接实体；请核对实际连接细节，或对匹配两臂选择曲率连续过渡。"]
-            if (getattr(mesh, "geometry_record", None) or {}).get("fillet_status") == "kernel_unavailable" else []),
+            if (getattr(mesh, "geometry_record", None) or {}).get("fillet_status") == "kernel_unavailable" else []) + (
+            [_auto_fillet_warning(mesh.geometry_record)]
+            if _auto_fillet_warning(getattr(mesh, "geometry_record", None)) else []),
         "files": {
             "directory": str(target),
             "contour_png": levels_out[-1]["contour_png"],

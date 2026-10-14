@@ -195,8 +195,14 @@ class ModelingWorkflowDialog(QDialog):
             rows = dict(self._rows)
             rows["job"] = ("运行中", self.window.statusBar().currentMessage())
         else:
-            rows = inspect_modeling(self.window)
-            self._rows = rows
+            # 定时器每秒触发一次，只为运行中刷新作业状态。模型与状态没变时直接
+            # 复用上次的检查：完整检查在千根杆件的模型上要几百毫秒，每秒重算一次
+            # 会让主线程一直卡着。
+            key = self._state_key()
+            if key != getattr(self, "_rows_key", None) or not hasattr(self, "_rows"):
+                self._rows = inspect_modeling(self.window)
+                self._rows_key = key
+            rows = self._rows
         for row, stage in enumerate(STAGES):
             for col, value in enumerate((stage.title, *rows[stage.key])):
                 item = QTableWidgetItem(value)
@@ -204,6 +210,13 @@ class ModelingWorkflowDialog(QDialog):
                 self.table.setItem(row, col, item)
         self.table.resizeRowsToContents()
         self.review.setEnabled(not self.window.runner.busy)
+
+    def _state_key(self):
+        """检查结果依赖的全部状态；任何一项变化都要重算。"""
+        window, session = self.window, self.window.session
+        return (session._model_key(), id(session.solution), id(session.result_db),
+                window.analysis_type, getattr(window, "_analysis_mesh_key", None),
+                tuple(sorted((getattr(window, "_modeling_reviews", None) or {}).items())))
 
     def select_stage(self, row, *_):
         if row < 0:

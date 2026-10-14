@@ -488,7 +488,8 @@ class SolvingMixin:
                             backend: str = "native",
                             dry_run: bool = False, levels: int = 1,
                             progress=None, loading_method: str = "displacement",
-                            geometry_mode: str = "transition") -> ToolResult:
+                            geometry_mode: str = "transition",
+                            fillet_radius_mm: float | None = None) -> ToolResult:
         """节点局部实体子模型：看杆件相交处的应力集中。
 
         分两段，是有意的。**建规格**（恢复梁切面运动或杆端力、反演圆管尺寸、
@@ -501,7 +502,7 @@ class SolvingMixin:
         try:
             spec = solid_joint.prepare_joint_spec(
                 self, int(node_id), case, anchor_member, loading_method=loading_method,
-                geometry_mode=geometry_mode)
+                geometry_mode=geometry_mode, fillet_radius_mm=fillet_radius_mm)
         except solid_joint.SolidJointError as exc:
             return ToolResult(False, {"error": str(exc)})
         except (KeyError, ValueError) as exc:
@@ -518,11 +519,12 @@ class SolvingMixin:
                 summary = native_joint.run_native_joint_analysis(
                     self, int(node_id), case, anchor_member, mesh_sizes_mm,
                     levels=int(levels), progress=progress, loading_method=loading_method,
-                    geometry_mode=geometry_mode)
+                    geometry_mode=geometry_mode, fillet_radius_mm=fillet_radius_mm)
             elif backend == "abaqus":
                 summary = solid_joint.run_joint_analysis(
                     self, int(node_id), case, anchor_member, mesh_sizes_mm,
-                    loading_method=loading_method, geometry_mode=geometry_mode)
+                    loading_method=loading_method, geometry_mode=geometry_mode,
+                    fillet_radius_mm=fillet_radius_mm)
             else:
                 return ToolResult(False, {"error": f"未知实体求解后端 {backend!r}"})
         except solid_joint.SolidJointError as exc:

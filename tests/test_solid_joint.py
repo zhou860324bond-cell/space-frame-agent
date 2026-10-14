@@ -617,7 +617,9 @@ def test_agent_routes_the_default_solid_backend_to_native(monkeypatch):
     assert seen["args"] == (2, None, None, [20.0])
     # 没指定就是快速的单档；进度出口默认不给（agent 调用时没有界面可报）
     assert seen["options"] == {"levels": 1, "progress": None,
-                               "loading_method": "displacement", "geometry_mode": "transition"}
+                               "loading_method": "displacement", "geometry_mode": "transition",
+                               # 圆角半径不给就留空，由几何算法自动取值并在结果里标明来源
+                               "fillet_radius_mm": None}
 
 
 def test_gmsh_generates_positive_c3d10_and_cut_faces_when_available():

@@ -1424,6 +1424,10 @@ TOOLS: list[dict[str, Any]] = [
                     "loading_method": {"type": "string", "enum": ["displacement", "force"],
                                        "description": "默认 displacement 分布耦合位移驱动；"
                                                       "force 为原六分量内力加载"},
+                    "fillet_radius_mm": {"type": "number", "minimum": 0,
+                                         "description": "过渡圆角半径 mm；留空按截面自动取值（结果会标明），"
+                                                        "0 不加圆角。热点应力与 Kt 随它变化，"
+                                                        "用户给了实际焊缝或构造尺寸就填上"},
                     "geometry_mode": {"type": "string", "enum": ["transition", "miter", "envelope", "intersection"],
                                       "description": "transition优先G2曲率连续扫掠；miter半空间斜接与局部圆角；"
                                                      "envelope旧凸包；intersection原始交汇。保留远端截面与孔洞，记录实际算法和圆角状态。"},
