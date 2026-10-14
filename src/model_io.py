@@ -356,7 +356,8 @@ MODEL_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "name": {"type": "string", "minLength": 1},
                     "analysis": {"type": "string",
-                                 "enum": ["linear", "pdelta"]},
+                                 "enum": ["linear", "pdelta", "frequency", "buckle"]},
+                    "num_modes": {"type": "integer", "minimum": 1, "maximum": 100},
                     "loads": {"type": "object",
                               "additionalProperties": {"type": "string"}},
                     "deactivate_loads": {"type": "array",

@@ -119,6 +119,7 @@ DIMENSIONS = {
     "combos.name": None, "combos.factors": None,
     "amplitudes": None,                   # (伪时间, 系数) 都无量纲
     "steps.name": None, "steps.analysis": None, "steps.increments": None,
+    "steps.num_modes": None,
     "steps.loads": None, "steps.deactivate_loads": None,
     "steps.deactivate_supports": None,
     # 分析步里改写的支座：与顶层 supports 同一批字段，同一批量纲。

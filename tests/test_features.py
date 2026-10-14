@@ -237,3 +237,42 @@ def test_manager_step_matrix_shows_created_propagated_and_active():
     loads = s.list_features("load").payload["features"]["loads"]
     _, table = step_matrix(s.model, "loads", loads)
     assert table["楼面"] == ["", "生效（RAMP）", "生效（RAMP）"]
+
+
+def test_perturbation_steps_do_not_change_the_base_state():
+    """频率步、屈曲步是 Abaqus 的线性摄动步：本步声明的荷载与支座改写不传播。"""
+    import steps as step_module
+    s = _with_objects()
+    assert s.add_step("S1", loads={"DL": "RAMP"}).ok
+    assert s.add_step("B1", analysis="buckle", loads={"DL": "STEP"}, num_modes=2).ok
+    assert s.add_step("F1", analysis="frequency", num_modes=3).ok
+    assert s.add_step("S2").ok
+    eff = {e.name: e for e in step_module.resolve(step_module.from_payload(s.model), s.model)}
+    assert eff["B1"].loads == {"DL": "STEP"}
+    assert eff["F1"].loads == {}
+    assert eff["S2"].loads == {"DL": "RAMP"}, "屈曲步的 STEP 幅值不能传播到后面的一般步"
+
+    bad = _with_objects()
+    assert bad.add_step("S1", loads={"DL": "RAMP"}).ok
+    refused = bad.add_step("B1", analysis="buckle")
+    assert not refused.ok and "参考荷载" in refused.payload["error"], "屈曲步必须声明参考荷载"
+
+
+def test_frequency_and_buckle_steps_match_the_standalone_analyses():
+    s = _with_objects()
+    assert s.add_step("S1", loads={"DL": "RAMP"}).ok
+    assert s.add_step("F1", analysis="frequency", num_modes=3).ok
+    assert s.add_step("B1", analysis="buckle", loads={"DL": "RAMP"}, num_modes=2).ok
+    got = s.solve_steps()
+    assert got.ok, got.payload
+    rows = {r["step"]: r for r in got.payload["steps"]}
+    assert got.payload["inspecting"] == "S1", "后处理留一般步的结果"
+
+    ref = _with_objects()
+    modes = ref.modal_analysis(num_modes=3).payload["modes"]
+    assert rows["F1"]["frequencies_Hz"] == pytest.approx([m["frequency_Hz"] for m in modes],
+                                                         rel=1e-9)
+    assert ref.solve_model().ok
+    lam = ref.buckling_analysis(case="DL", num_modes=2).payload["critical_factor"]
+    assert rows["B1"]["critical_factor"] == pytest.approx(lam, rel=1e-9)
+    assert not s.solve_steps(inspect="F1").ok

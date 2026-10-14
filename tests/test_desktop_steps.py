@@ -153,7 +153,9 @@ def test_the_dialog_does_not_offer_material_nonlinearity(app):
     from desktop.step_dialog import ANALYSES
     labels = [dialog_label for dialog_label, _ in ANALYSES]
     assert "材料" not in "".join(labels)
-    assert [kernel for _, kernel in ANALYSES] == ["linear", "pdelta"]
+    # 下拉框与内核支持的分析步类型一一对应（含频率、屈曲两种线性摄动步）
+    from steps import STEP_ANALYSES
+    assert [kernel for _, kernel in ANALYSES] == list(STEP_ANALYSES)
 
 
 def test_solving_from_the_dialog_reports_every_step(app, monkeypatch):

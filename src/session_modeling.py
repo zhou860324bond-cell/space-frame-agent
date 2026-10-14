@@ -1054,7 +1054,8 @@ class ModelingMixin:
                  supports: dict | None = None,
                  deactivate_supports: list | None = None,
                  increments: int = 10,
-                 after: str | None = None) -> ToolResult:
+                 after: str | None = None,
+                 num_modes: int = 6) -> ToolResult:
         """新增一个分析步（Abaqus 的 Step），追加到末尾或插在某一步之后。
 
         **荷载与边界条件在步之间传播。** 这一步只写新建或改写的东西，上一步
@@ -1065,7 +1066,9 @@ class ModelingMixin:
         ``supports`` 是 节点号 -> {"fix": [...], "spring": [...]}，用来在这一步
         改写某个支座（比如把固接换成铰接）。
 
-        analysis 目前支持 linear 与 pdelta。材料非线性没放进来是因为一个分析步
+        analysis 支持 linear、pdelta，以及线性摄动步 frequency（频率，``num_modes``
+        阶）与 buckle（屈曲，参考荷载只取本步 ``loads``）。摄动步不改变基态：本步的
+        荷载与支座改写不传播到后面的步。材料非线性没放进来是因为一个分析步
         里常有几个工况同时生效，而材料非线性不能事后叠加，缺一个合成工况的
         增量入口；硬放进来只能偷偷按单工况各算各的，那是错的答案。
         """
@@ -1079,7 +1082,7 @@ class ModelingMixin:
                 supports={int(k): dict(v) for k, v in (supports or {}).items()},
                 deactivate_supports=tuple(int(n) for n in
                                           (deactivate_supports or ())),
-                increments=int(increments))
+                increments=int(increments), num_modes=int(num_modes))
         except (ValueError, TypeError) as exc:
             return ToolResult(False, {"error": str(exc)})
 

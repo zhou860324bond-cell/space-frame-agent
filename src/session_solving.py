@@ -33,6 +33,30 @@ from task_control import TaskCancelled, checkpoint
 
 class SolvingMixin:
     """求解：自研内核、Abaqus 对标、实体子模型。见模块 docstring。"""
+    def _perturbation_step(self, eff, original) -> dict[str, Any]:
+        """频率步做模态、屈曲步做线性屈曲，都在这一步的支座配置上算。"""
+        entry: dict[str, Any] = {"step": eff.name, "analysis": eff.analysis,
+                                 "loads": dict(eff.loads), "supports": sorted(eff.supports),
+                                 "changes": list(eff.changes)}
+        if eff.analysis == "frequency":
+            got = self.modal_analysis(num_modes=eff.num_modes)
+            if not got.ok:
+                return {**entry, "error": got.payload}
+            entry["frequencies_Hz"] = [m["frequency_Hz"] for m in got.payload["modes"]]
+            return entry
+        factors = self._amplitude_factors(eff.loads, original)
+        self.model = dict(self.model)
+        self.model["combos"] = [{"name": eff.name, "factors": factors}]
+        static = self.solve_model(analysis="linear")
+        if not static.ok:
+            return {**entry, "error": static.payload}
+        got = self.buckling_analysis(case=eff.name, num_modes=eff.num_modes)
+        if not got.ok:
+            return {**entry, "error": got.payload}
+        entry["critical_factor"] = got.payload["critical_factor"]
+        entry["factors"] = got.payload["factors"]
+        return entry
+
     def solve_steps(self, inspect: str | None = None) -> ToolResult:
         """按顺序求解模型里声明的全部分析步。
 
@@ -62,7 +86,18 @@ class SolvingMixin:
                                       "hint": "分析步没有执行，模型保持不变"})
 
         names = [e.name for e in effective]
-        target = inspect if inspect is not None else names[-1]
+        general = [e.name for e in effective if e.analysis not in step_module.PERTURBATION]
+        if not general:
+            return ToolResult(False, {
+                "error": "全是线性摄动步（频率、屈曲），没有一般分析步提供基态",
+                "hint": "先加一个 linear 或 pdelta 分析步"})
+        # 会话里留作后处理的是一般步的静力结果；摄动步的频率与临界因子写在汇总里
+        target = inspect if inspect is not None else general[-1]
+        if target in names and target not in general:
+            return ToolResult(False, {
+                "error": f"分析步 {target!r} 是线性摄动步，没有静力结果可留作后处理",
+                "hint": "它的频率或临界因子在 solve_steps 的汇总里；inspect 请指定一般分析步",
+                "general_steps": general})
         if target not in names:
             return ToolResult(False, {
                 "error": f"没有名为 {target!r} 的分析步", "steps": names})
@@ -76,6 +111,14 @@ class SolvingMixin:
             for eff in effective:
                 checkpoint()
                 self.model = step_module.payload_for(eff, original)
+                if eff.analysis in step_module.PERTURBATION:
+                    summary.append(self._perturbation_step(eff, original))
+                    if summary[-1].get("error"):
+                        return ToolResult(False, {
+                            "error": f"分析步 {eff.name!r} 求解失败",
+                            "detail": summary[-1],
+                            "completed": [s["step"] for s in summary[:-1]]})
+                    continue
                 if eff.analysis == "pdelta":
                     outcome = self.solve_model(
                         analysis="step", amplitudes=dict(eff.loads),

@@ -1501,7 +1501,9 @@ TOOLS: list[dict[str, Any]] = [
                 "不是施工过程。用户问施工顺序时要说清楚这个区别。",
             "parameters": {"type": "object", "required": ["name"], "properties": {
                 "name": {"type": "string", "description": "分析步名；Initial 是保留名"},
-                "analysis": {"type": "string", "enum": ["linear", "pdelta"],
+                "num_modes": {"type": "integer", "minimum": 1,
+                                  "description": "频率步、屈曲步求几阶，默认 6"},
+                    "analysis": {"type": "string", "enum": ["linear", "pdelta", "frequency", "buckle"],
                              "description": "材料非线性暂不支持分析步"},
                 "loads": {"type": "object",
                           "additionalProperties": {"type": "string"},
