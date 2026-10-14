@@ -213,6 +213,9 @@ def test_solid_display_controls_keep_raw_results_and_expose_average_and_palette(
     panel.bind([directory/'summary.json'],0,'示例',geometry={
         'algorithm':'column-host-butt-joint','host_member_id':1,'head_extension_mm':100.})
     assert '柱截面保持' in panel.source.text() and '梁端贴合' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'column-host+constrained-rolling-ball','applied_fillet_radius_mm':4.5})
+    assert '一体连续实体' in panel.source.text() and '4.5 mm' in panel.source.text()
     panel.close()
 
 

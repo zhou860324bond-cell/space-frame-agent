@@ -41,7 +41,11 @@ def test_column_top_preserves_flange_material_and_does_not_extend_beams_into_voi
         volume=gmsh.model.getEntities(3)
         assert len(volume)==1
         assert gmsh.model.isInside(3,volume[0][1],point)==expected
-        assert record['algorithm']=='column-host-butt-joint'
+        assert record['algorithm']=='column-host+constrained-rolling-ball'
+        assert record['template']=='monolithic-column-top'
+        assert record['fillet_status']=='rounded'
+        assert record['removed_material_mm3'] <= record['boolean_volume_tolerance_mm3']
+        assert record['added_material_outside_transition_mm3'] <= record['boolean_volume_tolerance_mm3']
         assert record['host_member_id']==1
         assert record['beam_start_mm']=={'5':100.,'7':6.}
     finally:
@@ -64,7 +68,7 @@ def test_column_host_mesh_keeps_three_original_cut_sections_and_areas():
     from joint_transfer import cut_area_weights
     spec=_teaching_column_joint()
     mesh,cuts=native_joint.generate_joint_mesh(spec,60.,9.)
-    assert mesh.geometry_record['algorithm']=='column-host-butt-joint'
+    assert mesh.geometry_record['algorithm']=='column-host+constrained-rolling-ball'
     for arm in spec.arms:
         assert cut_area_weights(mesh,cuts[arm.member_id]).sum()==pytest.approx(arm.profile_mm['area'],rel=1e-6)
         cut=mesh.nodes[cuts[arm.member_id]]
@@ -72,6 +76,35 @@ def test_column_host_mesh_keeps_three_original_cut_sections_and_areas():
         outer=np.asarray(arm.profile_mm['outer'])
         assert yz.min(axis=0)==pytest.approx(outer.min(axis=0),abs=1e-5)
         assert yz.max(axis=0)==pytest.approx(outer.max(axis=0),abs=1e-5)
+
+
+@pytest.mark.parametrize('change', ['remove_material', 'extend_to_cut', 'local_addition'])
+def test_continuous_blend_rejects_material_loss_and_nonlocal_growth(change):
+    """防止圆角虽成功却削掉柱材料，或沿边链传播到远端切面而改变载荷传递。"""
+    gmsh=pytest.importorskip('gmsh')
+    gmsh.initialize(interruptible=False)
+    try:
+        gmsh.option.setNumber('General.Terminal',0)
+        gmsh.model.add('blend_validation')
+        occ=gmsh.model.occ
+        original=[(3,occ.addBox(0.,0.,0.,1.,1.,1.))]
+        if change=='remove_material':
+            rounded=[(3,occ.addBox(.1,0.,0.,.9,1.,1.))]
+        elif change=='extend_to_cut':
+            rounded=[(3,occ.addBox(0.,0.,0.,4.,1.,1.))]
+        else:
+            rounded=[(3,occ.addBox(0.,0.,0.,1.1,1.,1.))]
+        if change=='local_addition':
+            record=joint_blend._validate_additive_blend(occ,original,rounded,2.)
+            assert record['removed_material_mm3']==pytest.approx(0.,abs=1e-8)
+            assert record['added_material_outside_transition_mm3']==pytest.approx(0.,abs=1e-8)
+        else:
+            with pytest.raises(ValueError,match='原有材料或超出局部过渡区'):
+                joint_blend._validate_additive_blend(occ,original,rounded,2.)
+        # 验证步骤只删除临时差集，不破坏调用方保留的CAD。
+        assert occ.getMass(*original[0])==pytest.approx(1.)
+    finally:
+        gmsh.finalize()
 
 
 SHAPES = [sg.descriptor("rectangle", b=.12, h=.18), sg.descriptor("box", b=.12, h=.18, t=.02),

@@ -215,6 +215,40 @@ def build_column_host(gmsh, spec, plan):
     return occ.fuse(solids[:1], solids[1:], removeObject=True, removeTool=True)[0]
 
 
+def _validate_additive_blend(occ, original, rounded, radius):
+    """用实体差集验证材料只在局部增加，避免圆角链传播到驱动切面。"""
+    tolerance = max(1e-6, 1e-8*occ.getMass(*original[0]))
+    missing, _ = occ.cut(occ.copy(original), occ.copy(rounded))
+    missing_volume = sum(occ.getMass(*v) for v in missing)
+    if missing:
+        occ.remove(missing, recursive=True)
+    extra, _ = occ.cut(occ.copy(rounded), occ.copy(original))
+    outside = []
+    if extra:
+        sphere = [(3, occ.addSphere(0., 0., 0., radius))]
+        outside, _ = occ.cut(extra, sphere)
+    outside_volume = sum(occ.getMass(*v) for v in outside)
+    if outside:
+        occ.remove(outside, recursive=True)
+    if missing_volume > tolerance or outside_volume > tolerance:
+        raise ValueError('圆角改变了原有材料或超出局部过渡区，请核对节点截面和短臂范围。')
+    return {'removed_material_mm3': float(missing_volume),
+            'added_material_outside_transition_mm3': float(outside_volume),
+            'boolean_volume_tolerance_mm3': float(tolerance)}
+
+
+def build_continuous_column(gmsh, spec, plan):
+    """柱顶连续体模板：完整柱截面、贴合梁端、局部增材滚动球过渡。"""
+    solids = build_column_host(gmsh, spec, plan)
+    solids, blend = fillet_miter(gmsh, spec, solids, preserve_material=True)
+    if blend['fillet_status'] != 'rounded':
+        raise ValueError('柱顶连续体未形成有效曲面过渡，请核对截面朝向或增大短臂范围。')
+    return solids, {**plan, **blend, 'algorithm': 'column-host+constrained-rolling-ball',
+                    'template': 'monolithic-column-top',
+                    'connection_assumption': '一体连续实体；交汇处增材过渡，无焊缝、螺栓或接触界面。',
+                    'host_material_preserved': True, 'cut_sections_preserved': True}
+
+
 def build_miter(gmsh, spec):
     """沿角平分半空间分配各杆件实体与孔洞，避免凸包填满翼缘间凹槽。"""
     from joint_geometry import _basis, _extrude_loop, _polygon_surface, _profile
@@ -262,7 +296,7 @@ def build_miter(gmsh, spec):
     return solids
 
 
-def fillet_miter(gmsh, spec, solids):
+def fillet_miter(gmsh, spec, solids, preserve_material=False):
     """用边法向平面内的材料占比识别凹边，圆角失败只保留有效斜接实体并明确记录。"""
     from joint_geometry import _profile
     gmsh.model.occ.synchronize()
@@ -292,18 +326,28 @@ def fillet_miter(gmsh, spec, solids):
         points = point+feature*1e-3*(np.cos(phi)[:, None]*u+np.sin(phi)[:, None]*v)
         if sum(gmsh.model.isInside(3, volume, p.tolist()) for p in points)/24 > .56:
             selected.append(tag)
+    requested_radius = (.9 if preserve_material else .45)*feature
     record = {'algorithm': 'halfspace-miter+rolling-ball', 'concave_edges': len(selected),
-              'requested_fillet_radius_mm': .45*feature, 'applied_fillet_radius_mm': 0.,
+              'requested_fillet_radius_mm': requested_radius, 'applied_fillet_radius_mm': 0.,
               'fillet_region_radius_mm': reach, 'fillet_status': 'not_required'}
     if not selected:
         return solids, record
     for factor in (1., .5):
+        rounded = []
         try:
-            rounded = gmsh.model.occ.fillet([volume], selected, [.45*feature*factor], removeVolume=False)
+            rounded = gmsh.model.occ.fillet([volume], selected, [requested_radius*factor], removeVolume=False)
+            if preserve_material:
+                if len(rounded) != 1:
+                    raise ValueError('局部过渡未保持单一实体。')
+                validation = _validate_additive_blend(gmsh.model.occ, solids, rounded, reach)
         except Exception:  # noqa: BLE001  OCCT圆角失败不改变原实体；记录未形成圆角，不改成凸包。
+            if rounded:
+                gmsh.model.occ.remove(rounded, recursive=True)
             continue
         gmsh.model.occ.remove(solids, recursive=True)
-        record.update(applied_fillet_radius_mm=.45*feature*factor, fillet_status='rounded')
+        record.update(applied_fillet_radius_mm=requested_radius*factor, fillet_status='rounded')
+        if preserve_material:
+            record.update(validation)
         return rounded, record
     record['fillet_status'] = 'kernel_unavailable'
     return solids, record

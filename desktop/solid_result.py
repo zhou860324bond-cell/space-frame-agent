@@ -170,7 +170,12 @@ class SolidResultPanel(QWidget):
             details = ""
             if isinstance(geometry, dict):
                 try:
-                    if geometry.get("algorithm") == "column-host-butt-joint":
+                    if geometry.get("algorithm") == "column-host+constrained-rolling-ball":
+                        radius = float(geometry["applied_fillet_radius_mm"])
+                        if not np.isfinite(radius) or radius <= 0:
+                            raise ValueError("invalid radius")
+                        details = f"\n一体连续实体 · 柱截面保持 · 过渡半径 {radius:.6g} mm"
+                    elif geometry.get("algorithm") == "column-host-butt-joint":
                         host = int(geometry['host_member_id'])
                         height = float(geometry['head_extension_mm'])
                         if host < 1 or not np.isfinite(height) or height < 0:
