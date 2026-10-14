@@ -9,11 +9,67 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
+
 from PySide6.QtWidgets import QMessageBox
 
 
 class WindowVizMixin:
     """结果显示命令。见模块 docstring。"""
+
+    # --- 结果树：分析步 → 帧（Abaqus 的 Step / Frame） ---
+
+    def show_step_result(self, step: str, frame_index: int | None = None) -> None:
+        """切到某一分析步的结果；``frame_index`` 是增量帧（None 为最终帧）。"""
+        got = self.session.inspect_step(step)
+        if not got.ok:
+            self.statusBar().showMessage(f"无法切换到分析步 {step}：{self._explain(got.payload)}", 8000)
+            return
+        if got.payload.get("perturbation"):
+            self.show_step_mode(step, 0)
+            return
+        self.result = self.session.solve_summary
+        self.case = got.payload["case"]
+        self.result_frame = frame_index
+        frames = got.payload["frames"]
+        where = ("最终帧" if frame_index is None
+                 else f"增量 {frame_index + 1}/{len(frames)}，荷载因子 {frames[frame_index]:g}")
+        self.set_mode("变形")
+        self.refresh()
+        self.statusBar().showMessage(f"结果：分析步 {step}，{where}", 8000)
+
+    def _frame_solution(self):
+        """当前要画的结果：选了增量帧时，把该工况的位移换成那一帧的。"""
+        solution = self.session.solution
+        k = getattr(self, "result_frame", None)
+        if k is None or solution is None or self.case not in solution.all_results():
+            return solution
+        result = solution[self.case]
+        if not result.frames or k >= len(result.frames):
+            return solution
+        view = copy.copy(solution)
+        replaced = dataclasses.replace(result, U=result.frames[k][1], frames=[])
+        if self.case in solution.cases:
+            view.cases = {**solution.cases, self.case: replaced}
+        else:
+            view.combos = {**solution.combos, self.case: replaced}
+        return view
+
+    def show_step_mode(self, step: str, mode: int) -> None:
+        """画频率步的振型或屈曲步的失稳模态（用那一步自己的分析模型与结果）。"""
+        entry = self.session.step_results.get(step)
+        if not entry or entry.get("view") is None:
+            return
+        if entry["analysis"] == "frequency":
+            _key, _n, frame, r = entry["view"]
+            f = float(r.frequencies[mode])
+            label = f"{step}　第 {mode + 1} 阶　{f:.3f} Hz　周期 {1 / f:.4f} s"
+        else:
+            _key, frame, r = entry["view"]
+            label = f"{step}　第 {mode + 1} 屈曲模态　λ = {float(r.factors[mode]):.4g}"
+        self.viewport.show_mode(frame, r.shapes, mode, label)
+        self.statusBar().showMessage(label, 8000)
 
     # --- 显示组 ---
 

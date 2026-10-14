@@ -175,6 +175,11 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
     compilation: Any = None
     #: (模型指纹, 阶数, 分析模型, ModalResult)：界面画振型用同一份，见 modal_analysis
     modal_view: Any = field(default=None, repr=False, compare=False)
+    #: (模型指纹, 分析模型, BucklingResult)：界面画失稳模态用，见 buckling_analysis
+    buckling_view: Any = field(default=None, repr=False, compare=False)
+    #: solve_steps 留下的每一步结果（Abaqus 结果树的 Step → Frame），见 inspect_step
+    step_results: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    step_results_key: bytes | None = field(default=None, repr=False, compare=False)
     result_db: Any = None
     result_identity: dict[str, Any] | None = None
     solve_summary: ToolResult | None = field(default=None, repr=False)

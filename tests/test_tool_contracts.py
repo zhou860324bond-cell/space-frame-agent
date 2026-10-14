@@ -72,6 +72,7 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "create_load": (("kind", "name", "region"), "对象名与区域"),
     "create_constraint": (("kind", "name", "region", "nodes"), "对象名与展开后的从节点"),
     "modify_boundary_condition": (("kind", "name", "steps"), "各分析步的状态"),
+    "inspect_step": (("inspecting", "summary"), "切换到的分析步与它的汇总"),
     "deactivate_boundary_condition": (("kind", "name", "steps"), "各分析步的状态"),
     "edit_feature": (("kind", "name", "changed"), "改了哪些键"),
     "rename_feature": (("kind", "name", "was"), "新旧名字"),

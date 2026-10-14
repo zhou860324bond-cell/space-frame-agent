@@ -675,6 +675,9 @@ class CaseResult:
     U: np.ndarray
     R: np.ndarray
     member_forces: dict[int, np.ndarray]
+    #: 增量分析的中间帧（Abaqus 的 Frame）：[(荷载因子, 全位移)]，最后一帧就是 U。
+    #: 线性分析只有最终状态，留空。
+    frames: list[tuple[float, np.ndarray]] = field(default_factory=list)
 
 
 @dataclass

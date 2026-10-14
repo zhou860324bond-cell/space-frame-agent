@@ -1342,3 +1342,26 @@ def test_gravity_and_batch_assignment_create_objects_like_their_abaqus_counterpa
     assignment = s.model["features"]["section_assignments"][0]
     assert assignment["region"] == {"members": sorted(target)}
     assert "support" not in w.actions_by_name, "支座管理器与边界条件管理器是同一个，只留一个入口"
+
+
+def test_results_tree_lists_steps_frames_and_modes(qt_app):
+    """结果树按 分析步 → 帧 / 模态 展开；点增量帧画的是那一帧的位移，点模态画那一步的振型。"""
+    s = built()
+    assert s.add_step("静力", loads={"D": "RAMP"}).ok
+    assert s.add_step("二阶", analysis="pdelta", increments=3).ok
+    assert s.add_step("频率", analysis="frequency", num_modes=2).ok
+    w = MainWindow(s)
+    got = s.solve_steps()
+    assert got.ok, got.payload
+    w._steps_solved(got)
+    root = next(w.tree.topLevelItem(k) for k in range(w.tree.topLevelItemCount())
+                if w.tree.topLevelItem(k).text(0) == "结果")
+    steps = [root.child(k).text(0) for k in range(root.childCount())]
+    assert steps == ["静力　线性静力", "二阶　P-Δ", "频率　频率"]
+    assert root.child(1).childCount() == 3 and root.child(2).childCount() == 2
+    w._on_tree_action("result_frame", ("二阶", 0))
+    assert w.result_frame == 0
+    shown = w._frame_solution()[w.case].U
+    assert (shown == s.solution[w.case].frames[0][1]).all()
+    w._on_tree_action("result_mode", ("频率", 1))
+    assert "第 2 阶" in w.statusBar().currentMessage()

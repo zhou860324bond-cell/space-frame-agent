@@ -167,6 +167,30 @@ class ModelTree(QTreeWidget):
             node.setForeground(0, QColor(theme.INK_MUTED))
         return node
 
+    _ANALYSIS_LABEL = {"linear": "线性静力", "pdelta": "P-Δ", "frequency": "频率",
+                       "buckle": "屈曲"}
+
+    def _result_step(self, parent, name: str, entry: dict) -> None:
+        analysis = entry["analysis"]
+        node = self._child(parent, f"{name}　{self._ANALYSIS_LABEL.get(analysis, analysis)}",
+                           "result_step", name)
+        if analysis == "frequency":
+            r = entry["view"][3]
+            for k, f in enumerate(r.frequencies):
+                self._child(node, f"模态 {k + 1}　{f:.4g} Hz", "result_mode", (name, k))
+        elif analysis == "buckle":
+            r = entry["view"][2]
+            for k, lam in enumerate(r.factors):
+                self._child(node, f"屈曲模态 {k + 1}　λ = {lam:.4g}", "result_mode", (name, k))
+        else:
+            solution, case = entry["snapshot"][0], entry["case"]
+            frames = (solution[case].frames
+                      if case in solution.all_results() else [])
+            if not frames:
+                self._child(node, "帧 1　t = 1.0（最终）", "result_frame", (name, None))
+            for k, (t, _u) in enumerate(frames):
+                self._child(node, f"增量 {k + 1}　荷载因子 {t:.3g}", "result_frame", (name, k))
+
     def rebuild(self, session, result=None) -> None:
         """整棵重建。刚架模型小，重建比增量维护简单可靠得多。
 
@@ -310,8 +334,16 @@ class ModelTree(QTreeWidget):
 
         if result is not None and result.ok:
             res = self._child(self, "结果", "results")
-            for name in result.payload["cases"]:
-                self._child(res, name, "results", name)
+            done = (session.step_results
+                    if session.step_results and session.step_results_key == session._model_key()
+                    else {})
+            if done:
+                # Abaqus 结果树：Step → Frame。点步或帧切换会话里的结果，点模态画振型
+                for name, entry in done.items():
+                    self._result_step(res, name, entry)
+            else:
+                for name in result.payload["cases"]:
+                    self._child(res, name, "results", name)
 
         steps = len(session.history)
         if steps:

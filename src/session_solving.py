@@ -107,6 +107,7 @@ class SolvingMixin:
                             self.result_identity, self.solve_summary, self._solution_model_key)
         completed = False
         summary = []
+        stored: dict[str, dict[str, Any]] = {}
         try:
             for eff in effective:
                 checkpoint()
@@ -118,6 +119,9 @@ class SolvingMixin:
                             "error": f"分析步 {eff.name!r} 求解失败",
                             "detail": summary[-1],
                             "completed": [s["step"] for s in summary[:-1]]})
+                    view = self.modal_view if eff.analysis == "frequency" else self.buckling_view
+                    stored[eff.name] = {"analysis": eff.analysis, "summary": summary[-1],
+                                        "view": view}
                     continue
                 if eff.analysis == "pdelta":
                     outcome = self.solve_model(
@@ -147,6 +151,11 @@ class SolvingMixin:
                     "max_deflection_mm": entry.get("max_deflection_mm"),
                     "max_displacement_mm": entry.get("max_displacement_mm"),
                     "equilibrium_ok": entry.get("equilibrium_ok")})
+                stored[eff.name] = {"analysis": eff.analysis, "summary": summary[-1],
+                                    "case": case_key,
+                                    "snapshot": (self.solution, self.result_db, self.frame,
+                                                 self.compilation, self.result_identity,
+                                                 self.solve_summary)}
                 if eff.name == target:
                     kept = (self.solution, self.result_db,
                             self.frame, self.compilation, self.result_identity,
@@ -162,6 +171,7 @@ class SolvingMixin:
         (self.solution, self.result_db, self.frame, self.compilation,
          self.result_identity, self.solve_summary) = kept
         self._solution_model_key = self._model_key()
+        self.step_results, self.step_results_key = stored, self._solution_model_key
         if self.result_identity is not None:
             self.result_identity["model_fingerprint"] = self._solution_model_key.hex()
             self.result_identity["step"] = target
@@ -174,6 +184,38 @@ class SolvingMixin:
             "limitation": "每一步都从未变形、无应力状态重解，不把上一步的状态"
                           "带进来；杆件也不能在步之间生灭。所以这表达的是"
                           "「同一结构的几种配置」，不是施工过程。"})
+
+    def inspect_step(self, step: str) -> ToolResult:
+        """切换会话里供后处理的分析步结果，不重解（Abaqus 结果树里点另一个 Step）。
+
+        solve_steps 每一步的结果都留着；模型改过之后它们作废，要重新提交。
+        线性摄动步没有静力结果，返回它的频率或临界因子。
+        """
+        import steps as step_module
+        if not self.step_results:
+            return ToolResult(False, {"error": "还没有提交分析步", "hint": "先 solve_steps"})
+        if self.step_results_key != self._model_key():
+            return ToolResult(False, {"error": "模型在提交分析步之后改过，各步结果已作废",
+                                      "hint": "重新 solve_steps"})
+        entry = self.step_results.get(step)
+        if entry is None:
+            return ToolResult(False, {"error": f"没有名为 {step!r} 的分析步结果",
+                                      "steps": list(self.step_results)})
+        if entry["analysis"] in step_module.PERTURBATION:
+            return ToolResult(True, {"inspecting": step, "perturbation": True,
+                                     "summary": entry["summary"],
+                                     "note": "线性摄动步没有静力结果，会话里的静力结果不变"})
+        (self.solution, self.result_db, self.frame, self.compilation,
+         self.result_identity, self.solve_summary) = entry["snapshot"]
+        self._solution_model_key = self._model_key()
+        if self.result_identity is not None:
+            # 结果身份写的是“哪个模型、哪一步”：快照里留的是那一步的分步模型指纹
+            self.result_identity = {**deepcopy(self.result_identity), "step": step,
+                                    "model_fingerprint": self._solution_model_key.hex()}
+        frames = self.solution[entry["case"]].frames if entry["case"] in self.solution.all_results() else []
+        return ToolResult(True, {"inspecting": step, "case": entry["case"],
+                                 "summary": entry["summary"],
+                                 "frames": [round(float(t), 6) for t, _ in frames] or [1.0]})
 
     @staticmethod
     def _amplitude_factors(loads: dict, payload: dict) -> dict:

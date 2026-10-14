@@ -435,3 +435,44 @@ def test_a_bc_created_in_a_later_step_merges_with_the_existing_one_on_the_node()
     assert s.create_boundary_condition("BC-右加", [3], fix=[1, 1, 0, 1, 1, 1], step="S2").ok
     entry = s.model["steps"][1]["supports"]["3"]
     assert entry["fix"] == [1] * 6 and sorted(entry["owners"]) == ["BC-右", "BC-右加"]
+
+
+def _four_steps() -> Session:
+    s = _with_objects()
+    assert s.add_step("静力", loads={"DL": "RAMP"}).ok
+    assert s.add_step("二阶", analysis="pdelta", increments=4).ok
+    assert s.add_step("频率", analysis="frequency", num_modes=3).ok
+    assert s.add_step("屈曲", analysis="buckle", loads={"DL": "RAMP"}, num_modes=2).ok
+    return s
+
+
+def test_every_step_result_is_kept_and_inspect_step_switches_without_resolving():
+    """Abaqus 结果树：提交一次，各步结果都在，点哪一步看哪一步。
+
+    原来会话只留 inspect 指定的那一步，换一步看结果要把全部分析步重算一遍。
+    切换得到的结果要与直接 solve_steps(inspect=…) 逐位相同；P-Δ 步的每个增量是一帧。
+    """
+    s = _four_steps()
+    got = s.solve_steps()
+    assert got.ok, got.payload
+    assert list(s.step_results) == ["静力", "二阶", "频率", "屈曲"]
+    switched = s.inspect_step("静力")
+    assert switched.ok and switched.payload["frames"] == [1.0]
+    u_switched = s.solution[switched.payload["case"]].U.copy()
+    direct = _four_steps()
+    assert direct.solve_steps(inspect="静力").ok
+    np.testing.assert_array_equal(u_switched, direct.solution["静力"].U)
+
+    second = s.inspect_step("二阶")
+    assert second.payload["frames"] == [0.25, 0.5, 0.75, 1.0]
+    result = s.solution[second.payload["case"]]
+    np.testing.assert_array_equal(result.frames[-1][1], result.U)
+    assert s.result_identity["step"] == "二阶"
+
+    modal = s.inspect_step("频率")
+    assert modal.ok and modal.payload["perturbation"] and len(modal.payload["summary"]["frequencies_Hz"]) == 3
+    assert s.step_results["屈曲"]["view"][2].factors[0] > 0
+
+    assert s.create_load("追加", "DL", "concentrated_force", [4], force=[0, 0, -1e3]).ok
+    stale = s.inspect_step("静力")
+    assert not stale.ok and "作废" in stale.payload["error"]

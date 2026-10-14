@@ -105,6 +105,7 @@ def _pdelta_run(model: Frame, base_K, basis: DofBasis, name: str, case_at,
             if on:
                 prescribed[dofs[k]] = values[k]
     history: list[dict] = []
+    frames: list[tuple[float, np.ndarray]] = []
     Kt = base_K
     F = np.zeros(model.num_dofs)
     free = basis.free
@@ -135,6 +136,7 @@ def _pdelta_run(model: Frame, base_K, basis: DofBasis, name: str, case_at,
                                 "max_displacement": float(
                                     np.max(np.abs(U)) if U.size else 0.0),
                                 "relative_change": ratio})
+                frames.append((load_factor, U.copy()))
                 break
         if not converged:
             raise RuntimeError(
@@ -143,7 +145,7 @@ def _pdelta_run(model: Frame, base_K, basis: DofBasis, name: str, case_at,
     forces = _member_forces(model, U, final)
     reaction = np.zeros(model.num_dofs)
     reaction[basis.fixed] = basis.reactions(Kt @ U - F)
-    return CaseResult(name, U, reaction, forces), history
+    return CaseResult(name, U, reaction, forces, frames), history
 
 
 def solve_pdelta(model: Frame, cases: list[str] | None = None,

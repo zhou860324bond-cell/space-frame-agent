@@ -303,6 +303,7 @@ class ChecksMixin:
             compiled = self._eigen_compilation()
             refined = compiled.analysis_model
             r = buckling(refined, name, int(num_modes), solution=solve(refined))
+            self.buckling_view = (self._model_key(), refined, r)
         except ImportError as exc:
             return ToolResult(False, {"error": f"屈曲模块不可用：{exc}"})
         except CompilationError as exc:

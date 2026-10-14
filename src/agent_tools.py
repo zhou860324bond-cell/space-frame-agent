@@ -253,6 +253,18 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "inspect_step",
+            "description":
+                "切换会话里供后处理的分析步结果，不重解（solve_steps 之后每一步的结果都留着）。"
+                "画图、验算、查内力都按切换后的那一步。模型改过之后要重新 solve_steps。",
+            "parameters": {"type": "object", "required": ["step"],
+                           "properties": {"step": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "modify_boundary_condition",
             "description":
                 "在后面某一分析步修改边界条件（Abaqus 管理器的 Modify）：从该步起改用新的 fix/preset/spring，"

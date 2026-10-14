@@ -728,6 +728,7 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
 
     def _solved(self, result) -> None:
         self.result = result
+        self.result_frame = None
         self._on_busy(False)
         self.statusBar().clearMessage()
         if result.ok:
@@ -952,7 +953,7 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
         frame = self.session.frame or frame
         if self.mode == "变形":
             scale = self.scale or self._auto_scale(frame)
-            self.viewport.show_deformed(frame, self.session.solution,
+            self.viewport.show_deformed(frame, self._frame_solution(),
                                         self.case, scale)
         elif self.mode == "云图":
             options = self.result_display_options
@@ -3257,6 +3258,12 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
         elif action == "results" and payload:
             self.case = str(payload)
             self.set_mode("变形")
+        elif action == "result_step":
+            self.show_step_result(str(payload))
+        elif action == "result_frame":
+            self.show_step_result(*payload)
+        elif action == "result_mode":
+            self.show_step_mode(*payload)
         elif action == "history":
             self.timeline_dock.setVisible(True)
             self.timeline_dock.raise_()
