@@ -129,6 +129,7 @@ class ChatPanel(QWidget):
         self._chat_busy = False
         self._provider_dirty = False
         self._dialogs = []
+        self._task_dialog = None
         self.references = []
         self.reference_revision = ""
         self._selection = None
@@ -154,6 +155,7 @@ class ChatPanel(QWidget):
 
         header = QHBoxLayout()
         title = QLabel("工程对话")
+        self.title_label = title
         title.setStyleSheet(f"font-size:14pt;font-weight:600;color:{theme.INK};")
         self.btn_settings = QPushButton("模型连接设置")
         self.btn_settings.clicked.connect(self.open_settings)
@@ -161,6 +163,10 @@ class ChatPanel(QWidget):
         self.btn_history.clicked.connect(self._history_menu)
         self.btn_history.hide()
         header.addWidget(title, 1)
+        self.btn_tasks = QPushButton("Agent 任务")
+        self.btn_tasks.setToolTip("主Agent分派建模与检查子任务，候选在审阅应用前不修改原工程")
+        self.btn_tasks.clicked.connect(self.open_task_dialog)
+        header.addWidget(self.btn_tasks)
         header.addWidget(self.btn_history)
         header.addWidget(self.btn_settings)
         layout.insertLayout(0, header)
@@ -266,6 +272,7 @@ class ChatPanel(QWidget):
         self.history_widget.setVisible(self.height() >= 420)
         self.btn_history.setVisible(self.height() < 420)
         self.lbl_context.setVisible(self.height() >= 340)
+        self.title_label.setVisible(self.width() >= 550)
 
     # --- 后端 ---
 
@@ -385,6 +392,16 @@ class ChatPanel(QWidget):
         self._dialogs.append(dialog)
         dialog.show()
 
+    def open_task_dialog(self):
+        if self.runner.busy or self._chat_busy:
+            return
+        if self._task_dialog is None:
+            from .agent_task_dialog import AgentTaskDialog
+            self._task_dialog = AgentTaskDialog(self)
+            self._dialogs.append(self._task_dialog)
+        self._task_dialog.show()
+        self._task_dialog.raise_()
+
     def _profiles_changed(self, profiles, selected):
         self.profiles, self.selected_profile = profiles, selected
         self._config_error = ""
@@ -441,6 +458,7 @@ class ChatPanel(QWidget):
 
     def reset_session(self, session):
         self.shutdown()
+        self._task_dialog = None
         self.session = session
         self.conversation = None
         self._chats = []
@@ -632,7 +650,7 @@ class ChatPanel(QWidget):
 
     def set_task_busy(self, busy):
         idle = not (busy or self._chat_busy)
-        for widget in (self.model_selector, self.backup_selector, self.btn_settings, self.btn_history, self.chat_selector,
+        for widget in (self.model_selector, self.backup_selector, self.btn_settings, self.btn_tasks, self.btn_history, self.chat_selector,
                        self.btn_new_chat, self.btn_objects, self.btn_clear, self.entry, self.btn_send):
             widget.setEnabled(idle)
         self.btn_attach.setEnabled(idle and bool(self._selection))
@@ -650,7 +668,10 @@ class ChatPanel(QWidget):
     def shutdown(self):
         """退出或换工程时关闭配置窗口与闲置网络连接。"""
         for dialog in self._dialogs:
-            dialog.hide()
+            if hasattr(dialog, "shutdown"):
+                dialog.shutdown()
+            else:
+                dialog.hide()
         conversations = [self.conversation] + [item[0] for item in self._chats]
         for conversation in conversations:
             self._close_provider(getattr(conversation, "provider", None))

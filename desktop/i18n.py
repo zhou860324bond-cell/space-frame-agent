@@ -25,6 +25,11 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "Agent 任务": "Agent tasks", "Agent 协作任务": "Collaborative agent task",
+    "开始任务": "Start agent task", "继续任务": "Continue agent task",
+    "新建任务": "New agent task",
+    "预览候选": "Preview candidate", "应用候选": "Apply candidate",
+    "候选变更审阅": "Review candidate changes",
     "模型连接设置": "Model connection settings", "工程对话": "Engineering chat",
     "新建对话": "New conversation", "选择工程对象": "Select engineering objects",
     "加入视口所选": "Attach viewport selection", "清除引用": "Clear references",
