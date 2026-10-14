@@ -188,6 +188,8 @@ class Viewport(QWidget):
         # 显示组（Abaqus 的 Display Group）：隐藏的杆件不画、也不参与拾取。节点不
         # 过滤——位移向量按节点序号取值，删掉节点会让下标整体错位。
         self.hidden_members: set[int] = set()
+        # 基准点（Abaqus 的 Datum Point）：名称 → 坐标。只画参考标记、供建节点吸附
+        self.datum_points: dict[str, list[float]] = {}
         # 动画（Abaqus 的 Animate: Scale Factor）：按比例系数循环播放变形或振型
         self._anim_timer = None
         self._anim_frames: list = []
@@ -682,6 +684,15 @@ class Viewport(QWidget):
         """编号标注 + 选中高亮。**每种显示模式画完都要调一次**，
         否则切到云图选中就没了，用户会以为选择被清掉了。"""
         self._frame = frame
+        if frame is not None and CAN_RENDER and self.datum_points:
+            import pyvista as pv
+            names = list(self.datum_points)
+            pts = np.array([self.datum_points[n] for n in names], float)
+            self.plotter.add_mesh(pv.PolyData(pts), color=theme.REFERENCE, point_size=9,
+                                  render_points_as_spheres=False, name="_datum_points")
+            self.plotter.add_point_labels(pts, names, name="_datum_labels", font_size=9,
+                                          text_color=theme.REFERENCE, shape=None,
+                                          always_visible=True, show_points=False)
         if frame is None or not CAN_RENDER:
             return
         # 模型范围变了，网格地面跟着重算大小
@@ -990,6 +1001,20 @@ class Viewport(QWidget):
                     out[i] = round(out[i] / self.snap_size) * self.snap_size
         return out
 
+    def _snap_to_datum(self, pt):
+        """靠近基准点时吸附到基准点坐标；半径与已有节点吸附相同。"""
+        if not self.datum_points or self._frame is None:
+            return pt
+        try:
+            size = scene.model_size(self._frame) or 1.0
+        except Exception:                      # noqa: BLE001
+            size = 1.0
+        limit = self._node_snap_ratio * size
+        best = min(self.datum_points.values(),
+                   key=lambda xyz: float(np.linalg.norm(pt - np.asarray(xyz, float))))
+        best = np.asarray(best, float)
+        return best if float(np.linalg.norm(pt - best)) <= limit else pt
+
     def _snap_to_existing_node(self, pt):
         """吸附半径内已有节点则返回其编号，否则 None（避免重复节点）。"""
         if self._frame is None:
@@ -1087,7 +1112,7 @@ class Viewport(QWidget):
 
         # 人工建模：节点模式 —— 投影到工作平面、网格捕捉、吸附已有节点后创建
         if self.model_mode == "node":
-            snapped = self._snap_point(pt)
+            snapped = self._snap_to_datum(self._snap_point(pt))
             existing = self._snap_to_existing_node(snapped)
             if existing is not None:
                 # 点在了已有节点附近：不重复建，直接吸附并提示

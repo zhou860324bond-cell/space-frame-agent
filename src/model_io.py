@@ -175,6 +175,15 @@ MODEL_SCHEMA: dict[str, Any] = {
         # 建模对象（截面指派、边界条件、荷载）：Abaqus 式对象施加在区域上，
         # 上面的逐条目由它派生。见 features.py。
         "features": _FEATURES_SCHEMA,
+        # 基准点（Abaqus 的 Datum Point）：只用于定位与吸附，不参与计算。
+        "datums": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"points": {"type": "array", "items": {
+                "type": "object", "required": ["name", "xyz"], "additionalProperties": False,
+                "properties": {"name": {"type": "string", "minLength": 1},
+                               "xyz": {"type": "array", "minItems": 3, "maxItems": 3,
+                                       "items": {"type": "number"}}}}}},
+        },
         # 初始几何缺陷：第 mode 阶屈曲模态缩放到 amplitude（长度，可为负表示
         # 反向）叠到分析模型上，只在二阶分析（pdelta / step）中生效。case 是
         # 求缺陷模态用的参考工况或组合，缺省取内力最大者。见 imperfection.py。

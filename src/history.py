@@ -51,6 +51,8 @@ MUTATING = frozenset({
     "create_section_assignment", "create_beam_orientation", "create_boundary_condition",
     "create_load",
     "edit_feature", "rename_feature", "copy_feature", "suppress_feature", "delete_feature",
+    # Part 模块：分割杆件加顶点、基准点
+    "partition_member", "create_datum_point", "delete_datum_point",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -205,6 +207,12 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
                 "suppress_feature": "抑制" if args.get("suppressed", True) else "恢复",
                 "delete_feature": "删除"}[tool]
         return f"{verb}「{args.get('name')}」"
+    if tool == "partition_member":
+        return f"分割杆件 {args.get('member_id')}：顶点为节点 {payload.get('node')}"
+    if tool == "create_datum_point":
+        return f"基准点「{args.get('name')}」"
+    if tool == "delete_datum_point":
+        return f"删除基准点「{args.get('name')}」"
     if tool == "seed_mesh":
         if args.get("clear"):
             return "清除布种"

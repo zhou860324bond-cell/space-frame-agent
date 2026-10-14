@@ -179,6 +179,84 @@ class WindowObjectsMixin:
     def open_orientation_manager(self) -> None:
         self.open_object_manager("beam_orientations")
 
+    # --- Part 模块：分割、基准点、测量 ---
+
+    def partition_member_ui(self) -> None:
+        if not self.session.model.get("members"):
+            self.statusBar().showMessage("还没有杆件：请先建立几何。", 5000)
+            return
+        self.region_pick.start("member", "分割杆件：选一根杆件", self._finish_partition,
+                               self._initial_region("member"))
+
+    def _finish_partition(self, region: dict) -> None:
+        ids = region.get("members") or []
+        if "set" in region or len(ids) != 1:
+            QMessageBox.information(self, "分割杆件", "一次分割一根杆件：请只选一根，不用集合。")
+            return
+        ratio, ok = QInputDialog.getDouble(self, "分割杆件", "顶点位置（从 i 端量起的比例，0~1）：",
+                                           0.5, 0.0001, 0.9999, 4)
+        if ok:
+            got = self.session.partition_member(ids[0], ratio=ratio)
+            if self._object_result(got, f"已在杆件 {ids[0]} 上加顶点：节点 {got.payload.get('node')}。"):
+                self._sync_datums()
+
+    def datum_point_ui(self) -> None:
+        way, ok = QInputDialog.getItem(self, "基准点", "创建方式：",
+                                       ["两节点中点（在视口选两个节点）", "输入坐标"], 0, False)
+        if not ok:
+            return
+        name = next_name("Datum", set(self.session.datum_points()))
+        if way.startswith("两节点"):
+            self.region_pick.start("node", "基准点：选两个节点取中点",
+                                   lambda region: self._finish_datum(name, region))
+            return
+        text, ok = QInputDialog.getText(self, "基准点", "坐标 x, y, z（模型单位）：", text="0, 0, 0")
+        if not ok:
+            return
+        try:
+            xyz = [float(v) for v in text.replace("，", ",").split(",")]
+        except ValueError:
+            QMessageBox.warning(self, "坐标格式不对", "请输入三个数，用逗号分隔，例如 3, 0, 4.5。")
+            return
+        self._object_result(self.session.create_datum_point(name, xyz=xyz), f"已创建基准点「{name}」。")
+
+    def _finish_datum(self, name: str, region: dict) -> None:
+        ids = region.get("nodes") or []
+        if len(ids) != 2:
+            QMessageBox.information(self, "基准点", "取中点要恰好选两个节点。")
+            return
+        self._object_result(self.session.create_datum_point(name, midpoint_of=ids),
+                            f"已创建基准点「{name}」。")
+
+    def measure_ui(self) -> None:
+        way, ok = QInputDialog.getItem(self, "测量", "测什么：",
+                                       ["两节点距离", "杆长或两杆夹角"], 0, False)
+        if not ok:
+            return
+        kind = "node" if way.startswith("两节点") else "member"
+        self.region_pick.start(kind, f"测量：{way}", self._finish_measure)
+
+    def _finish_measure(self, region: dict) -> None:
+        if "set" in region:
+            QMessageBox.information(self, "测量", "测量请在视口里直接选对象，不用集合。")
+            return
+        got = (self.session.measure(nodes=region["nodes"]) if "nodes" in region
+               else self.session.measure(members=region["members"]))
+        if not got.ok:
+            QMessageBox.information(self, "测量", got.payload.get("error", ""))
+            return
+        p = got.payload
+        if "distance" in p:
+            dx, dy, dz = p["components"]
+            text = (f"节点 {p['nodes'][0]} → {p['nodes'][1]}：距离 {p['distance']:.6g} {p['unit']}"
+                    f"（Δx {dx:.6g}，Δy {dy:.6g}，Δz {dz:.6g}）")
+        elif "angle_deg" in p:
+            text = f"杆件 {p['members'][0]} 与 {p['members'][1]} 的夹角 {p['angle_deg']:.4g}°"
+        else:
+            text = f"杆件 {p['members'][0]} 长度 {p['length']:.6g} {p['unit']}"
+        self.set_prompt(text)
+        self.statusBar().showMessage(text, 15000)
+
     # --- 布种（Mesh 模块） ---
 
     def _ask_divisions(self, title: str, label: str) -> int | None:

@@ -1215,3 +1215,32 @@ def test_animation_toggle_needs_a_result_view(qt_app, monkeypatch):
     w.actions_by_name["animate"].setChecked(True)
     w.toggle_animation()
     assert told and not w.actions_by_name["animate"].isChecked()
+
+
+def test_part_commands_partition_datum_and_measure(qt_app, monkeypatch):
+    """Part 模块的三个命令都走提示区拾取：分割杆件、两节点中点基准点、测距离。"""
+    from desktop import window_objects
+    s = built()
+    w = MainWindow(s)
+    monkeypatch.setattr(window_objects.QInputDialog, "getDouble",
+                        staticmethod(lambda *a, **k: (0.5, True)))
+    member = s.model["members"][0]
+    before = len(s.model["nodes"])
+    w.partition_member_ui()
+    w.viewport.region_selection.apply("member", [member["id"]])
+    w.region_pick.finish()
+    assert len(s.model["nodes"]) == before + 1
+
+    choices = iter(["两节点中点（在视口选两个节点）", "两节点距离"])
+    monkeypatch.setattr(window_objects.QInputDialog, "getItem",
+                        staticmethod(lambda *a, **k: (next(choices), True)))
+    w.datum_point_ui()
+    w.viewport.region_selection.apply("node", [member["i"], member["j"]])
+    w.region_pick.finish()
+    assert list(s.datum_points()) == ["Datum-1"]
+    w.redraw()
+    assert "Datum-1" in w.viewport.datum_points, "重画时把基准点同步给视口（显示与吸附）"
+    w.measure_ui()
+    w.viewport.region_selection.apply("node", [member["i"], member["j"]])
+    w.region_pick.finish()
+    assert "距离" in w.lbl_prompt.text()

@@ -276,3 +276,32 @@ def test_frequency_and_buckle_steps_match_the_standalone_analyses():
     lam = ref.buckling_analysis(case="DL", num_modes=2).payload["critical_factor"]
     assert rows["B1"]["critical_factor"] == pytest.approx(lam, rel=1e-9)
     assert not s.solve_steps(inspect="F1").ok
+
+
+def test_partition_adds_a_vertex_without_changing_the_answer():
+    """分割杆件（Partition Edge）只加顶点：物理杆件仍一根，求解结果不变；新顶点可连杆件。"""
+    a, b = _with_objects(), _with_objects()
+    got = b.partition_member(4, ratio=0.25)
+    assert got.ok, got.payload
+    node = got.payload["node"]
+    assert len(b.model["members"]) == len(a.model["members"]), "物理杆件不增加"
+    ua, ub = _u(a), _u(b)
+    for nid in (1, 2, 3, 4, 5, 6):
+        ka, kb = a.frame.index_of()[nid], b.frame.index_of()[nid]
+        np.testing.assert_allclose(ub[6 * kb:6 * kb + 6], ua[6 * ka:6 * ka + 6],
+                                   rtol=1e-9, atol=1e-14)
+    assert b.add_nodes([[1.5, 0, 0]]).ok
+    assert b.add_members([[node, max(n["id"] for n in b.model["nodes"])]], "H", "Q355").ok
+    assert not b.partition_member(4, ratio=1.0).ok
+
+
+def test_datum_points_and_measure():
+    s = _geometry()
+    assert s.create_datum_point("中点", midpoint_of=[1, 6]).ok
+    assert s.datum_points()["中点"] == pytest.approx([6.0, 0.0, 2.0])
+    assert s.create_datum_point("偏移", offset_from=2, offset=[0, 0, 1]).ok
+    assert not s.create_datum_point("错", xyz=[0, 0, 0], midpoint_of=[1, 2]).ok
+    got = s.measure(nodes=[1, 6]).payload
+    assert got["distance"] == pytest.approx((12 ** 2 + 4 ** 2) ** 0.5)
+    assert s.measure(members=[1, 4]).payload["angle_deg"] == pytest.approx(90.0)
+    assert s.delete_datum_point("偏移").ok and "偏移" not in s.datum_points()

@@ -206,6 +206,10 @@ def convert_model(model: dict, to: str) -> dict:
                         **({"c_web": s["c_web"] * f["length"]}
                            if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    if model.get("datums"):
+        out["datums"] = {**model["datums"], "points": [
+            {**pt, "xyz": [v * f["length"] for v in pt["xyz"]]}
+            for pt in model["datums"].get("points") or []]}
     if model.get("features"):
         out["features"] = _convert_features(model["features"], f)
     if model.get("imperfection"):

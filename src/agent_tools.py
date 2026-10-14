@@ -325,6 +325,56 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "partition_member",
+            "description": "分割杆件（Abaqus 的 Partition Edge）：在杆件上按比例 ratio（0~1，从 i 端量起）或"
+                           "距离 distance 加一个顶点，返回新节点号，之后可把别的杆件连到该节点。物理杆件仍是一根，"
+                           "杆上荷载、释放、截面指派都不用改。",
+            "parameters": {"type": "object", "required": ["member_id"],
+                           "properties": {"member_id": {"type": "integer"},
+                                          "ratio": {"type": "number"},
+                                          "distance": {"type": "number"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_datum_point",
+            "description": "基准点（Abaqus 的 Datum Point）：只用于定位与吸附、不参与计算。三种给法选一：xyz 坐标；"
+                           "midpoint_of 两个节点的中点；offset_from 节点 + offset 偏移。同名替换。",
+            "parameters": {"type": "object", "required": ["name"],
+                           "properties": {"name": {"type": "string"},
+                                          "xyz": {"type": "array", "items": {"type": "number"}},
+                                          "midpoint_of": {"type": "array", "items": {"type": "integer"}},
+                                          "offset_from": {"type": "integer"},
+                                          "offset": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_datum_point",
+            "description": "删除基准点。",
+            "parameters": {"type": "object", "required": ["name"],
+                           "properties": {"name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "measure",
+            "description": "测量（Abaqus 的 Query）：两个节点给距离与 x/y/z 分量；一根杆件给长度；两根杆件给夹角。只读。",
+            "parameters": {"type": "object",
+                           "properties": {"nodes": {"type": "array", "items": {"type": "integer"}},
+                                          "members": {"type": "array", "items": {"type": "integer"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "seed_mesh",
             "description":
                 "布种：设定每根杆件剖成几个分析单元（Abaqus 式），写进模型，存盘后仍在。"

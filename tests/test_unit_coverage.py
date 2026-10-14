@@ -62,6 +62,7 @@ DIMENSIONS = {
     "supports.spring": "support_spring",
     "sets": None,
     "mesh.divisions": None,               # 段数，纯计数
+    "datums.points.name": None, "datums.points.xyz": "length",
     "features.section_assignments.region.set": None,
     "features.section_assignments.region.nodes": None,
     "features.section_assignments.region.members": None,
@@ -222,6 +223,7 @@ def _kitchen_sink_body():
         # 撞了会被语义校验挡住（刚性约束会让弹簧完全失效）。
         # rx 刚接（沉降要给在被约束的方向上），ry/rz 弹性支承。
         "imperfection": {"mode": 1, "amplitude": 0.024},
+        "datums": {"points": [{"name": "D1", "xyz": [1.5, 0.2, 0.3]}]},
         "masses": [{"name": "设备", "node": 2, "mass": 1200.0,
                     "inertia": [30.0, 40.0, 50.0]}],
         "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0],

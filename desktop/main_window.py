@@ -900,8 +900,12 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
 
     # --- 绘制 ---
 
+    def _sync_datums(self) -> None:
+        self.viewport.datum_points = self.session.datum_points()
+
     def redraw(self) -> None:
         # 重画会清掉视口（也就停了动画），开关的勾要跟着取消，免得显示「在播」实际没播
+        self._sync_datums()
         animate = getattr(self, "actions_by_name", {}).get("animate")
         if animate is not None:
             animate.setChecked(False)
