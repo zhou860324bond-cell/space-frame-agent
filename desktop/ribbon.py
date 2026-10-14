@@ -656,6 +656,8 @@ def build(window) -> Ribbon:
 
     # ========== 作业 ==========
     p = r.page("作业")
+    g = p.group("作业")
+    g.add_large(a["job_manager"])
     g = p.group("求解")
     g.add_large(a["solve"]); g.add_small(a["solve_steps"])
     g.add_small(a["stop_task"])

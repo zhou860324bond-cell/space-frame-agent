@@ -1107,3 +1107,56 @@ def test_seed_edges_follows_the_region_flow_and_seed_part_sets_the_default(qt_ap
     assert s.model["mesh"]["members"] == {str(target): 8}
     w.clear_seeds()
     assert "mesh" not in s.model
+
+
+def _synchronous_runner(w, monkeypatch):
+    """作业在后台线程里跑；测试里改成同步执行，回调立刻发生。"""
+    def submit(fn, on_done=None, on_failed=None, on_progress=None):
+        on_done(fn())
+        return True
+    monkeypatch.setattr(w.runner, "submit", submit)
+
+
+def test_job_manager_records_how_and_what_was_solved(qt_app, monkeypatch):
+    """作业管理器：数据检查、提交、消息、结果与模型版本对应。
+
+    原来 F5 直接求解，算过什么、出了什么警告只在状态栏闪一下；改了模型之后旧结果
+    还对不对应当前模型，只能靠记忆。
+    """
+    from desktop.job_manager import Job
+    s = built()
+    w = MainWindow(s)
+    _synchronous_runner(w, monkeypatch)
+    job = Job("Job-1", "cases", "linear")
+    w.jobs.append(job)
+    w.job_action("check", job)
+    assert job.status == "数据检查通过"
+    w.job_action("submit", job)
+    assert job.status == "完成" and job.finished
+    assert any("平衡校核通过" in m for m in job.messages)
+    assert any("静默失败检查" in m for m in job.messages)
+
+    infos = []
+    from desktop import window_jobs
+    monkeypatch.setattr(window_jobs.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: infos.append(a[2])))
+    w.job_action("results", job)
+    assert not infos and w.mode == "变形"
+    s.model["nodes"][0]["x"] += 0.1                     # 改了模型
+    w.job_action("results", job)
+    assert infos and "旧模型" not in infos[-1] and "重新提交" in infos[-1]
+
+
+def test_a_steps_job_reports_frequency_and_buckling_steps(qt_app, monkeypatch):
+    from desktop.job_manager import Job
+    s = built()
+    case = s.model["load_cases"][0]["name"] if s.model.get("load_cases") else "default"
+    assert s.add_step("S1", loads={case: "RAMP"}).ok
+    assert s.add_step("F1", analysis="frequency", num_modes=2).ok
+    w = MainWindow(s)
+    _synchronous_runner(w, monkeypatch)
+    job = Job("Job-步", "steps")
+    w.jobs.append(job)
+    w.job_action("submit", job)
+    assert job.status == "完成", job.messages
+    assert any("F1（频率）" in m and "Hz" in m for m in job.messages)

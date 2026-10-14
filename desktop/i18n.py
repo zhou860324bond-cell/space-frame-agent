@@ -71,7 +71,7 @@ ZH_EN: dict[str, str] = {
     "模型表格": "Tables", "模型 JSON": "JSON",
     "门式刚架": "Portal", "截面管理器": "Sections",
     "创建材料": "Material", "创建截面": "Section",
-    "属性指派": "Assign", "截面渲染": "Profiles", "全局布种": "Seed Part",
+    "属性指派": "Assign", "截面渲染": "Profiles", "作业管理器": "Job Manager", "全局布种": "Seed Part",
     "杆件布种": "Seed Edges", "清除布种": "Clear Seeds", "截面指派管理器": "Section Assignments", "创建铰接": "Release",
     "加支撑": "Bracing", "载荷管理器": "Loads",
     "荷载组合": "Combos", "重力": "Gravity",

@@ -83,6 +83,9 @@ COMMANDS: tuple[Command, ...] = (
             "清掉全部布种，回到每杆 1 段（分析时按类型自动加密）", "clear_seeds"),
     Command("mesh_preview", "预览梁网格", "mesh",
             "查看自动剖分后的分析杆段、节点及物理杆件编号映射", "show_analysis_mesh"),
+    Command("job_manager", "作业管理器", "solve",
+            "Abaqus 式 Job Manager：创建作业，数据检查、写 inp、后台提交、监控消息、"
+            "查看结果、终止；结果与提交时的模型版本对应", "open_job_manager"),
     Command("solve_steps", "提交分析步", "solve",
             "在后台按声明顺序求解分析步，保留最后一步的有效结果", "solve_declared_steps"),
     # 参数化建模使用直接操作的对话框。

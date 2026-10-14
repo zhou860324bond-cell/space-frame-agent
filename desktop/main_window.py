@@ -43,6 +43,7 @@ from .window_commands import WindowCommandsMixin
 from .window_preferences import WindowPreferencesMixin, _settings
 from .window_results import WindowResultsMixin
 from .window_objects import WindowObjectsMixin
+from .window_jobs import WindowJobsMixin
 from .region_prompt import RegionPickController
 
 
@@ -85,7 +86,8 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 MODES = ("模型", "分析网格", "变形", "云图", "实体云图", "内力图", "应力比", "模态")
 
 
-class MainWindow(WindowObjectsMixin, WindowCommandsMixin, WindowPreferencesMixin,
+class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowCommandsMixin,
+                 WindowPreferencesMixin,
                  WindowResultsMixin, QMainWindow):
     def __init__(self, session: Session | None = None):
         super().__init__()
