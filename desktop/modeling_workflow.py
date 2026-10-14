@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QHeaderView, QLabel,
@@ -61,7 +62,10 @@ def assembly_issues(session):
     tolerance = SNAP_TOL / session.units.length_to_m
     for group in draft.coincident_nodes(tol=tolerance):
         issues.append(("node", group[0], f"节点 {group} 坐标重合但编号不同，请核对并共用同一节点编号。"))
-    known = {int(n["id"]) for n in draft.nodes}
+    # 一次建好坐标表：draft.length() 每次都线性扫描节点和杆件列表，逐杆调用是
+    # O(杆件数×节点数)，千根杆件的模型要一秒多。
+    coords = {int(n["id"]): (float(n["x"]), float(n["y"]), float(n["z"])) for n in draft.nodes}
+    known = set(coords)
     pairs = {}
     for member in draft.members:
         mid = int(member["id"])
@@ -70,8 +74,8 @@ def assembly_issues(session):
         if missing:
             issues.append(("member", mid, f"杆件 {mid} 的端点 {sorted(missing)} 不存在，请修正端点引用。"))
             continue
-        length = draft.length(mid)
-        if length is not None and length <= tolerance:
+        length = math.dist(coords[endpoints[0]], coords[endpoints[1]])
+        if length <= tolerance:
             issues.append(("member", mid, f"杆件 {mid} 长度为零或过小，请修正节点坐标。"))
         pair = tuple(sorted(endpoints))
         if pair in pairs:
