@@ -28,9 +28,9 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QKeyEvent, QTextCursor
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLayout, QMenu, QSizePolicy,
-                               QPlainTextEdit, QPushButton, QTextBrowser,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QLayout, QMenu,
+                               QPlainTextEdit, QPushButton, QSizePolicy, QTextBrowser,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from . import theme
 
@@ -72,10 +72,15 @@ class PromptEdit(QPlainTextEdit):
             lambda *_: self._fit_height())
         self._fit_height()
 
+    MIN_LINES = 2
+
     def _fit_height(self) -> None:
+        # 至少两行：一行高的输入框在输入卡片里显得局促，也容易误以为不能换行。
+        # 额外高度要盖住样式表的上下内边距与文档边距，否则一行字也会冒出滚动条
         line = self.fontMetrics().lineSpacing()
-        rows = min(max(1, int(self.document().size().height())), self.MAX_LINES)
-        self.setFixedHeight(int(line * rows) + 14)
+        rows = min(max(self.MIN_LINES, int(self.document().size().height())), self.MAX_LINES)
+        margin = 2 * self.document().documentMargin() + 2 * self.frameWidth() + 10
+        self.setFixedHeight(int(line * rows + margin))
 
     # --- 与 QLineEdit 兼容的几个别名 ---
     #
@@ -144,63 +149,54 @@ class ChatPanel(QWidget):
             self._config_error = str(exc)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(6)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+
+        # 第一行：标题 + 会话 / 协作任务 / 连接设置。原来这些各占一行，
+        # 对话区上方压了六层控件；收进一行工具按钮后，对话本身才是主体。
+        header = QHBoxLayout()
+        header.setSpacing(2)
+        self.title_label = QLabel("工程对话")
+        self.title_label.setObjectName("chatTitle")
+        header.addWidget(self.title_label)
+        header.addStretch(1)
+        self.btn_history = _tool_button("对话", "切换本次运行中的对话；所有对话共用当前工程模型，历史不写入磁盘")
+        self.btn_history.clicked.connect(self._history_menu)
+        self.btn_new_chat = _tool_button("新建", "新建对话（保留当前对话，可从「对话」切回）")
+        self.btn_new_chat.clicked.connect(self.new_chat)
+        self.btn_tasks = _tool_button("协作任务", "主 Agent 分派建模与检查子任务，候选在审阅应用前不修改原工程")
+        self.btn_tasks.clicked.connect(self.open_task_dialog)
+        self.btn_settings = _tool_button("连接设置", "配置模型地址、密钥与备用连接")
+        self.btn_settings.clicked.connect(self._settings_menu)
+        for button in (self.btn_history, self.btn_new_chat, self.btn_tasks, self.btn_settings):
+            header.addWidget(button)
+        layout.addLayout(header)
+
+        # 第二行：当前模型。备用连接只在请求失败时才用，放进「连接设置」菜单，
+        # 两个并排的下拉框读起来像两个必填项。
+        self.model_selector = QComboBox()
+        self.model_selector.setToolTip("切换模型保留对话历史与当前工程；运行期间不可切换")
+        self.model_selector.setMinimumWidth(0)
+        self.model_selector.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self._populate_models()
+        self.model_selector.currentIndexChanged.connect(self._switch_model)
+        layout.addWidget(self.model_selector)
+        # 备用连接与会话列表仍是真实的下拉数据源，只是不常驻界面
+        self.backup_selector = QComboBox(self)
+        self.backup_selector.setToolTip("仅在模型请求失败时启用所选连接；各提供商使用自己的密钥")
+        self._populate_backup()
+        self.backup_selector.currentIndexChanged.connect(self._switch_model)
+        self.backup_selector.hide()
+        self.chat_selector = QComboBox(self)
+        self.chat_selector.addItem("新对话")
+        self.chat_selector.currentIndexChanged.connect(self._switch_chat)
+        self.chat_selector.hide()
 
         self.lbl_status = QLabel()
         self.lbl_status.setWordWrap(True)
         self.lbl_status.setProperty("panel", "hint")
         layout.addWidget(self.lbl_status)
-
-        header = QHBoxLayout()
-        title = QLabel("工程对话")
-        self.title_label = title
-        title.setStyleSheet(f"font-size:14pt;font-weight:600;color:{theme.INK};")
-        self.btn_settings = QPushButton("模型连接设置")
-        self.btn_settings.clicked.connect(self.open_settings)
-        self.btn_history = QPushButton("会话")
-        self.btn_history.clicked.connect(self._history_menu)
-        self.btn_history.hide()
-        header.addWidget(title, 1)
-        self.btn_tasks = QPushButton("Agent 任务")
-        self.btn_tasks.setToolTip("主Agent分派建模与检查子任务，候选在审阅应用前不修改原工程")
-        self.btn_tasks.clicked.connect(self.open_task_dialog)
-        header.addWidget(self.btn_tasks)
-        header.addWidget(self.btn_history)
-        header.addWidget(self.btn_settings)
-        layout.insertLayout(0, header)
-        self.model_selector = QComboBox()
-        self.model_selector.setToolTip("切换模型保留对话历史与当前工程；运行期间不可切换")
-        self._populate_models()
-        self.model_selector.currentIndexChanged.connect(self._switch_model)
-        self.backup_selector = QComboBox()
-        self.backup_selector.setToolTip("仅在模型请求失败时启用所选连接；各提供商使用自己的密钥")
-        self._populate_backup()
-        self.backup_selector.currentIndexChanged.connect(self._switch_model)
-        model_row = QHBoxLayout()
-        for combo in (self.model_selector, self.backup_selector):
-            combo.setMinimumWidth(0)
-            combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            model_row.addWidget(combo)
-        layout.addLayout(model_row)
-        history_row = QHBoxLayout()
-        self.chat_selector = QComboBox()
-        self.chat_selector.setToolTip("对话保留于本次运行，所有对话共用当前工程模型")
-        self.chat_selector.addItem("新对话")
-        self.chat_selector.currentIndexChanged.connect(self._switch_chat)
-        self.btn_new_chat = QPushButton("新建对话")
-        self.btn_new_chat.clicked.connect(self.new_chat)
-        history_row.addWidget(self.chat_selector, 1)
-        history_row.addWidget(self.btn_new_chat)
-        self.history_widget = QWidget(self)
-        self.history_widget.setLayout(history_row)
-        layout.addWidget(self.history_widget)
-
-        # 模型调用状态
-        self.lbl_call_status = QLabel("")
-        self.lbl_call_status.setStyleSheet(f"color:{theme.INK_MUTED}; font-size:8pt;")
-        layout.addWidget(self.lbl_call_status)
 
         self.view = QTextBrowser(self)
         self.view.setOpenExternalLinks(False)
@@ -209,23 +205,15 @@ class ChatPanel(QWidget):
         self._show_welcome()
         layout.addWidget(self.view, 1)
 
-        context_row = QHBoxLayout()
-        self.btn_objects = QPushButton("选择工程对象")
-        self.btn_objects.clicked.connect(self.pick_objects)
-        self.btn_attach = QPushButton("加入视口所选")
-        self.btn_attach.setEnabled(False)
-        self.btn_attach.clicked.connect(self.attach_selection)
-        self.btn_clear = QPushButton("清除引用")
-        self.btn_clear.clicked.connect(self.clear_references)
-        for button in (self.btn_objects, self.btn_attach, self.btn_clear):
-            context_row.addWidget(button)
-        layout.addLayout(context_row)
-        self.lbl_context = QLabel("所有对话共用当前工程 · 历史仅保留于本次运行")
-        self.lbl_context.setWordWrap(True)
-        self.lbl_context.setProperty("panel", "hint")
-        layout.addWidget(self.lbl_context)
+        # 模型调用状态：没有内容时不占行
+        self.lbl_call_status = QLabel("")
+        self.lbl_call_status.setProperty("panel", "hint")
+        self.lbl_call_status.setStyleSheet("font-size:8pt;")
+        self.lbl_call_status.hide()
+        layout.addWidget(self.lbl_call_status)
 
         suggestions = QHBoxLayout()
+        suggestions.setContentsMargins(0, 0, 0, 0)
         suggestions.setSpacing(4)
         for label, prompt in (
                 ("门式刚架", "创建一榀 24 米门式刚架，并说明还缺哪些工程参数"),
@@ -241,22 +229,50 @@ class ChatPanel(QWidget):
         self.suggestions.setLayout(suggestions)
         layout.addWidget(self.suggestions)
 
-        row = QHBoxLayout()
-        self.entry = PromptEdit(self)
+        # 输入卡片：输入框在上，引用对象与发送在同一条底栏。引用是低频操作，
+        # 用文字按钮即可，不该和「发送」一样是三个大按钮。
+        composer = QFrame(self)
+        composer.setObjectName("chatComposer")
+        card = QVBoxLayout(composer)
+        card.setContentsMargins(1, 1, 1, 1)
+        card.setSpacing(0)
+        self.entry = PromptEdit(composer)
+        self.entry.setObjectName("chatEntry")
         self.entry.submitted.connect(self.send)
-        self.btn_send = QPushButton("发送", self)
-        self.btn_send.setProperty("role", "primary")
-        self.btn_send.clicked.connect(self.send)
-        self.btn_stop = QPushButton("停止", self)
+        card.addWidget(self.entry)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(6, 2, 6, 6)
+        bar.setSpacing(2)
+        self.btn_objects = _tool_button("引用对象", "从模型中选择节点或杆件，随本轮请求发送")
+        self.btn_objects.clicked.connect(self.pick_objects)
+        self.btn_attach = _tool_button("加入所选", "把视口中当前选中的节点或杆件加入引用")
+        self.btn_attach.setEnabled(False)
+        self.btn_attach.clicked.connect(self.attach_selection)
+        self.lbl_context = QLabel()
+        self.lbl_context.setProperty("panel", "hint")
+        self.lbl_context.setMinimumWidth(0)
+        self.lbl_context.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.btn_clear = _tool_button("清除", "清除本轮引用的对象")
+        self.btn_clear.clicked.connect(self.clear_references)
+        self.btn_stop = QPushButton("停止", composer)
         self.btn_stop.setEnabled(False)
+        self.btn_stop.hide()
         self.btn_stop.setToolTip("中止本轮后续工具调用。已执行的调用不会回滚，如需退回请使用撤销（Ctrl+Z）")
         self.btn_stop.clicked.connect(self.stop)
-        row.addWidget(self.entry, 1)
-        row.addWidget(self.btn_send)
-        row.addWidget(self.btn_stop)
-        layout.addLayout(row)
+        self.btn_send = QPushButton("发送", composer)
+        self.btn_send.setProperty("role", "primary")
+        self.btn_send.clicked.connect(self.send)
+        for widget in (self.btn_objects, self.btn_attach):
+            bar.addWidget(widget)
+        bar.addSpacing(4)
+        bar.addWidget(self.lbl_context, 1)
+        for widget in (self.btn_clear, self.btn_stop, self.btn_send):
+            bar.addWidget(widget)
+        card.addLayout(bar)
+        layout.addWidget(composer)
 
         self._refresh_status()
+        self._refresh_references()
         self.runner.busy_changed.connect(self.set_task_busy)
         self._save_chat()
 
@@ -265,14 +281,13 @@ class ChatPanel(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # 小屏幕保留输入、模型与对象选择，辅助说明按可用高度收起。
+        # 小屏幕保留模型、输入与引用，辅助说明按可用空间收起。
         self.lbl_status.setVisible(self.height() >= 420)
-        self.suggestions.setVisible(self.height() >= 420)
-        self.lbl_call_status.setVisible(self.height() >= 360)
-        self.history_widget.setVisible(self.height() >= 420)
-        self.btn_history.setVisible(self.height() < 420)
-        self.lbl_context.setVisible(self.height() >= 340)
-        self.title_label.setVisible(self.width() >= 550)
+        self.suggestions.setVisible(self.height() >= 420 and not self._has_messages())
+        self.title_label.setVisible(self.width() >= 380)
+
+    def _has_messages(self):
+        return bool(self.conversation is not None and self.conversation.history)
 
     # --- 后端 ---
 
@@ -318,7 +333,7 @@ class ChatPanel(QWidget):
             key = profile.api_key if profile else ""
             description = f"{profile.label} · {profile.protocol}" if profile else "配置不存在"
         else:
-            description = "离线演示：预设意图，工具调用与求解实际执行。自由对话请打开模型连接设置。"
+            description = "离线演示：意图为预设脚本，工具调用与求解真实执行。自由对话请在「连接设置」中配置模型。"
         self._offline = selected == "offline"
         suffix = f" · 密钥指纹 {credentials.fingerprint(key)}" if key else ""
         self.lbl_status.setText(redact(description + suffix, [p.api_key for p in self.profiles]))
@@ -329,7 +344,7 @@ class ChatPanel(QWidget):
         previous = self.backup_selector.currentData()
         self.backup_selector.blockSignals(True)
         self.backup_selector.clear()
-        self.backup_selector.addItem("备用连接 · 关闭自动切换", "")
+        self.backup_selector.addItem("不切换", "")
         for profile in self.profiles:
             self.backup_selector.addItem(f"备用 · {profile.label} · {profile.model}", profile.id)
         self.backup_selector.setCurrentIndex(max(0, self.backup_selector.findData(previous)))
@@ -381,6 +396,7 @@ class ChatPanel(QWidget):
         self._provider_dirty = True
         self._refresh_status()
         self.lbl_call_status.clear()
+        self.lbl_call_status.hide()
 
     def open_settings(self):
         if self.runner.busy or self._chat_busy:
@@ -422,14 +438,26 @@ class ChatPanel(QWidget):
         if self.runner.busy or self._chat_busy:
             return
         menu = QMenu(self)
-        menu.addAction("新建对话", self.new_chat)
-        menu.addSeparator()
         for index in range(self.chat_selector.count()):
             action = menu.addAction(self.chat_selector.itemText(index))
             action.setCheckable(True)
             action.setChecked(index == self._current_chat)
             action.triggered.connect(lambda _checked, i=index: self.chat_selector.setCurrentIndex(i))
         menu.exec(self.btn_history.mapToGlobal(self.btn_history.rect().bottomLeft()))
+        menu.deleteLater()
+
+    def _settings_menu(self):
+        if self.runner.busy or self._chat_busy:
+            return
+        menu = QMenu(self)
+        menu.addAction("模型连接设置…", self.open_settings)
+        backup = menu.addMenu("请求失败时切换到")
+        for index in range(self.backup_selector.count()):
+            action = backup.addAction(self.backup_selector.itemText(index).removeprefix("备用 · "))
+            action.setCheckable(True)
+            action.setChecked(index == self.backup_selector.currentIndex())
+            action.triggered.connect(lambda _checked, i=index: self.backup_selector.setCurrentIndex(i))
+        menu.exec(self.btn_settings.mapToGlobal(self.btn_settings.rect().bottomLeft()))
         menu.deleteLater()
 
     def new_chat(self):
@@ -455,6 +483,7 @@ class ChatPanel(QWidget):
             self._show_welcome()
         self._provider_dirty = True
         self._refresh_references()
+        self.suggestions.setVisible(not self._has_messages() and self.height() >= 420)
 
     def reset_session(self, session):
         self.shutdown()
@@ -471,6 +500,7 @@ class ChatPanel(QWidget):
         self.entry.clear()
         self._show_welcome()
         self.clear_references()
+        self.suggestions.setVisible(self.height() >= 420)
         self._save_chat()
 
     def set_selection(self, kind, ident):
@@ -517,15 +547,15 @@ class ChatPanel(QWidget):
     def _refresh_references(self):
         from object_context import model_revision
         if not self.references:
-            self.lbl_context.setText("所有对话共用当前工程 · 历史仅保留于本次运行")
+            self.lbl_context.setText("未引用对象")
         elif self.reference_revision != model_revision(self.session.model):
-            self.lbl_context.setText("引用已过期：模型发生修改，请重新选择或清除引用")
+            self.lbl_context.setText("引用已过期：模型已修改，请重新选择")
         else:
             names = [f"{'节点' if k == 'node' else '杆件'} {i}" for k, i in self.references]
-            self.lbl_context.setText("本轮引用：" + "、".join(names[:5]) +
-                                     (f" 等 {len(names)} 项" if len(names) > 5 else ""))
-        self.btn_objects.setToolTip(self.lbl_context.text())
-        self.btn_clear.setText(f"清除引用 ({len(self.references)})" if self.references else "清除引用")
+            self.lbl_context.setText("、".join(names[:3]) +
+                                     (f" 等 {len(names)} 项" if len(names) > 3 else ""))
+        self.lbl_context.setToolTip(self.lbl_context.text())
+        self.btn_clear.setVisible(bool(self.references))
 
     # --- 交互 ---
 
@@ -542,6 +572,7 @@ class ChatPanel(QWidget):
             self._failed(type(exc).__name__, str(exc))
             return
         self.entry.clear()
+        self.suggestions.hide()
         self._append_user(text)
         if not conversation.history:
             self.chat_selector.setItemText(self._current_chat, text[:20])
@@ -609,6 +640,7 @@ class ChatPanel(QWidget):
             status = (glyphs.TICK if last.success else f"{glyphs.CROSS}{last.error[:30] if last.error else ''}")
             parts.append(f"最近模型：{last.model} {status}{fallback}")
         self.lbl_call_status.setText("　|　".join(parts))
+        self.lbl_call_status.setVisible(bool(parts))
 
     def _failed(self, kind: str, message: str) -> None:
         """网络超时、密钥无效、脚本用尽……都走这里。
@@ -646,12 +678,14 @@ class ChatPanel(QWidget):
         self.entry.setReadOnly(busy)
         self.btn_send.setText("思考中…" if busy else "发送")
         self.btn_stop.setEnabled(busy)
+        self.btn_stop.setVisible(busy)
         self.busy_changed.emit(busy)
 
     def set_task_busy(self, busy):
         idle = not (busy or self._chat_busy)
-        for widget in (self.model_selector, self.backup_selector, self.btn_settings, self.btn_tasks, self.btn_history, self.chat_selector,
-                       self.btn_new_chat, self.btn_objects, self.btn_clear, self.entry, self.btn_send):
+        for widget in (self.model_selector, self.backup_selector, self.btn_settings, self.btn_tasks,
+                       self.btn_history, self.chat_selector, self.btn_new_chat, self.btn_objects,
+                       self.btn_clear, self.entry, self.btn_send):
             widget.setEnabled(idle)
         self.btn_attach.setEnabled(idle and bool(self._selection))
 
@@ -726,6 +760,16 @@ class ChatPanel(QWidget):
     def _append_note(self, text: str) -> None:
         self._html(f'<p style="margin:4px 0;color:{theme.WARN};">'
                    f'{_esc(text)}</p>')
+
+
+def _tool_button(text: str, tip: str) -> QToolButton:
+    """面板内的低频操作：扁平文字按钮，悬停才显出边框。"""
+    button = QToolButton()
+    button.setText(text)
+    button.setToolTip(tip)
+    button.setProperty("chat", "tool")
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    return button
 
 
 def _esc(text: str) -> str:

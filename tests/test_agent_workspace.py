@@ -185,3 +185,41 @@ def test_missing_session_key_never_falls_back_to_offline(panel):
     panel.send()
     assert not panel._offline and "API 密钥" in panel.view.toPlainText()
     assert panel.entry.toPlainText() == "工程请求"
+
+
+def test_panel_keeps_conversation_as_main_area(panel):
+    """对话区上方曾压了六层控件：备用连接与会话列表各占一行，引用是三个大按钮。
+    现在备用连接和会话收进菜单，停止和清除只在有用时出现。"""
+    panel.resize(420, 700)
+    panel.show()
+    QApplication.processEvents()
+    assert not panel.backup_selector.isVisible() and not panel.chat_selector.isVisible()
+    assert not panel.btn_stop.isVisible() and not panel.btn_clear.isVisible()
+    assert panel.view.geometry().top() < panel.height() * 0.2
+    panel._set_busy(True)
+    assert panel.btn_stop.isVisible() and panel.btn_stop.isEnabled()
+    panel._set_busy(False)
+    panel.session.model["nodes"] = [{"id": 1, "x": 0, "y": 0, "z": 0}]
+    panel.set_selection("node", 1)
+    panel.attach_selection()
+    assert panel.btn_clear.isVisible() and "节点 1" in panel.lbl_context.text()
+    panel.hide()
+
+
+def test_combo_boxes_draw_a_visible_arrow():
+    """样式表给 drop-down 写了规则后 Qt 不再画箭头，下拉框和输入框长得一样。"""
+    from pathlib import Path
+    from desktop import theme
+    assert "QComboBox::down-arrow" in theme.STYLESHEET
+    assert theme._CHEVRON and Path(theme._CHEVRON).is_file()
+    assert theme._CHEVRON in theme.STYLESHEET
+
+
+def test_connection_dialog_has_single_primary_and_safe_delete(panel):
+    """「删除连接」曾因排在第一个 autoDefault 按钮而被画成深蓝主按钮。"""
+    from desktop.model_settings import ModelSettings
+    dialog = ModelSettings(panel.runner, [], "", panel)
+    assert dialog.save.isDefault() and dialog.save.property("role") == "primary"
+    assert not dialog.remove.isDefault() and not dialog.remove.autoDefault()
+    assert dialog.remove.property("role") == "danger"
+    assert not any(b.isDefault() for b in (dialog.directory, dialog.probe, dialog.import_key))

@@ -112,3 +112,23 @@ def test_old_candidate_results_not_shown_as_current_values(chat):
     dialog.task.children["review"].conversation.session.model["nodes"][1]["x"] = 4
     dialog._done(dialog.task.snapshot())
     assert "实际工具结果" not in dialog.reply.toPlainText()
+
+
+def test_task_window_shows_readable_results_not_internal_ids(chat):
+    """结果曾显示「review（来源 build）」这类内部编号、位移带 6 位小数，
+    工具证据整段倾倒 JSON；新建任务与开始任务并排两个蓝色主按钮。"""
+    from test_agent_tasks import cantilever_model
+    assert chat.session.set_model(cantilever_model()).ok
+    chat.open_task_dialog()
+    dialog = chat._task_dialog
+    assert dialog.start_button.isDefault() and not dialog.new_button.autoDefault()
+    dialog.prompt.setPlainText("求解并查询最大位移")
+    dialog.start()
+    assert chat.runner.wait(30000)
+    reply = dialog.reply.toPlainText()
+    assert "实际工具结果（检查 Agent，原模型）" in reply
+    assert "review" not in reply
+    evidence = dialog.evidence.toPlainText()
+    assert "[检查 Agent] query_results(what=max_displacement) 成功" in evidence
+    assert "{" not in evidence
+    assert not dialog.evidence.isVisible()

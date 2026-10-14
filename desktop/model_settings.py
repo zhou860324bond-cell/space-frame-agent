@@ -6,12 +6,13 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog,
                                QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QSpinBox, QVBoxLayout)
 
 from model_profiles import ModelProfile, ProfileStore, redact
+from . import dialog_styles
 
 
 class ModelSettings(QDialog):
@@ -22,21 +23,32 @@ class ModelSettings(QDialog):
         self.runner = runner
         self.profiles = [replace(p) for p in profiles]
         self.setWindowTitle("模型连接设置")
-        self.resize(580, 540)
-        box = QVBoxLayout(self)
-        intro = QLabel("每个连接独立配置地址与密钥。检测只发送固定探针；正式对话会发送对话与工程上下文。")
-        intro.setWordWrap(True)
-        box.addWidget(intro)
+        self.resize(560, 470)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(dialog_styles.DialogHeader(
+            "模型连接设置", "每个连接独立保存地址与密钥。检测只发送固定探针；正式对话会发送对话与工程上下文。"))
+        box = QVBoxLayout()
+        box.setContentsMargins(14, 10, 14, 12)
+        box.setSpacing(8)
+        outer.addLayout(box)
         top = QHBoxLayout()
+        top.setSpacing(6)
         self.saved = QComboBox()
         self.saved.addItem("新建连接", "")
         for p in self.profiles:
             self.saved.addItem(p.label, p.id)
         top.addWidget(self.saved, 1)
-        self.remove = QPushButton("删除连接")
+        # 删除是破坏性操作，用红色描边的次要按钮，不能抢主操作的蓝色
+        self.remove = QPushButton("删除")
+        self.remove.setProperty("role", "danger")
         top.addWidget(self.remove)
-        box.addLayout(top)
         self.form = QFormLayout()
+        self.form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.form.setHorizontalSpacing(10)
+        self.form.setVerticalSpacing(7)
+        self.form.addRow("已保存的连接", top)
         self.preset = QComboBox()
         self.preset.addItems(["DeepSeek", "OpenAI", "Anthropic", "自定义兼容接口"])
         self.label = QLineEdit()
@@ -72,16 +84,20 @@ class ModelSettings(QDialog):
         box.addLayout(self.form)
         self.status = QLabel("填写实际模型标识，或读取账户可用模型目录。目录不提供完整能力保证。")
         self.status.setWordWrap(True)
+        self.status.setProperty("panel", "hint")
         box.addWidget(self.status)
+        box.addStretch(1)
         actions = QHBoxLayout()
         self.directory = QPushButton("读取模型目录")
         self.probe = QPushButton("检测工具调用")
         self.probe.setToolTip("发送一次固定模型请求，可能计入提供商用量；不上传工程或调用求解器")
         self.save = QPushButton("保存并使用")
-        self.save.setProperty("role", "primary")
-        for b in (self.directory, self.probe, self.save):
-            actions.addWidget(b)
+        actions.addWidget(self.directory)
+        actions.addWidget(self.probe)
+        actions.addStretch(1)
+        actions.addWidget(self.save)
         box.addLayout(actions)
+        dialog_styles.set_primary(self.save, self.remove, self.import_key, self.directory, self.probe)
         self.preset.currentIndexChanged.connect(self._preset)
         self.saved.currentIndexChanged.connect(self._load)
         self.import_key.clicked.connect(self._import)
