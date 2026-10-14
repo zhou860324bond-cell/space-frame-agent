@@ -120,6 +120,9 @@ _TO_MM = {
     # 用同一个系数会让转动弹簧差 10⁶，而且只在换过单位的模型上现形。
     "spring_translation": 1e-3,   # N/m     → N/mm
     "spring_rotation": 1e3,       # N·m/rad → N·mm/rad
+    # 节点质量与密度同一套：kg ↔ t。转动惯量再乘长度²：kg·m² → t·mm²。
+    "mass": 1e-3,                 # kg    → t
+    "mass_inertia": 1e3,          # kg·m² → t·mm²
 }
 
 
@@ -179,6 +182,12 @@ def convert_model(model: dict, to: str) -> dict:
                         **({"c_web": s["c_web"] * f["length"]}
                            if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    if model.get("masses"):
+        out["masses"] = [{**e, "mass": e["mass"] * f["mass"],
+                          **({"inertia": [v * f["mass_inertia"] for v in e["inertia"]]}
+                             if "inertia" in e else {})}
+                         for e in model["masses"]]
+
     def spring(values):
         """六个方向的支承刚度：前三个是力/长度，后三个是力·长度/弧度。"""
         return [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])

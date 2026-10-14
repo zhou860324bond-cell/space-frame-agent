@@ -198,6 +198,58 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "set_nodal_mass",
+            "description":
+                "节点集中质量：设备、配重、楼面质量。只进模态与反应谱的质量阵，**不产生静力荷载**。"
+                "单位与材料密度同一套：N-m-Pa 下 kg，N-mm-MPa 下 t（吨）；转动惯量是质量·长度²。"
+                "同一节点同名的旧质量会被替换，mass=0 删除。"
+                "要把楼面恒载、活载换成质量，用 masses_from_loads，不要自己算。",
+            "parameters": {
+                "type": "object",
+                "required": ["nodes", "mass"],
+                "properties": {
+                    "nodes": {
+                        "description": "节点编号列表或节点集合名",
+                        "oneOf": [{"type": "array", "items": {"type": "integer"}},
+                                  {"type": "string"}],
+                    },
+                    "mass": {"type": "number", "minimum": 0,
+                             "description": "每个节点的平动质量"},
+                    "inertia": {"type": "array", "items": {"type": "number"},
+                                "minItems": 3, "maxItems": 3,
+                                "description": "可选，[Ixx, Iyy, Izz]，全局轴"},
+                    "name": {"type": "string", "description": "这份质量的来源名，默认「附加质量」"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "masses_from_loads",
+            "description":
+                "按 GB 50011 重力荷载代表值，把若干工况的竖向向下荷载乘组合值系数、除以 g，"
+                "换成节点质量（杆上荷载按简支杠杆关系分到两端节点）。"
+                "做地震相关的模态、反应谱之前用它——不换的话楼面质量不进质量阵，周期偏短。"
+                "组合值系数：恒载 1.0，一般楼面活载 0.5（按规范取，不确定就问用户）。"
+                "带密度材料的自重荷载会自动跳过，避免和一致质量阵重复。同名结果整体替换。",
+            "parameters": {
+                "type": "object",
+                "required": ["cases"],
+                "properties": {
+                    "cases": {"type": "object",
+                              "additionalProperties": {"type": "number"},
+                              "description": "工况名 → 组合值系数，如 {\"DL\": 1.0, \"LL\": 0.5}"},
+                    "name": {"type": "string", "description": "默认「重力荷载代表值」"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "define_set",
             "description":
                 "给一组杆件或节点起个名字，之后凡是要杆件编号的地方都能直接写这个名字。"

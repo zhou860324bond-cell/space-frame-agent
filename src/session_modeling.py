@@ -253,6 +253,7 @@ class ModelingMixin:
             "note": "之后凡是要杆件编号的地方，都可以直接写这个名字。",
         })
 
+    @_records
     def seed_mesh(self, divisions: int | None = None, members=None,
                   clear: bool = False) -> ToolResult:
         """布种：每根物理杆件剖成几个分析单元。

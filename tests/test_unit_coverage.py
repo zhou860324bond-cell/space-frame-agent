@@ -59,6 +59,10 @@ DIMENSIONS = {
     "supports.spring": "support_spring",
     "sets": None,
     "mesh.divisions": None,               # 段数，纯计数
+    "masses.name": None,
+    "masses.node": None,
+    "masses.mass": "mass",
+    "masses.inertia": "mass_inertia",
     "mesh.members": None,                 # 杆件编号 → 段数，纯计数
     "nodal_loads.name": None, "nodal_loads.node": None,
     "nodal_loads.load": "force_and_moment",
@@ -166,6 +170,8 @@ def kitchen_sink():
         # 平动刚接、转动弹性支承：fix 与 spring 不能撞在同一个自由度上，
         # 撞了会被语义校验挡住（刚性约束会让弹簧完全失效）。
         # rx 刚接（沉降要给在被约束的方向上），ry/rz 弹性支承。
+        "masses": [{"name": "设备", "node": 2, "mass": 1200.0,
+                    "inertia": [30.0, 40.0, 50.0]}],
         "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0],
                       "spring": [0.0, 0.0, 0.0, 0.0, 5e7, 6e7]}],
         "nodal_loads": [{"node": 2, "load": [1e3, 2e3, 3e3, 4e3, 5e3, 6e3]}],

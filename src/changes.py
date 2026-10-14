@@ -114,6 +114,13 @@ def prune_loads(model: dict[str, Any], *,
     clean(model)                                    # 单工况写法
     for case in model.get("load_cases") or []:      # 多工况写法
         clean(case)
+    # 节点质量不是荷载，但同样挂在节点上：节点删了它必须一起走，
+    # 否则下一次校验报「masses 指向不存在的节点」，指向的却不是删除那一步。
+    if nodes and model.get("masses"):
+        kept = [e for e in model["masses"] if int(e["node"]) not in nodes]
+        if len(kept) != len(model["masses"]):
+            counted["masses"] = len(model["masses"]) - len(kept)
+        model["masses"] = kept
     return counted
 
 

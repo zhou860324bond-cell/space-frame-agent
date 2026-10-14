@@ -167,6 +167,22 @@ MODEL_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        # 节点集中质量（附加质量、由荷载换算的重力荷载代表值）。只进质量阵，
+        # 不产生荷载。同一节点可以有多条，按名字区分来源；语义见 masses.py。
+        "masses": {
+            "type": "array",
+            "items": {
+                "type": "object", "required": ["node", "mass"],
+                "additionalProperties": False,
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "node": {"type": "integer"},
+                    "mass": {"type": "number", "minimum": 0},
+                    "inertia": {"type": "array", "minItems": 3, "maxItems": 3,
+                                "items": {"type": "number", "minimum": 0}},
+                },
+            },
+        },
         "materials": {
             "type": "array", "minItems": 1,
             "items": {
@@ -474,6 +490,10 @@ def from_dict(data: dict[str, Any]) -> Frame:
         if s.get("spring"):
             f.springs[int(s["node"])] = tuple(float(v) for v in s["spring"])
 
+    from masses import nodal_mass_table
+    f.masses = {node: tuple(float(v) for v in row)
+                for node, row in nodal_mass_table(data).items()}
+
     _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):
         _fill_case(f, f.case(str(c["name"])), c)
@@ -551,6 +571,10 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
                 f"[语义] 节点 {s.get('node')} 的方向 {clash} 既写了 fix=1 又给了"
                 "弹簧刚度。刚性约束会让弹簧完全失效，两者只能取一个："
                 "要刚接就把 spring 那一项设为 0，要弹性支承就把 fix 那一项设为 0。")
+    known_nodes = {int(n["id"]) for n in data.get("nodes") or []}
+    lost = sorted({int(e["node"]) for e in data.get("masses") or []} - known_nodes)
+    if lost:
+        errors.append(f"[语义] masses 指向不存在的节点 {lost}。删掉这几项或改成现有节点。")
     seeded = {int(k) for k in ((data.get("mesh") or {}).get("members") or {})}
     stale = sorted(seeded - {int(m["id"]) for m in data.get("members") or []})
     if stale:

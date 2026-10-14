@@ -42,6 +42,8 @@ MUTATING = frozenset({
     "edit_member", "edit_node", "assign_properties", "set_supports", "define_set",
     # 布种改的是分析网格，不改几何；但它改了模型（存盘后仍在），撤销要能退回
     "seed_mesh",
+    # 节点质量只进质量阵，但同样是模型的一部分
+    "set_nodal_mass", "masses_from_loads",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -181,6 +183,11 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
         target = args.get("members")
         where = f"杆件 {target}" if target is not None else "全部杆件"
         return f"布种：{where}每杆 {args.get('divisions')} 段"
+    if tool == "set_nodal_mass":
+        return f"节点质量「{payload.get('name')}」：{len(payload.get('nodes') or [])} 个节点"
+    if tool == "masses_from_loads":
+        return (f"荷载换算质量 {args.get('cases')}："
+                f"{payload.get('nodes')} 个节点，共 {payload.get('total_mass_kg')} kg")
     if tool == "apply_draft":
         s = payload.get("summary") or {}
         return (f"手工修改：{s.get('nodes', 0)} 个节点、{s.get('members', 0)} 根杆件"
