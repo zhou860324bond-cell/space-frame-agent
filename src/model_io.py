@@ -582,6 +582,71 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_editing_payload(data: dict[str, Any]) -> list[str]:
+    """编辑阶段允许未指派属性及未施加约束，仍严格检查已有数据。"""
+    from copy import deepcopy
+
+    import jsonschema
+
+    candidate = deepcopy(data)
+    schema = deepcopy(MODEL_SCHEMA)
+    for key in ("materials", "sections", "nodes", "members", "supports"):
+        candidate.setdefault(key, [])
+        schema["properties"][key]["minItems"] = 0
+    errors = [f"[结构] {'/'.join(map(str, e.path)) or '(根)'}: {e.message}"
+              for e in jsonschema.Draft202012Validator(schema).iter_errors(candidate)]
+    if errors:
+        return errors
+
+    def finite(value, path="模型"):
+        if isinstance(value, float) and not math.isfinite(value):
+            errors.append(f"{path} 的数值必须有限。")
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                finite(item, f"{path}/{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                finite(item, f"{path}/{index}")
+    finite(candidate)
+    for key, ident in (("nodes", "id"), ("members", "id"), ("supports", "node"),
+                       ("materials", "name"), ("sections", "name"),
+                       ("load_cases", "name"), ("combos", "name")):
+        values = [entry[ident] for entry in candidate.get(key) or []]
+        if len(set(values)) != len(values):
+            errors.append(f"{key} 存在重复的编号或名称，请修正后提交。")
+    if errors:
+        return errors
+    try:
+        model = from_dict(candidate)
+        for message in check_model(model):
+            if message.endswith("未被任何杆件引用（悬空节点）"):
+                continue
+            if ("引用了未定义的截面 ''" in message
+                    or "引用了未定义的材料 ''" in message):
+                continue
+            errors.append(message)
+        # 属性尚未指派时内核不会计算杆件矩阵，局部轴与弹簧冲突须单独检查。
+        import numpy as np
+        for member in model.members.values():
+            if member.i not in model.nodes or member.j not in model.nodes:
+                continue
+            vector = member.ref_vector
+            if vector is not None:
+                axis = model.nodes[member.j].xyz - model.nodes[member.i].xyz
+                if np.linalg.norm(np.cross(axis, vector)) < 1e-12:
+                    errors.append(f"杆件 {member.id} 的参考方向与杆轴平行或为零，请更换方向。")
+            for releases, connections in ((member.releases_i, member.springs_i),
+                                           (member.releases_j, member.springs_j)):
+                if set(releases) & set(connections):
+                    errors.append(f"杆件 {member.id} 同一方向不能同时释放并设置连接弹簧。")
+        for entry in candidate["supports"]:
+            if any(fix and value for fix, value in zip(entry["fix"], entry.get("spring") or [0]*6, strict=True)):
+                errors.append(f"节点 {entry['node']} 同一方向不能同时固定并设置支座弹簧。")
+    except (KeyError, TypeError, ValueError) as exc:
+        errors.append(f"编辑模型装配失败：{exc}。请修正已有属性或荷载定义。")
+    return errors
+
+
 def validate_definitions(materials: list[dict[str, Any]],
                          sections: list[dict[str, Any]], *,
                          allow_incomplete: bool = False) -> list[str]:

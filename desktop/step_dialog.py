@@ -360,6 +360,10 @@ class StepManagerDialog(QDialog):
         self._reload()
 
     def _solve(self) -> None:
+        if callable(getattr(self.parent(), "solve_declared_steps", None)):
+            self.accept()
+            self.parent().solve_declared_steps()
+            return
         result = self.session.solve_steps()
         if not result.ok:
             QMessageBox.warning(self, "求解失败", str(

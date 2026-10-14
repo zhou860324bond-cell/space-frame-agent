@@ -82,6 +82,21 @@ class ModelingMixin:
     """建模：几何生成与图元增删改。见模块 docstring。"""
     # --- 工具实现 ---
     @_records
+    def replace_editing_model(self, model: dict) -> ToolResult:
+        """人工表格提交合法半成品；不能绕过已有数据的结构与语义检查。"""
+        from copy import deepcopy
+        from model_io import validate_editing_payload
+        errors = validate_editing_payload(model)
+        if errors:
+            return ToolResult(False, {"errors": errors, "hint": "改动未写入，请修正表格后提交。"})
+        if model == self.model:
+            return ToolResult(True, {"no_change": True})
+        self.model = deepcopy(model)
+        self._invalidate()
+        return ToolResult(True, {"summary": describe(self.model),
+                                 "analysis_ready": not self.validation_errors()})
+
+    @_records
     def define_materials_and_sections(self, materials, sections) -> ToolResult:
         # 单位制是项目设置，不是“定义属性”的副作用。用户若先选了毫米制，
         # 创建材料时不能又被悄悄改回 SI。
@@ -877,6 +892,74 @@ class ModelingMixin:
                                  "summary": describe(self.model),
                                  "analysis_ready": not errors,
                                  "warnings": errors})
+
+    @_records
+    def configure_member_group(self, member_ids, *, end: str = "both",
+                               rotations: dict | None = None,
+                               ref_vector: list[float] | None | object = _UNSET) -> ToolResult:
+        """人工批量设置局部轴与连接；全部检查通过才形成一个撤销步骤。"""
+        from copy import copy, deepcopy
+
+        try:
+            ids = self._expand_members(member_ids)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+        known = {int(m["id"]) for m in self.model.get("members") or []}
+        if not ids or set(ids) - known:
+            return ToolResult(False, {"error": "目标杆件为空或包含不存在的编号，请重新选择。"})
+        if end not in ("i", "j", "both"):
+            return ToolResult(False, {"error": "连接位置只能选择 i 端、j 端或两端。"})
+        rotations = rotations or {}
+        for dof, setting in rotations.items():
+            if dof not in ("rx", "ry", "rz") or not isinstance(setting, dict):
+                return ToolResult(False, {"error": "连接设置必须对应局部 rx、ry、rz 转动。"})
+            mode = setting.get("mode")
+            if mode not in ("rigid", "release", "spring"):
+                return ToolResult(False, {"error": "连接方式必须是刚接、释放或转动弹簧。"})
+            if mode == "spring":
+                try:
+                    value = float(setting["stiffness"])
+                except (KeyError, TypeError, ValueError):
+                    return ToolResult(False, {"error": "请填写转动弹簧的正数刚度。"})
+                if not np.isfinite(value) or value <= 0:
+                    return ToolResult(False, {"error": "转动刚度必须是有限正数；理想铰请选释放。"})
+
+        # 浅复制只用于隔离候选状态；不调用带历史装饰器的工具，也不复制数值结果。
+        shadow = copy(self)
+        shadow.model = deepcopy(self.model)
+        ends = ("i", "j") if end == "both" else (end,)
+        for mid in ids:
+            if ref_vector is not _UNSET:
+                checked = type(self).edit_member.__wrapped__(shadow, mid, ref_vector=ref_vector)
+                if not checked.ok:
+                    return ToolResult(False, {**checked.payload, "member": mid,
+                                              "hint": "整组改动未写入，请修正参考方向后重新提交。"})
+            entry = next(m for m in shadow.model["members"] if int(m["id"]) == mid)
+            for side in ends:
+                releases = list((entry.get("releases") or {}).get(side) or [])
+                springs = dict((entry.get("connections") or {}).get(side) or {})
+                for dof, setting in rotations.items():
+                    releases = [key for key in releases if key != dof]
+                    springs.pop(dof, None)
+                    if setting["mode"] == "release":
+                        releases.append(dof)
+                    elif setting["mode"] == "spring":
+                        springs[dof] = float(setting["stiffness"])
+                for key, value in (("releases", releases), ("connections", springs)):
+                    table = entry.setdefault(key, {})
+                    if value:
+                        table[side] = value
+                    else:
+                        table.pop(side, None)
+                    if not table:
+                        entry.pop(key, None)
+        if shadow.model == self.model:
+            return ToolResult(True, {"members": ids, "no_change": True})
+        self.model = shadow.model
+        self._invalidate()
+        return ToolResult(True, {"members": ids, "end": end,
+                                 "analysis_ready": not self.validation_errors(),
+                                 "note": "连接按局部轴定义，螺栓和焊缝构造不能由刚度设置代替。"})
 
     @_records
     def add_step(self, name: str, analysis: str = "linear",

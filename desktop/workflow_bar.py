@@ -37,6 +37,7 @@ class WorkflowBar(QWidget):
     """Show what is complete, what blocks progress, and the next real action."""
 
     stage_requested = Signal(str)
+    modeling_requested = Signal()
     STAGES = (
         ("model", "1  建模"),
         ("define", "2  定义"),
@@ -69,6 +70,10 @@ class WorkflowBar(QWidget):
         label = QLabel("分析流程", self)
         label.setProperty("workflow", "caption")
         row.addWidget(label)
+        self.modeling_button = QPushButton("全流程", self)
+        self.modeling_button.setToolTip("刚架建模全流程：几何、属性、装配、分析步、连接、载荷、网格、作业与结果")
+        self.modeling_button.clicked.connect(self.modeling_requested.emit)
+        row.addWidget(self.modeling_button)
         self.buttons: dict[str, QPushButton] = {}
         for index, (stage, text) in enumerate(self.STAGES):
             if index:

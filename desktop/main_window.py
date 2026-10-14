@@ -100,6 +100,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._solid_info = None
         self._solid_reset_camera = True
         self.analysis_type = "linear"
+        self._modeling_reviews = {}
+        self._analysis_mesh_key = None
         self.analysis_options = {"increments": 10, "max_iter": 40,
                                  "tolerance": 1e-7}
 
@@ -403,6 +405,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.ribbon.set_collapsed(False)
         self.workflow_bar = WorkflowBar(self)
         self.workflow_bar.stage_requested.connect(self._on_workflow_stage)
+        self.workflow_bar.modeling_requested.connect(self.open_modeling_workflow)
         holder = QWidget(self)
         box = QVBoxLayout(holder)
         box.setContentsMargins(0, 0, 0, 0)
@@ -424,8 +427,12 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             "项目": "项目：新建或打开模型；建模过程可随时撤销。",
             "建模": "建模：创建几何后，用“选择节点/杆件”进入对象选择。",
             "属性": "属性：选择杆件，创建或指派材料与截面。",
+            "装配": "装配：核对端点编号与重复几何，建立可复用的命名集合。",
+            "连接": "连接：按局部轴定义杆端刚接、释放或转动弹簧，并复核实际构造。",
+            "网格": "网格：预览物理杆件与分析杆段映射；局部实体网格在整体求解后设置。",
+            "作业": "作业：先检查模型与约束，再提交独立工况或声明分析步，并查看运行状态。",
             "载荷": "载荷：选择节点创建边界条件，或选择杆件/节点施加载荷。",
-            "分析": "分析：先执行模型检查，再求解或进行模态、屈曲分析。",
+            "分析": "分析：选择分析过程，或定义有传播关系的分析步及幅值曲线。",
             "结果": "结果：查看变形与内力，并做强度验算、对称性与存储方案校核。",
             "视图": "视图：切换标准视角、选择视口背景、开关网格地面与编号标注。",
         }
@@ -459,7 +466,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             return
         if stage == "solve":
             if status.phase is WorkflowPhase.READY:
-                self._show_ribbon_page("分析")
+                self._show_ribbon_page("作业")
                 self.solve()
             else:
                 self._on_workflow_stage("model" if status.phase is WorkflowPhase.EMPTY
@@ -482,11 +489,14 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         from PySide6.QtWidgets import QToolButton
 
         menus = (("文件", ("new", "open", "save", None, "report", "learning_trace")),
-                 ("建模", ("sketch", "frame", "portal", None,
+                 ("建模", ("modeling_workflow", "sketch", "frame", "portal", None,
                            "model_node", "model_member", "delete", "brace", None,
                            "tables", "json")),
                  ("属性", ("material", "beam_section", "section", None,
-                           "assign_section", "units")),
+                           "assign_section", "batch_assignment", "beam_orientation", "units")),
+                 ("装配", ("assembly_check", "model_sets")),
+                 ("连接", ("member_connections", "hinge")),
+                 ("作业", ("model_check", "support_diagnosis", "solve", "solve_steps", "stop_task")),
                  ("载荷", ("create_bc", "support", None,
                            "create_load", "gravity", None,
                            "load", "combo")),
@@ -646,6 +656,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def _replace_session(self, session: Session) -> None:
         """让所有会修改模型的面板指向同一个新会话。"""
         self.session = session
+        self._modeling_reviews = {}
+        self._analysis_mesh_key = None
         self._selected_kind = self._selected_id = None
         self.viewport.set_selection(None, None)
         self.viewport.set_problem_refs([])
@@ -681,6 +693,28 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                                 on_done=self._solved, on_failed=self._solve_failed)
         if not ok:
             self._on_busy(False)
+
+    def solve_declared_steps(self) -> None:
+        """声明分析步使用同一个后台任务及结果生效路径。"""
+        if self.runner.busy:
+            return
+        if not self.session.model.get("steps"):
+            QMessageBox.information(self, "尚无分析步", "请先在分析步管理器创建步骤；独立工况可使用求解。")
+            return
+        self._on_busy(True)
+        self.statusBar().showMessage("分析步求解中…")
+        if not self.runner.submit(self.session.solve_steps, on_done=self._steps_solved,
+                                  on_failed=self._solve_failed):
+            self._on_busy(False)
+
+    def _steps_solved(self, result) -> None:
+        if not result.ok:
+            self._solved(result)
+            return
+        self._solved(self.session.solve_summary)
+        self.statusBar().showMessage(
+            f"已完成 {result.payload['count']} 个分析步；当前查看 {result.payload['inspecting']}。"
+            + result.payload["limitation"], 15000)
 
     def _solved(self, result) -> None:
         self.result = result
@@ -989,6 +1023,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.lbl_last.setText("最近：尚未建模")
         self.act_solve.setEnabled(not self.runner.busy and bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
+        dialog = getattr(self, "_modeling_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.refresh()
         self.redraw()
         has_model = bool(model.get("nodes"))
         self._sync_model_tree(has_model)
@@ -1097,7 +1134,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         dialog = TableDialog(self.session, self)
         if dialog.exec() != dialog.DialogCode.Accepted or dialog.model is None:
             return
-        result = self.session.set_model(model=dialog.model)
+        result = self.session.replace_editing_model(model=dialog.model)
         if not result.ok:
             QMessageBox.warning(self, "表格模型未写回", self._explain(result.payload))
             return
@@ -1867,6 +1904,81 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._after_manual_edit(f"已更新 {len(new_combos)} 个荷载组合")
 
     # ------------------------------------------------- Abaqus 式对话框
+
+    def open_modeling_workflow(self) -> None:
+        from .modeling_workflow import ModelingWorkflowDialog
+        if getattr(self, "_modeling_dialog", None) is None:
+            self._modeling_dialog = ModelingWorkflowDialog(self)
+        self._modeling_dialog.refresh()
+        self._modeling_dialog.show()
+        self._modeling_dialog.raise_()
+        self._modeling_dialog.activateWindow()
+
+    def check_manual_model(self) -> None:
+        self._on_workflow_stage("validate")
+
+    def check_assembly(self) -> None:
+        from .modeling_workflow import assembly_issues
+        issues = assembly_issues(self.session)
+        self.results_dock.show()
+        if not self.session.model.get("members"):
+            self.results.show_message("装配尚未定义", "请先创建节点和杆件，再检查装配。")
+        elif issues:
+            self.results.show_rows("装配检查发现问题，请修正后重新检查。",
+                                   ["对象", "编号", "原因与下一步"],
+                                   [["节点" if kind == "node" else "杆件", ident, text]
+                                    for kind, ident, text in issues],
+                                   [(kind, ident) for kind, ident, _ in issues])
+        else:
+            self.results.show_message("装配几何检查完成",
+                                      "未检出重合节点、重复杆件或端点错误。请复核相交杆件是否需要共用节点；本项不证明结构稳定。")
+
+    def open_model_sets(self) -> None:
+        from .assignment_dialog import SetDialog
+        selected = self._selected_id if getattr(self, "_selected_kind", None) == "member" else None
+        dialog = SetDialog(self.session, selected, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            result = self.session.define_set(**dialog.definition())
+            if not result.ok:
+                QMessageBox.warning(self, "集合未创建", self._explain(result.payload))
+                return
+            self._after_manual_edit("命名集合已更新，可用于批量属性与连接设置。")
+
+    def assign_member_group(self) -> None:
+        from .assignment_dialog import BatchAssignmentDialog
+        if not self.session.model.get("materials") or not self.session.model.get("sections"):
+            self.statusBar().showMessage("请先创建材料和截面，再进行批量属性指派。", 5000)
+            self._show_ribbon_page("属性")
+            return
+        selected = self._selected_id if getattr(self, "_selected_kind", None) == "member" else None
+        dialog = BatchAssignmentDialog(self.session, selected, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        section, material = dialog.get_assignment()
+        result = self.session.assign_properties(dialog.target.member_ids(), section, material)
+        if not result.ok:
+            QMessageBox.warning(self, "属性未指派", self._explain(result.payload))
+            return
+        self._after_manual_edit("所选杆件的材料与截面已指派。")
+
+    def _configure_member_group(self, orientation=False) -> None:
+        from .assignment_dialog import MemberSetupDialog
+        selected = self._selected_id if getattr(self, "_selected_kind", None) == "member" else None
+        dialog = MemberSetupDialog(self.session, selected, orientation=orientation, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = self.session.configure_member_group(dialog.target.member_ids(), **dialog.changes())
+        if not result.ok:
+            QMessageBox.warning(self, "杆件设置未提交", self._explain(result.payload))
+            return
+        if not result.payload.get("no_change"):
+            self._after_manual_edit("梁截面方向已更新。" if orientation else "杆端连接已更新，请复核机构与传力路径。")
+
+    def set_member_orientation(self) -> None:
+        self._configure_member_group(orientation=True)
+
+    def set_member_connections(self) -> None:
+        self._configure_member_group()
 
     def create_material(self) -> None:
         """Abaqus 式：创建/编辑材料。"""
@@ -2683,6 +2795,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                          int(item["i"]), int(item["j"])])
             locations.append(("member", physical))
         p = preview.payload
+        self._analysis_mesh_key = self.session._model_key()
         caption = (f"分析网格：{p['physical_members']} 个物理杆件 → "
                    f"{p['analysis_elements']} 个分析杆段，"
                    f"{p['split_nodes']} 个切分节点。点击一行定位物理杆件。")

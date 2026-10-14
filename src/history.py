@@ -40,6 +40,9 @@ MUTATING = frozenset({
     # 属性面板的就地修改。**必须登记**——不登记的话用户改完按 Ctrl+Z
     # 什么也不会发生，而他完全预期能撤销
     "edit_member", "edit_node", "assign_properties", "set_supports", "define_set",
+    "configure_member_group",
+    "replace_editing_model",
+    "add_step", "delete_step", "define_amplitude",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -156,6 +159,16 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
     if tool == "retaper":
         return (f"{len(payload.get('changed_members') or [])} 根杆件换成截面 "
                 f"{args.get('section')}")
+    if tool == "configure_member_group":
+        return f"设置 {len(payload.get('members') or [])} 根杆件的局部轴与杆端连接"
+    if tool == "replace_editing_model":
+        return "提交人工模型表格（允许尚未完成的定义）"
+    if tool == "add_step":
+        return f"定义分析步 {args.get('name')}"
+    if tool == "delete_step":
+        return f"删除分析步 {args.get('name')}"
+    if tool == "define_amplitude":
+        return f"定义幅值曲线 {args.get('name')}"
     if tool == "edit_member":
         bits = "、".join(f"{k}→{v['now']}" for k, v in
                         (payload.get("changed") or {}).items())

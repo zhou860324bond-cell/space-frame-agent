@@ -11,8 +11,7 @@
    迟早会出现"菜单是灰的、功能区是亮的"。
 2. **图标要画这个软件真正在做的事**，不用通用的齿轮放大镜凑数。
    见 `icons.py`。
-3. **只做空间刚架。** 不摆"网格""接触""非线性"这些我们没有的页签。
-   摆了就是在骗人，而且答辩时一点就穿。
+3. **只显示实际能力。** 整体梁网格与局部实体网格分别说明，接触等未实现能力不提供虚假操作。
 
 大按钮（图标在上、文字在下）留给每一页的主操作，小按钮（图标在左）
 放次要操作——一眼能看出这一页最该点哪个。
@@ -580,7 +579,7 @@ class QuickBar(QWidget):
 
 def build(window) -> Ribbon:
     """按 Abaqus/CAE 的模块顺序组织功能区：
-    Part → Property → Assembly → Step → Load → Mesh → Job → Visualization
+    Part → Property → Assembly → Step → Interaction → Load → Mesh → Job → Visualization
 
     每个模块只做一类事，模块之间有明确顺序——这是 Abaqus 的核心逻辑。
     """
@@ -596,6 +595,7 @@ def build(window) -> Ribbon:
     g.add_small(a["brace"])
     g = p.group("查看")
     g.add_small(a["tables"]); g.add_small(a["json"])
+    g.add_small(a["modeling_workflow"])
 
     # ========== 属性 ==========
     p = r.page("属性")
@@ -604,9 +604,31 @@ def build(window) -> Ribbon:
     g = p.group("截面")
     g.add_large(a["beam_section"]); g.add_large(a["section"])
     g = p.group("指派")
-    g.add_large(a["assign_section"]); g.add_small(a["hinge"])
+    g.add_large(a["assign_section"]); g.add_small(a["batch_assignment"])
+    g.add_small(a["beam_orientation"])
     g = p.group("单位")
     g.add_small(a["units"])
+
+    # ========== 装配 ==========
+    p = r.page("装配")
+    g = p.group("拓扑与区域")
+    g.add_large(a["assembly_check"]); g.add_large(a["model_sets"])
+    g.add_small(a["tables"])
+
+    # ========== 分析步 ==========
+    p = r.page("分析")
+    g = p.group("分析过程")
+    g.add_large(a["solve_options"])
+    g = p.group("分析步")
+    g.add_large(a["step_manager"]); g.add_small(a["amplitude"])
+
+    # ========== 连接 ==========
+    p = r.page("连接")
+    g = p.group("杆端力学连接")
+    g.add_large(a["member_connections"]); g.add_small(a["hinge"])
+    g.add_small(a["beam_orientation"])
+    g = p.group("检查")
+    g.add_small(a["support_diagnosis"])
 
     # ========== 载荷 ==========
     p = r.page("载荷")
@@ -620,12 +642,20 @@ def build(window) -> Ribbon:
     g.add_large(a["code_combo"]); g.add_small(a["live_pattern"])
     g.add_small(a["area_load"]); g.add_small(a["bc_manager"])
 
-    # ========== 分析 ==========
-    p = r.page("分析")
+    # ========== 网格 ==========
+    p = r.page("网格")
+    # 预览输出杆段映射表，常驻模式按钮只负责显示切换。
+    g = p.group("整体梁离散")
+    g.add_large(a["mesh_preview"]); g.add_small(a["modeling_workflow"])
+    note = QLabel("用下方“分析网格”查看自动剖分与映射；\n局部实体网格在整体求解后设置。", p)
+    note.setWordWrap(True)
+    p._row.insertWidget(p._row.count() - 1, note)
+
+    # ========== 作业 ==========
+    p = r.page("作业")
     g = p.group("求解")
-    g.add_large(a["solve"]); g.add_small(a["solve_options"])
-    g = p.group("分析步")
-    g.add_large(a["step_manager"]); g.add_small(a["amplitude"])
+    g.add_large(a["solve"]); g.add_small(a["solve_steps"])
+    g.add_small(a["stop_task"])
     g = p.group("特征值")
     g.add_small(a["buckling"])
     g = p.group("局部实体")
@@ -634,6 +664,7 @@ def build(window) -> Ribbon:
     # 分析网格是**显示模式**不是一次性动作，它和模型/变形/云图/模态一起
     # 归常驻快捷栏右段的模式分段控件，这里不再重复占位置——
     # 与「视图」页不重复标准视角是同一条约定。
+    g.add_small(a["model_check"]); g.add_small(a["support_diagnosis"])
     g.add_small(a["diagnose"])
     g = p.group("历史")
     g.add_small(a["timeline"])
@@ -678,7 +709,7 @@ def build(window) -> Ribbon:
     g = p.group("Agent 学习")
     g.add_small(a["learning_trace"])
 
-    # 项目在最左侧；之后按 Part → Property → Load → Analysis → Results 走。
+    # 项目在最左侧；之后按九个CAE阶段组织。
     r.tabBar().moveTab(r.indexOf(r.pages["项目"]), 0)
 
     return r

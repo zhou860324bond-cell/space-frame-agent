@@ -9,7 +9,7 @@
 
 1. **改动一律先校验再落地。** `Session.set_model` 是故意"先存后验"的
    （Agent 要靠它做增量修补），但人工编辑不能这样：一份改坏的表
-   把好模型顶掉，用户就只能靠撤销找回来。所以这里自己先 `validate_payload`。
+   把好模型顶掉，用户就只能靠撤销找回来。表格按编辑期校验，完整JSON按求解期校验。
 2. **对话框不碰视口、不碰求解。** 它只产出一个模型字典，交回主窗口。
 """
 
@@ -369,7 +369,8 @@ class TableDialog(QDialog):
 
         hint = QLabel(
             "直接编辑单元格；行尾留空行可新增，清空整行即删除。"
-            "改动点「确定」后才会校验并写回模型，校验不通过不会覆盖当前模型。")
+            "改动点「确定」后才会校验并写回模型，校验不通过不会覆盖当前模型。"
+            "可以暂缺材料、截面或支座；提交前仍须完整性校验。")
         hint.setWordWrap(True)
         hint.setProperty("panel", "hint")
         box.addWidget(hint)
@@ -437,15 +438,15 @@ class TableDialog(QDialog):
         return {name: self._rows_of(name) for name in TABLE_NAMES}
 
     def _accept(self) -> None:
-        from model_io import validate_payload
+        from model_io import validate_editing_payload
         from model_tables import from_tables
 
         try:
-            model = from_tables(self.session.model, self.collect())
+            model = from_tables(self.session.model, self.collect(), allow_unassigned=True)
         except Exception as exc:                # noqa: BLE001
             QMessageBox.warning(self, "表格有误", str(exc)[:600])
             return
-        errors = validate_payload(model)
+        errors = validate_editing_payload(model)
         if errors:
             # **先校验再落地。** 一份改坏的表把好模型顶掉的话，
             # 用户就只能靠撤销找回来——那是能避免的麻烦

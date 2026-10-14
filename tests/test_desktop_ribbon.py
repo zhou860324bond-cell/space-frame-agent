@@ -338,7 +338,7 @@ def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app
     assert w.ribbon.is_collapsed()
     assert w.ribbon.maximumHeight() < tall
     assert w.ribbon.tabBar().isVisibleTo(w.ribbon), "页签不能跟着收掉"
-    assert w.ribbon.count() == 7, "收起不该动页签本身"
+    assert w.ribbon.count() == 11, "收起不该动页签本身"
     w.ribbon.setCurrentIndex(4)
     assert all(w.ribbon.widget(i).isHidden() for i in range(w.ribbon.count()))
 
@@ -407,7 +407,7 @@ def test_the_ribbon_pages_follow_the_workflow(qt_app):
     从左往右点一遍正好走完一次完整分析，这是它的主要价值。"""
     w = MainWindow()
     titles = [w.ribbon.tabText(i) for i in range(w.ribbon.count())]
-    assert titles == ["项目", "建模", "属性", "载荷", "分析", "结果", "视图"]
+    assert titles == ["项目", "建模", "属性", "装配", "分析", "连接", "载荷", "网格", "作业", "结果", "视图"]
 
 
 def test_each_module_explains_its_next_operation(qt_app):
@@ -422,7 +422,7 @@ def test_the_ribbon_only_offers_what_we_actually_have(qt_app):
     """**不摆我们没有的功能。** 摆了就是骗人，答辩时一点就穿。"""
     w = MainWindow()
     titles = [w.ribbon.tabText(i) for i in range(w.ribbon.count())]
-    for absent in ("网格", "接触", "非线性", "热分析", "疲劳"):
+    for absent in ("接触", "非线性", "热分析", "疲劳"):
         assert absent not in titles, f"我们并没有{absent}"
 
 

@@ -25,6 +25,14 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "刚架建模全流程": "Frame modeling workflow",
+    "装配检查": "Assembly check", "命名集合": "Named sets",
+    "批量属性指派": "Batch property assignment", "梁截面方向": "Beam orientation",
+    "杆端连接": "Member end connections", "完整性校验": "Model validation",
+    "提交分析步": "Submit analysis steps",
+    "预览梁网格": "Preview beam mesh", "全流程": "Complete workflow",
+    "机构诊断": "Mechanism diagnosis",
+    "装配": "Assembly", "连接": "Interaction", "网格": "Mesh", "作业": "Job",
     "曲率连续过渡（自动）": "Automatic curvature continuous transition",
     "一体连续节点（自动）": "Automatic monolithic continuous joint",
     "斜接裁切与圆角": "Miter intersection and fillet",
