@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QToolButton,
@@ -57,6 +58,23 @@ COLLECTIONS = {"nodes": "节点", "members": "杆件", "materials": "材料", "s
 _HIDDEN_FIELDS = {"schema_version"}
 
 PLAN_MARK = {"pending": "○", "in_progress": "◐", "done": "✓"}
+
+
+_BOLD = re.compile(r"\*\*([^*\n]+?)\*\*")
+_CODE = re.compile(r"(`[^`\n]*`)")
+_IMG = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+
+
+def markdown_ready(text: str) -> str:
+    """修正中文 Markdown 的加粗。
+
+    CommonMark 规定：结束的 ``**`` 前面是标点时，后面必须是空白或标点才算闭合。
+    中文里「**结论。**后面接正文」很常见，于是界面上露出两对星号。这里把
+    ``**…**`` 直接换成 ``<b>…</b>``（Qt 的 Markdown 支持内联 HTML），行内代码不动；
+    顺带去掉图片标签，模型回答不应从网络加载图片。
+    """
+    parts = _CODE.split(_IMG.sub("", text))
+    return "".join(p if p.startswith("`") else _BOLD.sub(r"<b>\1</b>", p) for p in parts)
 
 
 def tool_label(name: str) -> str:
@@ -154,6 +172,8 @@ def entry_text(entry: dict) -> str:
         for seg in entry.get("segments", []):
             if seg["kind"] == "text":
                 parts.append(seg["text"])
+            elif seg["kind"] == "thinking":
+                continue            # 思考过程不进复制与检索的正文
             else:
                 parts.append(f"{tool_label(seg['name'])} {seg['name']} {brief_args(seg.get('args') or {})}")
         return "\n".join(p for p in parts if p)
@@ -246,6 +266,48 @@ class ToolCard(QFrame):
             button.clicked.connect(lambda _=False, k=kind, i=ident: self.locate.emit(k, i))
             self.refs_row.addWidget(button)
         self.refs_row.addStretch(1)
+
+
+class ThinkingCard(QFrame):
+    """模型的思考过程。运行中展开、实时滚动；本轮结束后收起，需要时再点开。
+
+    推理模型每轮先想十几秒才开始调用工具，这段时间只显示「思考中」会让人以为
+    卡住了。思考内容只供阅读，不进入回答正文、不回传模型，也不是数值依据。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("thinkingCard")
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(0)
+        self.header = QToolButton(self)
+        self.header.setObjectName("toolCardHeader")
+        self.header.setCheckable(True)
+        self.header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.header.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.header.toggled.connect(self._toggle)
+        box.addWidget(self.header)
+        self.body = _label("", "thinking")
+        self.body.setContentsMargins(22, 0, 8, 6)
+        box.addWidget(self.body)
+        self._user_choice = None
+        self.header.clicked.connect(lambda checked: setattr(self, "_user_choice", checked))
+
+    def _toggle(self, shown):
+        self.body.setVisible(shown)
+        self.header.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
+
+    def update_segment(self, seg: dict, live: bool) -> None:
+        text = seg.get("text", "")
+        self.header.setText(("正在思考…" if live else "思考过程") + f"　{len(text)} 字")
+        # 运行中显示最后几行，跟着思考进度滚动；结束后显示全文
+        self.body.setText(text[-600:] if live else text)
+        shown = live if self._user_choice is None else self._user_choice
+        self.header.blockSignals(True)
+        self.header.setChecked(shown)
+        self.header.blockSignals(False)
+        self._toggle(shown)
 
 
 class PlanCard(QFrame):
@@ -380,14 +442,22 @@ class EntryWidget(QFrame):
             else:
                 self.plan_card.set_steps(plan)
         offset = 1 if self.plan_card is not None else 0
+        live_index = len(entry.get("segments", [])) - 1 if entry.get("status") == "streaming" else -1
         for i, seg in enumerate(entry.get("segments", [])):
-            if seg["kind"] == "text":
+            if seg["kind"] == "thinking":
+                card = self._tool_cards.get(i)
+                if card is None:
+                    card = ThinkingCard(self)
+                    self._tool_cards[i] = card
+                    self.content.insertWidget(i + offset, card)
+                card.update_segment(seg, i == live_index)
+            elif seg["kind"] == "text":
                 label = self._text_labels.get(i)
                 if label is None:
                     label = _label("", "assistant", rich=True)
                     self._text_labels[i] = label
                     self.content.insertWidget(i + offset, label)
-                label.setText(seg["text"])
+                label.setText(markdown_ready(seg["text"]))
             else:
                 card = self._tool_cards.get(i)
                 if card is None:
@@ -398,14 +468,20 @@ class EntryWidget(QFrame):
                 else:
                     card.update_segment(seg)
         status = entry.get("status", "done")
-        self.status_label.setText(entry.get("activity", "") if status == "streaming" else "")
+        activity = entry.get("activity", "")
+        if entry.get("elapsed"):
+            activity += f"　{entry['elapsed']} s"
+        self.status_label.setText(activity if status == "streaming" else "")
         tools = [s for s in entry.get("segments", []) if s["kind"] == "tool"]
         footer = []
         if tools:
             ok = sum(1 for s in tools if s.get("state") == "ok")
-            footer.append(f"数值依据：{ok} 次成功的工具调用" +
-                          (f"，{len(tools) - ok} 次失败" if ok < len(tools) else "") +
-                          "（展开卡片查看参数与结果）")
+            failed = len(tools) - ok
+            if ok:
+                footer.append(f"数值依据：{ok} 次成功的工具调用" +
+                              (f"（另有 {failed} 次失败）" if failed else "") + "，展开卡片查看参数与结果")
+            else:
+                footer.append(f"本轮工具调用均未成功（{failed} 次），回答中没有来自求解器的新数值")
         if entry.get("metrics"):
             footer.append(entry["metrics"])
         self.footer.setText("\n".join(footer))

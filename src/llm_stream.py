@@ -18,6 +18,21 @@ from typing import Any, Callable, Iterable
 TextSink = Callable[[str], None]
 
 
+def _tool_started(sink, name: str) -> None:
+    """模型开始写某个工具调用。大参数（整套截面、几十根杆件）可能要生成几十秒，
+    界面只显示"思考中"的话用户分不清是卡住了还是在干活。接收方可选：
+    ``on_text`` 若带 ``tool_started`` 方法就通知它，普通函数照旧只收文字。"""
+    notify = getattr(sink, "tool_started", None)
+    if notify is not None and name:
+        notify(name)
+
+
+def _reasoning(sink, piece: str) -> None:
+    notify = getattr(sink, "reasoning", None)
+    if notify is not None and piece:
+        notify(piece)
+
+
 def _parse_arguments(raw: str) -> dict:
     try:
         return json.loads(raw or "{}")
@@ -42,6 +57,12 @@ def collect_openai_chunks(chunks: Iterable[Any], on_text: TextSink | None,
         if not choices:
             continue
         delta = choices[0].delta
+        # DeepSeek 等推理模型先输出思考过程（reasoning_content），常有十几秒；
+        # 只转给界面显示，不进入返回值，也不回传给模型
+        thought = getattr(delta, "reasoning_content", None) or \
+            (getattr(delta, "model_extra", None) or {}).get("reasoning_content")
+        if thought:
+            _reasoning(on_text, thought)
         piece = getattr(delta, "content", None)
         if piece:
             text.append(piece)
@@ -54,7 +75,10 @@ def collect_openai_chunks(chunks: Iterable[Any], on_text: TextSink | None,
             function = getattr(call, "function", None)
             if function is not None:
                 if function.name:
+                    first = not slot["name"]
                     slot["name"] += function.name
+                    if first:
+                        _tool_started(on_text, slot["name"])
                 if function.arguments:
                     slot["arguments"] += function.arguments
     if calls:
@@ -98,6 +122,8 @@ def collect_anthropic_events(lines: Iterable[bytes | str],
             block = event.get("content_block") or {}
             blocks[event["index"]] = {"type": block.get("type"), "id": block.get("id", ""),
                                       "name": block.get("name", ""), "json": ""}
+            if block.get("type") == "tool_use":
+                _tool_started(on_text, block.get("name", ""))
         elif kind == "content_block_delta":
             delta = event.get("delta") or {}
             if delta.get("type") == "text_delta":
@@ -105,6 +131,8 @@ def collect_anthropic_events(lines: Iterable[bytes | str],
                 text.append(piece)
                 if on_text is not None and piece:
                     on_text(piece)
+            elif delta.get("type") == "thinking_delta":
+                _reasoning(on_text, delta.get("thinking", ""))
             elif delta.get("type") == "input_json_delta":
                 blocks.setdefault(event["index"], {"type": "tool_use", "id": "", "name": "", "json": ""})
                 blocks[event["index"]]["json"] += delta.get("partial_json", "")

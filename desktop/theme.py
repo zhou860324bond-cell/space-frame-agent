@@ -924,6 +924,8 @@ QToolButton#toolCardHeader {{
 }}
 QToolButton#toolCardHeader:hover {{ color: {ACCENT_DIM}; }}
 QFrame#toolCard[state="failed"] QToolButton#toolCardHeader {{ color: {ERROR}; }}
+QFrame#thinkingCard {{ background: transparent; border: none; border-left: 2px solid {BORDER_LIGHT}; }}
+QLabel[chat="thinking"] {{ color: {INK_DIM}; font-size: 8pt; }}
 QToolButton[chat="primaryLink"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
 QListWidget#chatHistory::item {{ padding: 6px 6px; border-bottom: 1px solid {BORDER}; }}
 """

@@ -140,6 +140,22 @@ def tool_message_content(result, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str
 
 
 
+class _StreamSink:
+    """流式回调：收文字片段，也收"模型开始写某个工具调用"的通知。"""
+
+    def __init__(self, emit):
+        self._emit = emit
+
+    def __call__(self, piece: str) -> None:
+        self._emit("text", {"delta": piece})
+
+    def tool_started(self, name: str) -> None:
+        self._emit("tool_prepare", {"name": name})
+
+    def reasoning(self, piece: str) -> None:
+        self._emit("reasoning", {"delta": piece})
+
+
 def result_brief(result, max_chars: int = 900) -> str:
     """工具结果的短摘要，供界面卡片展开查看；完整结果仍在 Session 里。"""
     payload = result.payload if isinstance(result.payload, dict) else {"value": result.payload}
@@ -334,8 +350,11 @@ class Conversation:
             result, tool_ms = self._run_tool("query_results", args, on_tool)
             if result.ok:
                 p = result.payload
-                text = (f"最大位移为 {p['magnitude_mm']} mm，控制工况 {p['case']}，"
-                        f"位置坐标 {p['coordinates_xyz']} m；分量 {p['components_mm']} mm。")
+                # 只改显示位数（4 位有效数字）；完整数值在工具卡片与 Session 中
+                xyz = "、".join(f"{v:.4g}" for v in p["coordinates_xyz"])
+                parts = "，".join(f"{k} {v:+.4g}" for k, v in p["components_mm"].items())
+                text = (f"最大位移 {p['magnitude_mm']:.4g} mm，控制工况 {p['case']}，"
+                        f"位于 ({xyz}) m；分量 {parts} mm。")
             else:
                 text = str(result.payload.get("error", "结果查询失败"))
             out = self._finish_local(user_text, text,
@@ -448,7 +467,7 @@ class Conversation:
     def _complete(self, messages: list[dict], tools: list[dict]) -> dict:
         stream = getattr(self.provider, "complete_stream", None)
         if self._on_event is not None and stream is not None:
-            return stream(messages, tools, lambda piece: self._emit("text", {"delta": piece}))
+            return stream(messages, tools, _StreamSink(self._emit))
         return self.provider.complete(messages, tools)
 
     def _ask(self, user_text: str, on_tool=None) -> TurnResult:

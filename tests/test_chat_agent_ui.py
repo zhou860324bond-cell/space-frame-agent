@@ -341,3 +341,107 @@ def test_mention_completion_follows_ime_input(panel):
     panel.entry.completer.activated.emit("@杆件2")
     assert panel.entry.toPlainText() == "@杆件2 "
     assert panel.references == [("member", 2)]
+
+
+def test_followups_track_workflow_stage(panel):
+    """建议曾写死为「门式刚架 / 检查模型」，模型算完了还在提示建门式刚架。"""
+    labels = lambda: [f.label for f in panel.followups]  # noqa: E731
+    assert "门式刚架" in labels()
+    _turn(panel, "建个 24 米门式刚架并求解")
+    assert "门式刚架" not in labels() and "最大位移" in labels()
+    assert panel.suggestions.isVisible()
+    panel.send(panel.followups[labels().index("最大位移")].prompt)
+    assert panel.runner.wait(30000)
+    QApplication.processEvents()
+    assert "最大位移" not in labels(), "刚问过的不再重复建议"
+
+
+def test_followups_offer_confirm_for_pending_change(panel):
+    from followups import suggest
+    session = Session()
+    session.pending_change = {"preview_id": "P7", "tool": "remove_members"}
+    assert [f.prompt for f in suggest(session)] == ["确认 P7", "取消"]
+
+
+def test_followups_hidden_while_running(panel):
+    panel._set_busy(True)
+    assert not panel.followups and not panel.suggestions.isVisible()
+    panel._set_busy(False)
+    assert panel.followups
+
+
+def test_tool_preparation_is_announced_during_long_generation():
+    """真实试用时模型写一整套截面参数要四十秒，界面只显示「思考中」像是卡住了。"""
+    pieces, prepared = [], []
+
+    class Sink:
+        def __call__(self, piece):
+            pieces.append(piece)
+
+        def tool_started(self, name):
+            prepared.append(name)
+
+    collect_openai_chunks([_chunk(calls=[_call(0, "c1", "define_materials_and_sections", "{")]),
+                           _chunk(calls=[_call(0, None, None, "}")])], Sink())
+    assert prepared == ["define_materials_and_sections"]
+    collect_anthropic_events([
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"solve_model"}}'],
+        Sink())
+    assert prepared[-1] == "solve_model"
+    # 普通函数作为回调时不受影响
+    collect_openai_chunks([_chunk(calls=[_call(0, "c1", "solve_model", "{}")])], pieces.append)
+
+
+def test_chinese_bold_next_to_punctuation_renders():
+    """「**结论。**后接正文」按 CommonMark 不闭合，界面曾露出星号。"""
+    from desktop.chat_widgets import markdown_ready
+    assert markdown_ready("**最大挠度 1.09 mm。**结构很刚") == "<b>最大挠度 1.09 mm。</b>结构很刚"
+    assert markdown_ready("`a**b**c` 与 **粗**") == "`a**b**c` 与 <b>粗</b>"
+    assert "<img" not in markdown_ready('看图<img src="http://x/y.png">')
+
+
+def test_fast_path_displacement_is_readable(panel):
+    """快速路径曾直接打印 0.151766 mm 和 {'ux': -0.0, ...} 这样的原始字典。"""
+    _turn(panel, "建个 24 米门式刚架并求解")
+    _turn(panel, "/位移")
+    reply = [e for e in panel.record["entries"] if e["type"] == "assistant"][-1]
+    text = next(s["text"] for s in reply["segments"] if s["kind"] == "text")
+    assert "{" not in text and "最大位移" in text
+
+
+def test_reasoning_stream_shown_as_collapsible_thinking(panel, monkeypatch):
+    """真实试用：DeepSeek 每轮先输出十几秒 reasoning_content，界面只有「思考中」。
+    思考过程要实时显示，但不进入回答正文、复制内容或数值依据。"""
+    class Thinking(StreamingScript):
+        def complete_stream(self, messages, tools, on_text):
+            for piece in ("先看跨度，", "再看荷载。"):
+                on_text.reasoning(piece)
+            return super().complete_stream(messages, tools, on_text)
+
+    monkeypatch.setattr(panel, "_make_provider", lambda: Thinking([{"content": "结论如下。"}]))
+    _turn(panel, "这个结构稳不稳")
+    reply = next(e for e in panel.record["entries"] if e["type"] == "assistant")
+    kinds = [s["kind"] for s in reply["segments"]]
+    assert kinds == ["thinking", "text"]
+    assert reply["segments"][0]["text"] == "先看跨度，再看荷载。"
+    assert "先看跨度" not in panel.view.toPlainText()
+    card = next(iter(panel.view.widgets[-1]._tool_cards.values()), None) or \
+        next(c for w in panel.view.widgets for c in getattr(w, "_tool_cards", {}).values())
+    assert not card.body.isVisible(), "本轮结束后思考过程应收起"
+
+
+def test_openai_reasoning_content_forwarded_not_returned():
+    seen = []
+
+    class Sink:
+        def __call__(self, piece):
+            seen.append(("text", piece))
+
+        def reasoning(self, piece):
+            seen.append(("think", piece))
+
+    delta = SimpleNamespace(content=None, tool_calls=None, reasoning_content="推理中")
+    out = collect_openai_chunks([SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None),
+                                 _chunk("答")], Sink())
+    assert seen == [("think", "推理中"), ("text", "答")]
+    assert out == {"content": "答"}

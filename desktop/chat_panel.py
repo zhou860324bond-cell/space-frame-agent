@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import re
+import time
 from copy import deepcopy
 
 from PySide6.QtCore import QSize, QStringListModel, Qt, QTimer, Signal
@@ -231,10 +232,15 @@ class ChatPanel(QWidget):
         self._selection = None
         self._turn = None              # 进行中回合的上下文
         self._text_buffer = ""
+        self._think_buffer = ""
         self._flush_timer = QTimer(self)
         self._flush_timer.setSingleShot(True)
         self._flush_timer.setInterval(40)
         self._flush_timer.timeout.connect(self._flush_text)
+        # 每秒刷新"已用时间"：大模型一次请求可能几十秒，看着秒数在走才知道没有卡住
+        self._clock = QTimer(self)
+        self._clock.setInterval(1000)
+        self._clock.timeout.connect(self._tick)
         from chat_store import ChatStore, new_record
         from model_profiles import ProfileStore
         self.store = ChatStore()
@@ -314,23 +320,14 @@ class ChatPanel(QWidget):
         self.lbl_call_status.hide()
         layout.addWidget(self.lbl_call_status)
 
-        suggestions = QHBoxLayout()
-        suggestions.setContentsMargins(0, 0, 0, 0)
-        suggestions.setSpacing(4)
-        for label, prompt in (
-                ("门式刚架", "创建一榀 24 米门式刚架，并说明还缺哪些工程参数"),
-                ("检查模型", "检查当前模型的材料、约束、荷载和稳定性问题"),
-                ("/ 命令", "/")):
-            button = QPushButton(label, self)
-            button.setProperty("role", "suggestion")
-            button.setToolTip(prompt)
-            button.clicked.connect(
-                lambda _=False, value=prompt: self._use_suggestion(value))
-            suggestions.addWidget(button)
-        suggestions.addStretch(1)
+        # 后续建议：随模型阶段、待确认修改和引用对象变化，点一下直接发送
+        self.suggestion_row = QHBoxLayout()
+        self.suggestion_row.setContentsMargins(0, 0, 0, 0)
+        self.suggestion_row.setSpacing(4)
         self.suggestions = QWidget(self)
-        self.suggestions.setLayout(suggestions)
+        self.suggestions.setLayout(self.suggestion_row)
         layout.addWidget(self.suggestions)
+        self.followups = []
 
         # 输入卡片：输入框在上，引用对象与发送在同一条底栏
         composer = QFrame(self)
@@ -389,7 +386,7 @@ class ChatPanel(QWidget):
         super().resizeEvent(event)
         # 小屏幕保留模型、输入与引用，辅助说明按可用空间收起。
         self.lbl_status.setVisible(self.height() >= 420)
-        self.suggestions.setVisible(self.height() >= 420 and not self.view.entries)
+        self.suggestions.setVisible(self.height() >= 300 and bool(self.followups))
         self.title_label.setVisible(self.width() >= 380)
 
     def _has_messages(self):
@@ -728,7 +725,6 @@ class ChatPanel(QWidget):
         self.entry.clear()
         self.view.load(self.record["entries"])
         self._refresh_references()
-        self.suggestions.setVisible(self.height() >= 420)
 
     def new_chat(self):
         if self.runner.busy or self._chat_busy:
@@ -756,7 +752,6 @@ class ChatPanel(QWidget):
         self.reference_revision = record.get("reference_revision", "")
         self._provider_dirty = True
         self._refresh_references()
-        self.suggestions.setVisible(not self._has_messages() and self.height() >= 420)
 
     def reset_session(self, session):
         self._save_chat()
@@ -840,6 +835,32 @@ class ChatPanel(QWidget):
                                      (f" 等 {len(names)} 项" if len(names) > 3 else ""))
         self.lbl_context.setToolTip(self.lbl_context.text())
         self.btn_clear.setVisible(bool(self.references))
+        self.refresh_suggestions()
+
+    def refresh_suggestions(self) -> None:
+        """按当前进度换一组后续建议；运行中不给建议，避免误点发出第二个请求。"""
+        from followups import suggest
+        from object_context import model_revision
+        if self._chat_busy or self.runner.busy:
+            items = []
+        else:
+            refs = self.references if self.reference_revision == model_revision(self.session.model) else []
+            last = next((e['text'] for e in reversed(self.record['entries']) if e['type'] == 'user'), '')
+            items = suggest(self.session, refs, last)
+        if items != self.followups:
+            self.followups = items
+            while self.suggestion_row.count():
+                item = self.suggestion_row.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            for followup in items:
+                button = QPushButton(followup.label, self.suggestions)
+                button.setProperty('role', 'suggestion')
+                button.setToolTip(f'发送：{followup.prompt}')
+                button.clicked.connect(lambda _=False, text=followup.prompt: self.send(text))
+                self.suggestion_row.addWidget(button)
+            self.suggestion_row.addStretch(1)
+        self.suggestions.setVisible(bool(items) and self.height() >= 300)
 
     # --- 拖入图纸 ---
 
@@ -902,7 +923,6 @@ class ChatPanel(QWidget):
             return
         if typed:
             self.entry.clear()
-        self.suggestions.hide()
         if not self.record["entries"]:
             self.record["title"] = text[:20]
             self._sync_selector_titles()
@@ -912,7 +932,8 @@ class ChatPanel(QWidget):
         self._turn = {"index": index, "user": text, "before": deepcopy(self.session.model),
                       "cursor": self.session.history.cursor, "signature": self._model_signature(),
                       "pending": (self.session.pending_change or {}).get("preview_id"),
-                      "round_text": None}
+                      "round_text": None, "round_thinking": None, "started": time.monotonic()}
+        self._clock.start()
         self._set_busy(True)
         self._streamed = 0
         ok = self.runner.submit(
@@ -945,10 +966,22 @@ class ChatPanel(QWidget):
             if not self._flush_timer.isActive():
                 self._flush_timer.start()
             return
+        if kind == "reasoning":
+            if self._turn["round_thinking"] is None:
+                segments.append({"kind": "thinking", "text": ""})
+                self._turn["round_thinking"] = len(segments) - 1
+            self._think_buffer += data["delta"]
+            entry["activity"] = "正在思考…"
+            if not self._flush_timer.isActive():
+                self._flush_timer.start()
+            return
         self._flush_text()
         if kind == "round":
             self._turn["round_text"] = None
+            self._turn["round_thinking"] = None
             entry["activity"] = "思考中…"
+        elif kind == "tool_prepare":
+            entry["activity"] = f"正在生成调用：{tool_label(data['name'])}…"
         elif kind == "tool_start":
             segments.append({"kind": "tool", "id": data.get("id", ""), "name": data["name"],
                              "args": data.get("args") or {}, "state": "running"})
@@ -967,14 +1000,27 @@ class ChatPanel(QWidget):
             entry["plan"] = data["steps"]
         self.view.refresh(self._turn["index"])
 
+    def _tick(self) -> None:
+        entry = self._assistant()
+        if entry is None or entry.get("status") != "streaming":
+            self._clock.stop()
+            return
+        entry["elapsed"] = int(time.monotonic() - self._turn["started"])
+        self.view.refresh(self._turn["index"])
+
     def _flush_text(self) -> None:
         entry = self._assistant()
-        if entry is None or not self._text_buffer:
+        if entry is None or not (self._text_buffer or self._think_buffer):
             return
         position = self._turn["round_text"]
-        if position is not None:
+        if position is not None and self._text_buffer:
             entry["segments"][position]["text"] += self._text_buffer
-        self._text_buffer = ""
+        thinking = self._turn["round_thinking"]
+        if thinking is not None and self._think_buffer:
+            seg = entry["segments"][thinking]
+            # 思考过程只为让用户看到进展，落盘保留最后 4000 字即可
+            seg["text"] = (seg["text"] + self._think_buffer)[-4000:]
+        self._text_buffer = self._think_buffer = ""
         self.view.refresh(self._turn["index"])
 
     def _replied(self, result) -> None:
@@ -1163,6 +1209,8 @@ class ChatPanel(QWidget):
                        self.btn_clear, self.entry, self.btn_send):
             widget.setEnabled(idle)
         self.btn_attach.setEnabled(idle and bool(self._selection))
+        if hasattr(self, 'followups'):
+            self.refresh_suggestions()
 
     def _model_signature(self):
         """粗粒度的模型指纹，用来判断这一轮有没有动过模型。"""

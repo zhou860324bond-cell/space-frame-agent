@@ -1041,6 +1041,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.lbl_last.setText("最近：尚未建模")
         self.act_solve.setEnabled(not self.runner.busy and bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
+        # 工具栏改了模型，对话面板的后续建议也要跟着换（例如求解后改为问位移）
+        self.chat.refresh_suggestions()
         dialog = getattr(self, "_modeling_dialog", None)
         if dialog is not None and dialog.isVisible():
             dialog.refresh()
