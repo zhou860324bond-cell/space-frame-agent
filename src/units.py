@@ -151,10 +151,17 @@ def _convert_features(features: dict, f: dict[str, float]) -> dict:
         for key, scale in factor.items():
             if key in load:
                 load[key] = [v * scale for v in load[key]]
+    def springs(values):
+        return [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])
+                for k, v in enumerate(values)]
+
     for bc in out.get("bcs") or []:
         if "spring" in bc:
-            bc["spring"] = [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])
-                            for k, v in enumerate(bc["spring"])]
+            bc["spring"] = springs(bc["spring"])
+        if bc.get("modifications"):
+            bc["modifications"] = {
+                step: {**mod, **({"spring": springs(mod["spring"])} if "spring" in mod else {})}
+                for step, mod in bc["modifications"].items()}
     return out
 
 

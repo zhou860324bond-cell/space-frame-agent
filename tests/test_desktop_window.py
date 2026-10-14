@@ -1271,3 +1271,36 @@ def test_create_constraint_picks_master_then_slaves(qt_app, monkeypatch):
     labels = [w.tree.topLevelItem(k).text(0) for k in range(w.tree.topLevelItemCount())]
     assert "约束（1）" in labels
     assert s.solve_model().ok
+
+
+def test_bc_manager_modifies_and_deactivates_in_the_selected_step(qt_app, monkeypatch):
+    """边界条件管理器的步矩阵：点选某一步的格子，编辑即在该步修改，失活从该步起生效。"""
+    from desktop.object_dialogs import ObjectManagerDialog
+    s = Session()
+    assert s.add_nodes([[0, 0, 0], [6, 0, 0]]).ok
+    assert s.define_materials_and_sections(
+        [{"name": "S", "E": 2e11, "nu": 0.3}],
+        [{"name": "R", "A": 1e-2, "Iy": 2e-5, "Iz": 8e-5, "J": 1e-5}]).ok
+    assert s.add_members([[1, 2]]).ok
+    assert s.create_section_assignment("SA", [1], "R", "S").ok
+    assert s.create_boundary_condition("BC-左", [1], preset="ENCASTRE").ok
+    assert s.create_boundary_condition("BC-右", [2], preset="ENCASTRE").ok
+    assert s.set_load_cases([{"name": "DL"}]).ok
+    assert s.create_load("均布", "DL", "line_load", [1], w=[0, 0, -1e4]).ok
+    assert s.add_step("S1", loads={"DL": "RAMP"}).ok and s.add_step("S2").ok and s.add_step("S3").ok
+    w = MainWindow(s)
+    manager = ObjectManagerDialog(w, "bcs")
+    assert manager.steps == ["Initial", "S1", "S2", "S3"]
+    row = next(r for r in range(manager.table.rowCount()) if manager.table.item(r, 0).text() == "BC-右")
+    first = len(manager.COLUMNS["bcs"])
+    _stub(monkeypatch, "EditBCDialog", values=([1, 1, 1, 0, 0, 0], None))
+    manager.table.setCurrentCell(row, first + 2)                     # S2 列
+    manager._run("edit")
+    manager.table.setCurrentCell(row, first + 3)                     # S3 列
+    manager._run("deactivate")
+    feature = next(f for f in s.model["features"]["bcs"] if f["name"] == "BC-右")
+    assert feature["modifications"]["S2"]["fix"] == [1, 1, 1, 0, 0, 0]
+    assert feature["deactivated"] == "S3"
+    cells = [manager.table.item(row, first + k).text() for k in range(4)]
+    assert cells == ["创建", "传播", "修改", "失活"]
+    assert s.solve_steps().ok

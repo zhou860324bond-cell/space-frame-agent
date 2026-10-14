@@ -351,8 +351,13 @@ class WindowObjectsMixin:
     def open_assignment_manager(self) -> None:
         self.open_object_manager("section_assignments")
 
-    def manage_object(self, kind: str, action: str, name: str | None, manager=None) -> None:
-        """管理器与模型树右键菜单共用的动作。"""
+    def manage_object(self, kind: str, action: str, name: str | None, manager=None,
+                      step: str | None = None) -> None:
+        """管理器与模型树右键菜单共用的动作。
+
+        ``step`` 是边界条件管理器里选中的分析步列：编辑变成「在该步修改」，
+        失活从该步起生效。在创建步或没选步列时，编辑改的是对象本身。
+        """
         alias = _KIND_ALIAS[kind]
         session = self.session
         if action == "create":
@@ -366,8 +371,26 @@ class WindowObjectsMixin:
         if name is None:
             return
         feature = next(f for f in session.model["features"][kind] if f["name"] == name)
-        if action == "edit":
+        created = feature.get("step") or "Initial"
+        if action == "edit" and kind == "bcs" and step not in (None, created):
+            current = (feature.get("modifications") or {}).get(step, feature)
+            editor = EditBCDialog(f"{name}（{step}）", current["fix"], current.get("spring"), self)
+            if editor.exec() == QDialog.DialogCode.Accepted:
+                fix, spring = editor.values()
+                self._object_result(session.modify_boundary_condition(name, step, fix=fix,
+                                                                       spring=spring),
+                                    f"「{name}」在「{step}」已修改。")
+        elif action == "edit":
             self._edit_object(kind, feature)
+        elif action == "deactivate":
+            if step in (None, created):
+                QMessageBox.information(self, "失活", "请先在表格里点选要失活的那一步（创建步之后的列）。")
+                return
+            self._object_result(session.deactivate_boundary_condition(name, step),
+                                f"「{name}」从「{step}」起失活。")
+        elif action == "activate":
+            self._object_result(session.deactivate_boundary_condition(name, None),
+                                f"「{name}」已重新激活。")
         elif action == "region":
             if manager is not None:
                 manager.accept()

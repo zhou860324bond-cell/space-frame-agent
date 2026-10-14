@@ -158,6 +158,72 @@ class FeaturesMixin:
         return self._create_feature("bcs", feature)
 
     @_records
+    def modify_boundary_condition(self, name: str, step: str, fix: list[int] | None = None,
+                                  preset: str | None = None,
+                                  spring: list[float] | None = None) -> ToolResult:
+        """在后面某一步修改边界条件（Abaqus 管理器在步列上的 Edit/Modify）。
+
+        从 ``step`` 起改用新的约束与弹簧，直到再被修改或失活；线性摄动步里的修改
+        只在那一步。fix、preset、spring 都不给时撤销这一步的修改（恢复传播）。
+        创建步里的值用 edit_feature 改。
+        """
+        candidate = deepcopy(self.model)
+        feature = self._find_feature(candidate, "bcs", name)
+        if feature is None:
+            return ToolResult(False, {"error": f"没有名为「{name}」的边界条件"})
+        if step == (feature.get("step") or _features.INITIAL):
+            return ToolResult(False, {"error": f"「{step}」是它的创建步，创建步里的值用 edit_feature 改"})
+        mods = dict(feature.get("modifications") or {})
+        if fix is None and preset is None and spring is None:
+            if mods.pop(step, None) is None:
+                return ToolResult(False, {"error": f"「{name}」在「{step}」没有修改可撤销"})
+        else:
+            if preset is not None:
+                key = str(preset).upper()
+                if key not in BC_PRESETS:
+                    return ToolResult(False, {"error": f"preset 只能是 {sorted(BC_PRESETS)}"})
+                fix = BC_PRESETS[key]
+            fix = [int(v) for v in (fix if fix is not None else [0] * 6)]
+            if len(fix) != 6 or any(v not in (0, 1) for v in fix):
+                return ToolResult(False, {"error": "fix 必须是六个 0 或 1，顺序 ux uy uz rx ry rz"})
+            entry: dict[str, Any] = {"fix": fix}
+            if spring is not None:
+                values = [float(v) for v in spring]
+                if len(values) != 6 or not all(np.isfinite(v) and v >= 0 for v in values):
+                    return ToolResult(False, {"error": "spring 必须是六个非负有限数"})
+                if any(values):
+                    entry["spring"] = values
+            mods[step] = entry
+        if mods:
+            feature["modifications"] = mods
+        else:
+            feature.pop("modifications", None)
+        return self._commit_bc_steps(candidate, feature)
+
+    @_records
+    def deactivate_boundary_condition(self, name: str, step: str | None) -> ToolResult:
+        """从 ``step`` 起失活边界条件（Abaqus 管理器的 Deactivate）；step 给 None 表示重新激活。"""
+        candidate = deepcopy(self.model)
+        feature = self._find_feature(candidate, "bcs", name)
+        if feature is None:
+            return ToolResult(False, {"error": f"没有名为「{name}」的边界条件"})
+        if step is None:
+            if feature.pop("deactivated", None) is None:
+                return ToolResult(False, {"error": f"「{name}」没有失活，不用重新激活"})
+        else:
+            feature["deactivated"] = str(step)
+        return self._commit_bc_steps(candidate, feature)
+
+    def _commit_bc_steps(self, candidate: dict, feature: dict) -> ToolResult:
+        problems = _features.bc_problems(candidate, feature)
+        if problems:
+            return ToolResult(False, {"errors": problems, "hint": "改动未写入，原模型保持不变。"})
+        states = [{"step": step, "status": status} for step, _v, status
+                  in _features.bc_states(candidate, feature)]
+        return self._commit_features(candidate, {"kind": "bcs", "name": feature["name"],
+                                                 "steps": states})
+
+    @_records
     def create_load(self, name: str, case: str, load_type: str, region,
                     force: list[float] | None = None, moment: list[float] | None = None,
                     w: list[float] | None = None, g: list[float] | None = None) -> ToolResult:

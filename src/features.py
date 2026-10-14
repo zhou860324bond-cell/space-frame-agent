@@ -80,6 +80,16 @@ SCHEMA = {
                         "items": {"type": "integer", "enum": [0, 1]}},
                 "spring": {"type": "array", "minItems": 6, "maxItems": 6,
                            "items": {"type": "number", "minimum": 0}},
+                # Abaqus 管理器里在后面某一步 Modify：步名 → 那一步起的约束与弹簧
+                "modifications": {"type": "object", "additionalProperties": {
+                    "type": "object", "additionalProperties": False, "required": ["fix"],
+                    "properties": {
+                        "fix": {"type": "array", "minItems": 6, "maxItems": 6,
+                                "items": {"type": "integer", "enum": [0, 1]}},
+                        "spring": {"type": "array", "minItems": 6, "maxItems": 6,
+                                   "items": {"type": "number", "minimum": 0}}}}},
+                # Abaqus 管理器里的 Deactivate：从这一步起不再生效
+                "deactivated": {"type": "string", "minLength": 1},
                 "suppressed": {"type": "boolean"},
             }}},
         "loads": {"type": "array", "items": {
@@ -260,11 +270,94 @@ def _merge_support(entry: dict[str, Any], feature: dict[str, Any]) -> str | None
     return None
 
 
+def _step_order(payload: dict[str, Any]) -> list[tuple[str, bool]]:
+    """[(步名, 是否线性摄动步)]，Initial 在最前。"""
+    from steps import PERTURBATION
+    return [(INITIAL, False)] + [(str(s["name"]), s.get("analysis", "linear") in PERTURBATION)
+                                 for s in payload.get("steps") or []]
+
+
+def _bc_values(source: dict[str, Any]) -> dict[str, Any] | None:
+    """{fix, spring}；一个方向都不约束、也没有弹簧时返回 None（等于不起作用）。"""
+    fix = [int(v) for v in source["fix"]]
+    spring = [float(v) for v in source.get("spring") or []]
+    if not any(fix) and not any(spring):
+        return None
+    return {"fix": fix, **({"spring": spring} if any(spring) else {})}
+
+
+def bc_problems(payload: dict[str, Any], feature: dict[str, Any]) -> list[str]:
+    """边界条件的分析步引用：创建、修改、失活的步要存在，先后顺序要对。"""
+    order = [name for name, _ in _step_order(payload)]
+    label = f"边界条件「{feature['name']}」"
+    created = feature.get("step") or INITIAL
+    if created not in order:
+        return [f"{label}所在的分析步「{created}」不存在"]
+    out = []
+    first = order.index(created)
+    off = feature.get("deactivated")
+    if off is not None:
+        if off not in order:
+            out.append(f"{label}在不存在的分析步「{off}」失活")
+        elif order.index(off) <= first:
+            out.append(f"{label}在「{off}」失活，但它在「{created}」才创建；失活要在创建之后的步")
+    for step in feature.get("modifications") or {}:
+        if step not in order:
+            out.append(f"{label}在不存在的分析步「{step}」被修改")
+        elif order.index(step) <= first:
+            out.append(f"{label}在「{step}」的修改早于或等于创建步「{created}」；创建步里直接编辑它")
+        elif off in order and order.index(step) >= order.index(off):
+            out.append(f"{label}在「{step}」的修改不早于失活步「{off}」，不会生效")
+    return out
+
+
+def bc_states(payload: dict[str, Any], feature: dict[str, Any]
+              ) -> list[tuple[str, dict[str, Any] | None, str]]:
+    """边界条件在每一步的状态：(步名, 生效的 {fix, spring} 或 None, 状态)。
+
+    对应 Abaqus 边界条件管理器的分析步矩阵：创建、传播、修改、失活。通用步里的
+    修改与失活一直延续到后面；线性摄动步里的只在本步（摄动步不改变基态）。
+    在摄动步里创建的边界条件也只在那一步。
+    """
+    created = feature.get("step") or INITIAL
+    mods = feature.get("modifications") or {}
+    off = feature.get("deactivated")
+    out: list[tuple[str, dict[str, Any] | None, str]] = []
+    started, ended, current, tail = False, False, None, ""
+    for name, perturb in _step_order(payload):
+        if ended or (not started and name != created):
+            out.append((name, None, tail if ended else ""))
+            continue
+        if name == created:
+            started = True
+            values = _bc_values(feature)
+            if perturb:
+                ended = True                      # 摄动步里创建的只在本步
+                out.append((name, values, "创建（本步）"))
+                continue
+            current = values
+            out.append((name, values, "创建"))
+            continue
+        if name == off:
+            out.append((name, None, "失活（本步）" if perturb else "失活"))
+            if not perturb:
+                current, ended, tail = None, True, "失活"
+            continue
+        if name in mods:
+            values = _bc_values(mods[name])
+            out.append((name, values, "修改（本步）" if perturb else "修改"))
+            if not perturb:
+                current = values
+            continue
+        out.append((name, current, "传播" if current is not None else "失活"))
+    return out
+
+
 def _regenerate_bcs(payload, problems):
     supports = [s for s in payload.get("supports") or [] if not s.get("owners")]
     direct = {int(s["node"]) for s in supports}
     steps = {s["name"]: s for s in payload.get("steps") or []}
-    for step in steps.values():
+    for step in steps.values():                 # 先撤掉旧的派生条目
         table = step.get("supports")
         if table:
             kept = {k: v for k, v in table.items() if not v.get("owners")}
@@ -272,45 +365,85 @@ def _regenerate_bcs(payload, problems):
                 step["supports"] = kept
             else:
                 step.pop("supports", None)
-    derived: dict[str, dict[int, dict[str, Any]]] = {}
+        owned = step.pop("deactivation_owners", None) or {}
+        if owned:
+            kept_off = [n for n in step.get("deactivate_supports") or [] if str(n) not in owned]
+            if kept_off:
+                step["deactivate_supports"] = kept_off
+            else:
+                step.pop("deactivate_supports", None)
+
+    order = _step_order(payload)
+    tables: list[dict[int, dict[str, Any]]] = [{} for _ in order]
+    seen: set[str] = set()
+
+    def report(text: str) -> None:
+        if text not in seen:
+            seen.add(text)
+            problems.append(text)
+
     for feature in _active("bcs", payload):
-        step = feature.get("step") or INITIAL
-        if step != INITIAL and step not in steps:
-            problems.append(f"边界条件「{feature['name']}」所在的分析步「{step}」不存在")
+        bad = bc_problems(payload, feature)
+        if bad:
+            for text in bad:
+                report(text)
             continue
         ids, problem = region_ids(payload, feature["region"], "nodes")
         if problem:
-            problems.append(f"边界条件「{feature['name']}」：{problem}")
+            report(f"边界条件「{feature['name']}」：{problem}")
             continue
-        table = derived.setdefault(step, {})
-        for nid in ids:
-            if step == INITIAL and nid in direct:
-                problems.append(f"节点 {nid} 既有直接定义的支座，又在边界条件「{feature['name']}」"
-                                "的区域里；请删除直接定义，或把它转成边界条件对象。")
+        clash = sorted(set(ids) & direct)
+        if clash:
+            report(f"节点 {clash} 既有直接定义的支座，又在边界条件「{feature['name']}」"
+                   "的区域里；请删除直接定义，或把它转成边界条件对象。")
+            ids = [n for n in ids if n not in direct]
+        for k, (step_name, values, _status) in enumerate(bc_states(payload, feature)):
+            if values is None:
                 continue
-            if nid in table:
-                conflict = _merge_support(table[nid], feature)
-                if conflict:
-                    problems.append(conflict + "；请调整其中一个的区域或自由度。")
-                continue
-            entry = {"name": feature["name"], "fix": list(feature["fix"]),
-                     "owners": [feature["name"]]}
-            if any(feature.get("spring") or []):
-                entry["spring"] = list(feature["spring"])
-            table[nid] = entry
-    for nid, entry in sorted((derived.get(INITIAL) or {}).items()):
+            table = tables[k]
+            for nid in ids:
+                if nid in table:
+                    conflict = _merge_support(table[nid], {"name": feature["name"], **values})
+                    if conflict:
+                        where = "" if step_name == INITIAL else f"分析步「{step_name}」里，"
+                        report(where + conflict + "；请调整其中一个的区域或自由度。")
+                    continue
+                table[nid] = {"name": feature["name"], "fix": list(values["fix"]),
+                              "owners": [feature["name"]],
+                              **({"spring": list(values["spring"])} if values.get("spring") else {})}
+
+    for nid, entry in sorted(tables[0].items()):
         supports.append({"node": nid, **entry})
     payload["supports"] = supports
-    for step_name, table in derived.items():
-        if step_name == INITIAL:
-            continue
-        target = steps[step_name].setdefault("supports", {})
-        for nid, entry in sorted(table.items()):
+
+    # 分析步只写相对基态的变化：改写的节点进 supports，不再约束的节点进
+    # deactivate_supports 并记下来源，下次再生成时据此撤掉
+    base = tables[0]
+    for k, (step_name, perturb) in enumerate(order[1:], start=1):
+        step, now = steps[step_name], tables[k]
+        target = step.get("supports") or {}
+        for nid, entry in sorted(now.items()):
+            if base.get(nid) == entry:
+                continue
             if str(nid) in target:
-                problems.append(f"节点 {nid} 在分析步「{step_name}」里既有直接改写的支座，"
-                                f"又在边界条件「{entry['owners'][0]}」的区域里")
+                report(f"节点 {nid} 在分析步「{step_name}」里既有直接改写的支座，"
+                       f"又在边界条件「{entry['owners'][0]}」的区域里")
                 continue
             target[str(nid)] = entry
+        if target:
+            step["supports"] = target
+        off = list(step.get("deactivate_supports") or [])
+        owners: dict[str, list[str]] = {}
+        for nid in sorted(set(base) - set(now)):
+            if str(nid) in target or nid in off:
+                continue
+            off.append(nid)
+            owners[str(nid)] = list(base[nid]["owners"])
+        if owners:
+            step["deactivate_supports"] = off
+            step["deactivation_owners"] = owners
+        if not perturb:
+            base = now
 
 
 def _case_blocks(payload) -> dict[str, dict[str, Any]]:

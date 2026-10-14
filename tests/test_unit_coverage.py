@@ -82,6 +82,8 @@ DIMENSIONS = {
     "features.section_assignments.material": None,
     "features.bcs.step": None, "features.bcs.fix": None,
     "features.bcs.spring": "support_spring",
+    # 后续步的修改：与 bcs 本身同一批字段（fix 无量纲、spring 是支承刚度），见 test_bc_modification_springs_convert
+    "features.bcs.modifications": "support_entry", "features.bcs.deactivated": None,
     "features.loads.case": None, "features.loads.type": None,
     "features.loads.force": "force", "features.loads.moment": "moment",
     "features.loads.w": "line_load", "features.loads.g": "acceleration",
@@ -128,7 +130,7 @@ DIMENSIONS = {
     "steps.name": None, "steps.analysis": None, "steps.increments": None,
     "steps.num_modes": None,
     "steps.loads": None, "steps.deactivate_loads": None,
-    "steps.deactivate_supports": None,
+    "steps.deactivate_supports": None, "steps.deactivation_owners": None,
     # 分析步里改写的支座：与顶层 supports 同一批字段，同一批量纲。
     "steps.supports": "support_entry",
 }
@@ -249,11 +251,14 @@ def _kitchen_sink_body():
         "steps": [{"name": "S1", "loads": {"default": "RAMP"},
                    "supports": {"2": {"fix": [0, 0, 1, 0, 0, 0],
                                       "spring": [0.0, 0.0, 5e6,
-                                                 0.0, 0.0, 7e7]}}}],
+                                                 0.0, 0.0, 7e7]}}},
+                  {"name": "S2"}],
         "amplitudes": {"c": [[0.0, 0.0], [1.0, 1.0]]},
         "features": {
             "bcs": [{"name": "BC-端部", "region": {"nodes": [2]}, "fix": [0, 1, 0, 0, 0, 0],
-                     "spring": [0.0, 0.0, 0.0, 3e7, 0.0, 0.0]}],
+                     "spring": [0.0, 0.0, 0.0, 3e7, 0.0, 0.0],
+                     "modifications": {"S2": {"fix": [0, 1, 0, 0, 0, 0],
+                                              "spring": [0.0, 0.0, 0.0, 6e7, 0.0, 0.0]}}}],
             "loads": [
                 {"name": "F-端部", "region": {"nodes": [2]}, "case": "default",
                  "type": "concentrated_force", "force": [0.0, 0.0, -2e3]},
@@ -388,3 +393,16 @@ def test_the_kitchen_sink_uses_every_field_that_gets_converted():
     assert not missing, (
         f"这些会换算的字段没被 kitchen_sink 用到：{missing}。"
         "加进去，否则来回换算那条测不出它们。")
+
+
+def test_bc_modification_springs_convert():
+    """边界条件在后续步的修改里也有弹簧刚度：换单位时要和对象本身的 spring 一起换。"""
+    factors = _factors("N-m-Pa", "N-mm-MPa")
+    model = {"units": "N-m-Pa", "nodes": [], "members": [], "materials": [], "sections": [],
+             "supports": [],
+             "features": {"bcs": [{"name": "BC", "region": {"nodes": [1]}, "fix": [1] * 6,
+                                   "modifications": {"S2": {"fix": [0] * 6,
+                                                            "spring": [1e6] * 3 + [2e5] * 3}}}]}}
+    after = convert_model(model, "N-mm-MPa")["features"]["bcs"][0]["modifications"]["S2"]["spring"]
+    for index, value in enumerate([1e6] * 3 + [2e5] * 3):
+        assert after[index] == pytest.approx(value * _expected("support_spring", index, factors))

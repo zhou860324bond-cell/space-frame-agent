@@ -383,3 +383,55 @@ def test_constraint_over_constraint_and_manager_operations():
     assert [f["name"] for f in s.list_features("constraint").payload["features"]["constraints"]] == ["连接"]
     assert s.delete_feature("constraint", "连接").ok
     assert "features" not in s.model or "constraints" not in s.model["features"]
+
+
+def _beam_with_steps() -> Session:
+    """单跨梁 L=6，两端各一个固接边界条件，满跨均布 w；S1 原样、S2 右端改铰、S3 右端失活。"""
+    s = Session()
+    assert s.add_nodes([[0, 0, 0], [3, 0, 0], [6, 0, 0]]).ok
+    assert s.define_materials_and_sections(
+        [{"name": "S", "E": 2e11, "nu": 0.3}],
+        [{"name": "R", "A": 1e-2, "Iy": 2e-5, "Iz": 8e-5, "J": 1e-5}]).ok
+    assert s.add_members([[1, 2], [2, 3]]).ok
+    assert s.create_section_assignment("SA", [1, 2], "R", "S").ok
+    assert s.create_boundary_condition("BC-左", [1], preset="ENCASTRE").ok
+    assert s.create_boundary_condition("BC-右", [3], preset="ENCASTRE").ok
+    _case(s)
+    assert s.create_load("均布", "DL", "line_load", [1, 2], w=[0, 0, -1e4]).ok
+    for name in ("S1", "S2", "S3"):
+        assert s.add_step(name, loads={"DL": "RAMP"} if name == "S1" else None).ok, name
+    return s
+
+
+def test_bc_modified_and_deactivated_in_later_steps_match_closed_forms():
+    """Abaqus 管理器在步列上 Modify / Deactivate：同一根梁三步三种支承。
+
+    固端 R = wL/2；右端改铰（固-铰梁）铰端 R = 3wL/8；右端失活（悬臂）左端 R = wL。
+    原来只能在分析步里按节点号写支座改写，对象层的边界条件改不了、也失活不了。
+    """
+    s = _beam_with_steps()
+    got = s.modify_boundary_condition("BC-右", "S2", preset="PINNED")
+    assert got.ok, got.payload
+    got = s.deactivate_boundary_condition("BC-右", "S3")
+    assert got.ok, got.payload
+    assert [x["status"] for x in got.payload["steps"]] == ["创建", "传播", "修改", "失活"]
+    w, L = 1e4, 6.0
+    expected = {"S1": (3, w * L / 2), "S2": (3, 3 * w * L / 8), "S3": (1, w * L)}
+    for step, (node, reaction) in expected.items():
+        assert s.solve_steps(inspect=step).ok, step
+        k = s.frame.index_of()[node]
+        assert s.solution.R[6 * k + 2] == pytest.approx(reaction, rel=1e-9), step
+    # 撤销修改、重新激活：回到三步都是固端
+    assert s.modify_boundary_condition("BC-右", "S2").ok
+    assert s.deactivate_boundary_condition("BC-右", None).ok
+    assert "deactivate_supports" not in s.model["steps"][2] and not s.model["steps"][1].get("supports")
+    assert not s.deactivate_boundary_condition("BC-右", "Initial").ok, "失活不能早于创建"
+
+
+def test_a_bc_created_in_a_later_step_merges_with_the_existing_one_on_the_node():
+    """后面步里新建的边界条件只加它自己的方向，不能把节点上已有的约束整个顶掉。"""
+    s = _beam_with_steps()
+    assert s.edit_feature("bc", "BC-右", {"fix": [0, 0, 1, 0, 0, 0]}).ok
+    assert s.create_boundary_condition("BC-右加", [3], fix=[1, 1, 0, 1, 1, 1], step="S2").ok
+    entry = s.model["steps"][1]["supports"]["3"]
+    assert entry["fix"] == [1] * 6 and sorted(entry["owners"]) == ["BC-右", "BC-右加"]

@@ -250,6 +250,19 @@ def payload_for(effective: EffectiveStep,
     out = deepcopy(payload)
     out["supports"] = [{"node": node, **entry}
                        for node, entry in sorted(effective.supports.items())]
+    features = out.get("features") or {}
+    if features.get("bcs"):
+        # 这一步的支座已经结算好了：边界条件对象在这份快照里冻结成直接条目，
+        # 否则校验时按对象再生成一遍，得到的是 Initial 步的支座，与快照对不上
+        del features["bcs"]
+        if not features:
+            out.pop("features", None)
+        for entry in out["supports"]:
+            entry.pop("owners", None)
+        for step in out.get("steps") or []:
+            for entry in (step.get("supports") or {}).values():
+                entry.pop("owners", None)
+            step.pop("deactivation_owners", None)
     return out
 
 

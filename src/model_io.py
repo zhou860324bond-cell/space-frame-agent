@@ -390,6 +390,9 @@ MODEL_SCHEMA: dict[str, Any] = {
                     },
                     "deactivate_supports": {"type": "array",
                                             "items": {"type": "integer"}},
+                    # 由边界条件对象派生的失活：节点 → 来源对象名（再生成时据此撤掉）
+                    "deactivation_owners": {"type": "object", "additionalProperties": {
+                        "type": "array", "items": {"type": "string", "minLength": 1}}},
                     "increments": {"type": "integer", "minimum": 1},
                 },
             },

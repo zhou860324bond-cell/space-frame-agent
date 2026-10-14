@@ -50,6 +50,7 @@ MUTATING = frozenset({
     # 建模对象（Abaqus 式截面指派、边界条件、荷载）的创建与管理器操作
     "create_section_assignment", "create_beam_orientation", "create_boundary_condition",
     "create_load", "create_constraint",
+    "modify_boundary_condition", "deactivate_boundary_condition",
     "edit_feature", "rename_feature", "copy_feature", "suppress_feature", "delete_feature",
     # Part 模块：分割杆件加顶点、基准点
     "partition_member", "create_datum_point", "delete_datum_point",
@@ -208,6 +209,12 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
                 "suppress_feature": "抑制" if args.get("suppressed", True) else "恢复",
                 "delete_feature": "删除"}[tool]
         return f"{verb}「{args.get('name')}」"
+    if tool == "modify_boundary_condition":
+        return f"在「{args.get('step')}」修改边界条件「{args.get('name')}」"
+    if tool == "deactivate_boundary_condition":
+        step = args.get("step")
+        return (f"在「{step}」失活边界条件「{args.get('name')}」" if step
+                else f"重新激活边界条件「{args.get('name')}」")
     if tool == "partition_member":
         return f"分割杆件 {args.get('member_id')}：顶点为节点 {payload.get('node')}"
     if tool == "create_datum_point":

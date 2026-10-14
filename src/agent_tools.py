@@ -253,6 +253,37 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "modify_boundary_condition",
+            "description":
+                "在后面某一分析步修改边界条件（Abaqus 管理器的 Modify）：从该步起改用新的 fix/preset/spring，"
+                "直到再被修改或失活；线性摄动步里的修改只在那一步。三者都不给表示撤销该步的修改。"
+                "创建步里的值用 edit_feature 改。",
+            "parameters": {"type": "object", "required": ["name", "step"],
+                           "properties": {
+                               "name": {"type": "string"}, "step": {"type": "string"},
+                               "preset": {"type": "string",
+                                          "enum": ["ENCASTRE", "PINNED", "XSYMM", "YSYMM", "ZSYMM"]},
+                               "fix": {"type": "array", "items": {"type": "integer"}},
+                               "spring": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deactivate_boundary_condition",
+            "description":
+                "从某一分析步起失活边界条件（Abaqus 管理器的 Deactivate），step 给 null 重新激活。"
+                "失活步要在创建步之后。",
+            "parameters": {"type": "object", "required": ["name", "step"],
+                           "properties": {"name": {"type": "string"},
+                                          "step": {"type": ["string", "null"]}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_load",
             "description":
                 "荷载对象（Abaqus 的 Create Load），属于某个工况、施加在一个区域上，是**一个**对象"

@@ -397,22 +397,14 @@ def step_matrix(model: dict[str, Any], kind: str, features: list[dict]) -> tuple
         return names, {f["name"]: [f"分析步有误：{exc}"] + [""] * (len(names) - 1)
                        for f in features}
     table = {}
+    import features as feature_module
     for feature in features:
         cells = []
         if kind == "bcs":
-            created = feature.get("step") or "Initial"
-            started = False
-            for col, step_name in enumerate(names):
-                if step_name == created:
-                    cells.append("创建")
-                    started = True
-                elif started:
-                    eff = effective[col - 1]
-                    live = any(feature["name"] in (entry.get("owners") or [entry.get("name")])
-                               for entry in eff.supports.values())
-                    cells.append("传播" if live else "失活")
-                else:
-                    cells.append("")
+            # 与求解同源：状态来自对象层的 bc_states（创建 / 传播 / 修改 / 失活）
+            source = next((f for f in (model.get("features") or {}).get("bcs") or []
+                           if f["name"] == feature["name"]), feature)
+            cells = [status for _step, _values, status in feature_module.bc_states(model, source)]
         else:
             cells.append("")                                  # 荷载不进 Initial 步
             for eff in effective:
@@ -449,9 +441,13 @@ class ObjectManagerDialog(QDialog):
         layout.addWidget(self.table, 1)
         row = QHBoxLayout()
         self.buttons: dict[str, QPushButton] = {}
-        for key, text in (("create", "创建…"), ("edit", "编辑…"), ("region", "编辑区域…"),
-                          ("copy", "复制…"), ("rename", "改名…"), ("delete", "删除"),
-                          ("suppress", "抑制"), ("resume", "恢复")):
+        keys = (("create", "创建…"), ("edit", "编辑…"), ("region", "编辑区域…"),
+                ("copy", "复制…"), ("rename", "改名…"), ("delete", "删除"),
+                ("suppress", "抑制"), ("resume", "恢复"))
+        if kind == "bcs":
+            # Abaqus 的边界条件管理器：选中某一步的格子，编辑即在该步修改，另有失活 / 激活
+            keys += (("deactivate", "失活"), ("activate", "激活"))
+        for key, text in keys:
             button = QPushButton(text, self)
             button.clicked.connect(lambda _=False, k=key: self._run(k))
             row.addWidget(button)
@@ -470,12 +466,21 @@ class ObjectManagerDialog(QDialog):
         item = self.table.item(row, 0) if row >= 0 else None
         return item.text() if item else None
 
+    def selected_step(self) -> str | None:
+        """当前格子所在的分析步列（边界条件管理器）；不在步列上时为 None。"""
+        col = self.table.currentColumn()
+        first = len(self.COLUMNS[self.kind])
+        if self.kind != "bcs" or col < first or col >= first + len(self.steps):
+            return None
+        return self.steps[col - first]
+
     def refresh(self) -> None:
         listed = self.window.session.list_features(self.kind).payload["features"][self.kind]
-        current = self.selected_name()
+        current, column = self.selected_name(), self.table.currentColumn()
         steps, matrix = ([], {})
         if self.kind in ("bcs", "loads"):
             steps, matrix = step_matrix(self.window.session.model, self.kind, listed)
+        self.steps = steps
         headers = [*self.COLUMNS[self.kind], *steps, "状态"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
@@ -492,7 +497,7 @@ class ObjectManagerDialog(QDialog):
                 item.setToolTip(text)
                 self.table.setItem(row, col, item)
             if feature["name"] == current:
-                self.table.selectRow(row)
+                self.table.setCurrentCell(row, max(column, 0))
         if self.table.currentRow() < 0 and listed:
             self.table.selectRow(0)
         self._sync_buttons()
@@ -503,5 +508,6 @@ class ObjectManagerDialog(QDialog):
             button.setEnabled(key == "create" or has)
 
     def _run(self, action: str) -> None:
-        self.window.manage_object(self.kind, action, self.selected_name(), manager=self)
+        self.window.manage_object(self.kind, action, self.selected_name(), manager=self,
+                                  step=self.selected_step())
         self.refresh()
