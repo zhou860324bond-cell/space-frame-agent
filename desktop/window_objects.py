@@ -116,12 +116,18 @@ class WindowObjectsMixin:
 
     # --- 荷载 ---
 
-    def create_load(self) -> None:
-        """Abaqus 式：创建载荷 → 选区域（节点或杆件，按类型）→ 编辑分量。"""
+    def create_load(self, load_type: str | None = None) -> None:
+        """Abaqus 式：创建载荷 → 选区域（节点或杆件，按类型）→ 编辑分量。
+
+        ``load_type`` 预选类型（重力按钮用）；重力且没选杆件时区域默认全部杆件。
+        """
         cases = [c["name"] for c in self.session.model.get("load_cases") or []]
-        dialog = CreateObjectDialog("创建载荷", next_name("Load", self._feature_names("loads")),
+        prefix = "Gravity" if load_type == "gravity" else "Load"
+        dialog = CreateObjectDialog("创建载荷", next_name(prefix, self._feature_names("loads")),
                                     "工况", cases or ["Load-1"], LOAD_TYPES, self,
                                     editable_scope=True)
+        if load_type is not None and hasattr(dialog, "kind"):
+            dialog.kind.setCurrentIndex([v for _, v in LOAD_TYPES].index(load_type))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         name, case, load_type = dialog.values()
@@ -132,9 +138,12 @@ class WindowObjectsMixin:
                 QMessageBox.warning(self, "工况未创建", self._explain(created.payload))
                 return
         kind = LOAD_REGION[load_type]
+        initial = self._initial_region(kind)
+        if load_type == "gravity" and not initial:
+            initial = [int(m["id"]) for m in self.session.model.get("members") or []]
         self.region_pick.start(kind, f"创建载荷「{name}」",
                                lambda region: self._finish_load(name, case, load_type, region),
-                               self._initial_region(kind))
+                               initial)
 
     def _finish_load(self, name: str, case: str, load_type: str, region: dict) -> None:
         default = {"gravity": [0.0, 0.0, -self.session.units.gravity]}.get(load_type,

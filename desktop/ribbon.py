@@ -616,7 +616,6 @@ def build(window) -> Ribbon:
     p = r.page("装配")
     g = p.group("拓扑与区域")
     g.add_large(a["assembly_check"]); g.add_large(a["model_sets"])
-    g.add_small(a["tables"])
 
     # ========== 分析步 ==========
     p = r.page("分析")
@@ -629,11 +628,8 @@ def build(window) -> Ribbon:
     p = r.page("连接")
     g = p.group("杆端力学连接")
     g.add_large(a["member_connections"]); g.add_small(a["hinge"])
-    g.add_small(a["beam_orientation"])
     g = p.group("约束")
     g.add_large(a["create_constraint"]); g.add_small(a["constraint_manager"])
-    g = p.group("检查")
-    g.add_small(a["support_diagnosis"])
 
     # ========== 载荷 ==========
     p = r.page("载荷")
@@ -653,7 +649,7 @@ def build(window) -> Ribbon:
     g.add_large(a["seed_part"]); g.add_large(a["seed_edges"]); g.add_small(a["clear_seeds"])
     # 预览输出杆段映射表，常驻模式按钮只负责显示切换。
     g = p.group("整体梁离散")
-    g.add_large(a["mesh_preview"]); g.add_small(a["modeling_workflow"])
+    g.add_large(a["mesh_preview"])
     note = QLabel("用下方“分析网格”查看自动剖分与映射；\n局部实体网格在整体求解后设置。", p)
     note.setWordWrap(True)
     p._row.insertWidget(p._row.count() - 1, note)

@@ -1304,3 +1304,41 @@ def test_bc_manager_modifies_and_deactivates_in_the_selected_step(qt_app, monkey
     cells = [manager.table.item(row, first + k).text() for k in range(4)]
     assert cells == ["创建", "传播", "修改", "失活"]
     assert s.solve_steps().ok
+
+
+def test_gravity_and_batch_assignment_create_objects_like_their_abaqus_counterparts(qt_app, monkeypatch):
+    """重力按钮与批量属性指派不再写逐杆直接条目：得到的是载荷管理器、截面指派管理器里的对象。
+
+    原来同一件事有两条路，结果是两种数据：一种能在管理器里编辑、抑制，另一种只能去表格里删。
+    """
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("Gravity-1", "D", "gravity"))
+    _stub(monkeypatch, "EditLoadDialog", vector=[0.0, 0.0, -9.80665])
+    w.apply_gravity()
+    assert w.region_pick.active
+    assert sorted(w.viewport.region_selection.ids) == sorted(m["id"] for m in s.model["members"]), \
+        "重力的区域默认全部杆件"
+    w.region_pick.finish()
+    load = next(f for f in s.model["features"]["loads"] if f["name"] == "Gravity-1")
+    assert load["type"] == "gravity"
+
+    from desktop import assignment_dialog
+    target = [m["id"] for m in s.model["members"][:2]]
+
+    class _Batch:
+        def __init__(self, *a, **k):
+            self.target = type("T", (), {"member_ids": lambda _self: target})()
+
+        def exec(self):
+            from PySide6.QtWidgets import QDialog
+            return QDialog.DialogCode.Accepted
+
+        def get_assignment(self):
+            return "COLUMN", "Q355"
+
+    monkeypatch.setattr(assignment_dialog, "BatchAssignmentDialog", _Batch)
+    w.assign_member_group()
+    assignment = s.model["features"]["section_assignments"][0]
+    assert assignment["region"] == {"members": sorted(target)}
+    assert "support" not in w.actions_by_name, "支座管理器与边界条件管理器是同一个，只留一个入口"

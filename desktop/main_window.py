@@ -507,7 +507,7 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
                  ("装配", ("assembly_check", "model_sets")),
                  ("连接", ("member_connections", "hinge")),
                  ("作业", ("model_check", "support_diagnosis", "solve", "solve_steps", "stop_task")),
-                 ("载荷", ("create_bc", "support", None,
+                 ("载荷", ("create_bc", "bc_manager", None,
                            "create_load", "gravity", None,
                            "load", "combo")),
                  ("分析", ("solve", None, "modal", "buckling", "solid_joint", None,
@@ -1708,17 +1708,15 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
         self.open_parametric(BY_NAME["portal"])
 
     def apply_gravity(self) -> None:
-        """直接按材料密度和截面面积计算自重荷载，施加到所有杆件上。"""
+        """Abaqus 的 Gravity 载荷：走创建载荷流程，类型预选重力，区域默认全部杆件。
+
+        原来这里直接写逐杆的自重条目，和「创建载荷 → 重力」得到的荷载对象是两种
+        东西：一个能在载荷管理器里编辑、抑制，另一个只能去表格里删。
+        """
         if not self.session.model.get("members"):
             self.statusBar().showMessage("当前没有杆件，无法计算自重。", 5000)
             return
-        result = self.session.add_self_weight()
-        if not result.ok:
-            self.statusBar().showMessage(
-                f"施加自重失败：{self._explain(result.payload)}", 8000)
-            return
-        self._after_manual_edit(
-            f"已将自重写入 {result.payload['case']} 工况（{result.payload['members']} 根杆件）")
+        self.create_load(load_type="gravity")
 
     def show_bc_panel(self) -> None:
         """打开边界条件面板。"""
@@ -1986,11 +1984,15 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         section, material = dialog.get_assignment()
-        result = self.session.assign_properties(dialog.target.member_ids(), section, material)
+        # 与「截面指派」同一种对象：原来这里写的是逐杆的直接条目，管理器里看不见
+        from .object_dialogs import next_name
+        name = next_name("SA", self._feature_names("section_assignments"))
+        result = self.session.create_section_assignment(name, dialog.target.member_ids(),
+                                                        section, material)
         if not result.ok:
             QMessageBox.warning(self, "属性未指派", self._explain(result.payload))
             return
-        self._after_manual_edit("所选杆件的材料与截面已指派。")
+        self._after_manual_edit(f"已创建截面指派「{name}」。")
 
     def _configure_member_group(self, orientation=False) -> None:
         from .assignment_dialog import MemberSetupDialog

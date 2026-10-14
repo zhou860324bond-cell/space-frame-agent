@@ -62,7 +62,8 @@ COMMANDS: tuple[Command, ...] = (
     Command("model_sets", "命名集合", "table",
             "为节点或杆件组建立可保存、可复用的名字", "open_model_sets"),
     Command("batch_assignment", "批量属性指派", "assign_section",
-            "按编号、方向或集合选择多根杆件，同时指派材料和截面", "assign_member_group"),
+            "按编号、方向或集合挑出多根杆件，建一个截面指派对象（与截面指派同一种对象，"
+            "在截面指派管理器里管理）", "assign_member_group"),
     Command("beam_orientation", "梁截面方向", "iso",
             "Abaqus 式 Assign Beam Orientation：先在视口选杆件区域（Shift 加选、Ctrl 减选、拖框，"
             "或使用集合），再给截面高度方向 n1；方向是一个对象，区域是集合时随集合更新",
@@ -135,9 +136,9 @@ COMMANDS: tuple[Command, ...] = (
     Command("load", "载荷管理器", "load",
             "列出全部荷载对象：创建、编辑、编辑区域、复制、改名、删除、抑制、恢复", "open_load_manager"),
     Command("combo", "荷载组合", "combo", "弹出对话框编辑荷载组合（按分项系数组合）", "edit_load_combos"),
-    Command("gravity", "重力", "gravity", "按密度和截面面积自动计算自重荷载", "apply_gravity"),
-    Command("support", "支座管理器", "support",
-            "列出全部边界条件对象（与边界条件管理器相同）", "open_bc_manager"),
+    Command("gravity", "重力", "gravity",
+            "Abaqus 式 Gravity 载荷：创建载荷，类型预选重力，区域默认全部杆件；"
+            "按材料密度与截面面积计算，结果是一个可编辑、可抑制的荷载对象", "apply_gravity"),
     Command("create_constraint", "创建约束", "hinge",
             "Abaqus 式 Create Constraint：名称、类型（MPC BEAM / TIE / PIN、运动耦合）→ 选主节点 → "
             "选从节点区域（Shift 加选、Ctrl 减选、拖框，或使用集合）→ 运动耦合勾选自由度", "create_constraint_ui"),
