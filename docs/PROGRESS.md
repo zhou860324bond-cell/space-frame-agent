@@ -1,5 +1,12 @@
 # 工作进度
 
+## 真实工字钢外形与节点图片核对（2026-10-14）
+
+- 用户指出连续体版仍不像现实工字钢节点，要求查图片及现成函数；本轮只核对来源，不再以几何连通、圆角成功或求解通过作为实际外形正确的证据，未改节点、用户模型或求解器。
+- 核对当前截面代码：工字形只有高、宽、腹板厚和翼缘厚，轮廓是尖角多边形，缺少型钢根部圆角及斜翼缘参数。查到sectionproperties的[i_section](https://sectionproperties.readthedocs.io/en/stable/gen/sectionproperties.pre.library.steel_sections.i_section.html)及[tapered_flange_i_section](https://sectionproperties.readthedocs.io/en/stable/gen/sectionproperties.pre.library.steel_sections.tapered_flange_i_section.html)；分别支持根部圆角、斜翼缘及根/端圆角，可参考开源实现，尚未接入项目，也不能据此自动决定节点构造。
+- 收集[实际梁柱连接照片](https://www.hardfacingfty.com/i-beam-welding/)与[CYPE柱及正交梁构造图](https://uniones.cype.es/ampliadas/union_I_soldada_1069.htm)。后者明确是铰接例子，仅作形状参考，不能套入当前整体刚接模型。核对[Tekla自动切口与翼缘避让](https://support.tekla.com/doc/tekla-structures/2025/conn_151_help)和[Dlubal杆件切割](https://www.dlubal.com/en/downloads-and-information/documents/online-manuals/rfem-6-steel-joints/002940)：成熟做法按翼缘、腹板、切口和连接板定义构造。
+- 下一步应先确定真实型钢轮廓与有图可对照的节点模板，再定义有限元连接；连续位移/理想粘结的分析近似不要求把外形熔成统一圆角体。本轮不自行选新构造替换用户模型。开工已读进度并成功git pull公开分支；仅更新调研记录，回归基线不变，Word按约定重新导出。
+
 ## 一体连续柱顶节点（2026-10-14）
 
 - 用户确认采用一体连续实体，保留杆件截面，只在交汇处过渡；不建立焊缝、螺栓或接触。
