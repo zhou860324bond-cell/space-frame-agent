@@ -213,3 +213,27 @@ def test_a_beam_orientation_parallel_to_a_member_is_rejected_with_its_id():
     got = s.create_beam_orientation("Ori-错", "柱", [0, 0, 1])     # 柱沿 Z
     assert not got.ok
     assert any("杆件 1" in e and "平行" in e for e in got.payload["errors"])
+
+
+def test_load_cases_can_be_defined_before_any_support():
+    """原来 set_load_cases 拿整个模型去校验，没有支座就建不了工况，建模顺序被定死；
+    Abaqus 允许先定义荷载、后加边界条件。"""
+    s = _geometry()
+    got = s.set_load_cases([{"name": "DL"}, {"name": "LL"}])
+    assert got.ok, got.payload
+    assert s.create_load("楼面", "LL", "line_load", "梁", w=[0, 0, -1e3]).ok
+
+
+def test_manager_step_matrix_shows_created_propagated_and_active():
+    """管理器按分析步分列（Abaqus 的 Created / Propagated），传播关系一眼可见。"""
+    from desktop.object_dialogs import step_matrix
+    s = _with_objects()
+    assert s.add_step("S1", loads={"DL": "RAMP"}).ok
+    assert s.add_step("S2").ok
+    bcs = s.list_features("bc").payload["features"]["bcs"]
+    names, table = step_matrix(s.model, "bcs", bcs)
+    assert names == ["Initial", "S1", "S2"]
+    assert table["BC-柱脚"] == ["创建", "传播", "传播"]
+    loads = s.list_features("load").payload["features"]["loads"]
+    _, table = step_matrix(s.model, "loads", loads)
+    assert table["楼面"] == ["", "生效（RAMP）", "生效（RAMP）"]

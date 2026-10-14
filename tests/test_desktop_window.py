@@ -1075,3 +1075,16 @@ def test_assign_beam_orientation_follows_the_region_first_flow(qt_app, monkeypat
     w.region_pick.finish()
     member = next(m for m in s.model["members"] if m["id"] == target)
     assert member["ref_vector"] == [0.0, 1.0, 0.0] and member["orientation"] == "Ori-1"
+
+
+def test_create_load_can_name_a_new_case_on_the_spot(qt_app, monkeypatch):
+    """荷载属于工况；原来没有工况时只弹提示让用户去别处建，现在输入新名字即就地新建。"""
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("屋面活载", "LL", "line_load"))
+    _stub(monkeypatch, "EditLoadDialog", vector=[0.0, 0.0, -500.0])
+    w.create_load()
+    w.viewport.region_selection.apply("member", [s.model["members"][0]["id"]])
+    w.region_pick.finish()
+    assert "LL" in [c["name"] for c in s.model["load_cases"]]
+    assert [f["name"] for f in s.model["features"]["loads"]] == ["屋面活载"]

@@ -76,15 +76,18 @@ class WindowObjectsMixin:
     def create_load(self) -> None:
         """Abaqus 式：创建载荷 → 选区域（节点或杆件，按类型）→ 编辑分量。"""
         cases = [c["name"] for c in self.session.model.get("load_cases") or []]
-        if not cases:
-            QMessageBox.information(self, "还没有工况",
-                                    "荷载属于某个工况。请先在「荷载组合」旁的工况管理里新建工况，再创建载荷。")
-            return
         dialog = CreateObjectDialog("创建载荷", next_name("Load", self._feature_names("loads")),
-                                    "工况", cases, LOAD_TYPES, self)
+                                    "工况", cases or ["Load-1"], LOAD_TYPES, self,
+                                    editable_scope=True)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         name, case, load_type = dialog.values()
+        if case not in cases:
+            # 输入了一个新工况名：就地建好，不必先去别处建工况
+            created = self.session.add_load_case(case)
+            if not created.ok:
+                QMessageBox.warning(self, "工况未创建", self._explain(created.payload))
+                return
         kind = LOAD_REGION[load_type]
         self.region_pick.start(kind, f"创建载荷「{name}」",
                                lambda region: self._finish_load(name, case, load_type, region),

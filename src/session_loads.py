@@ -101,7 +101,12 @@ class LoadsMixin:
             candidate.pop(key, None)
         candidate["load_cases"] = deepcopy(cases)
         candidate["combos"] = deepcopy(combos or [])
-        errors = validate_payload(candidate)
+        # 只拒绝这次修改新引入的错误：几何刚建好、还没加支座时，原本就有的
+        # 「supports 不能为空」不该挡住定义工况。Abaqus 也允许先定义荷载、
+        # 后加边界条件；原来这里拿整个模型去校验，建模顺序被强行定死。
+        from model_io import validate_editing_payload
+        before = set(validate_editing_payload(self.model))
+        errors = [e for e in validate_editing_payload(candidate) if e not in before]
         if errors:
             return ToolResult(False, {"errors": errors,
                                       "hint": "荷载定义未写入，原模型保持不变"})

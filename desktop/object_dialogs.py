@@ -47,7 +47,7 @@ class CreateObjectDialog(QDialog):
     """第一段：名称、分析步或工况、类型。确定后进入区域选择。"""
 
     def __init__(self, title: str, name: str, scope_label: str, scopes: list[str],
-                 types: tuple[tuple[str, Any], ...], parent=None):
+                 types: tuple[tuple[str, Any], ...], parent=None, editable_scope: bool = False):
         super().__init__(parent)
         self.setWindowTitle(title)
         layout = QVBoxLayout(self)
@@ -56,6 +56,8 @@ class CreateObjectDialog(QDialog):
         self.name = QLineEdit(name, self)
         self.scope = QComboBox(self)
         self.scope.addItems(scopes)
+        # 荷载的工况可以就地新建：输入一个还没有的名字即可，不必先去别处建工况
+        self.scope.setEditable(editable_scope)
         self.kind = QComboBox(self)
         for label, value in types:
             self.kind.addItem(label, value)
@@ -73,10 +75,14 @@ class CreateObjectDialog(QDialog):
         if not self.name.text().strip():
             self.name.setFocus()
             return
+        if not self.scope.currentText().strip():
+            self.scope.setFocus()
+            return
         self.accept()
 
     def values(self) -> tuple[str, str, Any]:
-        return self.name.text().strip(), self.scope.currentText(), self.kind.currentData()
+        return (self.name.text().strip(), self.scope.currentText().strip(),
+                self.kind.currentData())
 
 
 class EditBCDialog(QDialog):
@@ -282,13 +288,59 @@ def describe_values(kind: str, feature: dict[str, Any]) -> str:
     return f"{label} ({', '.join(f'{v:g}' for v in vec)})"
 
 
+def step_matrix(model: dict[str, Any], kind: str, features: list[dict]) -> tuple[list[str], dict]:
+    """管理器的分析步矩阵（Abaqus 管理器的 Created / Propagated 列）。
+
+    返回 (列名, {对象名: [每列的状态文字]})。边界条件在创建它的分析步「创建」，之后
+    仍生效的步「传播」；荷载属于工况，工况在哪一步生效它就在哪一步「生效」。没有
+    声明分析步时，各工况独立求解，只有一列。
+    """
+    import steps as step_module
+    declared = model.get("steps") or []
+    if not declared:
+        if kind == "bcs":
+            return ["Initial"], {f["name"]: ["创建" if (f.get("step") or "Initial") == "Initial"
+                                             else "（分析步不存在）"] for f in features}
+        return ["独立工况"], {f["name"]: ["生效"] for f in features}
+    names = ["Initial"] + [s["name"] for s in declared]
+    try:
+        effective = step_module.resolve(step_module.from_payload(model), model)
+    except ValueError as exc:
+        return names, {f["name"]: [f"分析步有误：{exc}"] + [""] * (len(names) - 1)
+                       for f in features}
+    table = {}
+    for feature in features:
+        cells = []
+        if kind == "bcs":
+            created = feature.get("step") or "Initial"
+            started = False
+            for col, step_name in enumerate(names):
+                if step_name == created:
+                    cells.append("创建")
+                    started = True
+                elif started:
+                    eff = effective[col - 1]
+                    live = any(feature["name"] in (entry.get("owners") or [entry.get("name")])
+                               for entry in eff.supports.values())
+                    cells.append("传播" if live else "失活")
+                else:
+                    cells.append("")
+        else:
+            cells.append("")                                  # 荷载不进 Initial 步
+            for eff in effective:
+                amp = eff.loads.get(feature["case"])
+                cells.append(f"生效（{amp}）" if amp else "")
+        table[feature["name"]] = cells
+    return names, table
+
+
 class ObjectManagerDialog(QDialog):
     """一类对象的管理器：Abaqus 的 … Manager。按钮动作交给窗口执行。"""
 
-    COLUMNS = {"section_assignments": ("名称", "区域", "截面 / 材料", "状态"),
-               "beam_orientations": ("名称", "区域", "方向", "状态"),
-               "bcs": ("名称", "区域", "约束", "分析步", "状态"),
-               "loads": ("名称", "区域", "荷载", "工况", "状态")}
+    COLUMNS = {"section_assignments": ("名称", "区域", "截面 / 材料"),
+               "beam_orientations": ("名称", "区域", "方向"),
+               "bcs": ("名称", "区域", "约束"),
+               "loads": ("名称", "区域", "荷载", "工况")}
 
     def __init__(self, window, kind: str):
         super().__init__(window)
@@ -298,8 +350,7 @@ class ObjectManagerDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(DialogHeader(f"{label}管理器",
                                       "对象施加在区域上；区域是集合时，集合变化对象随之更新。"))
-        self.table = QTableWidget(0, len(self.COLUMNS[kind]), self)
-        self.table.setHorizontalHeaderLabels(self.COLUMNS[kind])
+        self.table = QTableWidget(0, len(self.COLUMNS[kind]) + 1, self)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -333,15 +384,20 @@ class ObjectManagerDialog(QDialog):
     def refresh(self) -> None:
         listed = self.window.session.list_features(self.kind).payload["features"][self.kind]
         current = self.selected_name()
+        steps, matrix = ([], {})
+        if self.kind in ("bcs", "loads"):
+            steps, matrix = step_matrix(self.window.session.model, self.kind, listed)
+        headers = [*self.COLUMNS[self.kind], *steps, "状态"]
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
         self.table.setRowCount(len(listed))
         for row, feature in enumerate(listed):
             cells = [feature["name"], describe_region(feature, feature),
                      describe_values(self.kind, feature)]
-            if self.kind == "bcs":
-                cells.append(feature.get("step") or "Initial")
-            elif self.kind == "loads":
+            if self.kind == "loads":
                 cells.append(feature["case"])
-            cells.append("已抑制" if feature["suppressed"] else "生效")
+            cells += matrix.get(feature["name"], [])
+            cells.append("已抑制" if feature["suppressed"] else "正常")
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)
