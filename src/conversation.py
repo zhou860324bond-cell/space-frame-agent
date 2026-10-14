@@ -188,6 +188,7 @@ class Conversation:
         self.max_rounds = max_rounds
         self.context_chars = context_chars
         self.history: list[Exchange] = []
+        self.object_context = ""
         # 界面上的"停止"置位它。**只在轮与轮之间检查**——
         # 一次工具调用中途掐断，模型可能停在改了一半的状态，
         # 那比多跑一轮糟糕得多
@@ -205,6 +206,8 @@ class Conversation:
                workflow_message(self.session)]
         if self.history:
             out.append({"role": "system", "content": _CONTINUATION_HINT})
+        if self.object_context:
+            out.append({"role": "system", "content": self.object_context})
         return out
 
     def build_messages(self, user_text: str) -> list[dict]:

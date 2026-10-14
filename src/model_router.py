@@ -36,7 +36,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import hashlib
 from typing import Protocol
 
 
@@ -50,10 +51,17 @@ class ModelConfig:
     """一个模型的配置。"""
     name: str
     base_url: str
-    api_key: str = ""
+    api_key: str = field(default="", repr=False)
     api_key_env: str = ""       # 优先从环境变量读，读不到再用 api_key 字段
     priority: int = 1
-    temperature: float = 0.0
+    temperature: float | None = 0.0
+    max_tokens: int | None = None
+
+    def identity(self) -> tuple:
+        """同名模型在不同地址或凭证下不能复用连接。"""
+        return (self.base_url.rstrip("/"), self.name,
+                hashlib.sha256((self.resolved_key() or "").encode()).hexdigest(),
+                self.temperature, self.max_tokens)
 
     def resolved_key(self) -> str | None:
         """解析出实际的 API 密钥。环境变量优先，其次配置字段。"""
@@ -86,19 +94,27 @@ class _OpenAICompatibleProvider:
         if not api_key:
             raise ValueError(f"模型 {config.name} 缺少 API 密钥"
                              f"（环境变量 {config.api_key_env or '未设置'} 为空）")
-        self._client = OpenAI(api_key=api_key, base_url=config.base_url)
+        self._client = OpenAI(api_key=api_key, base_url=config.base_url,
+                              timeout=90.0, max_retries=0)
         self._model = config.name
         self._temperature = config.temperature
+        self._max_tokens = config.max_tokens
+        from urllib.parse import urlsplit
+        self._token_parameter = ("max_completion_tokens" if urlsplit(config.base_url).hostname == "api.openai.com"
+                                 else "max_tokens")
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}
 
     def __repr__(self) -> str:
         return f"OpenAICompatibleProvider(model={self._model!r})"
 
     def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+        options = {}
+        if self._temperature is not None:
+            options["temperature"] = self._temperature
+        if self._max_tokens is not None:
+            options[self._token_parameter] = self._max_tokens
         response = self._client.chat.completions.create(
-            model=self._model, messages=messages, tools=tools,
-            temperature=self._temperature,
-        )
+            model=self._model, messages=messages, tools=tools, **options)
         u = getattr(response, "usage", None)
         if u is not None:
             self.usage["calls"] += 1
@@ -138,7 +154,7 @@ class ModelRouter:
             raise ValueError("ModelRouter 至少需要一个模型配置")
         # 按 priority 排序，数字越小优先级越高
         self._configs = sorted(configs, key=lambda c: c.priority)
-        self._providers: dict[str, _OpenAICompatibleProvider] = {}
+        self._providers: dict[tuple, _OpenAICompatibleProvider] = {}
         self.call_history: list[CallRecord] = []
         self._fallback_count = 0      # 累计降级次数
 
@@ -170,9 +186,10 @@ class ModelRouter:
 
     def _get_provider(self, config: ModelConfig) -> _OpenAICompatibleProvider:
         """懒加载 provider——第一次用到才创建，避免初始化时就因为缺密钥报错。"""
-        if config.name not in self._providers:
-            self._providers[config.name] = _OpenAICompatibleProvider(config)
-        return self._providers[config.name]
+        identity = config.identity()
+        if identity not in self._providers:
+            self._providers[identity] = _OpenAICompatibleProvider(config)
+        return self._providers[identity]
 
     def complete(self, messages: list[dict], tools: list[dict]) -> dict:
         """按优先级依次调用，第一个成功的返回结果。
@@ -194,10 +211,11 @@ class ModelRouter:
                     self._fallback_count += 1
                 return result
             except Exception as e:  # noqa: BLE001  一个模型失败要记进 call_history 再回退到下一个；error 字段留了原文
+                from model_profiles import redact
                 duration = 0.0
                 self.call_history.append(CallRecord(
                     model=config.name, success=False, duration_ms=duration,
-                    error=f"{type(e).__name__}: {str(e)[:200]}",
+                    error=f"{type(e).__name__}: {redact(str(e), [c.resolved_key() for c in self._configs])[:200]}",
                     was_fallback=(i > 0),
                 ))
                 last_error = e
@@ -205,7 +223,7 @@ class ModelRouter:
 
         # 全部失败，抛出最后一个错误
         if last_error:
-            raise last_error
+            raise RuntimeError(self.call_history[-1].error) from None
         raise RuntimeError("ModelRouter: 所有模型都失败了，但没有记录到错误（不应发生）")
 
     @property

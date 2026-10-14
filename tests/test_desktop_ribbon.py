@@ -93,7 +93,7 @@ def test_panels_live_in_three_drawers_not_loose_windows(qt_app):
     assert set(w.drawers.drawers.values()) == drawers
     for name in w.PANELS:
         handle = getattr(w, name)
-        if name == "sketch_dock":
+        if name in ("sketch_dock", "chat_dock"):
             continue                     # 草图识别是独立窗口，见下一条
         assert handle._drawer in drawers, f"{name} 不在任何一个抽屉里"
         assert handle.windowTitle().strip(), f"{name} 没有标题，页签会是空的"
@@ -109,7 +109,9 @@ def test_each_side_holds_one_kind_of_thing(qt_app):
 
     w = MainWindow()
     assert w.left_drawer.keys() == ["tree", "props", "solid", "bc", "timeline"]
-    assert w.right_drawer.keys() == ["chat"]
+    assert w.right_drawer.keys() == []
+    assert w.agent_splitter.widget(0) is w.chat
+    assert w.agent_splitter.widget(1) is w.viewport
     assert list(w.right_rail.buttons) == ["chat"], "右侧只该有 AI 一颗按钮"
     assert {"results", "diagram", "section_opt"} <= set(w.left_rail.buttons)
     assert isinstance(w.sketch_dock, QDialog) and not w.sketch_dock.isModal()
@@ -158,13 +160,12 @@ def test_drawers_stay_inside_the_viewport_and_never_overlap(qt_app):
     w.section_opt_dock.dock_panel()     # 独立优化窗口也允许用户停靠回底部
     qt_app.processEvents()
     area = w.drawers.viewport_rect()
-    left, right, bottom = (w.left_drawer.geometry(), w.right_drawer.geometry(),
-                           w.bottom_drawer.geometry())
-    for side, geometry in (("left", left), ("right", right), ("bottom", bottom)):
+    left, bottom = w.left_drawer.geometry(), w.bottom_drawer.geometry()
+    for side, geometry in (("left", left), ("bottom", bottom)):
         assert area.contains(geometry), f"{side} 抽屉 {geometry} 越出了视口 {area}"
         assert geometry == w.drawers.geometry_for(side), (
             f"{side} 抽屉没待在分给它的位置：{geometry}")
-    assert not bottom.intersects(left) and not bottom.intersects(right)
+    assert not bottom.intersects(left)
     w.close()
 
 
@@ -177,7 +178,7 @@ def test_drawers_never_cover_the_toolbars(qt_app):
     w.chat_dock.show()
     qt_app.processEvents()
     top = w.drawers.viewport_rect().top()
-    for drawer in (w.left_drawer, w.right_drawer):
+    for drawer in (w.left_drawer,):
         assert drawer.geometry().top() >= top
     bar = w.quickbar
     bar_bottom = bar.mapToGlobal(bar.rect().bottomLeft()).y()
@@ -188,13 +189,14 @@ def test_drawers_never_cover_the_toolbars(qt_app):
 def test_one_button_on_the_right_summons_and_dismisses_the_assistant(qt_app):
     """右侧窄栏最上面那颗「AI」：一点召唤，再点收起；菜单里的开关同步。"""
     w = MainWindow()
-    assert w.chat_dock.isHidden()
-    w.agent_button.click()
     assert w.chat_dock.isVisible()
     assert w.agent_button.isChecked() and w.act_chat.isChecked()
     w.agent_button.click()
     assert w.chat_dock.isHidden()
     assert not w.agent_button.isChecked() and not w.act_chat.isChecked()
+    w.agent_button.click()
+    assert w.chat_dock.isVisible()
+    assert w.agent_button.isChecked() and w.act_chat.isChecked()
 
 
 def test_rail_buttons_follow_the_real_drawer_state(qt_app):
@@ -350,14 +352,14 @@ def test_the_ribbon_can_be_collapsed_to_give_the_viewport_its_height_back(qt_app
     assert [i for i in range(w.ribbon.count()) if not w.ribbon.widget(i).isHidden()] == [4]
 
 
-def test_the_assistant_starts_out_of_the_way_but_reachable(qt_app):
+def test_the_assistant_starts_beside_the_model_and_can_be_hidden(qt_app):
     """AI 面板默认收起，右侧窄栏上的「AI」按钮是它的入口。
 
     这个面板固定占 400px、四分之一屏，只在想让 AI 帮忙建模时才用；
     没配密钥时开局还是一大段配置说明——第一眼看到的不该是一条错误。
     """
     w = MainWindow()
-    assert w.chat_dock.isHidden(), "AI 面板不该默认占着四分之一屏"
+    assert w.chat_dock.isVisible(), "用户选择的并排布局应默认显示"
     assert not w.agent_button.isHidden(), "收起后必须留下可见的入口"
 
 

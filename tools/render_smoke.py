@@ -146,14 +146,14 @@ def main(report_path: Path | None = None) -> int:
     window.results_dock.dock_panel()    # 继续验证用户主动停靠后的三侧抽屉布局
     settle()
     area = window.drawers.viewport_rect()
-    geometry = {side: d.geometry() for side, d in window.drawers.drawers.items()}
+    geometry = {side: d.geometry() for side, d in window.drawers.drawers.items() if d.is_open()}
     for side, rect in geometry.items():
         check(f"{side} 抽屉在视口内", area.contains(rect),
               f"抽屉 {rect.getRect()} / 视口 {area.getRect()}")
         check(f"{side} 抽屉就在分给它的位置", rect == window.drawers.geometry_for(side))
     check("底部抽屉不压两侧抽屉",
           not geometry["bottom"].intersects(geometry["left"])
-          and not geometry["bottom"].intersects(geometry["right"]))
+          and ("right" not in geometry or not geometry["bottom"].intersects(geometry["right"])))
     left, right, bottom = window.drawers.insets()
     width = max(1, window.viewport.width())
     height = max(1, window.viewport.height())
