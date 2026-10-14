@@ -1088,3 +1088,22 @@ def test_create_load_can_name_a_new_case_on_the_spot(qt_app, monkeypatch):
     w.region_pick.finish()
     assert "LL" in [c["name"] for c in s.model["load_cases"]]
     assert [f["name"] for f in s.model["features"]["loads"]] == ["屋面活载"]
+
+
+def test_seed_edges_follows_the_region_flow_and_seed_part_sets_the_default(qt_app, monkeypatch):
+    """网格模块的布种：全局段数与逐杆覆盖（Abaqus Seed Part / Seed Edges）。"""
+    from desktop import window_objects
+    s = built()
+    w = MainWindow(s)
+    answers = iter([3, 8])
+    monkeypatch.setattr(window_objects.QInputDialog, "getInt",
+                        staticmethod(lambda *a, **k: (next(answers), True)))
+    w.seed_part()
+    assert s.model["mesh"]["divisions"] == 3
+    target = s.model["members"][0]["id"]
+    w.seed_edges()
+    w.viewport.region_selection.apply("member", [target])
+    w.region_pick.finish()
+    assert s.model["mesh"]["members"] == {str(target): 8}
+    w.clear_seeds()
+    assert "mesh" not in s.model

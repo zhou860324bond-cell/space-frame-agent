@@ -179,6 +179,40 @@ class WindowObjectsMixin:
     def open_orientation_manager(self) -> None:
         self.open_object_manager("beam_orientations")
 
+    # --- 布种（Mesh 模块） ---
+
+    def _ask_divisions(self, title: str, label: str) -> int | None:
+        current = int((self.session.model.get("mesh") or {}).get("divisions") or 1)
+        value, ok = QInputDialog.getInt(self, title, label, current, 1, 200, 1)
+        return value if ok else None
+
+    def seed_part(self) -> None:
+        if not self.session.model.get("members"):
+            self.statusBar().showMessage("还没有杆件：请先建立几何，再布种。", 5000)
+            return
+        n = self._ask_divisions("全局布种", "每根杆件剖成几段：")
+        if n is not None:
+            self._object_result(self.session.seed_mesh(divisions=n),
+                                f"全局布种：每杆 {n} 段。")
+
+    def seed_edges(self) -> None:
+        if not self.session.model.get("members"):
+            self.statusBar().showMessage("还没有杆件：请先建立几何，再布种。", 5000)
+            return
+        self.region_pick.start("member", "杆件布种", self._finish_seed,
+                               self._initial_region("member"))
+
+    def _finish_seed(self, region: dict) -> None:
+        n = self._ask_divisions("杆件布种", "所选杆件各剖成几段（覆盖全局布种）：")
+        if n is None:
+            return
+        target = region["set"] if "set" in region else region["members"]
+        self._object_result(self.session.seed_mesh(divisions=n, members=target),
+                            f"已给所选杆件布种：每杆 {n} 段。")
+
+    def clear_seeds(self) -> None:
+        self._object_result(self.session.seed_mesh(clear=True), "已清除布种。")
+
     # --- 管理器 ---
 
     def open_object_manager(self, kind: str) -> None:

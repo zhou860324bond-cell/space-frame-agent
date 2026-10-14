@@ -73,6 +73,14 @@ COMMANDS: tuple[Command, ...] = (
             "提交前执行确定性完整性校验，并显示原因和问题编号", "check_manual_model"),
     Command("support_diagnosis", "机构诊断", "support",
             "用约束后的刚度阵定位零刚度运动，报告节点及自由度", "run_diagnose"),
+    Command("seed_part", "全局布种", "mesh",
+            "Abaqus 式 Seed Part：给全部杆件设默认段数（每根杆件剖成几个分析杆段）；"
+            "频率、屈曲、P-Δ 本来就会每杆至少 4 段", "seed_part"),
+    Command("seed_edges", "杆件布种", "mesh",
+            "Abaqus 式 Seed Edges：先在视口选杆件（Shift 加选、Ctrl 减选、拖框，或使用集合），"
+            "再给段数，覆盖全局布种", "seed_edges"),
+    Command("clear_seeds", "清除布种", "remove",
+            "清掉全部布种，回到每杆 1 段（分析时按类型自动加密）", "clear_seeds"),
     Command("mesh_preview", "预览梁网格", "mesh",
             "查看自动剖分后的分析杆段、节点及物理杆件编号映射", "show_analysis_mesh"),
     Command("solve_steps", "提交分析步", "solve",

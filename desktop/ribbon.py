@@ -645,6 +645,8 @@ def build(window) -> Ribbon:
 
     # ========== 网格 ==========
     p = r.page("网格")
+    g = p.group("布种")
+    g.add_large(a["seed_part"]); g.add_large(a["seed_edges"]); g.add_small(a["clear_seeds"])
     # 预览输出杆段映射表，常驻模式按钮只负责显示切换。
     g = p.group("整体梁离散")
     g.add_large(a["mesh_preview"]); g.add_small(a["modeling_workflow"])
