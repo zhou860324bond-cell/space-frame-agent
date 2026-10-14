@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Frame, LoadCase,
+from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Constraint, Frame, LoadCase,
                      Material, Member, Node, Section, check_model,
                      member_endpoints)
 from span_loads import KINDS as SPAN_KINDS
@@ -548,6 +548,10 @@ def from_dict(data: dict[str, Any]) -> Frame:
     from masses import nodal_mass_table
     f.masses = {node: tuple(float(v) for v in row)
                 for node, row in nodal_mass_table(data).items()}
+    if (data.get("features") or {}).get("constraints"):
+        import features as _features
+        f.constraints = [Constraint(c["name"], c["master"], c["slaves"], c["dofs"], c["rigid"])
+                         for c in _features.resolved_constraints(data)]
 
     _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):

@@ -228,6 +228,31 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "create_constraint",
+            "description":
+                "约束对象（Abaqus Interaction 模块的 Create Constraint）：从节点区域跟随主节点 control。"
+                "beam=MPC BEAM 刚性连杆（偏心连接、刚臂）；tie=重合节点全部自由度相等；"
+                "pin=重合节点只连平动（铰）；coupling=运动耦合，dofs 六个 0/1 选被约束自由度，"
+                "只选 ux uy rz 即水平刚性楼板。主节点不连杆件时，没被带动的方向要另加边界条件。"
+                "从自由度不能再有支座，同一从自由度不能跟两个主节点。",
+            "parameters": {"type": "object",
+                           "required": ["name", "constraint_type", "control", "region"],
+                           "properties": {
+                               "name": {"type": "string"},
+                               "constraint_type": {"type": "string",
+                                                   "enum": ["beam", "tie", "pin", "coupling"]},
+                               "control": {"type": "integer", "description": "主节点编号"},
+                               "region": {"description": "从节点：集合名，或节点编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "dofs": {"type": "array", "items": {"type": "integer"},
+                                        "description": "仅 coupling：六个 0/1，顺序 ux uy uz rx ry rz"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_load",
             "description":
                 "荷载对象（Abaqus 的 Create Load），属于某个工况、施加在一个区域上，是**一个**对象"
@@ -257,7 +282,7 @@ TOOLS: list[dict[str, Any]] = [
                            "changes 只写要改的键；值为 null 表示去掉该键。",
             "parameters": {"type": "object", "required": ["kind", "name", "changes"],
                            "properties": {
-                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load"]},
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
                                "name": {"type": "string"},
                                "changes": {"type": "object"}},
                            "additionalProperties": False},
@@ -270,7 +295,7 @@ TOOLS: list[dict[str, Any]] = [
             "description": "给建模对象改名。",
             "parameters": {"type": "object", "required": ["kind", "name", "new_name"],
                            "properties": {
-                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load"]},
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
                                "name": {"type": "string"}, "new_name": {"type": "string"}},
                            "additionalProperties": False},
         },
@@ -282,7 +307,7 @@ TOOLS: list[dict[str, Any]] = [
             "description": "复制建模对象。边界条件的副本默认抑制，避免与原对象在同一区域过约束。",
             "parameters": {"type": "object", "required": ["kind", "name", "new_name"],
                            "properties": {
-                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load"]},
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
                                "name": {"type": "string"}, "new_name": {"type": "string"}},
                            "additionalProperties": False},
         },
@@ -294,7 +319,7 @@ TOOLS: list[dict[str, Any]] = [
             "description": "抑制或恢复建模对象（Abaqus 的 Suppress / Resume）：抑制的对象不参与计算。",
             "parameters": {"type": "object", "required": ["kind", "name"],
                            "properties": {
-                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load"]},
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
                                "name": {"type": "string"}, "suppressed": {"type": "boolean"}},
                            "additionalProperties": False},
         },
@@ -306,7 +331,7 @@ TOOLS: list[dict[str, Any]] = [
             "description": "删除建模对象，由它派生的约束、荷载或截面指派一并去掉。",
             "parameters": {"type": "object", "required": ["kind", "name"],
                            "properties": {
-                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load"]},
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
                                "name": {"type": "string"}},
                            "additionalProperties": False},
         },
@@ -318,7 +343,7 @@ TOOLS: list[dict[str, Any]] = [
             "description": "列出建模对象：名字、区域、展开后的编号、是否抑制。不给 kind 列出全部。",
             "parameters": {"type": "object",
                            "properties": {"kind": {"type": "string",
-                                                   "enum": ["section_assignment", "beam_orientation", "bc", "load"]}},
+                                                   "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]}},
                            "additionalProperties": False},
         },
     },

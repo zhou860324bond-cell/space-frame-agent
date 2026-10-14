@@ -534,7 +534,7 @@ class ChecksMixin:
         if errors:
             return ToolResult(False, {"errors": errors})
         try:
-            from frame3d import assemble, constrained_dofs, solve
+            from frame3d import assemble, dof_basis, solve
             from numbering import (estimated_half_bandwidth, matrix_bandwidth,
                                    node_number_span, permute, rcm_order)
             from skyline import Skyline, factory
@@ -548,11 +548,10 @@ class ChecksMixin:
                 return ToolResult(False, {"errors": list(exc.diagnostics)})
         frame = self.compilation.analysis_model
         K, _, _ = assemble(frame)
-        fixed = constrained_dofs(frame)
-        free = np.setdiff1d(np.arange(frame.num_dofs), fixed)
-        if free.size == 0:
+        basis = dof_basis(frame)
+        if basis.free.size == 0:
             return ToolResult(False, {"error": "没有自由自由度，无从谈带宽"})
-        Kff = K[free][:, free]
+        Kff = basis.reduce(K)
         order = rcm_order(Kff)
         before = Skyline.from_matrix(Kff).storage()
         after = Skyline.from_matrix(permute(Kff, order)).storage()

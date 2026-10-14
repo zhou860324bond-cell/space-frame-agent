@@ -305,3 +305,81 @@ def test_datum_points_and_measure():
     assert got["distance"] == pytest.approx((12 ** 2 + 4 ** 2) ** 0.5)
     assert s.measure(members=[1, 4]).payload["angle_deg"] == pytest.approx(90.0)
     assert s.delete_datum_point("偏移").ok and "偏移" not in s.datum_points()
+
+
+def test_rigid_arm_constraint_equals_force_plus_moment_at_the_master():
+    """MPC BEAM 把加在偏心点上的力原样传到主节点：等于主节点上的力加 d×F 力矩（静力等效）。
+
+    防的问题：加载点、设备质量点这类不连杆件的节点以前只能悬空（校验拒绝）或者
+    手算等效力矩。约束对象要和手算的等效荷载逐位一致，偏心点自己还要按刚体跟着动。
+    """
+    a = _with_objects()
+    assert a.add_nodes([[0, 0.5, 4.3]]).ok
+    arm = a.create_constraint("刚臂", "beam", 2, [7])
+    assert arm.ok, arm.payload
+    assert arm.payload["nodes"] == [7]
+    assert a.create_load("偏心", "DL", "concentrated_force", [7], force=[0, 3e3, -8e3]).ok
+    b = _with_objects()
+    d, force = np.array([0, 0.5, 0.3]), np.array([0, 3e3, -8e3])
+    assert b.create_load("偏心", "DL", "concentrated_force", [2], force=force.tolist()).ok
+    assert b.create_load("偏心矩", "DL", "moment", [2], moment=np.cross(d, force).tolist()).ok
+    ua, ub = _u(a), _u(b)
+    for nid in range(1, 7):
+        ka, kb = a.frame.index_of()[nid], b.frame.index_of()[nid]
+        np.testing.assert_allclose(ua[6 * ka:6 * ka + 6], ub[6 * kb:6 * kb + 6],
+                                   rtol=1e-10, atol=1e-15)
+    k2, k7 = a.frame.index_of()[2], a.frame.index_of()[7]
+    u2, u7 = ua[6 * k2:6 * k2 + 6], ua[6 * k7:6 * k7 + 6]
+    np.testing.assert_allclose(u7[:3], u2[:3] + np.cross(u2[3:], d), rtol=1e-12, atol=1e-15)
+
+    # 删别的杆件时，只靠约束连着的节点不算孤立节点
+    assert a.remove_members([5]).ok
+    assert 7 in {int(n["id"]) for n in a.model["nodes"]}
+
+    # 单位制换算后结果不变（刚臂系数带长度量纲，跟着节点坐标一起换）
+    c = _with_objects()
+    assert c.add_nodes([[0, 0.5, 4.3]]).ok
+    assert c.create_constraint("刚臂", "beam", 2, [7]).ok
+    assert c.create_load("偏心", "DL", "concentrated_force", [7], force=[0, 3e3, -8e3]).ok
+    mm = Session(model=convert_model(deepcopy(c.model), "N-mm-MPa"))
+    u_si, u_mm = _u(c), _u(mm)
+    k = c.frame.index_of()[7]
+    np.testing.assert_allclose(u_mm[6 * k:6 * k + 3] / 1e3, u_si[6 * k:6 * k + 3], rtol=1e-9)
+
+
+def test_floor_coupling_warns_about_undriven_reference_point_dofs(tmp_path):
+    """刚性楼板（运动耦合只选 ux uy rz）：悬空参考点的平面外方向没有刚度，创建时就提示。
+
+    同时检查 Abaqus 导出带上了约束——漏写不会报错，只会让对拍的那边算的是
+    约束全断开的结构。
+    """
+    s = _with_objects()
+    assert s.add_nodes([[6, 1, 4]]).ok                 # 参考点在楼板平面内
+    got = s.create_constraint("楼板", "coupling", 7, [2, 4, 6], dofs=[1, 1, 0, 0, 0, 1])
+    assert got.ok, got.payload
+    assert "['uz', 'rx', 'ry']" in got.payload["warning"]
+    assert not s.solve_model().ok, "参考点平面外无刚度，必须拒绝而不是给出奇异解"
+    assert s.create_boundary_condition("RP", [7], fix=[0, 0, 1, 1, 1, 0]).ok
+    u = _u(s)
+    ux = [u[6 * s.frame.index_of()[n]] for n in (2, 4, 6)]
+    assert ux[0] == pytest.approx(ux[1], rel=1e-12) and ux[2] == pytest.approx(ux[1], rel=1e-12)
+
+    from inp_writer import write_inp
+    text = write_inp(s.model, path=tmp_path / "floor.inp", case="DL").read_text()
+    assert "*KINEMATIC COUPLING, REF NODE=7" in text and " 2, 6, 6" in text
+    assert "*MPC" not in text
+
+
+def test_constraint_over_constraint_and_manager_operations():
+    """从自由度已有支座时拒绝并点名；约束对象和其他对象一样能抑制、改名、删除。"""
+    s = _with_objects()
+    bad = s.create_constraint("错", "beam", 2, [1])
+    assert not bad.ok and any("既有支座" in e for e in bad.payload["errors"])
+    assert s.add_nodes([[0, 0.0, 4.0001]]).ok
+    assert s.create_constraint("连", "tie", 2, [7]).ok
+    assert s.rename_feature("constraint", "连", "连接").ok
+    assert s.suppress_feature("constraint", "连接").ok
+    assert s.suppress_feature("constraint", "连接", False).ok
+    assert [f["name"] for f in s.list_features("constraint").payload["features"]["constraints"]] == ["连接"]
+    assert s.delete_feature("constraint", "连接").ok
+    assert "features" not in s.model or "constraints" not in s.model["features"]

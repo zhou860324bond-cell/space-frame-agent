@@ -49,7 +49,7 @@ MUTATING = frozenset({
     "set_nodal_mass", "masses_from_loads", "set_imperfection",
     # 建模对象（Abaqus 式截面指派、边界条件、荷载）的创建与管理器操作
     "create_section_assignment", "create_beam_orientation", "create_boundary_condition",
-    "create_load",
+    "create_load", "create_constraint",
     "edit_feature", "rename_feature", "copy_feature", "suppress_feature", "delete_feature",
     # Part 模块：分割杆件加顶点、基准点
     "partition_member", "create_datum_point", "delete_datum_point",
@@ -197,9 +197,10 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
         n = len(payload.get("members") or payload.get("nodes") or [])
         return f"定义集合「{args.get('name')}」，{n} 个对象"
     if tool in ("create_section_assignment", "create_beam_orientation",
-                "create_boundary_condition", "create_load"):
+                "create_boundary_condition", "create_load", "create_constraint"):
         label = {"create_section_assignment": "截面指派", "create_beam_orientation": "梁方向",
-                 "create_boundary_condition": "边界条件", "create_load": "荷载"}[tool]
+                 "create_boundary_condition": "边界条件", "create_load": "荷载",
+                 "create_constraint": "约束"}[tool]
         return f"创建{label}「{args.get('name')}」"
     if tool in ("edit_feature", "rename_feature", "copy_feature", "suppress_feature",
                 "delete_feature"):

@@ -19,23 +19,23 @@ from scipy.sparse import diags
 from scipy.sparse.linalg import splu
 
 from buckling import assemble_geometric
-from frame3d import (BUILTIN_AMPLITUDES, Amplitude, CaseResult, Frame, LoadCase,
+from frame3d import (BUILTIN_AMPLITUDES, Amplitude, CaseResult, DofBasis, Frame, LoadCase,
                      Solution, _member_forces, _condense, _member_matrices,
-                     assemble, combined_case, constrained_dofs, fixed_end,
+                     assemble, combined_case, dof_basis, fixed_end,
                      span_loads_of)
 from scipy.sparse import coo_matrix
 from task_control import checkpoint
 
 
-def _solve_constrained(K, rhs: np.ndarray, fixed: np.ndarray,
+def _solve_constrained(K, rhs: np.ndarray, basis: DofBasis,
                        prescribed: np.ndarray | None = None) -> np.ndarray:
-    """带 Jacobi 缩放的约束线性子问题。"""
+    """带 Jacobi 缩放的约束线性子问题（支座与运动约束都经 ``basis``）。"""
     n = K.shape[0]
-    free = np.setdiff1d(np.arange(n), fixed)
-    U = np.zeros(n) if prescribed is None else prescribed.copy()
+    free, fixed = basis.free, basis.fixed
+    U = np.zeros(n) if prescribed is None else basis.enforce(prescribed)
     if not free.size:
         return U
-    Kff = K[free][:, free].tocsc()
+    Kff = basis.reduce(K).tocsc()
     diagonal = np.abs(Kff.diagonal())
     if np.any(~np.isfinite(diagonal)) or np.any(diagonal <= 0.0):
         raise np.linalg.LinAlgError("非线性迭代遇到零/负切线刚度，结构可能已失稳")
@@ -46,10 +46,10 @@ def _solve_constrained(K, rhs: np.ndarray, fixed: np.ndarray,
         lu = splu(Ks)
     except RuntimeError as exc:
         raise np.linalg.LinAlgError("非线性迭代切线刚度奇异，结构可能已失稳") from exc
-    b = rhs[free].copy()
+    b = basis.project(rhs).copy()
     if fixed.size and np.any(U[fixed]):
-        b -= K[free][:, fixed] @ U[fixed]
-    U[free] = scale * lu.solve(scale * b)
+        b -= basis.coupling(K) @ U[fixed]
+    U = basis.expand(scale * lu.solve(scale * b), U[fixed])
     if not np.all(np.isfinite(U)):
         raise np.linalg.LinAlgError("非线性迭代产生非有限位移")
     return U
@@ -84,10 +84,10 @@ def _case_frame(model: Frame, case: LoadCase) -> Frame:
 
 def _linear_parts(model: Frame, case_name: str):
     """弹性刚度与约束自由度。刚度与荷载工况无关，工况名只是装配的入口。"""
-    return assemble(model, [case_name])[0], constrained_dofs(model)
+    return assemble(model, [case_name])[0], dof_basis(model)
 
 
-def _pdelta_run(model: Frame, base_K, fixed, name: str, case_at,
+def _pdelta_run(model: Frame, base_K, basis: DofBasis, name: str, case_at,
                 increments: int, max_iter: int, tolerance: float):
     """一条 P-Δ 加载路径的增量—迭代循环。
 
@@ -107,7 +107,7 @@ def _pdelta_run(model: Frame, base_K, fixed, name: str, case_at,
     history: list[dict] = []
     Kt = base_K
     F = np.zeros(model.num_dofs)
-    free = np.setdiff1d(np.arange(model.num_dofs), fixed)
+    free = basis.free
     for step in range(1, increments + 1):
         checkpoint()
         load_factor = step / increments
@@ -121,7 +121,7 @@ def _pdelta_run(model: Frame, base_K, fixed, name: str, case_at,
             member_forces = _member_forces(probe, U, scaled)
             axial = {mid: float(force[6]) for mid, force in member_forces.items()}
             Kt = base_K + assemble_geometric(model, axial)
-            candidate = _solve_constrained(Kt, F, fixed, prescribed)
+            candidate = _solve_constrained(Kt, F, basis, prescribed)
             delta = np.linalg.norm(candidate[free] - U[free])
             reference = max(np.linalg.norm(candidate[free]), 1e-14)
             ratio = float(delta / reference)
@@ -142,7 +142,7 @@ def _pdelta_run(model: Frame, base_K, fixed, name: str, case_at,
                 "结构可能接近失稳，请减小荷载或增加增量")
     forces = _member_forces(model, U, final)
     reaction = np.zeros(model.num_dofs)
-    reaction[fixed] = (Kt @ U - F)[fixed]
+    reaction[basis.fixed] = basis.reactions(Kt @ U - F)
     return CaseResult(name, U, reaction, forces), history
 
 
@@ -161,14 +161,14 @@ def solve_pdelta(model: Frame, cases: list[str] | None = None,
     if unknown:
         raise ValueError(f"P-Δ 当前只接受基础荷载工况，不接受组合或未知名称：{unknown}")
 
-    fixed = constrained_dofs(model)
+    basis = dof_basis(model)
     base_K, _, _ = assemble(model, [names[0]])
     results: dict[str, CaseResult] = {}
     convergence: dict[str, list[dict]] = {}
     for name in names:
         original = model.load_cases[name]
         results[name], convergence[name] = _pdelta_run(
-            model, base_K, fixed, name,
+            model, base_K, basis, name,
             lambda t, c=original: _scaled_case(c, t),
             increments, max_iter, tolerance)
 
@@ -238,8 +238,8 @@ def solve_step(model: Frame, loads: dict[str, str], name: str = STEP_CASE,
     # 内力图和强度验算都按结果名回查荷载工况，查不到就是 KeyError。分析步的
     # 荷载本来就该是一个实在的工况，Abaqus 里也是这样物化的。
     model.load_cases[name] = case_at(1.0)
-    base_K, fixed = _linear_parts(model, next(iter(loads)))
-    result, history = _pdelta_run(model, base_K, fixed, name, case_at,
+    base_K, basis = _linear_parts(model, next(iter(loads)))
+    result, history = _pdelta_run(model, base_K, basis, name, case_at,
                                   increments, max_iter, tolerance)
     return Solution({name: result}, {}, base_K, name,
                     {"type": "pdelta_step", "increments": increments,
@@ -333,7 +333,8 @@ def solve_material_nonlinear(model: Frame, cases: list[str] | None = None,
     unknown = [name for name in names if name not in model.load_cases]
     if unknown:
         raise ValueError(f"材料非线性当前只接受基础荷载工况：{unknown}")
-    fixed = constrained_dofs(model)
+    basis = dof_basis(model)
+    fixed = basis.fixed
     results = {}
     all_history = {}
     last_tangent, _, _ = assemble(model, [names[0]])
@@ -347,6 +348,7 @@ def solve_material_nonlinear(model: Frame, cases: list[str] | None = None,
             for k, on in enumerate(mask):
                 if on:
                     U[dofs[k]] = values[k]
+        U = basis.enforce(U)
         committed = {mid: (0.0, 0.0) for mid in model.members}
         history = []
         forces = {}
@@ -364,10 +366,9 @@ def solve_material_nonlinear(model: Frame, cases: list[str] | None = None,
                 last_tangent, internal, trial, forces = _material_system(
                     model, U, scaled, committed)
                 residual = external_nodal - internal
-                free = np.setdiff1d(np.arange(model.num_dofs), fixed)
-                norm = float(np.linalg.norm(residual[free]))
-                reference = max(float(np.linalg.norm(external_nodal[free])),
-                                float(np.linalg.norm(internal[free])), 1.0)
+                norm = float(np.linalg.norm(basis.project(residual)))
+                reference = max(float(np.linalg.norm(basis.project(external_nodal))),
+                                float(np.linalg.norm(basis.project(internal))), 1.0)
                 ratio = norm / reference
                 if ratio <= tolerance:
                     committed = trial
@@ -376,14 +377,14 @@ def solve_material_nonlinear(model: Frame, cases: list[str] | None = None,
                                     "relative_residual": ratio})
                     converged = True
                     break
-                correction = _solve_constrained(last_tangent, residual, fixed)
+                correction = _solve_constrained(last_tangent, residual, basis)
                 U += correction
             if not converged:
                 raise RuntimeError(
                     f"材料非线性工况 {name!r} 在增量 {step}/{increments} 未收敛；"
                     "可增加增量，或检查是否达到理想塑性极限")
         reaction = np.zeros(model.num_dofs)
-        reaction[fixed] = (internal - external_nodal)[fixed]
+        reaction[fixed] = basis.reactions(internal - external_nodal)
         results[name] = CaseResult(name, U.copy(), reaction, forces)
         all_history[name] = history
 

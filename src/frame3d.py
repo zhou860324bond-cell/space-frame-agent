@@ -293,6 +293,28 @@ def span_loads_of(case: LoadCase, member_id: int) -> list[SpanLoad]:
     return items
 
 
+@dataclass(frozen=True)
+class Constraint:
+    """运动约束（Abaqus 的 MPC 与运动耦合）：从节点的指定自由度跟随主节点。
+
+    ``rigid=True``：从节点随主节点作**刚体运动**，平动带转角 × 刚臂一项
+    u_s = u_m + θ_m × (x_s − x_m)，转角 θ_s = θ_m（Abaqus 的 MPC BEAM、
+    Kinematic Coupling）。``rigid=False``：对应自由度直接相等（MPC TIE、PIN），
+    用于坐标重合的两个节点。
+
+    ``dofs`` 是被约束的从节点自由度（0~5）。只选 (0, 1, 5) 就是水平面内的
+    刚性楼板——不需要另写一种约束。小转角线性化，与内核的小位移假定一致。
+
+    实现是主从自由度消元（见 :func:`dof_basis`），不是罚刚度：罚刚度取大了
+    病态、取小了不刚，两头都不报错。
+    """
+    name: str
+    master: int
+    slaves: tuple[int, ...]
+    dofs: tuple[int, ...] = (0, 1, 2, 3, 4, 5)
+    rigid: bool = True
+
+
 def _default_cases() -> dict[str, LoadCase]:
     return {DEFAULT_CASE: LoadCase(DEFAULT_CASE)}
 
@@ -371,6 +393,8 @@ class Frame:
     masses: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)
     #: 幅值曲线，供非线性分析做非比例加载。线性静力用不到。
     amplitudes: dict[str, Amplitude] = field(default_factory=dict)
+    #: 运动约束（刚性连接、MPC、运动耦合）。见 Constraint 与 dof_basis。
+    constraints: list[Constraint] = field(default_factory=list)
     # 单位制只影响自重的 g 与结果的显示换算，不影响刚度方程本身
     units: str = UNITS_SI
 
@@ -806,6 +830,155 @@ def constrained_dofs(model: Frame) -> np.ndarray:
     return np.array(sorted(set(fixed)), dtype=int)
 
 
+def constraint_rows(model: Frame) -> dict[int, dict[int, float]]:
+    """从自由度 → {独立自由度: 系数}。链式约束（主节点本身是别处的从节点）已代换到底。
+
+    下面几种情况在 Abaqus 里是 over-constraint 错误，这里同样拒绝而不是取舍：
+    同一从自由度被两个约束控制、从自由度同时是支座、主从是同一节点、约束成环。
+    """
+    rows: dict[int, dict[int, float]] = {}
+    owner: dict[int, str] = {}
+    fixed = set(constrained_dofs(model).tolist())
+    for c in model.constraints:
+        if c.master not in model.nodes:
+            raise ValueError(f"约束「{c.name}」的主节点 {c.master} 不存在")
+        xm = model.nodes[c.master].xyz
+        md = model.node_dofs(c.master)
+        for s in c.slaves:
+            if s not in model.nodes:
+                raise ValueError(f"约束「{c.name}」的从节点 {s} 不存在")
+            if s == c.master:
+                raise ValueError(f"约束「{c.name}」的主节点 {s} 同时出现在从节点里")
+            arm = model.nodes[s].xyz - xm if c.rigid else np.zeros(3)
+            sd = model.node_dofs(s)
+            for k in c.dofs:
+                dof = sd[k]
+                if dof in rows:
+                    raise ValueError(
+                        f"节点 {s} 的{_DOF_NAME[k]}同时被约束「{owner[dof]}」和「{c.name}」控制；"
+                        "一个自由度只能跟随一个主节点")
+                if dof in fixed:
+                    raise ValueError(
+                        f"节点 {s} 的{_DOF_NAME[k]}既有支座又是约束「{c.name}」的从自由度；"
+                        "把支座加在主节点上")
+                row = {md[k]: 1.0}
+                if k < 3:
+                    # (θ × d)_k = θ_a·d_b − θ_b·d_a，(k, a, b) 轮换
+                    a, b = (k + 1) % 3, (k + 2) % 3
+                    row[md[3 + a]] = float(arm[b])
+                    row[md[3 + b]] = -float(arm[a])
+                rows[dof] = {j: v for j, v in row.items() if v != 0.0}
+                owner[dof] = c.name
+
+    resolved: dict[int, dict[int, float]] = {}
+    order = model.order()
+
+    def resolve(dof: int, path: tuple[int, ...]) -> dict[int, float]:
+        if dof in resolved:
+            return resolved[dof]
+        if dof in path:
+            nodes = sorted({order[d // DOF_PER_NODE] for d in path})
+            raise ValueError(f"运动约束成环（节点 {nodes}）：主从关系不能互相跟随")
+        out: dict[int, float] = {}
+        for j, v in rows[dof].items():
+            terms = resolve(j, path + (dof,)) if j in rows else {j: 1.0}
+            for jj, vv in terms.items():
+                out[jj] = out.get(jj, 0.0) + v * vv
+        resolved[dof] = out
+        return out
+
+    for dof in rows:
+        resolve(dof, ())
+    return resolved
+
+
+@dataclass(frozen=True)
+class DofBasis:
+    """施加支座与运动约束之后的自由度基：全位移 ``U = P·u_f + Q·u_s``。
+
+    ``free`` 是独立且自由的自由度、``fixed`` 是支座自由度（全局编号），
+    ``u_s`` 是支座处的给定位移（沉降）。从自由度不在方程里，由主自由度算出。
+
+    没有运动约束时 P、Q 是纯选取（存成 None），``reduce`` 就是原来的
+    ``K[free][:, free]``——同一个入口，不分两套写法。所有求解（静力、P-Δ、
+    材料非线性、模态、屈曲、奇异诊断）都经过这里，约束不会在某条路径上漏掉。
+    """
+    n: int
+    free: np.ndarray
+    fixed: np.ndarray
+    slaves: np.ndarray
+    P: csr_matrix | None = None
+    Q: csr_matrix | None = None
+
+    def reduce(self, A) -> csr_matrix:
+        """Pᵀ·A·P：刚度、质量、几何刚度阵都这样缩到独立自由自由度上。"""
+        if self.P is None:
+            return A[self.free][:, self.free]
+        return (self.P.T @ A @ self.P).tocsr()
+
+    def coupling(self, A) -> csr_matrix:
+        """Pᵀ·A·Q：给定位移对自由方程的影响（沉降移到右端用）。"""
+        if self.Q is None:
+            return A[self.free][:, self.fixed]
+        return (self.P.T @ A @ self.Q).tocsr()
+
+    def project(self, F: np.ndarray) -> np.ndarray:
+        """Pᵀ·F：节点力（含加在从节点上的）换到独立自由度上。"""
+        F = np.asarray(F, dtype=float)
+        return F[self.free] if self.P is None else self.P.T @ F
+
+    def expand(self, u_free: np.ndarray, u_fixed: np.ndarray | None = None) -> np.ndarray:
+        """独立自由度 → 全位移（含从节点）。``u_free`` 可以是一列或多列。"""
+        u_free = np.asarray(u_free, dtype=float)
+        if self.P is None:
+            out = np.zeros((self.n,) + u_free.shape[1:])
+            out[self.free] = u_free
+            if u_fixed is not None:
+                out[self.fixed] = u_fixed
+            return out
+        out = self.P @ u_free
+        if u_fixed is not None and self.fixed.size:
+            out = out + self.Q @ np.asarray(u_fixed, dtype=float)
+        return np.asarray(out)
+
+    def enforce(self, U: np.ndarray) -> np.ndarray:
+        """按独立自由度上的值重算从自由度，使位移满足约束。"""
+        U = np.asarray(U, dtype=float)
+        return self.expand(U[self.free], U[self.fixed])
+
+    def reactions(self, residual: np.ndarray) -> np.ndarray:
+        """支座反力 = Qᵀ·(K·U − F)：经约束传到支座上的力也算进去。"""
+        residual = np.asarray(residual, dtype=float)
+        return residual[self.fixed] if self.Q is None else self.Q.T @ residual
+
+
+def dof_basis(model: Frame) -> DofBasis:
+    """支座 + 运动约束 → 自由度基。约束不合法时抛 ValueError（点名节点与约束）。"""
+    n = model.num_dofs
+    fixed = constrained_dofs(model)
+    if not model.constraints:
+        return DofBasis(n, np.setdiff1d(np.arange(n), fixed), fixed, np.zeros(0, dtype=int))
+    rows = constraint_rows(model)
+    slaves = np.array(sorted(rows), dtype=int)
+    free = np.setdiff1d(np.arange(n), np.union1d(fixed, slaves))
+    col_free = {int(d): k for k, d in enumerate(free)}
+    col_fixed = {int(d): k for k, d in enumerate(fixed)}
+    pr, pc, pv, qr, qc, qv = [], [], [], [], [], []
+    for d in free:
+        pr.append(int(d)); pc.append(col_free[int(d)]); pv.append(1.0)
+    for d in fixed:
+        qr.append(int(d)); qc.append(col_fixed[int(d)]); qv.append(1.0)
+    for s, terms in rows.items():
+        for j, v in terms.items():
+            if j in col_free:
+                pr.append(s); pc.append(col_free[j]); pv.append(v)
+            else:
+                qr.append(s); qc.append(col_fixed[j]); qv.append(v)
+    P = coo_matrix((pv, (pr, pc)), shape=(n, free.size)).tocsr()
+    Q = coo_matrix((qv, (qr, qc)), shape=(n, fixed.size)).tocsr()
+    return DofBasis(n, free, fixed, slaves, P, Q)
+
+
 def _recover_end_rotations(u_local: np.ndarray, p: np.ndarray,
                            cond: _Condensation) -> np.ndarray:
     """把节点侧位移还原成**杆端**位移。
@@ -875,8 +1048,8 @@ def solve(model: Frame, cases: list[str] | None = None,
     """
     K, F, case_names = assemble(model, cases)
     n = model.num_dofs
-    fixed = constrained_dofs(model)
-    free = np.setdiff1d(np.arange(n), fixed)
+    basis = dof_basis(model)
+    fixed, free = basis.fixed, basis.free
 
     U = np.zeros((n, len(case_names)))
     # 支座沉降是**给定位移**，先填进 U 的受约束行，再把它对自由行的影响
@@ -893,7 +1066,7 @@ def solve(model: Frame, cases: list[str] | None = None,
     has_settlement = bool(np.any(U[fixed])) if fixed.size else False
 
     if free.size:
-        K_ff = K[free][:, free].tocsc()
+        K_ff = basis.reduce(K).tocsc()
         # 平动与转动自由度本来就量纲不同，复杂刚架再叠加长短杆、大小截面后，
         # K 的对角项可以跨十几个数量级。直接拿原矩阵主元比判断奇异，会把
         # “尺度差异”误报成机构。先做对称 Jacobi 缩放：
@@ -934,13 +1107,13 @@ def solve(model: Frame, cases: list[str] | None = None,
                     "求解失败：刚度矩阵奇异（存在近零主元），约束不足或存在机构。"
                     "调用 diagnose_singularity 定位。"
                 )
-        K_fs = K[free][:, fixed] if (fixed.size and has_settlement) else None
+        K_fs = basis.coupling(K) if (fixed.size and has_settlement) else None
         for c in range(len(case_names)):
-            rhs = F[free, c]
+            rhs = basis.project(F[:, c])
             if K_fs is not None:
                 rhs = rhs - K_fs @ U[fixed, c]
             # 先解缩放变量 y，再由 u = D y 回到模型的原始单位。
-            U[free, c] = jacobi * lu.solve(jacobi * rhs)
+            U[:, c] = basis.expand(jacobi * lu.solve(jacobi * rhs), U[fixed, c])
     if not np.all(np.isfinite(U)):
         raise np.linalg.LinAlgError("求解失败：位移出现非有限值，刚度矩阵接近奇异。")
 
@@ -948,7 +1121,7 @@ def solve(model: Frame, cases: list[str] | None = None,
     for c, name in enumerate(case_names):
         Uc = U[:, c]
         Rc = np.zeros(n)
-        Rc[fixed] = (K @ Uc - F[:, c])[fixed]
+        Rc[fixed] = basis.reactions(K @ Uc - F[:, c])
         # 弹簧支承的自由度是**自由**的，K@U−F 在那里恒为零，取不到反力。
         # 弹簧对结构的作用力是 −k·u，方向与固定支座的反力一致：
         # 向下压 P 时 u=−P/k，−k·u=+P，向上托住。
@@ -1117,12 +1290,11 @@ def diagnose_singularity(model: Frame, tol: float = 1e-8) -> list[dict]:
     找出参与最大的节点与方向。大模型拿到这份结构化诊断即可翻译成建议。
     """
     K, _, _ = assemble(model)
-    fixed = constrained_dofs(model)
-    free = np.setdiff1d(np.arange(model.num_dofs), fixed)
-    if free.size == 0:
+    basis = dof_basis(model)
+    if basis.free.size == 0:
         return []
 
-    Kff = np.asarray(K[free][:, free].todense())
+    Kff = np.asarray(basis.reduce(K).todense())
     vals, vecs = np.linalg.eigh(Kff)
     ref = max(abs(vals).max(), 1.0)
 
@@ -1130,8 +1302,7 @@ def diagnose_singularity(model: Frame, tol: float = 1e-8) -> list[dict]:
     for k, lam in enumerate(vals):
         if abs(lam) / ref >= tol:
             continue
-        v = np.zeros(model.num_dofs)
-        v[free] = vecs[:, k]
+        v = basis.expand(vecs[:, k])
         contrib = []
         for nid in model.order():
             d = model.node_dofs(nid)
@@ -1145,6 +1316,23 @@ def diagnose_singularity(model: Frame, tol: float = 1e-8) -> list[dict]:
     return modes
 
 
+def _constraint_groups(model: Frame) -> dict[int, int]:
+    """节点 → 所在约束连通组的代表节点（并查集）。"""
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for c in model.constraints:
+        for s in c.slaves:
+            parent[find(s)] = find(c.master)
+    return {nid: find(nid) for nid in list(parent)}
+
+
 def check_model(model: Frame, *, allow_incomplete: bool = False) -> list[str]:
     """几何、拓扑与荷载定义的合法性。返回问题清单，空列表表示通过。
 
@@ -1155,11 +1343,13 @@ def check_model(model: Frame, *, allow_incomplete: bool = False) -> list[str]:
     used: set[int] = set()
     seen: dict[tuple[int, int], int] = {}
 
-    # 当前内核没有 tie/MPC。两个坐标重合但编号不同的节点在图上像一个节点，
-    # 在刚度矩阵里却完全断开，是最危险的“看起来正确”。严格模型中直接拒绝。
+    # 两个坐标重合但编号不同的节点在图上像一个节点，在刚度矩阵里却完全断开，
+    # 是最危险的“看起来正确”。没有用运动约束连起来的，严格模型中直接拒绝。
     # 用 KD 树找近邻对而不是两两比较：五百个节点两两比就是十几万次向量
     # 运算，界面每刷新一次流程条都要校验一遍，实测占掉一秒多。报告的
     # 顺序仍按节点插入次序，与原来的双重循环逐条一致。
+    # 被 TIE / PIN 一类约束连起来的重合节点是有意为之（铰接、两层节点），不算错。
+    linked = _constraint_groups(model)
     node_list = list(model.nodes.values())
     if len(node_list) > 1:
         from scipy.spatial import cKDTree
@@ -1167,7 +1357,8 @@ def check_model(model: Frame, *, allow_incomplete: bool = False) -> list[str]:
         coords = np.array([(n.x, n.y, n.z) for n in node_list], dtype=float)
         for ia, ib in sorted(cKDTree(coords).query_pairs(r=1e-9)):
             a, b = node_list[ia], node_list[ib]
-            if float(np.linalg.norm(a.xyz - b.xyz)) < 1e-9:
+            if (float(np.linalg.norm(a.xyz - b.xyz)) < 1e-9
+                    and not (a.id in linked and linked[a.id] == linked.get(b.id))):
                 issues.append(f"节点 {a.id} 与节点 {b.id} 坐标重合；请合并为同一节点")
 
     for m in model.members.values():
@@ -1203,6 +1394,13 @@ def check_model(model: Frame, *, allow_incomplete: bool = False) -> list[str]:
                 issues.append(str(exc))
         used.update((m.i, m.j))
 
+    # 运动约束里的节点（参考点、加载点、质量点）不靠杆件也有刚度
+    used.update(linked)
+    if model.constraints:
+        try:
+            constraint_rows(model)
+        except ValueError as exc:
+            issues.append(str(exc))
     for nid in model.nodes:
         if nid not in used:
             node = model.nodes[nid]

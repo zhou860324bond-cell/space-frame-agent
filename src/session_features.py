@@ -1,4 +1,4 @@
-"""Session 的建模对象域：截面指派、边界条件、荷载的创建与管理。
+"""Session 的建模对象域：截面指派、边界条件、荷载、约束的创建与管理。
 
 对应 Abaqus/CAE 的「Create … / … Manager」：每类对象都是同一组操作——创建、
 编辑、复制、改名、抑制、删除。界面的管理器、模型树右键菜单和 Agent 都调
@@ -23,14 +23,15 @@ import features as _features
 from session_base import ToolResult, _records
 
 _LABEL = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
-          "bcs": "边界条件", "loads": "荷载"}
+          "bcs": "边界条件", "loads": "荷载", "constraints": "约束"}
 #: 工具参数里的类别名 → features 里的键
 KIND_ALIASES = {"section_assignment": "section_assignments",
                 "section_assignments": "section_assignments",
                 "beam_orientation": "beam_orientations",
                 "beam_orientations": "beam_orientations",
                 "bc": "bcs", "bcs": "bcs", "boundary_condition": "bcs",
-                "load": "loads", "loads": "loads"}
+                "load": "loads", "loads": "loads",
+                "constraint": "constraints", "constraints": "constraints"}
 
 #: Abaqus 边界条件预设（Encastre / Pinned / 对称）。顺序 ux uy uz rx ry rz。
 BC_PRESETS = {
@@ -181,6 +182,57 @@ class FeaturesMixin:
                    field: vector}
         feature["region"] = _region(region, _features.region_kind("loads", feature))
         return self._create_feature("loads", feature)
+
+    @_records
+    def create_constraint(self, name: str, constraint_type: str, control: int, region,
+                          dofs: list[int] | None = None) -> ToolResult:
+        """约束（Interaction 模块 Create Constraint）：从节点区域跟随主节点 ``control``。
+
+        ``constraint_type``：beam（MPC BEAM 刚性连杆）、tie（重合节点全部自由度相等）、
+        pin（重合节点只连平动，即铰）、coupling（运动耦合，``dofs`` 六个 0/1 选被
+        约束的自由度；只选 ux uy rz 就是水平刚性楼板）。
+        """
+        constraint_type = str(constraint_type)
+        if constraint_type not in _features.CONSTRAINT_TYPES:
+            return ToolResult(False, {"error": f"constraint_type 只能是 {list(_features.CONSTRAINT_TYPES)}"})
+        feature: dict[str, Any] = {"name": str(name).strip(), "type": constraint_type,
+                                   "control": int(control), "region": _region(region, "nodes")}
+        if constraint_type == "coupling":
+            mask = [1] * 6 if dofs is None else [int(v) for v in dofs]
+            if len(mask) != 6 or any(v not in (0, 1) for v in mask) or not any(mask):
+                return ToolResult(False, {"error": "dofs 必须是六个 0 或 1（ux uy uz rx ry rz），至少一个 1"})
+            feature["dofs"] = mask
+        elif dofs is not None:
+            return ToolResult(False, {"error": f"{constraint_type} 的自由度是固定的，只有 coupling 可以给 dofs"})
+        result = self._create_feature("constraints", feature)
+        if result.ok:
+            loose = self._undriven_control_dofs(int(control))
+            if loose:
+                result.payload["warning"] = (
+                    f"主节点 {control} 没有连杆件，它的 {loose} 方向没有被任何东西带动，"
+                    "求解时刚度为零；请给主节点在这些方向加边界条件（与 Abaqus 参考点相同）")
+        return result
+
+    def _undriven_control_dofs(self, control: int) -> list[str]:
+        """主节点上刚度为零的自由度（悬空参考点常见）。只读诊断，失败时返回空。"""
+        if any(int(control) in (int(m["i"]), int(m["j"])) for m in self.model.get("members") or []):
+            return []
+        try:
+            from frame3d import LOCAL_DOF_NAMES, assemble, dof_basis
+            from model_io import from_dict
+            frame = from_dict(self.model)
+            if any(not frame.sections.get(m.section) or not frame.materials.get(m.material)
+                   for m in frame.members.values()):
+                return []
+            basis = dof_basis(frame)
+            diagonal = np.abs(basis.reduce(assemble(frame)[0]).diagonal())
+        except Exception:                      # noqa: BLE001  诊断失败不影响创建结果
+            return []
+        column = {int(d): k for k, d in enumerate(basis.free)}
+        dofs = frame.node_dofs(int(control))
+        scale = float(diagonal.max(initial=0.0)) or 1.0
+        return [LOCAL_DOF_NAMES[k] for k in range(6)
+                if dofs[k] in column and diagonal[column[dofs[k]]] <= 1e-12 * scale]
 
     def _create_feature(self, kind: str, feature: dict[str, Any]) -> ToolResult:
         if not feature["name"]:

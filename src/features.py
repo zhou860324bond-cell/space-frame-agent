@@ -23,8 +23,16 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-KINDS = ("section_assignments", "beam_orientations", "bcs", "loads")
+KINDS = ("section_assignments", "beam_orientations", "bcs", "loads", "constraints")
 LOAD_TYPES = ("concentrated_force", "moment", "line_load", "gravity")
+#: Interaction 模块的约束类型（Abaqus 名）。beam / tie / pin 是 MPC，coupling 是运动耦合。
+#: 值是 (被约束的从节点自由度, 是否带刚臂)；coupling 的自由度由对象的 dofs 给出。
+CONSTRAINT_TYPES = {
+    "beam": ((0, 1, 2, 3, 4, 5), True),       # MPC BEAM：刚性连杆
+    "tie": ((0, 1, 2, 3, 4, 5), False),       # MPC TIE：重合节点全部自由度相等
+    "pin": ((0, 1, 2), False),                # MPC PIN：重合节点只连平动（铰）
+    "coupling": (None, True),                 # Kinematic Coupling：所选自由度随参考点刚体运动
+}
 INITIAL = "Initial"
 
 _REGION = {
@@ -88,11 +96,26 @@ SCHEMA = {
                 "g": _VEC3,              # gravity：加速度，全局分量
                 "suppressed": {"type": "boolean"},
             }}},
+        "constraints": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["name", "type", "control", "region"],
+            "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "type": {"type": "string", "enum": list(CONSTRAINT_TYPES)},
+                # 主节点：MPC 的 control point、耦合的 reference point
+                "control": {"type": "integer"},
+                # 从节点区域
+                "region": _REGION,
+                # 只有 coupling 用：六个 0/1，顺序 ux uy uz rx ry rz
+                "dofs": {"type": "array", "minItems": 6, "maxItems": 6,
+                         "items": {"type": "integer", "enum": [0, 1]}},
+                "suppressed": {"type": "boolean"},
+            }}},
     },
 }
 
 _LABELS = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
-           "bcs": "边界条件", "loads": "荷载"}
+           "bcs": "边界条件", "loads": "荷载", "constraints": "约束"}
 _LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
                "gravity": "g"}
 
@@ -105,7 +128,7 @@ def region_kind(kind: str, feature: dict[str, Any]) -> str:
     """对象需要哪一类实体：截面指派要杆件，边界条件要节点，荷载看类型。"""
     if kind in ("section_assignments", "beam_orientations"):
         return "members"
-    if kind == "bcs":
+    if kind in ("bcs", "constraints"):
         return "nodes"
     return "nodes" if feature.get("type") in ("concentrated_force", "moment") else "members"
 
@@ -370,8 +393,51 @@ def check(payload: dict[str, Any]) -> list[str]:
         field = _LOAD_FIELD[feature["type"]]
         if field not in feature:
             errors.append(f"荷载「{feature['name']}」是 {feature['type']}，缺少 {field}")
+    known = {int(n["id"]) for n in payload.get("nodes") or []}
+    for feature in features.get("constraints") or []:
+        if feature.get("suppressed"):
+            continue
+        label = f"约束「{feature['name']}」"
+        if int(feature["control"]) not in known:
+            errors.append(f"{label}的主节点 {feature['control']} 不存在")
+        slaves, problem = region_ids(payload, feature["region"], "nodes")
+        if problem:
+            errors.append(f"{label}：{problem}")
+        elif int(feature["control"]) in slaves:
+            errors.append(f"{label}的主节点 {feature['control']} 也在从节点区域里；从区域里去掉它")
+        if feature["type"] == "coupling" and not any(feature.get("dofs") or [1]):
+            errors.append(f"{label}是运动耦合，至少要选一个自由度")
     errors += regenerate(deepcopy(payload))
     return errors
+
+
+def resolved_constraints(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """生效的约束对象 → 内核能用的形式：主节点、从节点、自由度、是否带刚臂。
+
+    约束不派生逐条目，求解装配（model_io.from_dict）和 Abaqus 导出直接读这里，
+    两边同源。区域解析不了的跳过，由 :func:`check` 报出。
+    """
+    out = []
+    for feature in _active("constraints", payload):
+        slaves, problem = region_ids(payload, feature["region"], "nodes")
+        if problem:
+            continue
+        dofs, rigid = CONSTRAINT_TYPES[feature["type"]]
+        if dofs is None:
+            dofs = tuple(k for k, on in enumerate(feature.get("dofs") or [1] * 6) if on)
+        out.append({"name": feature["name"], "type": feature["type"],
+                    "master": int(feature["control"]), "slaves": tuple(slaves),
+                    "dofs": tuple(dofs), "rigid": rigid})
+    return out
+
+
+def constraint_nodes(payload: dict[str, Any]) -> set[int]:
+    """约束用到的节点（主节点与从节点）。它们可以不连杆件，清理孤立节点时要留下。"""
+    nodes: set[int] = set()
+    for feature in _active("constraints", payload):
+        nodes.add(int(feature["control"]))
+        nodes.update(region_ids(payload, feature["region"], "nodes")[0])
+    return nodes
 
 
 def owner_of(entry: dict[str, Any]) -> str | None:

@@ -85,6 +85,12 @@ DIMENSIONS = {
     "features.loads.case": None, "features.loads.type": None,
     "features.loads.force": "force", "features.loads.moment": "moment",
     "features.loads.w": "line_load", "features.loads.g": "acceleration",
+    # 约束只有拓扑（主节点、从节点区域、自由度选择）；刚臂长度取自节点坐标，随坐标换算
+    "features.constraints.name": None, "features.constraints.type": None,
+    "features.constraints.control": None, "features.constraints.dofs": None,
+    "features.constraints.suppressed": None,
+    "features.constraints.region.set": None, "features.constraints.region.nodes": None,
+    "features.constraints.region.members": None,
     # 派生条目的来源标记，都是对象名
     "members.assignment": None, "members.orientation": None, "supports.owners": None,
     "features.beam_orientations.name": None, "features.beam_orientations.suppressed": None,

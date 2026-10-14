@@ -34,7 +34,7 @@ from scipy.sparse import coo_matrix, diags
 from scipy.sparse.linalg import eigsh
 
 from frame3d import (DOF_PER_NODE, Frame, _member_matrices, assemble,
-                     constrained_dofs, member_endpoints,
+                     dof_basis, member_endpoints,
                      member_local_displacements, project_secondary_matrix,
                      scatter_blocks)
 
@@ -173,13 +173,15 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     M = assemble_mass(model)
 
     n = model.num_dofs
-    fixed = constrained_dofs(model)
-    free = np.setdiff1d(np.arange(n), fixed)
+    basis = dof_basis(model)
+    free = basis.free
     if free.size == 0:
         raise ValueError("所有自由度都被约束了，没有可振动的自由度")
 
-    Kff = K[free][:, free]
-    Mff = M[free][:, free]
+    # 运动约束下质量也经 Pᵀ·M·P 缩到主节点：从节点上的质量带着刚臂，
+    # 自然成为主节点的转动惯量（刚性楼板的 m·r² 就是这么来的）
+    Kff = basis.reduce(K)
+    Mff = basis.reduce(M)
     # 对称化：装配时的浮点误差会让两边差 1e-16 量级，eigh 要求严格对称
     Kff = 0.5 * (Kff + Kff.T)
     Mff = 0.5 * (Mff + Mff.T)
@@ -197,8 +199,7 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     keep = min(num_modes, vals.size)
     omega = np.sqrt(vals[:keep])
 
-    shapes = np.zeros((n, keep))
-    shapes[free, :] = vecs[:, :keep]
+    shapes = basis.expand(vecs[:, :keep])
 
     total = float(sum(model.materials[m.material].density
                       * model.sections[m.section].A

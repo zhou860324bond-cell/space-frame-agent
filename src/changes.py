@@ -204,6 +204,9 @@ def prune_orphan_nodes(model: dict[str, Any]) -> list[int]:
     """
     members = model.get("members") or []
     used = {int(m["i"]) for m in members} | {int(m["j"]) for m in members}
+    # 约束里的参考点、加载点不靠杆件也有刚度，不算孤立
+    import features as _features
+    used |= _features.constraint_nodes(model)
     orphans = [int(n["id"]) for n in model.get("nodes") or []
                if int(n["id"]) not in used]
     if not orphans:
