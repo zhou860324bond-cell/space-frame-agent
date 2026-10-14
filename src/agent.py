@@ -153,6 +153,7 @@ from session_loads import LoadsMixin
 from session_solving import SolvingMixin
 from session_query import QueryMixin
 from session_checks import ChecksMixin
+from session_features import FeaturesMixin
 
 
 # 批量修改闸门看这几类实体：它们有稳定 ID，改了就是改了「用户已经认过的结构」。
@@ -165,7 +166,7 @@ BATCH_EDIT_THRESHOLD = 2
 
 @dataclass
 class Session(ModelingMixin, LoadsMixin, SolvingMixin,
-              QueryMixin, ChecksMixin):
+              QueryMixin, ChecksMixin, FeaturesMixin):
     """一次会话持有的全部确定性状态。模型与结果只在这里，不在提示词里。"""
     model: dict[str, Any] = field(default_factory=dict)
     frame: Any = None

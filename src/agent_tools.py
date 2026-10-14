@@ -168,6 +168,144 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "create_section_assignment",
+            "description":
+                "截面指派（Abaqus 的 Assign Section）：把截面和材料指派给一个区域的杆件，"
+                "作为一个有名字的对象保存。region 写集合名时是**活引用**：之后集合里增减杆件，"
+                "指派自动跟着变。同一根杆不能被两个截面指派同时覆盖。",
+            "parameters": {"type": "object", "required": ["name", "region", "section", "material"],
+                           "properties": {
+                               "name": {"type": "string"},
+                               "region": {"description": "集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "section": {"type": "string"}, "material": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_boundary_condition",
+            "description":
+                "边界条件对象（Abaqus 的 Create Boundary Condition），施加在一个节点区域上。"
+                "preset 取 ENCASTRE 固接 / PINNED 铰接 / XSYMM / YSYMM / ZSYMM，或直接给 fix 六个 0/1。"
+                "region 写集合名是活引用。step 缺省 Initial。同一节点不同自由度可以分属不同边界条件，"
+                "同一自由度被两个约束会报过约束。",
+            "parameters": {"type": "object", "required": ["name", "region"],
+                           "properties": {
+                               "name": {"type": "string"},
+                               "region": {"description": "集合名，或节点编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "preset": {"type": "string",
+                                          "enum": ["ENCASTRE", "PINNED", "XSYMM", "YSYMM", "ZSYMM"]},
+                               "fix": {"type": "array", "items": {"type": "integer"}},
+                               "spring": {"type": "array", "items": {"type": "number"}},
+                               "step": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_load",
+            "description":
+                "荷载对象（Abaqus 的 Create Load），属于某个工况、施加在一个区域上，是**一个**对象"
+                "而不是逐杆拆开的若干条。load_type：concentrated_force（节点区域，force 三个全局分量）、"
+                "moment（节点区域，moment）、line_load（杆件区域，w 全局线荷载）、"
+                "gravity（杆件区域，g 加速度，按 ρA 算自重）。数值单位跟模型单位制。",
+            "parameters": {"type": "object", "required": ["name", "case", "load_type", "region"],
+                           "properties": {
+                               "name": {"type": "string"}, "case": {"type": "string"},
+                               "load_type": {"type": "string", "enum": ["concentrated_force", "moment",
+                                                                        "line_load", "gravity"]},
+                               "region": {"description": "集合名，或节点/杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "force": {"type": "array", "items": {"type": "number"}},
+                               "moment": {"type": "array", "items": {"type": "number"}},
+                               "w": {"type": "array", "items": {"type": "number"}},
+                               "g": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_feature",
+            "description": "编辑一个建模对象（截面指派 / 边界条件 / 荷载）的参数或区域。"
+                           "changes 只写要改的键；值为 null 表示去掉该键。",
+            "parameters": {"type": "object", "required": ["kind", "name", "changes"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "bc", "load"]},
+                               "name": {"type": "string"},
+                               "changes": {"type": "object"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rename_feature",
+            "description": "给建模对象改名。",
+            "parameters": {"type": "object", "required": ["kind", "name", "new_name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "bc", "load"]},
+                               "name": {"type": "string"}, "new_name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "copy_feature",
+            "description": "复制建模对象。边界条件的副本默认抑制，避免与原对象在同一区域过约束。",
+            "parameters": {"type": "object", "required": ["kind", "name", "new_name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "bc", "load"]},
+                               "name": {"type": "string"}, "new_name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suppress_feature",
+            "description": "抑制或恢复建模对象（Abaqus 的 Suppress / Resume）：抑制的对象不参与计算。",
+            "parameters": {"type": "object", "required": ["kind", "name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "bc", "load"]},
+                               "name": {"type": "string"}, "suppressed": {"type": "boolean"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_feature",
+            "description": "删除建模对象，由它派生的约束、荷载或截面指派一并去掉。",
+            "parameters": {"type": "object", "required": ["kind", "name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "bc", "load"]},
+                               "name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_features",
+            "description": "列出建模对象：名字、区域、展开后的编号、是否抑制。不给 kind 列出全部。",
+            "parameters": {"type": "object",
+                           "properties": {"kind": {"type": "string",
+                                                   "enum": ["section_assignment", "bc", "load"]}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "seed_mesh",
             "description":
                 "布种：设定每根杆件剖成几个分析单元（Abaqus 式），写进模型，存盘后仍在。"

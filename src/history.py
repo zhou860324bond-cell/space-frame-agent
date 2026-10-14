@@ -47,6 +47,9 @@ MUTATING = frozenset({
     "seed_mesh",
     # 节点质量只进质量阵，但同样是模型的一部分
     "set_nodal_mass", "masses_from_loads", "set_imperfection",
+    # 建模对象（Abaqus 式截面指派、边界条件、荷载）的创建与管理器操作
+    "create_section_assignment", "create_boundary_condition", "create_load",
+    "edit_feature", "rename_feature", "copy_feature", "suppress_feature", "delete_feature",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -190,6 +193,16 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
     if tool == "define_set":
         n = len(payload.get("members") or payload.get("nodes") or [])
         return f"定义集合「{args.get('name')}」，{n} 个对象"
+    if tool in ("create_section_assignment", "create_boundary_condition", "create_load"):
+        label = {"create_section_assignment": "截面指派", "create_boundary_condition": "边界条件",
+                 "create_load": "荷载"}[tool]
+        return f"创建{label}「{args.get('name')}」"
+    if tool in ("edit_feature", "rename_feature", "copy_feature", "suppress_feature",
+                "delete_feature"):
+        verb = {"edit_feature": "编辑", "rename_feature": "改名", "copy_feature": "复制",
+                "suppress_feature": "抑制" if args.get("suppressed", True) else "恢复",
+                "delete_feature": "删除"}[tool]
+        return f"{verb}「{args.get('name')}」"
     if tool == "seed_mesh":
         if args.get("clear"):
             return "清除布种"

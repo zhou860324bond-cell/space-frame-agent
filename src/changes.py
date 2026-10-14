@@ -157,6 +157,27 @@ def prune_sets(model: dict[str, Any]) -> tuple[dict[str, int], list[str]]:
     return pruned, emptied
 
 
+def prune_feature_regions(model: dict[str, Any]) -> dict[str, int]:
+    """建模对象里显式写出的编号随删除一起剪掉，返回每个对象剪了几个。
+
+    集合区域不用剪：集合本身由 prune_sets 清理，对象再生成时按集合的当前内容展开。
+    剪空的对象保留，由校验报出「区域里没有节点/杆件」，让用户决定删除还是改区域。
+    """
+    alive = {"nodes": {int(n["id"]) for n in model.get("nodes") or []},
+             "members": {int(m["id"]) for m in model.get("members") or []}}
+    counted: dict[str, int] = {}
+    for items in (model.get("features") or {}).values():
+        for feature in items:
+            region = feature.get("region") or {}
+            for key in ("nodes", "members"):
+                if key in region:
+                    kept = [k for k in region[key] if int(k) in alive[key]]
+                    if len(kept) != len(region[key]):
+                        counted[feature["name"]] = len(region[key]) - len(kept)
+                        region[key] = kept
+    return counted
+
+
 def prune_mesh_seeds(model: dict[str, Any]) -> list[int]:
     """删掉指向已不存在杆件的逐杆布种，返回被删的杆件编号。
 
@@ -223,5 +244,7 @@ def apply(model: dict[str, Any], change: Change, *,
             report["emptied_sets"] = emptied
         if stale := prune_mesh_seeds(model):
             report["pruned_mesh_seeds"] = stale
+        if trimmed := prune_feature_regions(model):
+            report["pruned_feature_regions"] = trimmed
 
     return report

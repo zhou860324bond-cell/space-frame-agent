@@ -62,6 +62,31 @@ DIMENSIONS = {
     "supports.spring": "support_spring",
     "sets": None,
     "mesh.divisions": None,               # 段数，纯计数
+    "features.section_assignments.region.set": None,
+    "features.section_assignments.region.nodes": None,
+    "features.section_assignments.region.members": None,
+    "features.section_assignments.name": None,
+    "features.section_assignments.suppressed": None,
+    "features.bcs.region.set": None,
+    "features.bcs.region.nodes": None,
+    "features.bcs.region.members": None,
+    "features.bcs.name": None,
+    "features.bcs.suppressed": None,
+    "features.loads.region.set": None,
+    "features.loads.region.nodes": None,
+    "features.loads.region.members": None,
+    "features.loads.name": None,
+    "features.loads.suppressed": None,
+    "features.section_assignments.section": None,
+    "features.section_assignments.material": None,
+    "features.bcs.step": None, "features.bcs.fix": None,
+    "features.bcs.spring": "support_spring",
+    "features.loads.case": None, "features.loads.type": None,
+    "features.loads.force": "force", "features.loads.moment": "moment",
+    "features.loads.w": "line_load", "features.loads.g": "acceleration",
+    # 派生条目的来源标记，都是对象名
+    "members.assignment": None, "supports.owners": None,
+    "nodal_loads.owner": None, "member_loads.owner": None, "member_spans.owner": None,
     "imperfection.mode": None,
     "imperfection.case": None,              # 工况名
     "imperfection.amplitude": "length",
@@ -156,7 +181,18 @@ def test_no_stale_entries_in_the_table():
 # --- 数值层：真的换了，而且换对了 -----------------------------------------
 
 def kitchen_sink():
-    """**用上每一个会换算的字段**的模型。漏用一个，下面的测试就测不到它。"""
+    """**用上每一个会换算的字段**的模型。漏用一个，下面的测试就测不到它。
+
+    建模对象层的物理量（荷载对象的力、力矩、线荷载、重力加速度，边界条件
+    对象的弹簧）也在这里；派生条目由 features.regenerate 生成，模型才合法。
+    """
+    import features
+    model = _kitchen_sink_body()
+    features.regenerate(model)
+    return model
+
+
+def _kitchen_sink_body():
     return {
         "schema_version": 1, "units": "N-m-Pa",
         "nodes": [{"id": 1, "x": 0.0, "y": 0.0, "z": 0.0},
@@ -201,6 +237,20 @@ def kitchen_sink():
                                       "spring": [0.0, 0.0, 5e6,
                                                  0.0, 0.0, 7e7]}}}],
         "amplitudes": {"c": [[0.0, 0.0], [1.0, 1.0]]},
+        "features": {
+            "bcs": [{"name": "BC-端部", "region": {"nodes": [2]}, "fix": [0, 1, 0, 0, 0, 0],
+                     "spring": [0.0, 0.0, 0.0, 3e7, 0.0, 0.0]}],
+            "loads": [
+                {"name": "F-端部", "region": {"nodes": [2]}, "case": "default",
+                 "type": "concentrated_force", "force": [0.0, 0.0, -2e3]},
+                {"name": "M-端部", "region": {"nodes": [2]}, "case": "default",
+                 "type": "moment", "moment": [0.0, 1e3, 0.0]},
+                {"name": "q-全跨", "region": {"members": [1]}, "case": "default",
+                 "type": "line_load", "w": [0.0, 0.0, -1e3]},
+                {"name": "自重", "region": {"members": [1]}, "case": "default",
+                 "type": "gravity", "g": [0.0, 0.0, -9.80665]},
+            ],
+        },
     }
 
 

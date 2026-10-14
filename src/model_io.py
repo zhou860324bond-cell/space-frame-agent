@@ -20,6 +20,7 @@ from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Frame, LoadCase,
                      member_endpoints)
 from span_loads import KINDS as SPAN_KINDS
 from span_loads import SpanLoad
+from features import SCHEMA as _FEATURES_SCHEMA
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -63,7 +64,9 @@ _NODAL_LOADS = {
     "items": {
         "type": "object", "required": ["node", "load"], "additionalProperties": False,
         "properties": {"name": {"type": "string", "minLength": 1},
-                       "node": {"type": "integer"}, "load": _LOAD6},
+                       "node": {"type": "integer"}, "load": _LOAD6,
+                       # 派生自哪个荷载对象（features.loads）；直接定义的条目没有
+                       "owner": {"type": "string", "minLength": 1}},
     },
 }
 _MEMBER_SPANS = {
@@ -73,6 +76,7 @@ _MEMBER_SPANS = {
         "additionalProperties": False,
         "properties": {
             "name": {"type": "string", "minLength": 1},
+            "owner": {"type": "string", "minLength": 1},
             "member": {"type": "integer"},
             "kind": {"type": "string", "enum": list(SPAN_KINDS)},
             "w1": _VEC3,
@@ -118,7 +122,8 @@ _MEMBER_LOADS = {
         "type": "object", "required": ["member", "w"], "additionalProperties": False,
         "properties": {"name": {"type": "string", "minLength": 1},
                        "member": {"type": "integer"}, "w": _VEC3,
-                       "frame": {"type": "string", "enum": ["global"]}},
+                       "frame": {"type": "string", "enum": ["global"]},
+                       "owner": {"type": "string", "minLength": 1}},
     },
 }
 
@@ -167,6 +172,9 @@ MODEL_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        # 建模对象（截面指派、边界条件、荷载）：Abaqus 式对象施加在区域上，
+        # 上面的逐条目由它派生。见 features.py。
+        "features": _FEATURES_SCHEMA,
         # 初始几何缺陷：第 mode 阶屈曲模态缩放到 amplitude（长度，可为负表示
         # 反向）叠到分析模型上，只在二阶分析（pdelta / step）中生效。case 是
         # 求缺陷模态用的参考工况或组合，缺省取内力最大者。见 imperfection.py。
@@ -274,6 +282,8 @@ MODEL_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "id": {"type": "integer", "minimum": 1},
                     "i": {"type": "integer"}, "j": {"type": "integer"},
+                    # 截面与材料来自哪个截面指派对象（features.section_assignments）
+                    "assignment": {"type": "string", "minLength": 1},
                     "section": {"type": "string"}, "material": {"type": "string"},
                     "ref_vector": _VEC3,
                     "offset_i": _VEC3,
@@ -303,6 +313,9 @@ MODEL_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object", "required": ["node", "fix"], "additionalProperties": False,
                 "properties": {"name": {"type": "string", "minLength": 1},
+                               # 派生自哪些边界条件对象（features.bcs）；同一节点的
+                               # 不同自由度可以分属不同对象
+                               "owners": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
                                "node": {"type": "integer"},
                                "fix": {"type": "array", "minItems": 6, "maxItems": 6,
                                        "items": {"type": "integer", "enum": [0, 1]}},
@@ -352,6 +365,7 @@ MODEL_SCHEMA: dict[str, Any] = {
                             "type": "object", "additionalProperties": False,
                             "properties": {
                                 "name": {"type": "string", "minLength": 1},
+                                "owners": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
                                 "fix": {"type": "array",
                                         "minItems": 6, "maxItems": 6,
                                         "items": {"type": "integer",
@@ -649,6 +663,17 @@ def _validate(data: dict[str, Any], schema: dict[str, Any], *,
         unique(named_bc, "name", f"{label}的给定位移名称")
     if errors:
         return errors
+    if data.get("features"):
+        import features as _features
+        errors += [f"[语义] {msg}" for msg in _features.check(data)]
+        regenerated = deepcopy(data)
+        _features.regenerate(regenerated)
+        if regenerated != data:
+            # 正常经由工具修改时每一步都会再生成；对不上说明文件被手工改过。
+            errors.append("[语义] 逐节点、逐杆件条目与建模对象的定义不一致（文件可能被手工修改）；"
+                          "请重新打开模型或执行一次对象再生成。")
+        if errors:
+            return errors
     try:
         errors += [f"[语义] {msg}" for msg in check_model(
             from_dict(data), allow_incomplete=allow_incomplete)]

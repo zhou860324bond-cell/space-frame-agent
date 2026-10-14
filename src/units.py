@@ -124,6 +124,7 @@ _TO_MM = {
     # 节点质量与密度同一套：kg ↔ t。转动惯量再乘长度²：kg·m² → t·mm²。
     "mass": 1e-3,                 # kg    → t
     "mass_inertia": 1e3,          # kg·m² → t·mm²
+    "acceleration": 1e3,          # m/s² → mm/s²（重力荷载对象的 g）
 }
 
 
@@ -135,6 +136,26 @@ def _factors(src: str, dst: str) -> dict[str, float]:
     if src == MM and dst == SI:
         return {k: 1.0 / v for k, v in _TO_MM.items()}
     raise ValueError(f"不支持从 {src} 换到 {dst}")
+
+
+def _convert_features(features: dict, f: dict[str, float]) -> dict:
+    """建模对象里的物理量：荷载的力、力矩、线荷载、重力加速度，边界条件的弹簧。
+
+    派生条目由 convert_model 照常换算，对象若不换，下一次再生成就会把换过的
+    条目又写回原单位的数——两边必须同时换。
+    """
+    factor = {"force": f["force"], "moment": f["moment"], "w": f["line_load"],
+              "g": f["acceleration"]}
+    out = {k: [dict(item) for item in v] for k, v in features.items()}
+    for load in out.get("loads") or []:
+        for key, scale in factor.items():
+            if key in load:
+                load[key] = [v * scale for v in load[key]]
+    for bc in out.get("bcs") or []:
+        if "spring" in bc:
+            bc["spring"] = [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])
+                            for k, v in enumerate(bc["spring"])]
+    return out
 
 
 def convert_model(model: dict, to: str) -> dict:
@@ -185,6 +206,8 @@ def convert_model(model: dict, to: str) -> dict:
                         **({"c_web": s["c_web"] * f["length"]}
                            if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    if model.get("features"):
+        out["features"] = _convert_features(model["features"], f)
     if model.get("imperfection"):
         out["imperfection"] = {**model["imperfection"],
                                "amplitude": model["imperfection"]["amplitude"] * f["length"]}
