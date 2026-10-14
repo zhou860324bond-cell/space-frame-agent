@@ -185,6 +185,14 @@ class Viewport(QWidget):
         # 区域拾取：命令要一组节点或杆件时进入，点选 / Shift 加选 / Ctrl 减选 /
         # 拖框选，按屏幕像素判定（见 picking.py）。与上面的单选浏览互不干扰。
         self.region_pick: str | None = None
+        # 显示组（Abaqus 的 Display Group）：隐藏的杆件不画、也不参与拾取。节点不
+        # 过滤——位移向量按节点序号取值，删掉节点会让下标整体错位。
+        self.hidden_members: set[int] = set()
+        # 动画（Abaqus 的 Animate: Scale Factor）：按比例系数循环播放变形或振型
+        self._anim_timer = None
+        self._anim_frames: list = []
+        self._anim_make = None
+        self._anim_index = 0
         self.region_selection = picking.Selection()
         self._drag_origin: QPoint | None = None
         self._rubber: QRubberBand | None = None
@@ -550,7 +558,112 @@ class Viewport(QWidget):
             self._inset_camera()
 
     @_batched
+    def visible_frame(self, frame):
+        """去掉显示组里隐藏的杆件（及挂在它们上面的杆件荷载）后的 Frame 视图。"""
+        if frame is None or not self.hidden_members:
+            return frame
+        from copy import copy
+        hidden = self.hidden_members
+        view = copy(frame)
+        view.members = {k: v for k, v in frame.members.items() if k not in hidden}
+        cases = {}
+        for name, case in frame.load_cases.items():
+            c = copy(case)
+            for key in ("member_loads", "member_spans", "member_strains", "member_curvatures"):
+                table = getattr(case, key, None)
+                if isinstance(table, dict):
+                    setattr(c, key, {k: v for k, v in table.items() if k not in hidden})
+            cases[name] = c
+        view.load_cases = cases
+        return view
+
+    def set_hidden_members(self, hidden: set[int]) -> None:
+        self.hidden_members = set(hidden)
+
+    # --- 动画 ---
+
+    ANIMATION_FRAMES = 16
+
+    def animating(self) -> bool:
+        return self._anim_timer is not None and self._anim_timer.isActive()
+
+    def start_animation(self, make_mesh, color: str) -> None:
+        """循环播放 ``make_mesh(系数)`` 生成的网格，系数按 sin 在 -1…1 之间变化。
+
+        第一轮按需生成并缓存，之后只替换渲染数据：大模型每帧重建管子要上百毫秒，
+        先算完全部帧再播会让界面停住好几秒。
+        """
+        self.stop_animation()
+        if not CAN_RENDER:
+            return
+        from PySide6.QtCore import QTimer
+        self._anim_make = make_mesh
+        self._anim_frames = [None] * self.ANIMATION_FRAMES
+        self._anim_index = 0
+        first = self._anim_frame(0)
+        self._anim_actor = self.plotter.add_mesh(
+            first, color=color, smooth_shading=True, pbr=True, metallic=0.16,
+            roughness=0.66, ambient=0.20, diffuse=0.80, name="_animation")
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(70)
+        self._anim_timer.timeout.connect(self._anim_tick)
+        self._anim_timer.start()
+
+    def _anim_frame(self, k: int):
+        import math
+        if self._anim_frames[k] is None:
+            factor = math.sin(2.0 * math.pi * k / self.ANIMATION_FRAMES)
+            self._anim_frames[k] = self._anim_make(factor)
+        return self._anim_frames[k]
+
+    def _anim_tick(self) -> None:
+        self._anim_index = (self._anim_index + 1) % self.ANIMATION_FRAMES
+        mesh = self._anim_frame(self._anim_index)
+        self._anim_actor.mapper.SetInputData(mesh)
+        self.plotter.render()
+
+    def stop_animation(self) -> None:
+        if self._anim_timer is not None:
+            self._anim_timer.stop()
+            self._anim_timer.deleteLater()
+        self._anim_timer = None
+        self._anim_frames = []
+        self._anim_make = None
+
+    def animate_deformed(self, frame, solution, case: str, scale: float) -> None:
+        """变形动画：在未变形轮廓上把变形按 -1…1 倍来回播放。"""
+        frame = self.visible_frame(frame)
+        self.clear()
+        if not CAN_RENDER:
+            return
+        self.plotter.add_mesh(scene.member_polylines(frame), color=theme.REFERENCE,
+                              line_width=1.5)
+        self.start_animation(lambda f: scene.member_tubes(frame, solution, case,
+                                                          scale=scale * f), theme.MEMBER)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+
+    def animate_mode(self, frame, shapes, mode: int, label: str = "") -> None:
+        """振型动画：振型是往复运动，静态图只能看到一个瞬间。"""
+        frame = self.visible_frame(frame)
+        self.clear()
+        if not CAN_RENDER:
+            return
+        scale = scene.auto_mode_scale(frame, shapes, mode)
+        self.plotter.add_mesh(scene.member_polylines(frame), color=theme.REFERENCE,
+                              line_width=1.5)
+        self.start_animation(lambda f: scene.mode_shape_tubes(frame, shapes, mode, scale * f),
+                             theme.HIGHLIGHT)
+        if label:
+            self.plotter.add_text(label, position="upper_left", color=theme.VIEWPORT_INK,
+                                  font_size=10)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+
     def clear(self) -> None:
+        self.stop_animation()
         self._annotation_context = None
         if getattr(self, "_solid_active", False):
             self._first_render = True
@@ -1171,6 +1284,7 @@ class Viewport(QWidget):
     def show_model(self, frame, case: str | None = None,
                    supports: bool = True, loads: bool = True) -> dict:
         """求解前的模型视图。"""
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1262,6 +1376,7 @@ class Viewport(QWidget):
     @_batched
     def show_deformed(self, frame, solution, case: str, scale: float,
                       overlay: bool = True, supports: bool = True) -> None:
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1300,6 +1415,7 @@ class Viewport(QWidget):
         这张图回答"用了几成、哪根超了"——SAP2000、盈建科最常看的就是它。
         判不了的构件（欧拉不适用的粗短柱）画灰色，不冒充合格。
         """
+        frame = self.visible_frame(frame)
         got = scene.utilization_lines(frame, mapping, payload)
         if not CAN_RENDER:
             self._frame = frame
@@ -1372,6 +1488,7 @@ class Viewport(QWidget):
         看不出大小。这里图形的**高度就是数值**，弯矩画在受拉侧，
         颜色只是辅助：负蓝、零灰、正红，全结构共用一个比例尺。
         """
+        frame = self.visible_frame(frame)
         from units import of as unit_system
         system = unit_system(frame)
         if component in {"T", "My", "Mz", "M"}:
@@ -1452,6 +1569,7 @@ class Viewport(QWidget):
         **分级着色（banded contour）**，级数默认 12，与色标上的分格一一对应。
         连续渐变上读不出"这一段到底是多少"，只读得出"这边比那边红"。
         """
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1672,6 +1790,7 @@ class Viewport(QWidget):
     def show_mode(self, frame, shapes: np.ndarray, mode: int,
                   label: str = "") -> None:
         """振型 / 失稳模态。振型无量纲，按模型尺寸定一个好看的放大倍数。"""
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False

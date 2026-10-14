@@ -44,6 +44,7 @@ from .window_preferences import WindowPreferencesMixin, _settings
 from .window_results import WindowResultsMixin
 from .window_objects import WindowObjectsMixin
 from .window_jobs import WindowJobsMixin
+from .window_viz import WindowVizMixin
 from .region_prompt import RegionPickController
 
 
@@ -86,7 +87,7 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 MODES = ("模型", "分析网格", "变形", "云图", "实体云图", "内力图", "应力比", "模态")
 
 
-class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowCommandsMixin,
+class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowCommandsMixin,
                  WindowPreferencesMixin,
                  WindowResultsMixin, QMainWindow):
     def __init__(self, session: Session | None = None):
@@ -900,6 +901,13 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowCommandsMixin,
     # --- 绘制 ---
 
     def redraw(self) -> None:
+        # 重画会清掉视口（也就停了动画），开关的勾要跟着取消，免得显示「在播」实际没播
+        animate = getattr(self, "actions_by_name", {}).get("animate")
+        if animate is not None:
+            animate.setChecked(False)
+        self._redraw()
+
+    def _redraw(self) -> None:
         self._sync_result_validity()
         if self.mode == "实体云图" and self._solid_grid is not None:
             self.viewport.show_solid_result(

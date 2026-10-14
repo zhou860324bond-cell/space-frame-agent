@@ -678,12 +678,12 @@ def build(window) -> Ribbon:
     p = r.page("结果")
     g = p.group("显示")
     g.add_large(a["diagram"])
-    g.add_small(a["clear_results"])
+    g.add_small(a["animate"]); g.add_small(a["clear_results"])
     g = p.group("实体结果")
     g.add_large(a["solid_contour"])
     g.add_small(a["open_solid_result"])
     g = p.group("查询")
-    g.add_small(a["curve"]); g.add_small(a["deflection"])
+    g.add_small(a["curve"]); g.add_small(a["path_plot"]); g.add_small(a["deflection"])
     g.add_small(a["envelope"]); g.add_small(a["report"])
     # 校核单独成一组：它回答的是"够不够"，与"是多少"不是一回事，
     # 混在查询里会让人以为它只是又一种查询方式。
@@ -699,6 +699,9 @@ def build(window) -> Ribbon:
     g.add_large(a["bg_settings"])
     g = p.group("参考显示")
     g.add_large(a["render_profiles"]); g.add_large(a["grid_floor"])
+    # 显示组（Abaqus 在 View / Tools 下）：只显示、隐藏一部分杆件
+    g = p.group("显示组")
+    g.add_small(a["display_only"]); g.add_small(a["display_hide"]); g.add_small(a["display_all"])
     g.add_small(a["load_labels"])
     g = p.group("视角管理")
     g.add_small(a["camera"])

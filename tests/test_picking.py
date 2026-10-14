@@ -90,3 +90,14 @@ def test_viewport_click_and_box_use_screen_geometry(qt_app, monkeypatch):
 def qt_app():
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication([])
+
+
+def test_path_ordering_follows_connectivity_and_rejects_branches():
+    """路径曲线要把选中的杆件排成首尾相连的链；分叉或断开时说清原因。"""
+    from desktop.path_plot import order_path
+    members = {1: (1, 2), 2: (3, 2), 3: (3, 4), 4: (2, 5), 5: (7, 8)}
+    assert order_path(members, [3, 1, 2]) == [(1, False), (2, True), (3, False)]
+    with pytest.raises(ValueError, match="分叉"):
+        order_path(members, [1, 2, 4])
+    with pytest.raises(ValueError, match="不连续"):
+        order_path(members, [1, 5])

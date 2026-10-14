@@ -1160,3 +1160,58 @@ def test_a_steps_job_reports_frequency_and_buckling_steps(qt_app, monkeypatch):
     w.job_action("submit", job)
     assert job.status == "完成", job.messages
     assert any("F1（频率）" in m and "Hz" in m for m in job.messages)
+
+
+def test_display_group_hides_members_from_drawing_and_picking(qt_app):
+    """显示组：仅显示 / 隐藏 / 全部显示；隐藏的杆件不进绘制用的 Frame，也就不参与拾取。"""
+    s = built()
+    w = MainWindow(s)
+    ids = [m["id"] for m in s.model["members"]]
+    w.display_only()
+    w.viewport.region_selection.apply("member", ids[:1])
+    w.region_pick.finish()
+    assert w.viewport.hidden_members == set(ids[1:])
+    view = w.viewport.visible_frame(w.session.preview_frame())
+    assert set(view.members) == {ids[0]}
+    assert set(view.nodes) == set(w.session.preview_frame().nodes), "节点不过滤，位移下标不能错位"
+    w.display_all()
+    assert not w.viewport.hidden_members
+
+
+def test_path_plot_draws_along_a_chain_of_members(qt_app, monkeypatch):
+    from desktop import window_viz
+    s = built()
+    w = MainWindow(s)
+    solved(w)
+    shown = []
+
+    import desktop.path_plot as path_plot
+    original = path_plot.PathPlotDialog
+
+    class Capture:
+        def __init__(self, window, ordered):
+            self.dialog = original(window, ordered)
+            shown.append(self.dialog.draw())
+
+        def exec(self):
+            return 0
+    monkeypatch.setattr(path_plot, "PathPlotDialog", Capture)
+    first = s.model["members"][0]
+    neighbour = next(m for m in s.model["members"][1:]
+                     if {m["i"], m["j"]} & {first["i"], first["j"]})
+    w.path_plot()
+    w.viewport.region_selection.apply("member", [first["id"], neighbour["id"]])
+    w.region_pick.finish()
+    assert shown and shown[0]["points"] > 0
+    assert window_viz is not None
+
+
+def test_animation_toggle_needs_a_result_view(qt_app, monkeypatch):
+    from desktop import window_viz
+    w = MainWindow(built())
+    told = []
+    monkeypatch.setattr(window_viz.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: told.append(a[2])))
+    w.actions_by_name["animate"].setChecked(True)
+    w.toggle_animation()
+    assert told and not w.actions_by_name["animate"].isChecked()
