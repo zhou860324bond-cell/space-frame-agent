@@ -100,21 +100,30 @@ COMMANDS: tuple[Command, ...] = (
             "Abaqus 式：选择梁截面类型（I/管/矩形等），输入尺寸，自动计算 A/I/J",
             "create_section"),
     Command("assign_section", "属性指派", "assign_section",
-            "选中杆件后一次指派材料与截面（Abaqus Property 模块核心操作）", "assign_section"),
+            "Abaqus 式截面指派：先在视口选杆件区域（Shift 加选、Ctrl 减选、拖框，或使用集合），"
+            "再选截面与材料；指派是一个对象，区域是集合时随集合更新", "assign_section"),
+    Command("assignment_manager", "截面指派管理器", "assign_section",
+            "列出全部截面指派对象：创建、编辑、编辑区域、复制、改名、删除、抑制、恢复",
+            "open_assignment_manager"),
     Command("hinge", "创建铰接", "hinge",
             "选中杆件后在 i端/j端/两端创建转动释放", "create_hinge"),
     Command("brace", "加支撑", "member",
             "在选中杆件所在节间加 X 型支撑。钢框架最有效的抗侧手段", "add_brace"),
 
     # --- 边界条件 ---
-    Command("load", "载荷管理器", "load", "打开边界条件面板，管理工况与荷载", "show_bc_panel"),
+    Command("load", "载荷管理器", "load",
+            "列出全部荷载对象：创建、编辑、编辑区域、复制、改名、删除、抑制、恢复", "open_load_manager"),
     Command("combo", "荷载组合", "combo", "弹出对话框编辑荷载组合（按分项系数组合）", "edit_load_combos"),
     Command("gravity", "重力", "gravity", "按密度和截面面积自动计算自重荷载", "apply_gravity"),
-    Command("support", "支座管理器", "support", "打开边界条件面板，设置支座约束", "show_bc_panel"),
+    Command("support", "支座管理器", "support",
+            "列出全部边界条件对象（与边界条件管理器相同）", "open_bc_manager"),
     Command("create_bc", "创建边界条件", "support",
-            "Abaqus 式：选中节点，勾选 U1/U2/U3/UR1/UR2/UR3 自由度", "create_bc"),
+            "Abaqus 式：名称、分析步、类型 → 在视口选节点区域（Shift 加选、Ctrl 减选、拖框，"
+            "或使用集合）→ 勾选 U1~UR3 或填弹性支承刚度", "create_bc"),
     Command("create_load", "创建载荷", "load",
-            "Abaqus 式：集中力/线载荷/重力，选中对象后输入分量", "create_load"),
+            "Abaqus 式：名称、工况、类型（集中力/力矩/线荷载/重力）→ 在视口选区域"
+            "（节点或杆件；点选、Shift 加选、Ctrl 减选、拖框，或使用集合）→ 填全局分量",
+            "create_load"),
 
     # --- 分析 ---
     Command("pick_node", "选择节点", "pick_node",

@@ -604,7 +604,8 @@ def build(window) -> Ribbon:
     g = p.group("截面")
     g.add_large(a["beam_section"]); g.add_large(a["section"])
     g = p.group("指派")
-    g.add_large(a["assign_section"]); g.add_small(a["batch_assignment"])
+    g.add_large(a["assign_section"]); g.add_small(a["assignment_manager"])
+    g.add_small(a["batch_assignment"])
     g.add_small(a["beam_orientation"])
     g = p.group("单位")
     g.add_small(a["units"])
@@ -633,14 +634,14 @@ def build(window) -> Ribbon:
     # ========== 载荷 ==========
     p = r.page("载荷")
     g = p.group("边界条件")
-    g.add_large(a["create_bc"])
+    g.add_large(a["create_bc"]); g.add_small(a["bc_manager"])
     g = p.group("载荷")
     g.add_large(a["create_load"]); g.add_large(a["gravity"])
     g = p.group("工况")
     g.add_small(a["load"]); g.add_small(a["combo"])
     g = p.group("规范与导荷")
     g.add_large(a["code_combo"]); g.add_small(a["live_pattern"])
-    g.add_small(a["area_load"]); g.add_small(a["bc_manager"])
+    g.add_small(a["area_load"])
 
     # ========== 网格 ==========
     p = r.page("网格")

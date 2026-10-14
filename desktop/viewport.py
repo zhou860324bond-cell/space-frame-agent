@@ -20,11 +20,11 @@ import functools
 import os
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QRubberBand, QVBoxLayout, QWidget
 
-from . import i18n, scene, theme
+from . import i18n, picking, scene, theme
 from .result_overlay import ResultOverlay
 
 # 无头环境（QT_QPA_PLATFORM=offscreen）里没有可用的 OpenGL：VTK 建不出
@@ -127,6 +127,8 @@ class Viewport(QWidget):
     escape_pressed = Signal()
     # 右键菜单由主窗口组装，这里只报告屏幕坐标。
     context_requested = Signal(object)
+    #: 区域拾取（Abaqus 提示区选择）的当前选择集变了：(类型, 编号列表)
+    region_changed = Signal(str, list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -151,6 +153,7 @@ class Viewport(QWidget):
         self.plotter.interactor.customContextMenuRequested.connect(
             lambda pos: self.context_requested.emit(
                 self.plotter.interactor.mapToGlobal(pos)))
+        self.plotter.interactor.installEventFilter(self)
 
         if CAN_RENDER:
             self.plotter.set_background(theme.VIEWPORT_BG)
@@ -179,6 +182,12 @@ class Viewport(QWidget):
         # 你不说清楚要选什么类型，用户就得靠反复试来猜自己选中了谁
         self.pick_mode: str | None = None      # None / "node" / "member"
         self.selection: tuple[str, int] | None = None
+        # 区域拾取：命令要一组节点或杆件时进入，点选 / Shift 加选 / Ctrl 减选 /
+        # 拖框选，按屏幕像素判定（见 picking.py）。与上面的单选浏览互不干扰。
+        self.region_pick: str | None = None
+        self.region_selection = picking.Selection()
+        self._drag_origin: QPoint | None = None
+        self._rubber: QRubberBand | None = None
         self.problem_refs: list[tuple[str, int]] = []
         self.show_labels = False
         self._frame = None                     # 最近一次画的 frame，拾取要用
@@ -598,6 +607,19 @@ class Viewport(QWidget):
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_selection", point_size=16,
                                           render_points_as_spheres=True)
+        if self.region_selection:
+            kind, ids = self.region_selection.kind, self.region_selection.ids
+            if kind == "member":
+                mesh = scene.highlight_members(frame, ids)
+                if mesh.n_cells:
+                    self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
+                                          name="_region_selection", opacity=0.9)
+            else:
+                mesh = scene.highlight_nodes(frame, ids)
+                if mesh.n_points:
+                    self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
+                                          name="_region_selection", point_size=16,
+                                          render_points_as_spheres=True)
         member_ids = [ident for kind, ident in self.problem_refs
                       if kind == "member"]
         node_ids = [ident for kind, ident in self.problem_refs
@@ -615,6 +637,121 @@ class Viewport(QWidget):
                                       render_points_as_spheres=True)
 
     @_batched
+    # --- 区域拾取 ---
+
+    def start_region_pick(self, kind: str, initial: list[int] | None = None) -> None:
+        """进入区域拾取：之后的点选、拖框都改写选择集，不再旋转相机。"""
+        if kind not in ("node", "member"):
+            raise ValueError(f"区域拾取只支持 node 或 member，收到 {kind!r}")
+        self.set_model_mode(None)
+        self.set_pick_mode(None)
+        self.region_pick = kind
+        self.region_selection.apply(kind, list(initial or []))
+        self._refresh_region()
+
+    def stop_region_pick(self) -> None:
+        self.region_pick = None
+        self.region_selection.clear()
+        self._drag_origin = None
+        if self._rubber is not None:
+            self._rubber.hide()
+        self._refresh_region()
+
+    def _refresh_region(self) -> None:
+        if self._frame is not None and CAN_RENDER:
+            self.plotter.remove_actor("_region_selection", reset_camera=False)
+            self._decorate(self._frame)
+            self.plotter.render()
+        self.region_changed.emit(self.region_selection.kind or "",
+                                 list(self.region_selection.ids))
+
+    def _screen_geometry(self):
+        """(节点编号, 节点屏幕坐标, 杆件编号, 杆件屏幕线段)，逻辑像素、左上为原点。"""
+        from frame3d import member_endpoints
+        frame = self._frame
+        widget = self.plotter.interactor
+        width, height = max(widget.width(), 1), max(widget.height(), 1)
+        camera = self.plotter.renderer.GetActiveCamera()
+        vtk_matrix = camera.GetCompositeProjectionTransformMatrix(width / height, -1, 1)
+        matrix = np.array([[vtk_matrix.GetElement(r, c) for c in range(4)] for r in range(4)])
+        node_ids = sorted(frame.nodes)
+        nodes = picking.project(matrix, (width, height),
+                                np.array([frame.nodes[k].xyz for k in node_ids]))
+        member_ids = sorted(frame.members)
+        ends = [member_endpoints(frame, frame.members[k]) for k in member_ids]
+        flat = np.array([p for pair in ends for p in pair]) if ends else np.zeros((0, 3))
+        segments = picking.project(matrix, (width, height), flat).reshape(-1, 2, 2)
+        return node_ids, nodes, member_ids, segments
+
+    def region_click(self, x: float, y: float, mode: str = "replace") -> None:
+        """在屏幕 (x, y) 处点选；mode 为 replace / add（Shift）/ remove（Ctrl）。"""
+        if self.region_pick is None or self._frame is None:
+            return
+        node_ids, nodes, member_ids, segments = self._screen_geometry()
+        if self.region_pick == "node":
+            hit = picking.nearest_point(nodes, (x, y))
+            picked = [] if hit is None else [node_ids[hit]]
+        else:
+            hit = picking.nearest_segment(segments, (x, y))
+            picked = [] if hit is None else [member_ids[hit]]
+        if not picked and mode != "replace":
+            return                         # 加选、减选时点空了什么也不改
+        self.region_selection.apply(self.region_pick, picked, mode)
+        self._refresh_region()
+
+    def region_box(self, rect: tuple[float, float, float, float],
+                   mode: str = "replace") -> None:
+        """拖框选：完全框住的节点或杆件。"""
+        if self.region_pick is None or self._frame is None:
+            return
+        node_ids, nodes, member_ids, segments = self._screen_geometry()
+        if self.region_pick == "node":
+            mask = picking.points_in_rect(nodes, rect)
+            picked = [k for k, keep in zip(node_ids, mask, strict=True) if keep]
+        else:
+            mask = picking.segments_in_rect(segments, rect)
+            picked = [k for k, keep in zip(member_ids, mask, strict=True) if keep]
+        self.region_selection.apply(self.region_pick, picked, mode)
+        self._refresh_region()
+
+    @staticmethod
+    def _pick_mode_for(modifiers) -> str:
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            return "add"
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            return "remove"
+        return "replace"
+
+    def eventFilter(self, watched, event):  # noqa: N802  Qt 的命名
+        """区域拾取时接管左键：单击点选，拖动画框；其余照常交给相机。"""
+        if self.region_pick is None or watched is not self.plotter.interactor:
+            return super().eventFilter(watched, event)
+        kind = event.type()
+        left = Qt.MouseButton.LeftButton
+        if kind == QEvent.Type.MouseButtonPress and event.button() == left:
+            self._drag_origin = event.position().toPoint()
+            return True
+        if kind == QEvent.Type.MouseMove and self._drag_origin is not None:
+            current = event.position().toPoint()
+            if (current - self._drag_origin).manhattanLength() > 4:
+                if self._rubber is None:
+                    self._rubber = QRubberBand(QRubberBand.Shape.Rectangle, watched)
+                self._rubber.setGeometry(QRect(self._drag_origin, current).normalized())
+                self._rubber.show()
+            return True
+        if (kind == QEvent.Type.MouseButtonRelease and event.button() == left
+                and self._drag_origin is not None):
+            origin, current = self._drag_origin, event.position().toPoint()
+            self._drag_origin = None
+            mode = self._pick_mode_for(event.modifiers())
+            if self._rubber is not None and self._rubber.isVisible():
+                self._rubber.hide()
+                self.region_box((origin.x(), origin.y(), current.x(), current.y()), mode)
+            else:
+                self.region_click(current.x(), current.y(), mode)
+            return True
+        return super().eventFilter(watched, event)
+
     def set_selection(self, kind: str | None, ident: int | None) -> None:
         self.selection = (kind, ident) if kind and ident is not None else None
         if self._frame is not None and CAN_RENDER:

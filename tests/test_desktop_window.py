@@ -439,32 +439,61 @@ def test_desktop_can_export_a_verified_agent_learning_trace(
     assert "正样本" in shown[0][2]
 
 
-def test_property_assignment_updates_material_and_section_together(
-        qt_app, monkeypatch):
-    from PySide6.QtWidgets import QDialog
-    from desktop import assignment_dialog
+class _Accept:
+    """替身对话框：exec 直接确定，values/vector 返回预先给定的值。"""
 
-    class FakeAssignmentDialog:
-        def __init__(self, *args, **kwargs):
-            pass
+    def __init__(self, *args, values=None, vector=None, **kwargs):
+        self._values, self._vector = values, vector
+        self.name = type("N", (), {"setEnabled": lambda *_: None})()
 
-        def exec(self):
-            return QDialog.DialogCode.Accepted
+    def exec(self):
+        from PySide6.QtWidgets import QDialog
+        return QDialog.DialogCode.Accepted
 
-        def get_assignment(self):
-            return "RAFTER", "Q235"
+    def values(self):
+        return self._values
 
-    monkeypatch.setattr(assignment_dialog, "AssignmentDialog", FakeAssignmentDialog)
+    def vector(self):
+        return self._vector
+
+
+@pytest.fixture(autouse=True)
+def _no_modal_boxes(monkeypatch):
+    """对象命令失败时会弹 QMessageBox；无头环境里没人点，测试会永远挂住。"""
+    from desktop import window_objects
+    monkeypatch.setattr(window_objects.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(window_objects.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+
+
+def _stub(monkeypatch, name, **kwargs):
+    from desktop import window_objects
+    monkeypatch.setattr(window_objects, name,
+                        lambda *a, **k: _Accept(*a, **{**k, **kwargs}))
+
+
+def test_assign_section_picks_a_region_first_then_creates_one_object(qt_app, monkeypatch):
+    """Abaqus 的截面指派：先在视口选区域（可多选），再选截面；结果是一个可管理的对象。
+
+    原来要先单选一根杆件，多根只能重复整套流程，指派也不是对象。
+    """
     s = built()
-    s.model["materials"].append(
-        {"name": "Q235", "E": 2.0e11, "nu": 0.3, "density": 7850.0})
-    member = s.model["members"][0]["id"]
+    s.model["materials"].append({"name": "Q235", "E": 2.0e11, "nu": 0.3, "density": 7850.0})
     w = MainWindow(s)
-    w._selected_kind, w._selected_id = "member", member
+    _stub(monkeypatch, "AssignSectionDialog", values=("SA-椽", "RAFTER", "Q235"))
     w.assign_section()
-    updated = next(item for item in s.model["members"] if item["id"] == member)
-    assert updated["section"] == "RAFTER"
-    assert updated["material"] == "Q235"
+    assert w.region_pick.active and w.viewport.region_pick == "member"
+    assert "截面指派" in w.lbl_prompt.text() and "拖框" in w.lbl_prompt.text()
+    targets = [m["id"] for m in s.model["members"][:2]]
+    w.viewport.region_selection.apply("member", targets)
+    w.region_pick.finish()
+    assert not w.region_pick.active
+    for member in s.model["members"]:
+        if member["id"] in targets:
+            assert (member["section"], member["material"]) == ("RAFTER", "Q235")
+            assert member["assignment"] == "SA-椽"
+    assert [f["name"] for f in s.model["features"]["section_assignments"]] == ["SA-椽"]
 
 
 def test_the_camera_is_not_reset_on_every_redraw(qt_app):
@@ -474,79 +503,88 @@ def test_the_camera_is_not_reset_on_every_redraw(qt_app):
     assert not w.viewport._first_render, "首帧之后就不该再自动摆相机了"
 
 
-def test_selection_commands_are_always_clickable_and_say_what_to_pick(qt_app):
-    """要作用在某个对象上的命令**始终可点**，提示里写明要点什么。
-
-    置灰比"点了没反应"好，但仍然要用户先猜对顺序；实测最常见的抱怨正是
-    "很多按钮点不了"。现在是命令在前、拾取在后，见下一条。
-    """
+def test_object_commands_are_clickable_without_a_prior_selection(qt_app):
+    """命令在前、区域在后：没选中任何东西也能点，提示里说明怎么选。"""
     w = MainWindow()
-    load = w.actions_by_name["create_load"]
-    bc = w.actions_by_name["create_bc"]
-    assert load.isEnabled() and bc.isEnabled()
-    assert "点选" in load.toolTip() and "节点或杆件" in load.toolTip()
-
-    w._on_picked("member", 1)
-    assert load.isEnabled() and bc.isEnabled()
-    assert "节点" in bc.toolTip() and "点选" in bc.toolTip(), "杆件不能加边界条件"
+    for name in ("create_load", "create_bc", "assign_section"):
+        action = w.actions_by_name[name]
+        assert action.isEnabled()
+        assert "集合" in action.toolTip() and "Shift" in action.toolTip()
 
 
-def test_a_command_without_a_selection_waits_for_a_pick_then_runs(qt_app):
-    """没选中就点「创建载荷」：进入拾取、提示去点什么；点中后自动接着走。"""
+def test_create_bc_follows_the_abaqus_sequence_and_takes_many_nodes(qt_app, monkeypatch):
+    """创建 → 选区域（多选）→ 编辑：一次给多个柱脚加约束，结果是一个边界条件对象。"""
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("BC-柱脚", "Initial", "PINNED"))
+    _stub(monkeypatch, "EditBCDialog", values=([1, 1, 1, 0, 0, 0], None))
+    warnings = []
+    from desktop import window_objects
+    monkeypatch.setattr(window_objects.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warnings.append(a[2])))
+    w.create_bc()
+    assert w.region_pick.active and w.viewport.region_pick == "node"
+    # 门架模型每个节点都有面外约束的直接支座；清掉后才能用对象重新约束
+    s.model["supports"] = []
+    feet = [1, 2]
+    w.viewport.region_selection.apply("node", feet)
+    w.region_pick.finish()
+    assert not warnings, warnings
+    assert [f["name"] for f in s.model["features"]["bcs"]] == ["BC-柱脚"]
+    owned = [x for x in s.model["supports"] if x.get("owners") == ["BC-柱脚"]]
+    assert sorted(x["node"] for x in owned) == sorted(feet)
+
+
+def test_the_selection_before_the_command_becomes_the_default_region(qt_app, monkeypatch):
+    """先选后点的老习惯保留：命令开始时已选中的同类对象直接带进区域。"""
     s = built()
     w = MainWindow(s)
     member = s.model["members"][0]["id"]
-    calls = []
-    w.create_load()                              # 真实入口：没选中
-    assert w._pending_command is not None
-    assert w.pick_actions["member"].isChecked(), "荷载默认拾杆件"
-    assert "点选" in w.lbl_prompt.text()
-
-    w.create_load = lambda: calls.append(w._selected_id)   # 续上时调的是它
     w._on_picked("member", member)
-    qt_app.processEvents()
-    assert calls == [member]
-    assert w._pending_command is None
+    w.assign_section()
+    assert w.viewport.region_selection.ids == [member]
 
 
-def test_a_pick_of_the_wrong_kind_keeps_waiting(qt_app):
-    """边界条件只能加在节点上：点中杆件不续上，继续等节点。"""
+def test_using_a_set_makes_the_region_a_live_reference(qt_app, monkeypatch):
     s = built()
     w = MainWindow(s)
-    w.create_bc()
-    assert w.pick_actions["node"].isChecked()
-    w._on_picked("member", s.model["members"][0]["id"])
-    qt_app.processEvents()
-    assert w._pending_command is not None
+    s.define_set(name="全部杆件", member_ids=[m["id"] for m in s.model["members"]])
+    s.set_load_cases([{"name": "DL"}])
+    _stub(monkeypatch, "CreateObjectDialog", values=("屋面", "DL", "line_load"))
+    _stub(monkeypatch, "EditLoadDialog", vector=[0.0, 0.0, -1e3])
+    from desktop import region_prompt
+    monkeypatch.setattr(region_prompt.QInputDialog, "getItem",
+                        staticmethod(lambda *a, **k: ("全部杆件", True)))
+    w.create_load()
+    w.region_pick.choose_set()
+    feature = s.model["features"]["loads"][0]
+    assert feature["region"] == {"set": "全部杆件"}
 
 
-def test_running_another_command_abandons_a_waiting_pick(qt_app):
-    """点了「创建载荷」又改主意去做别的：之后点中杆件不能再弹出载荷对话框。"""
+def test_escape_and_a_new_command_cancel_a_region_pick(qt_app, monkeypatch):
+    """Esc 取消选择；开始另一个对象命令时上一个选择作废，不会把区域交给错的命令。"""
     s = built()
     w = MainWindow(s)
-    w.actions_by_name["create_load"].trigger()
-    assert w._pending_command is not None
-    w.actions_by_name["iso"].trigger()            # 改主意：换个视角
-    assert w._pending_command is None
-    popped = []
-    w.create_load = lambda: popped.append(True)
-    w._on_picked("member", s.model["members"][0]["id"])
-    qt_app.processEvents()
-    assert not popped
-
-
-def test_triggering_the_same_command_again_keeps_waiting(qt_app):
-    w = MainWindow(built())
-    w.actions_by_name["create_bc"].trigger()
-    w.actions_by_name["create_bc"].trigger()
-    assert w._pending_command is not None
-
-
-def test_escape_abandons_a_waiting_command(qt_app):
-    w = MainWindow(built())
+    _stub(monkeypatch, "CreateObjectDialog", values=("BC-1", "Initial", "ENCASTRE"))
     w.create_bc()
     w.cancel_interaction()
-    assert w._pending_command is None
+    assert not w.region_pick.active and w.viewport.region_pick is None
+    created = []
+    w.create_bc()
+    w.region_pick.start("member", "截面指派", created.append)
+    assert w.viewport.region_pick == "member"
+    w.viewport.region_selection.apply("member", [s.model["members"][0]["id"]])
+    w.region_pick.finish()
+    assert created and "members" in created[0]
+    assert not (s.model.get("features") or {}).get("bcs"), "被顶掉的边界条件命令不能再落地"
+
+
+def test_region_pick_rejects_finishing_with_nothing_selected(qt_app):
+    w = MainWindow(built())
+    delivered = []
+    w.region_pick.start("node", "测试", delivered.append)
+    w.region_pick.finish()
+    assert not delivered and w.region_pick.active
 
 
 def test_solving_fills_the_result_summary_without_popping_it_open(qt_app):

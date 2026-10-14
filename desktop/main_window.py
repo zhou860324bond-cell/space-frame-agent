@@ -42,6 +42,8 @@ from . import glyphs
 from .window_commands import WindowCommandsMixin
 from .window_preferences import WindowPreferencesMixin, _settings
 from .window_results import WindowResultsMixin
+from .window_objects import WindowObjectsMixin
+from .region_prompt import RegionPickController
 
 
 def _format_combo_factors(factors: dict[str, float]) -> str:
@@ -83,7 +85,7 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 MODES = ("模型", "分析网格", "变形", "云图", "实体云图", "内力图", "应力比", "模态")
 
 
-class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
+class MainWindow(WindowObjectsMixin, WindowCommandsMixin, WindowPreferencesMixin,
                  WindowResultsMixin, QMainWindow):
     def __init__(self, session: Session | None = None):
         super().__init__()
@@ -229,6 +231,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._build_ribbon()
         self._build_menus()
         self._build_statusbar()
+        # Abaqus 式提示区选择：命令要区域时由它接管视口拾取（见 region_prompt.py）
+        self.region_pick = RegionPickController(self)
         self.runner.busy_changed.connect(self._on_busy)
         self.refresh()
         self.actions_by_name["stop_task"].setEnabled(False)
@@ -1401,6 +1405,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def cancel_interaction(self) -> None:
         """Esc：退出当前建模/拾取模式，回到浏览状态。"""
         changed = False
+        region = getattr(self, "region_pick", None)
+        if region is not None and region.active:
+            region.cancel()
+            changed = True
         for name in ("model_node", "model_member", "pick_node", "pick_member"):
             act = self.actions_by_name.get(name)
             if act is not None and act.isChecked():
@@ -2044,34 +2052,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             f"已创建截面：{sec['name']}（{section_type}, "
             f"A={sec['A']:.3e} {length_unit}²）")
 
-    def assign_section(self) -> None:
-        """Abaqus 式：选中杆件后一次指派材料与截面。"""
-        if getattr(self, "_selected_kind", None) != "member":
-            self.statusBar().showMessage("请先选中一根杆件，然后指派属性。", 5000)
-            return
-        sections = [s["name"] for s in self.session.model.get("sections", [])]
-        materials = [m["name"] for m in self.session.model.get("materials", [])]
-        if not sections or not materials:
-            self.statusBar().showMessage(
-                "属性指派需要材料和截面，请先在 Property 模块补齐定义。", 5000)
-            return
-        mid = self._selected_id
-        member = next(m for m in self.session.model.get("members", [])
-                      if int(m["id"]) == mid)
-        from .assignment_dialog import AssignmentDialog
-        dialog = AssignmentDialog(
-            [mid], sections, materials, member.get("section", ""),
-            member.get("material", ""), parent=self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        section, material = dialog.get_assignment()
-        result = self.session.assign_properties([mid], section, material)
-        if not result.ok:
-            QMessageBox.warning(self, "属性指派失败", self._explain(result.payload))
-            return
-        self._after_manual_edit(
-            f"杆件 {mid} 已指派属性：截面 {section}，材料 {material}")
-
     def create_hinge(self) -> None:
         """给选中杆件创建显式端铰；内核使用杆端自由度释放。"""
         if getattr(self, "_selected_kind", None) != "member":
@@ -2129,13 +2109,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         AreaLoadDialog(self.session, self).exec()
         self.refresh()
 
-    def open_bc_manager(self) -> None:
-        """边界条件管理器。"""
-        from .load_code_dialog import BCManagerDialog
-
-        BCManagerDialog(self.session, self).exec()
-        self.refresh()
-
     def open_step_manager(self) -> None:
         """分析步管理器。内核早就支持跨步传播与失活，界面一直够不到。"""
         from .step_dialog import StepManagerDialog
@@ -2178,40 +2151,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                  "material": "双线性轴向塑性；弯曲保持弹性"}[self.analysis_type]
         self.statusBar().showMessage(f"分析步：{choice}（{scope}）", 8000)
 
-    def create_bc(self) -> None:
-        """Abaqus 式：选中节点，创建边界条件（勾选自由度）。"""
-        if not self._require_selection("create_bc", ("node",), "创建边界条件"):
-            return
-        from .bc_dialog import BCDialog
-        nid = self._selected_id
-        current_entry = next((s for s in self.session.model.get("supports", [])
-                              if int(s["node"]) == nid), None)
-        current = current_entry["fix"] if current_entry else None
-        dlg = BCDialog(nid, current,
-                       current_name=(current_entry or {}).get("name"), parent=self,
-                       current_spring=(current_entry or {}).get("spring"))
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        fix = dlg.get_fix()
-        spring = dlg.get_spring()
-        bc_name = dlg.get_name()
-        if (any(fix) or spring) and not bc_name:
-            QMessageBox.warning(self, "边界条件创建失败", "边界条件名称不能为空。")
-            return
-        result = self.session.set_supports(
-            [nid], fix, name=bc_name or f"BC-Node-{nid}", spring=spring)
-        if not result.ok:
-            QMessageBox.warning(self, "边界条件创建失败", self._explain(result.payload))
-            return
-        told = f"{fix}" + (f" + 弹簧 {spring}" if spring else "")
-        self.set_prompt(f"已设置节点 {nid} 边界条件：{told}")
-        self._after_manual_edit(f"节点 {nid} 边界条件已更新：{told}")
-
     # 这些命令必须先在视口里选中对象才有意义。
     # 键是命令名，值是它接受的选择类型。
     _NEEDS_SELECTION = {
-        "create_load": ("node", "member"),
-        "create_bc": ("node",),
         "solid_joint": ("node",),
     }
 
@@ -2259,60 +2201,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.set_prompt(f"{pending[2]}：已选中，填写参数")
         # 等这次拾取事件走完再弹对话框，否则 VTK 的鼠标状态会卡在按下
         QTimer.singleShot(0, getattr(self, pending[0]))
-
-    def create_load(self) -> None:
-        """Abaqus 式：选中对象，创建载荷。"""
-        if not self._require_selection("create_load", ("node", "member"), "创建载荷"):
-            return
-        kind = self._selected_kind
-        from .load_dialog import LoadDialog
-        ident = self._selected_id
-        available = [case["name"] for case in self.session.model.get("load_cases", [])]
-        shown_cases = available or ["Load-1"]
-        dlg = LoadDialog(kind, ident, parent=self,
-                         units=self.session.model.get("units", "N-m-Pa"),
-                         cases=shown_cases, current_case=self.case)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        load_type = dlg.get_load_type()
-        load = dlg.get_load()
-        load_name = dlg.get_name()
-        case_name = dlg.get_case()
-        if not load_name:
-            QMessageBox.warning(self, "施加载荷失败", "载荷名称不能为空。")
-            return
-        # 确保有工况
-        if case_name not in available:
-            case_result = self.session.add_load_case(case_name)
-            if not case_result.ok:
-                QMessageBox.warning(self, "创建荷载工况失败", self._explain(case_result.payload))
-                return
-        if load_type == "concentrated":
-            result = self.session.set_nodal_load(ident, load, case_name, load_name)
-            description = f"节点 {ident} 已施加集中力：{load}"
-        elif load_type == "line":
-            result = self.session.set_member_load(ident, load, case_name, load_name)
-            description = f"杆件 {ident} 已施加满跨均布载荷：{load}"
-        elif load_type == "trapezoid":
-            end_load = dlg.get_end_load()
-            result = self.session.set_member_span_load(
-                ident, "trapezoid", load, w2=end_load,
-                case_name=case_name, name=load_name)
-            description = f"杆件 {ident} 已施加梯形载荷：i端 {load} → j端 {end_load}"
-        elif load_type == "member_point":
-            position = dlg.get_position()
-            result = self.session.set_member_span_load(
-                ident, "point", load, a=position,
-                case_name=case_name, name=load_name)
-            description = f"杆件 {ident} 距 i 端 {position:g} 处已施加集中力：{load}"
-        else:
-            QMessageBox.warning(self, "施加载荷失败", "未识别的荷载类型。")
-            return
-        if not result.ok:
-            QMessageBox.warning(self, "施加载荷失败", self._explain(result.payload))
-            return
-        self.set_prompt(description)
-        self._after_manual_edit(description)
 
     def open_sketch(self) -> None:
         """打开 2D 草图对话框，画一榀框架后拉伸成 3D 模型。"""
