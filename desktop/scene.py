@@ -264,6 +264,120 @@ def member_polylines(frame, solution=None, case: str | None = None,
     return merged
 
 
+def _profile_cap(profile: dict) -> tuple[np.ndarray, np.ndarray] | None:
+    """截面端面的三角剖分：(二维顶点, 三角形下标)。带孔截面交给 VTK 的轮廓三角化。
+
+    失败时返回 None——端面只是外观，侧壁已经表达了形状，不该因此画不出杆件。
+    """
+    loops = [np.asarray(profile["outer"], float),
+             *(np.asarray(h, float) for h in profile["holes"])]
+    points = np.vstack(loops)
+    lines, start = [], 0
+    for loop in loops:
+        n = len(loop)
+        lines += [n + 1, *range(start, start + n), start]
+        start += n
+    try:
+        from vtkmodules.vtkFiltersGeneral import vtkContourTriangulator
+        poly = pv.PolyData(np.column_stack([points, np.zeros(len(points))]), lines=lines)
+        tri = vtkContourTriangulator()
+        tri.SetInputData(poly)
+        tri.Update()
+        out = pv.wrap(tri.GetOutput())
+        if not out.n_cells:
+            return None
+        faces = np.asarray(out.faces).reshape(-1, 4)[:, 1:]
+        return np.asarray(out.points)[:, :2], faces
+    except Exception:  # noqa: BLE001  端面三角化失败只少两个端面，侧壁照画
+        return None
+
+
+def profile_extrusion(frame) -> tuple[pv.PolyData, set[int]]:
+    """按真实截面沿杆件拉伸（Abaqus 的 Render beam profiles）。返回 (网格, 画了的杆件)。
+
+    截面轮廓以形心为原点，第一坐标沿局部 y（截面高度方向）、第二坐标沿局部 z，
+    与内核的强轴约定一致：Iz = b·h³/12 是强轴，高度沿局部 y。没有截面几何的杆件
+    不在其中，调用方照旧画成圆管。原来所有杆件都画成同样粗细的圆管，工字钢、
+    箱形截面和圆管在视口里看不出区别，截面朝向放错了也看不出来。
+    """
+    from section_geometry import profile as section_profile
+
+    cache: dict[str, tuple] = {}
+    points, faces, owners = [], [], []
+    count = 0
+    drawn: set[int] = set()
+    for mid in sorted(frame.members):
+        member = frame.members[mid]
+        section = frame.sections.get(member.section)
+        geometry = getattr(section, "geometry", None) if section is not None else None
+        if not geometry:
+            continue
+        if member.section not in cache:
+            try:
+                prof = section_profile(geometry)
+            except (KeyError, ValueError):
+                cache[member.section] = None
+            else:
+                loops = [np.asarray(prof["outer"], float),
+                         *(np.asarray(h, float) for h in prof["holes"])]
+                cache[member.section] = (loops, _profile_cap(prof))
+        entry = cache[member.section]
+        if entry is None:
+            continue
+        loops, cap = entry
+        pi, pj = member_endpoints(frame, member)
+        _length, axes = local_axes(pi, pj, member.ref_vector)
+        ly, lz = axes[1], axes[2]
+
+        def place(uv, origin):
+            return origin + uv[:, :1] * ly + uv[:, 1:2] * lz
+
+        for loop in loops:
+            n = len(loop)
+            a, b = place(loop, pi), place(loop, pj)
+            points.append(np.vstack([a, b]))
+            k = np.arange(n)
+            quads = np.column_stack([np.full(n, 4), count + k, count + (k + 1) % n,
+                                     count + n + (k + 1) % n, count + n + k])
+            faces.append(quads.ravel())
+            owners.append(np.full(2 * n, mid))
+            count += 2 * n
+        if cap is not None:
+            cap_uv, tris = cap
+            for origin in (pi, pj):
+                points.append(place(cap_uv, origin))
+                faces.append(np.column_stack([np.full(len(tris), 3), count + tris]).ravel())
+                owners.append(np.full(len(cap_uv), mid))
+                count += len(cap_uv)
+        drawn.add(mid)
+    if not points:
+        return pv.PolyData(), drawn
+    mesh = pv.PolyData(np.vstack(points), faces=np.concatenate(faces))
+    mesh["member"] = np.concatenate(owners)
+    return mesh, drawn
+
+
+def profile_edges(mesh: pv.PolyData) -> pv.PolyData:
+    """截面实体的棱线：翼缘、腹板、端面的轮廓。Abaqus 渲染梁截面时叠加棱线，
+    平面着色下相邻面明暗接近时，没有棱线就分不清翼缘和腹板。"""
+    if not mesh.n_points:
+        return pv.PolyData()
+    return mesh.extract_feature_edges(feature_angle=30, boundary_edges=True,
+                                      non_manifold_edges=False, manifold_edges=False)
+
+
+def member_tubes_except(frame, skip: set[int]) -> pv.PolyData:
+    """除 ``skip`` 以外的杆件画成圆管：没有截面几何的杆件在截面渲染时的退路。"""
+    tubes = member_tubes(frame)
+    if not skip or not tubes.n_points:
+        return tubes
+    keep = ~np.isin(np.asarray(tubes["member"]), list(skip))
+    if not keep.any():
+        return pv.PolyData()
+    return tubes.extract_points(keep, adjacent_cells=False).extract_surface(
+        algorithm="dataset_surface")
+
+
 def member_tubes(frame, solution=None, case: str | None = None,
                  scale: float = 0.0, scalars: str | None = None,
                  radius: float | None = None) -> pv.PolyData:

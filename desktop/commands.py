@@ -140,6 +140,9 @@ COMMANDS: tuple[Command, ...] = (
             "set_model_member", "Ctrl+M", True),
     Command("delete", "删除选中", "remove",
             "删除当前选中的节点或杆件（Delete 键）", "delete_selected", "Delete"),
+    Command("render_profiles", "截面渲染", "section",
+            "按真实截面形状（工字、箱形、圆管、角钢等）显示杆件，看得出截面朝向与强弱轴；"
+            "没有截面几何的杆件仍画成圆管", "toggle_render_profiles", "", True),
     Command("labels", "编号标注", "labels",
             "在视口中显示节点与杆件编号。定位报错和结果时必需",
             "toggle_labels", "L", True),

@@ -190,6 +190,10 @@ class Viewport(QWidget):
         self._rubber: QRubberBand | None = None
         self.problem_refs: list[tuple[str, int]] = []
         self.show_labels = False
+        # 截面渲染（Abaqus 的 Render beam profiles）：有截面几何的杆件按真实轮廓
+        # 拉伸，没有几何的照旧画圆管。默认打开——看得见工字钢的朝向，才看得出
+        # 强弱轴放反了。
+        self.render_profiles = True
         self._frame = None                     # 最近一次画的 frame，拾取要用
 
         # 人工建模状态
@@ -1079,15 +1083,30 @@ class Viewport(QWidget):
                 else (theme.MEMBER, "#4a5764"))
 
     def _add_members(self, frame):
-        """画杆件本体。**形状始终是圆管**——粗细和形态不随截面变，
-        改的只有随底色深浅走的本体色。返回网格，空模型返回 None。"""
+        """画杆件本体。截面渲染打开时，有截面几何的杆件按真实轮廓拉伸，其余画圆管。
+        本体色随底色深浅走。返回杆件网格（可能为空）。"""
         body, _edge = self._member_ink()
-        mesh = scene.member_tubes(frame)
+        drawn: set[int] = set()
+        if self.render_profiles:
+            profiles, drawn = scene.profile_extrusion(frame)
+            if profiles.n_points:
+                # 平直面用平面着色：工字钢翼缘和腹板的棱角要清楚，平滑着色会糊成一团
+                self.plotter.add_mesh(profiles, color=body, smooth_shading=False,
+                                      pbr=True, metallic=0.28, roughness=0.58,
+                                      ambient=0.22, diffuse=0.78, name="_profiles")
+                self.plotter.add_mesh(scene.profile_edges(profiles), color=_edge,
+                                      line_width=1.2, name="_profile_edges")
+        mesh = scene.member_tubes_except(frame, drawn) if drawn else scene.member_tubes(frame)
         if mesh.n_points:
             self.plotter.add_mesh(mesh, color=body, smooth_shading=True,
                                   pbr=True, metallic=0.28, roughness=0.58,
                                   ambient=0.18, diffuse=0.82)
+        if drawn and not mesh.n_points:
+            return profiles
         return mesh
+
+    def set_render_profiles(self, on: bool) -> None:
+        self.render_profiles = bool(on)
 
     def set_contour_palette(self, palette: str) -> bool:
         """切换云图色系。返回是否真的变了，省得上层白刷一次视口。"""

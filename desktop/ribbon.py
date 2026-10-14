@@ -694,7 +694,7 @@ def build(window) -> Ribbon:
     g = p.group("视口背景")
     g.add_large(a["bg_settings"])
     g = p.group("参考显示")
-    g.add_large(a["grid_floor"])
+    g.add_large(a["render_profiles"]); g.add_large(a["grid_floor"])
     g.add_small(a["load_labels"])
     g = p.group("视角管理")
     g.add_small(a["camera"])

@@ -235,6 +235,7 @@ class MainWindow(WindowObjectsMixin, WindowCommandsMixin, WindowPreferencesMixin
         self._build_statusbar()
         # Abaqus 式提示区选择：命令要区域时由它接管视口拾取（见 region_prompt.py）
         self.region_pick = RegionPickController(self)
+        self.actions_by_name["render_profiles"].setChecked(self.viewport.render_profiles)
         self.runner.busy_changed.connect(self._on_busy)
         self.refresh()
         self.actions_by_name["stop_task"].setEnabled(False)
@@ -1317,6 +1318,10 @@ class MainWindow(WindowObjectsMixin, WindowCommandsMixin, WindowPreferencesMixin
             self.set_prompt("选择杆件模式：在视口中点击杆件选中，可用于截面指派/施加荷载/查看属性")
         else:
             self.set_prompt("就绪 | 选择上方功能区模块开始建模")
+
+    def toggle_render_profiles(self) -> None:
+        self.viewport.set_render_profiles(self.actions_by_name["render_profiles"].isChecked())
+        self.redraw()
 
     def toggle_labels(self) -> None:
         on = self.actions_by_name["labels"].isChecked()
