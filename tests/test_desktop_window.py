@@ -1053,3 +1053,12 @@ def test_model_tree_shows_objects_with_the_manager_context_menu(qt_app, monkeypa
                         staticmethod(lambda *a, **k: window_objects.QMessageBox.StandardButton.Yes))
     w.tree.feature_action.emit("section_assignments", "delete", "SA-椽")
     assert not (s.model.get("features") or {}).get("section_assignments")
+
+
+def test_the_prompt_resets_after_a_region_is_delivered(qt_app):
+    """真窗口实测发现：点「完成」后提示区仍停在「选择节点…」，像是还在等输入。"""
+    w = MainWindow(built())
+    w.region_pick.start("node", "测试", lambda region: None)
+    w.viewport.region_selection.apply("node", [1])
+    w.region_pick.finish()
+    assert "选择" not in w.lbl_prompt.text()

@@ -110,6 +110,9 @@ class RegionPickController:
     def _deliver(self, region: dict) -> None:
         callback = self._callback
         self._reset()
+        # 先把提示区复位：选择已经结束，不能还停在「选择节点…」。回调若又开始
+        # 一次选择（编辑区域），会写上它自己的提示。
+        self.window.set_prompt("就绪")
         if callback is not None:
             callback(region)
 

@@ -145,8 +145,11 @@ class ModelTree(QTreeWidget):
 
     def _feature_item(self, parent, kind: str, feature: dict) -> QTreeWidgetItem:
         region = feature["region"]
-        where = (f"集合「{region['set']}」" if "set" in region else
-                 f"{len(region.get('nodes') or region.get('members') or [])} 个对象")
+        if "set" in region:
+            where = f"集合「{region['set']}」"
+        else:
+            noun = "节点" if "nodes" in region else "杆件"
+            where = f"{len(region.get('nodes') or region.get('members') or [])} 个{noun}"
         if kind == "section_assignments":
             what = f"{feature['section']}/{feature['material']}"
         elif kind == "bcs":
