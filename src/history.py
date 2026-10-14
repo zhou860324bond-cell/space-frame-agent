@@ -43,7 +43,7 @@ MUTATING = frozenset({
     # 布种改的是分析网格，不改几何；但它改了模型（存盘后仍在），撤销要能退回
     "seed_mesh",
     # 节点质量只进质量阵，但同样是模型的一部分
-    "set_nodal_mass", "masses_from_loads",
+    "set_nodal_mass", "masses_from_loads", "set_imperfection",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -183,6 +183,10 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
         target = args.get("members")
         where = f"杆件 {target}" if target is not None else "全部杆件"
         return f"布种：{where}每杆 {args.get('divisions')} 段"
+    if tool == "set_imperfection":
+        spec = payload.get("imperfection")
+        return ("清除初始缺陷" if not spec else
+                f"初始缺陷：第 {spec['mode']} 阶屈曲模态，幅值 {payload.get('amplitude_mm')} mm")
     if tool == "set_nodal_mass":
         return f"节点质量「{payload.get('name')}」：{len(payload.get('nodes') or [])} 个节点"
     if tool == "masses_from_loads":

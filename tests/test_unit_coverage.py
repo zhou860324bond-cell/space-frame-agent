@@ -59,6 +59,9 @@ DIMENSIONS = {
     "supports.spring": "support_spring",
     "sets": None,
     "mesh.divisions": None,               # 段数，纯计数
+    "imperfection.mode": None,
+    "imperfection.case": None,              # 工况名
+    "imperfection.amplitude": "length",
     "masses.name": None,
     "masses.node": None,
     "masses.mass": "mass",
@@ -170,6 +173,7 @@ def kitchen_sink():
         # 平动刚接、转动弹性支承：fix 与 spring 不能撞在同一个自由度上，
         # 撞了会被语义校验挡住（刚性约束会让弹簧完全失效）。
         # rx 刚接（沉降要给在被约束的方向上），ry/rz 弹性支承。
+        "imperfection": {"mode": 1, "amplitude": 0.024},
         "masses": [{"name": "设备", "node": 2, "mass": 1200.0,
                     "inertia": [30.0, 40.0, 50.0]}],
         "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0],

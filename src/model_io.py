@@ -167,6 +167,18 @@ MODEL_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        # 初始几何缺陷：第 mode 阶屈曲模态缩放到 amplitude（长度，可为负表示
+        # 反向）叠到分析模型上，只在二阶分析（pdelta / step）中生效。case 是
+        # 求缺陷模态用的参考工况或组合，缺省取内力最大者。见 imperfection.py。
+        "imperfection": {
+            "type": "object", "required": ["mode", "amplitude"],
+            "additionalProperties": False,
+            "properties": {
+                "mode": {"type": "integer", "minimum": 1, "maximum": 20},
+                "amplitude": {"type": "number"},
+                "case": {"type": "string", "minLength": 1},
+            },
+        },
         # 节点集中质量（附加质量、由荷载换算的重力荷载代表值）。只进质量阵，
         # 不产生荷载。同一节点可以有多条，按名字区分来源；语义见 masses.py。
         "masses": {
@@ -571,6 +583,15 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
                 f"[语义] 节点 {s.get('node')} 的方向 {clash} 既写了 fix=1 又给了"
                 "弹簧刚度。刚性约束会让弹簧完全失效，两者只能取一个："
                 "要刚接就把 spring 那一项设为 0，要弹性支承就把 fix 那一项设为 0。")
+    imperfection = data.get("imperfection") or {}
+    if imperfection:
+        if not imperfection.get("amplitude"):
+            errors.append("[语义] imperfection/amplitude 不能为 0：零幅值等于没有缺陷，删掉这一项即可。")
+        ref = imperfection.get("case")
+        names = ({"default"} | {c.get("name") for c in data.get("load_cases") or []}
+                 | {c.get("name") for c in data.get("combos") or []})
+        if ref and ref not in names:
+            errors.append(f"[语义] imperfection/case 指向不存在的工况或组合 {ref!r}。")
     known_nodes = {int(n["id"]) for n in data.get("nodes") or []}
     lost = sorted({int(e["node"]) for e in data.get("masses") or []} - known_nodes)
     if lost:

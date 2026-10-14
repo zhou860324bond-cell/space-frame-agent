@@ -66,6 +66,7 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "raise_nodes": (("moved_nodes", "dz", "summary"), "抬高了哪些节点"),
     "select_members": (("member_ids", "count"), "按几何条件挑出的编号"),
     "define_set": (("name", "sets"), "集合名与当前全部集合"),
+    "set_imperfection": (("imperfection",), "缺陷设置（清除时为 None）"),
     "set_nodal_mass": (("name", "nodes", "total_mass_kg"), "质量来源名、节点与总质量"),
     "masses_from_loads": (("name", "nodes", "total_mass_kg", "skipped_self_weight"),
                           "换算的节点数、总质量与跳过的自重"),

@@ -198,6 +198,30 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "set_imperfection",
+            "description":
+                "初始几何缺陷（Abaqus 的 *IMPERFECTION）：取完善结构第 mode 阶屈曲模态，"
+                "缩放到给定幅值叠到分析几何上，之后 solve_model(analysis='pdelta') 按有缺陷的"
+                "几何做二阶分析。用户问「考虑初始缺陷」「二阶分析加缺陷」「直接分析法」时用。"
+                "幅值二选一：amplitude 直接给长度（模型单位，负值反向），或 height_ratio×结构总高"
+                "（如 1/250）。**规范取值按用户所用规范确定，不确定就问用户，不要自己编。**"
+                "线性静力和屈曲分析不受影响；clear=true 清除。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "integer", "minimum": 1, "description": "第几阶屈曲模态，默认 1"},
+                    "amplitude": {"type": "number", "description": "缺陷幅值，长度，模型单位"},
+                    "height_ratio": {"type": "number", "description": "幅值 = 该比例 × 结构总高"},
+                    "case": {"type": "string", "description": "求屈曲模态的参考工况或组合；缺省取内力最大者"},
+                    "clear": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_nodal_mass",
             "description":
                 "节点集中质量：设备、配重、楼面质量。只进模态与反应谱的质量阵，**不产生静力荷载**。"

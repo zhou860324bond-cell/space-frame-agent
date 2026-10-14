@@ -182,6 +182,9 @@ def convert_model(model: dict, to: str) -> dict:
                         **({"c_web": s["c_web"] * f["length"]}
                            if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    if model.get("imperfection"):
+        out["imperfection"] = {**model["imperfection"],
+                               "amplitude": model["imperfection"]["amplitude"] * f["length"]}
     if model.get("masses"):
         out["masses"] = [{**e, "mass": e["mass"] * f["mass"],
                           **({"inertia": [v * f["mass_inertia"] for v in e["inertia"]]}
