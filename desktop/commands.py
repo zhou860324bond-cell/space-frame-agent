@@ -138,6 +138,11 @@ COMMANDS: tuple[Command, ...] = (
     Command("gravity", "重力", "gravity", "按密度和截面面积自动计算自重荷载", "apply_gravity"),
     Command("support", "支座管理器", "support",
             "列出全部边界条件对象（与边界条件管理器相同）", "open_bc_manager"),
+    Command("create_constraint", "创建约束", "hinge",
+            "Abaqus 式 Create Constraint：名称、类型（MPC BEAM / TIE / PIN、运动耦合）→ 选主节点 → "
+            "选从节点区域（Shift 加选、Ctrl 减选、拖框，或使用集合）→ 运动耦合勾选自由度", "create_constraint_ui"),
+    Command("constraint_manager", "约束管理器", "hinge",
+            "列出全部约束：创建、编辑、编辑区域、复制、改名、删除、抑制、恢复", "open_constraint_manager"),
     Command("create_bc", "创建边界条件", "support",
             "Abaqus 式：名称、分析步、类型 → 在视口选节点区域（Shift 加选、Ctrl 减选、拖框，"
             "或使用集合）→ 勾选 U1~UR3 或填弹性支承刚度", "create_bc"),

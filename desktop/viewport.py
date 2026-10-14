@@ -190,6 +190,8 @@ class Viewport(QWidget):
         self.hidden_members: set[int] = set()
         # 基准点（Abaqus 的 Datum Point）：名称 → 坐标。只画参考标记、供建节点吸附
         self.datum_points: dict[str, list[float]] = {}
+        # 约束（MPC / 运动耦合）：(名称, 主节点坐标, [从节点坐标])，画成主节点到各从节点的连线
+        self.constraint_links: list[tuple[str, list[float], list[list[float]]]] = []
         # 动画（Abaqus 的 Animate: Scale Factor）：按比例系数循环播放变形或振型
         self._anim_timer = None
         self._anim_frames: list = []
@@ -693,6 +695,22 @@ class Viewport(QWidget):
             self.plotter.add_point_labels(pts, names, name="_datum_labels", font_size=9,
                                           text_color=theme.REFERENCE, shape=None,
                                           always_visible=True, show_points=False)
+        if frame is not None and CAN_RENDER and self.constraint_links:
+            import pyvista as pv
+            points, lines, masters, names = [], [], [], []
+            for name, master, slaves in self.constraint_links:
+                masters.append(master)
+                names.append(name)
+                for slave in slaves:
+                    lines += [2, len(points), len(points) + 1]
+                    points += [master, slave]
+            if points:
+                self.plotter.add_mesh(pv.PolyData(np.array(points, float), lines=np.array(lines)),
+                                      color=theme.REFERENCE, line_width=2, name="_constraint_links")
+            self.plotter.add_point_labels(np.array(masters, float), names, name="_constraint_labels",
+                                          font_size=9, text_color=theme.REFERENCE, shape=None,
+                                          always_visible=True, show_points=True, point_size=8,
+                                          point_color=theme.REFERENCE)
         if frame is None or not CAN_RENDER:
             return
         # 模型范围变了，网格地面跟着重算大小

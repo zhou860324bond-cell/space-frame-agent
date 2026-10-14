@@ -1244,3 +1244,30 @@ def test_part_commands_partition_datum_and_measure(qt_app, monkeypatch):
     w.viewport.region_selection.apply("node", [member["i"], member["j"]])
     w.region_pick.finish()
     assert "距离" in w.lbl_prompt.text()
+
+
+def test_create_constraint_picks_master_then_slaves(qt_app, monkeypatch):
+    """Interaction 模块的创建约束：名称与类型 → 选一个主节点 → 选从节点区域 → 编辑。
+
+    结果是一个约束对象：视口画出主从连线，模型树有「约束」分支，求解时偏心点随主节点动。
+    """
+    s = built()
+    eave = next(n for n in s.model["nodes"] if n["z"] == pytest.approx(7.5))
+    assert s.add_nodes([[eave["x"], 0.6, eave["z"]]]).ok
+    slave = max(n["id"] for n in s.model["nodes"])
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("刚臂", "", "beam"))
+    _stub(monkeypatch, "EditConstraintDialog", values=("beam", eave["id"], None))
+    w.create_constraint_ui()
+    assert w.region_pick.active and "主节点" in w.lbl_prompt.text()
+    w.viewport.region_selection.apply("node", [eave["id"]])
+    w.region_pick.finish()
+    assert w.region_pick.active and "从节点" in w.lbl_prompt.text()
+    w.viewport.region_selection.apply("node", [slave])
+    w.region_pick.finish()
+    assert [f["name"] for f in s.model["features"]["constraints"]] == ["刚臂"]
+    w.redraw()
+    assert [link[0] for link in w.viewport.constraint_links] == ["刚臂"]
+    labels = [w.tree.topLevelItem(k).text(0) for k in range(w.tree.topLevelItemCount())]
+    assert "约束（1）" in labels
+    assert s.solve_model().ok

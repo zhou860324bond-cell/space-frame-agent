@@ -156,6 +156,8 @@ class ModelTree(QTreeWidget):
             what = "n1=(" + ",".join(f"{v:g}" for v in feature["n1"]) + ")"
         elif kind == "bcs":
             what = "".join(str(v) for v in feature["fix"])
+        elif kind == "constraints":
+            what = f"{feature['type'].upper()}→节点 {feature['control']}"
         else:
             what = feature["type"]
         suppressed = bool(feature.get("suppressed"))
@@ -230,6 +232,9 @@ class ModelTree(QTreeWidget):
         for step in steps:
             self._child(step_node, f"{step['name']}　{step.get('analysis', 'linear')}",
                         "steps", step["name"])
+
+        # Abaqus 模型树里约束（Constraints）排在分析步之后、荷载与边界条件之前
+        self._feature_branch("约束", "constraints", features)
 
         sup = self._feature_branch("边界条件", "bcs", features)
         direct = [s for s in model.get("supports") or [] if not s.get("owners")]

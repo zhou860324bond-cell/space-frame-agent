@@ -15,16 +15,17 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
-from .object_dialogs import (BC_TYPES, LOAD_FIELD, LOAD_REGION, LOAD_TYPES,
+from .object_dialogs import (BC_TYPES, CONSTRAINT_TYPES, LOAD_FIELD, LOAD_REGION, LOAD_TYPES,
                              AssignSectionDialog, CreateObjectDialog, EditBCDialog,
-                             EditLoadDialog, ObjectManagerDialog, OrientationDialog,
-                             next_name)
+                             EditConstraintDialog, EditLoadDialog, ObjectManagerDialog,
+                             OrientationDialog, next_name)
 
 _PRESET_FIX = {"ENCASTRE": [1] * 6, "PINNED": [1, 1, 1, 0, 0, 0],
                "XSYMM": [1, 0, 0, 0, 1, 1], "YSYMM": [0, 1, 0, 1, 0, 1],
                "ZSYMM": [0, 0, 1, 1, 1, 0], "SPRING": [0] * 6}
 _KIND_ALIAS = {"section_assignments": "section_assignment",
-               "beam_orientations": "beam_orientation", "bcs": "bc", "loads": "load"}
+               "beam_orientations": "beam_orientation", "bcs": "bc", "loads": "load",
+               "constraints": "constraint"}
 
 
 class WindowObjectsMixin:
@@ -70,6 +71,48 @@ class WindowObjectsMixin:
         result = self.session.create_boundary_condition(name, region, fix=fix, spring=spring,
                                                         step=step)
         self._object_result(result, f"已创建边界条件「{name}」。")
+
+    # --- 约束（Interaction 模块） ---
+
+    def create_constraint_ui(self) -> None:
+        """Abaqus 式：创建约束（名称、类型）→ 选主节点 → 选从节点区域 → 编辑。"""
+        if not self.session.model.get("nodes"):
+            self.statusBar().showMessage("还没有节点：请先建立几何，再创建约束。", 5000)
+            return
+        dialog = CreateObjectDialog("创建约束", next_name("Constraint", self._feature_names("constraints")),
+                                    "", None, CONSTRAINT_TYPES, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, _, kind = dialog.values()
+        self.region_pick.start("node", f"约束「{name}」：选主节点（控制点）",
+                               lambda region: self._constraint_control(name, kind, region),
+                               self._initial_region("node"))
+
+    def _constraint_control(self, name: str, kind: str, region: dict) -> None:
+        ids = region.get("nodes") or []
+        if "set" in region or len(ids) != 1:
+            QMessageBox.information(self, "创建约束", "主节点只能有一个：请在视口里点选一个节点，不用集合。")
+            return
+        control = ids[0]
+        self.region_pick.start("node", f"约束「{name}」：选从节点区域（主节点 {control}）",
+                               lambda slaves: self._finish_constraint(name, kind, control, slaves))
+
+    def _finish_constraint(self, name: str, kind: str, control: int, region: dict) -> None:
+        nodes = sorted(int(n["id"]) for n in self.session.model.get("nodes") or [])
+        editor = EditConstraintDialog(name, kind, control,
+                                      [1, 1, 0, 0, 0, 1] if kind == "coupling" else None,
+                                      nodes, self)
+        if editor.exec() != QDialog.DialogCode.Accepted:
+            return
+        kind, control, dofs = editor.values()
+        result = self.session.create_constraint(name, kind, control, region, dofs=dofs)
+        if self._object_result(result, f"已创建约束「{name}」。"):
+            self._sync_datums()
+            if result.payload.get("warning"):
+                QMessageBox.information(self, "主节点需要边界条件", result.payload["warning"])
+
+    def open_constraint_manager(self) -> None:
+        self.open_object_manager("constraints")
 
     # --- 荷载 ---
 
@@ -149,6 +192,8 @@ class WindowObjectsMixin:
             return
         what = "node" if "nodes" in feature else "member"
         ids = feature.get("nodes") or feature.get("members") or []
+        if kind == "constraints":
+            ids = [*ids, int(feature["control"])]
         self.viewport.highlight_region(what, ids)
         noun = "节点" if what == "node" else "杆件"
         self.statusBar().showMessage(
@@ -315,7 +360,8 @@ class WindowObjectsMixin:
                 manager.accept()
             {"bcs": self.create_bc, "loads": self.create_load,
              "section_assignments": self.assign_section,
-             "beam_orientations": self.assign_beam_orientation}[kind]()
+             "beam_orientations": self.assign_beam_orientation,
+             "constraints": self.create_constraint_ui}[kind]()
             return
         if name is None:
             return
@@ -325,8 +371,8 @@ class WindowObjectsMixin:
         elif action == "region":
             if manager is not None:
                 manager.accept()
-            what = "node" if kind == "bcs" or LOAD_REGION.get(feature.get("type")) == "node" \
-                else "member"
+            what = "node" if kind in ("bcs", "constraints") \
+                or LOAD_REGION.get(feature.get("type")) == "node" else "member"
             listed = session.list_features(alias).payload["features"][kind]
             current = next(f for f in listed if f["name"] == name)
             self.region_pick.start(
@@ -369,6 +415,15 @@ class WindowObjectsMixin:
             if editor.exec() == QDialog.DialogCode.Accepted:
                 self._object_result(self.session.edit_feature(
                     alias, name, {field: editor.vector()}), f"「{name}」已更新。")
+        elif kind == "constraints":
+            nodes = sorted(int(n["id"]) for n in self.session.model.get("nodes") or [])
+            editor = EditConstraintDialog(name, feature["type"], int(feature["control"]),
+                                          feature.get("dofs"), nodes, self)
+            if editor.exec() == QDialog.DialogCode.Accepted:
+                kind_value, control, dofs = editor.values()
+                self._object_result(self.session.edit_feature(
+                    alias, name, {"type": kind_value, "control": control, "dofs": dofs}),
+                    f"「{name}」已更新。")
         elif kind == "beam_orientations":
             dialog = OrientationDialog(name, feature["n1"], "修改方向", self)
             dialog.name.setEnabled(False)

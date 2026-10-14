@@ -20,7 +20,6 @@ import pytest
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _COMMANDS = _ROOT / "desktop" / "commands.py"
-_MAIN_WINDOW = _ROOT / "desktop" / "main_window.py"
 
 
 def _commands() -> list[tuple[str, str, str, str]]:
@@ -44,10 +43,27 @@ def _commands() -> list[tuple[str, str, str, str]]:
 
 
 def _main_window_methods() -> set[str]:
-    tree = ast.parse(_MAIN_WINDOW.read_text(encoding="utf-8"))
-    cls = next(n for n in ast.walk(tree)
-               if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
-    return {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
+    """MainWindow 及其在 desktop/ 里定义的各层 mixin 的方法。
+
+    命令处理函数按 Abaqus 模块分到了 window_objects / window_jobs / window_viz
+    等 mixin 里；只看 MainWindow 类体的话，每个搬走的 handler 都会被误报成不存在。
+    """
+    classes: dict[str, ast.ClassDef] = {}
+    for path in sorted((_ROOT / "desktop").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ClassDef):
+                classes.setdefault(node.name, node)
+    methods: set[str] = set()
+    pending, seen = ["MainWindow"], set()
+    while pending:
+        name = pending.pop()
+        if name in seen or name not in classes:
+            continue
+        seen.add(name)
+        cls = classes[name]
+        methods |= {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
+        pending += [b.id for b in cls.bases if isinstance(b, ast.Name)]
+    return methods
 
 
 def test_the_registry_is_not_empty():

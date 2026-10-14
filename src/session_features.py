@@ -234,6 +234,13 @@ class FeaturesMixin:
         return [LOCAL_DOF_NAMES[k] for k in range(6)
                 if dofs[k] in column and diagonal[column[dofs[k]]] <= 1e-12 * scale]
 
+    def constraint_links(self) -> list[tuple[str, list[float], list[list[float]]]]:
+        """视口画约束用：(名称, 主节点坐标, [从节点坐标])，只含生效的约束。"""
+        xyz = {int(n["id"]): [float(n["x"]), float(n["y"]), float(n["z"])]
+               for n in self.model.get("nodes") or []}
+        return [(c["name"], xyz[c["master"]], [xyz[s] for s in c["slaves"] if s in xyz])
+                for c in _features.resolved_constraints(self.model) if c["master"] in xyz]
+
     def _create_feature(self, kind: str, feature: dict[str, Any]) -> ToolResult:
         if not feature["name"]:
             return ToolResult(False, {"error": f"{_LABEL[kind]}名称不能为空"})

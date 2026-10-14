@@ -630,6 +630,8 @@ def build(window) -> Ribbon:
     g = p.group("杆端力学连接")
     g.add_large(a["member_connections"]); g.add_small(a["hinge"])
     g.add_small(a["beam_orientation"])
+    g = p.group("约束")
+    g.add_large(a["create_constraint"]); g.add_small(a["constraint_manager"])
     g = p.group("检查")
     g.add_small(a["support_diagnosis"])
 

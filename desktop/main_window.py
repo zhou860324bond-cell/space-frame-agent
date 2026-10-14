@@ -902,6 +902,7 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
 
     def _sync_datums(self) -> None:
         self.viewport.datum_points = self.session.datum_points()
+        self.viewport.constraint_links = self.session.constraint_links()
 
     def redraw(self) -> None:
         # 重画会清掉视口（也就停了动画），开关的勾要跟着取消，免得显示「在播」实际没播

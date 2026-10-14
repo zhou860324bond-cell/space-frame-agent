@@ -32,7 +32,16 @@ LOAD_REGION = {"concentrated_force": "node", "moment": "node",
 LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
               "gravity": "g"}
 KIND_LABEL = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
-              "bcs": "边界条件", "loads": "荷载"}
+              "bcs": "边界条件", "loads": "荷载", "constraints": "约束"}
+#: Interaction 模块的约束类型（Abaqus 的 Create Constraint 列表里梁模型用得上的几种）
+CONSTRAINT_TYPES = (("MPC 刚性连杆 BEAM", "beam"), ("MPC 绑定 TIE", "tie"),
+                    ("MPC 铰接 PIN", "pin"), ("运动耦合 Coupling", "coupling"))
+CONSTRAINT_HINT = {
+    "beam": "从节点随主节点作刚体运动（含刚臂）：偏心连接、加载点、设备质量点。",
+    "tie": "从节点全部自由度与主节点相等：用于坐标重合的两层节点。",
+    "pin": "只连平动、转动各自独立：重合节点处的铰。",
+    "coupling": "所选自由度随主节点作刚体运动；只选 U1 U2 UR3 即水平刚性楼板。",
+}
 
 
 def next_name(prefix: str, existing: set[str]) -> str:
@@ -55,14 +64,19 @@ class CreateObjectDialog(QDialog):
         form = QFormLayout()
         self.name = QLineEdit(name, self)
         self.scope = QComboBox(self)
-        self.scope.addItems(scopes)
+        self.scope.addItems(scopes or [])
         # 荷载的工况可以就地新建：输入一个还没有的名字即可，不必先去别处建工况
         self.scope.setEditable(editable_scope)
         self.kind = QComboBox(self)
         for label, value in types:
             self.kind.addItem(label, value)
         form.addRow("名称", self.name)
-        form.addRow(scope_label, self.scope)
+        # 约束不属于分析步也不属于工况（Abaqus 的 Constraint 是模型级对象），没有这一行
+        self.has_scope = scopes is not None
+        if self.has_scope:
+            form.addRow(scope_label, self.scope)
+        else:
+            self.scope.hide()
         form.addRow("类型", self.kind)
         layout.addLayout(form)
         box = button_box(self, ok="继续…")
@@ -75,7 +89,7 @@ class CreateObjectDialog(QDialog):
         if not self.name.text().strip():
             self.name.setFocus()
             return
-        if not self.scope.currentText().strip():
+        if self.has_scope and not self.scope.currentText().strip():
             self.scope.setFocus()
             return
         self.accept()
@@ -137,6 +151,73 @@ class EditBCDialog(QDialog):
         fix = [int(c.isChecked()) for c in self.checks]
         spring = [s.value() for s in self.springs]
         return fix, (spring if any(spring) else None)
+
+
+class EditConstraintDialog(QDialog):
+    """约束的编辑对话框：类型、主节点、（运动耦合的）被约束自由度。"""
+
+    def __init__(self, name: str, constraint_type: str, control: int, dofs: list[int] | None,
+                 nodes: list[int], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"编辑约束 {name}")
+        layout = QVBoxLayout(self)
+        layout.addWidget(DialogHeader(f"编辑约束 {name}",
+                                      "从节点区域跟随主节点；从节点上不能再有支座。"))
+        form = QFormLayout()
+        self.kind = QComboBox(self)
+        for label, value in CONSTRAINT_TYPES:
+            self.kind.addItem(label, value)
+        self.kind.setCurrentIndex([v for _, v in CONSTRAINT_TYPES].index(constraint_type))
+        self.control = QComboBox(self)
+        for nid in nodes:
+            self.control.addItem(f"节点 {nid}", nid)
+        self.control.setCurrentIndex(max(0, nodes.index(control) if control in nodes else 0))
+        form.addRow("类型", self.kind)
+        form.addRow("主节点", self.control)
+        layout.addLayout(form)
+        self.type_hint = HintLabel("", self)
+        layout.addWidget(self.type_hint)
+        grid = QGridLayout()
+        self.checks: list[QCheckBox] = []
+        dofs = dofs or [1] * 6
+        for k, label in enumerate(DOF_LABELS):
+            box = QCheckBox(label, self)
+            box.setChecked(bool(dofs[k]))
+            grid.addWidget(box, k // 3, k % 3)
+            self.checks.append(box)
+        layout.addLayout(grid)
+        floor = QPushButton("水平刚性楼板（U1 U2 UR3）", self)
+        floor.clicked.connect(lambda: [c.setChecked(k in (0, 1, 5))
+                                       for k, c in enumerate(self.checks)])
+        layout.addWidget(floor)
+        self.floor = floor
+        self.hint = HintLabel("", self)
+        layout.addWidget(self.hint)
+        box = button_box(self)
+        box.accepted.connect(self._accept)
+        box.rejected.connect(self.reject)
+        layout.addWidget(box)
+        self.kind.currentIndexChanged.connect(lambda *_: self._sync())
+        self._sync()
+        style_dialog(self, 420, 360)
+
+    def _sync(self) -> None:
+        coupling = self.kind.currentData() == "coupling"
+        for box in self.checks:
+            box.setEnabled(coupling)
+        self.floor.setEnabled(coupling)
+        self.type_hint.setText(CONSTRAINT_HINT[self.kind.currentData()])
+
+    def _accept(self) -> None:
+        if self.kind.currentData() == "coupling" and not any(c.isChecked() for c in self.checks):
+            self.hint.setText("运动耦合至少要选一个自由度，否则这个约束不起作用。")
+            return
+        self.accept()
+
+    def values(self) -> tuple[str, int, list[int] | None]:
+        kind = self.kind.currentData()
+        dofs = [int(c.isChecked()) for c in self.checks] if kind == "coupling" else None
+        return kind, int(self.control.currentData()), dofs
 
 
 class EditLoadDialog(QDialog):
@@ -277,6 +358,13 @@ def describe_values(kind: str, feature: dict[str, Any]) -> str:
         return f"{feature['section']} / {feature['material']}"
     if kind == "beam_orientations":
         return "n1 = (" + ", ".join(f"{v:g}" for v in feature["n1"]) + ")"
+    if kind == "constraints":
+        label = dict((v, k) for k, v in CONSTRAINT_TYPES)[feature["type"]]
+        text = f"{label}，主节点 {feature['control']}"
+        if feature["type"] == "coupling":
+            text += "（" + " ".join(DOF_LABELS[k] for k, v in enumerate(feature.get("dofs") or [1] * 6)
+                                    if v) + "）"
+        return text
     if kind == "bcs":
         fixed = [DOF_LABELS[k] for k, v in enumerate(feature["fix"]) if v]
         text = "固定 " + ("、".join(fixed) if fixed else "无")
@@ -340,6 +428,7 @@ class ObjectManagerDialog(QDialog):
     COLUMNS = {"section_assignments": ("名称", "区域", "截面 / 材料"),
                "beam_orientations": ("名称", "区域", "方向"),
                "bcs": ("名称", "区域", "约束"),
+               "constraints": ("名称", "从节点区域", "类型与主节点"),
                "loads": ("名称", "区域", "荷载", "工况")}
 
     def __init__(self, window, kind: str):
