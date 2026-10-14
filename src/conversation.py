@@ -41,6 +41,23 @@ DEFAULT_KEEP_TURNS = 6
 DEFAULT_CONTEXT_CHARS = 24_000
 TOOL_MESSAGE_MAX_CHARS = 6_000
 
+# 计划清单工具。只在桌面对话里开启：它不改模型、不产数值，只让界面把
+# "先建模→再指派截面→再求解"这样的多步任务列成清单逐项打勾。评测集与单轮
+# 调用不开，避免改变那边的工具集与提示。
+PLAN_TOOL = {"type": "function", "function": {
+    "name": "update_plan",
+    "description": ("多步任务开始前列出计划，之后每完成一步再调用一次更新状态。"
+                    "只用于向用户展示进度，不修改模型。单步问答不要调用。"),
+    "parameters": {"type": "object", "properties": {
+        "steps": {"type": "array", "items": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "这一步要做什么，简短中文"},
+            "status": {"type": "string", "enum": ["pending", "in_progress", "done"]}},
+            "required": ["title", "status"]}}},
+        "required": ["steps"]}}}
+
+_PLAN_HINT = ("需要三步及以上工具调用的任务，先调用 update_plan 列出计划；"
+              "每完成一步调用 update_plan 更新状态。计划只给用户看进度，不能代替工具调用。")
+
 _CONTINUATION_HINT = """
 你正在一次**多轮对话**中。此前的模型状态还在：材料、截面、节点、杆件、荷载
 都保留着，不必重建。用户说"改一下""再算一遍"时，用 add_members、set_load_cases、
@@ -123,6 +140,38 @@ def tool_message_content(result, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str
 
 
 
+def result_brief(result, max_chars: int = 900) -> str:
+    """工具结果的短摘要，供界面卡片展开查看；完整结果仍在 Session 里。"""
+    payload = result.payload if isinstance(result.payload, dict) else {"value": result.payload}
+
+    def rounded(value):
+        if isinstance(value, float):
+            return float(f"{value:.6g}")
+        if isinstance(value, list):
+            return [rounded(v) for v in value]
+        if isinstance(value, dict):
+            return {k: rounded(v) for k, v in value.items()}
+        return value
+
+    # 只影响界面摘要的显示位数；模型上下文与 Session 中的结果保持全精度
+    text = json.dumps(rounded(_compact_value(payload, list_edge=3)), ensure_ascii=False, indent=1)
+    return text if len(text) <= max_chars else text[:max_chars - 1] + "…"
+
+
+def _plan_steps(arguments: dict) -> list[dict] | None:
+    steps = arguments.get("steps") if isinstance(arguments, dict) else None
+    if not isinstance(steps, list) or not steps or len(steps) > 20:
+        return None
+    clean = []
+    for step in steps:
+        if not isinstance(step, dict) or not str(step.get("title", "")).strip():
+            return None
+        status = step.get("status")
+        clean.append({"title": str(step["title"]).strip()[:80],
+                      "status": status if status in ("pending", "in_progress", "done") else "pending"})
+    return clean
+
+
 def _cancelled_message(session, calls: list[tuple[str, dict]]) -> str:
     """用户按了停止之后给的话。
 
@@ -177,7 +226,8 @@ class Conversation:
     def __init__(self, provider: Provider, session: Session | None = None,
                  keep_turns: int = DEFAULT_KEEP_TURNS,
                  max_rounds: int = MAX_ROUNDS,
-                 context_chars: int = DEFAULT_CONTEXT_CHARS):
+                 context_chars: int = DEFAULT_CONTEXT_CHARS,
+                 plan_tool: bool = False):
         if keep_turns < 1:
             raise ValueError("keep_turns 至少为 1")
         if context_chars < 1:
@@ -189,6 +239,9 @@ class Conversation:
         self.context_chars = context_chars
         self.history: list[Exchange] = []
         self.object_context = ""
+        self.plan_tool = plan_tool
+        self.plan: list[dict] = []
+        self._on_event = None
         # 界面上的"停止"置位它。**只在轮与轮之间检查**——
         # 一次工具调用中途掐断，模型可能停在改了一半的状态，
         # 那比多跑一轮糟糕得多
@@ -204,6 +257,8 @@ class Conversation:
         """
         out = [{"role": "system", "content": SYSTEM_PROMPT},
                workflow_message(self.session)]
+        if self.plan_tool:
+            out.append({"role": "system", "content": _PLAN_HINT})
         if self.history:
             out.append({"role": "system", "content": _CONTINUATION_HINT})
         if self.object_context:
@@ -276,14 +331,7 @@ class Conversation:
         if normalized in {"最大位移", "查看最大位移", "查询最大位移"} \
                 and self.session.solution is not None:
             args = {"what": "max_displacement"}
-            tool_started = time.perf_counter()
-            result = self.session.dispatch("query_results", args)
-            tool_ms = (time.perf_counter() - tool_started) * 1000
-            if on_tool is not None:
-                try:
-                    on_tool("query_results", args, result.ok)
-                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
-                    pass
+            result, tool_ms = self._run_tool("query_results", args, on_tool)
             if result.ok:
                 p = result.payload
                 text = (f"最大位移为 {p['magnitude_mm']} mm，控制工况 {p['case']}，"
@@ -297,14 +345,7 @@ class Conversation:
 
         if normalized in {"检查模型", "校验模型", "验证模型"}:
             args: dict[str, Any] = {}
-            tool_started = time.perf_counter()
-            result = self.session.dispatch("validate_model", args)
-            tool_ms = (time.perf_counter() - tool_started) * 1000
-            if on_tool is not None:
-                try:
-                    on_tool("validate_model", args, result.ok)
-                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
-                    pass
+            result, tool_ms = self._run_tool("validate_model", args, on_tool)
             if result.ok:
                 summary = result.payload.get("summary") or {}
                 text = ("模型校验通过，可以求解。"
@@ -320,14 +361,7 @@ class Conversation:
 
         if normalized in {"重新求解", "重新计算", "再算一遍", "求解模型"}:
             args = {}
-            tool_started = time.perf_counter()
-            result = self.session.dispatch("solve_model", args)
-            tool_ms = (time.perf_counter() - tool_started) * 1000
-            if on_tool is not None:
-                try:
-                    on_tool("solve_model", args, result.ok)
-                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
-                    pass
+            result, tool_ms = self._run_tool("solve_model", args, on_tool)
             if result.ok:
                 cases = result.payload.get("cases") or {}
                 rows = [f"{name}: {row.get('max_displacement_mm')} mm"
@@ -344,14 +378,7 @@ class Conversation:
         if normalized in {"查看反力", "查询反力", "支座反力"} \
                 and self.session.solution is not None:
             args = {"what": "reactions"}
-            tool_started = time.perf_counter()
-            result = self.session.dispatch("query_results", args)
-            tool_ms = (time.perf_counter() - tool_started) * 1000
-            if on_tool is not None:
-                try:
-                    on_tool("query_results", args, result.ok)
-                except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
-                    pass
+            result, tool_ms = self._run_tool("query_results", args, on_tool)
             if result.ok:
                 p = result.payload
                 text = (f"控制工况 {p['case']} 的支座反力已读取；"
@@ -365,6 +392,29 @@ class Conversation:
             return out
         return None
 
+    def _emit(self, kind: str, data: dict) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(kind, data)
+        except Exception:  # noqa: BLE001  界面回调出错不能中断对话，模型已做的改动不会因显示失败而撤销
+            pass
+
+    def _run_tool(self, name: str, args: dict, on_tool=None, call_id: str = ""):
+        """执行一次工具，前后各发一个事件；返回结果和耗时（毫秒）。"""
+        self._emit("tool_start", {"id": call_id, "name": name, "args": args})
+        started = time.perf_counter()
+        result = self.session.dispatch(name, args)
+        elapsed = (time.perf_counter() - started) * 1000
+        if on_tool is not None:
+            try:
+                on_tool(name, args, result.ok)
+            except Exception:  # noqa: BLE001  隔离外部回调：on_tool 是界面传进来的，它出问题不该把对话流程带走
+                pass
+        self._emit("tool_end", {"id": call_id, "name": name, "args": args, "ok": result.ok,
+                                "ms": elapsed, "summary": result_brief(result)})
+        return result, elapsed
+
     def cancel(self) -> None:
         """请求停止。**下一轮开始前生效，不打断正在跑的这一轮。**
 
@@ -377,14 +427,31 @@ class Conversation:
 
     # --- 主循环 ---
 
-    def ask(self, user_text: str, on_tool=None) -> TurnResult:
+    def ask(self, user_text: str, on_tool=None, on_event=None) -> TurnResult:
         """问一轮。工具调用循环与单轮一致，区别只在带着历史进去。
 
         `on_tool(name, args, ok)` 在**每个工具跑完的那一刻**回调一次。
         一轮对话十几秒，期间界面上什么都没有的话用户只能干等；逐个报出来
         不只是"看着不慌"——他能在第三行就发现模型理解错了跨度，立刻按停止，
         而不是等它把报告都写完。
+
+        `on_event(kind, data)` 给桌面对话用的细粒度事件：``text``（流式文字片段）、
+        ``round``（开始一次模型请求）、``tool_start`` / ``tool_end``（含耗时与结果
+        摘要）、``plan``（计划清单）。不传则与原来完全一样。
         """
+        self._on_event = on_event
+        try:
+            return self._ask(user_text, on_tool)
+        finally:
+            self._on_event = None
+
+    def _complete(self, messages: list[dict], tools: list[dict]) -> dict:
+        stream = getattr(self.provider, "complete_stream", None)
+        if self._on_event is not None and stream is not None:
+            return stream(messages, tools, lambda piece: self._emit("text", {"delta": piece}))
+        return self.provider.complete(messages, tools)
+
+    def _ask(self, user_text: str, on_tool=None) -> TurnResult:
         started = time.perf_counter()
         self.session.begin_user_turn(user_text)
         local = self._try_local_fast_path(user_text, started, on_tool)
@@ -403,6 +470,7 @@ class Conversation:
         provider_ms = 0.0
         tool_ms = 0.0
         prompt_chars = 0
+        tools = TOOLS + [PLAN_TOOL] if self.plan_tool else TOOLS
 
         for round_index in range(self.max_rounds):
             if self._cancelled:
@@ -416,7 +484,8 @@ class Conversation:
                                   stopped_by_limit=True)
             prompt_chars += _message_chars(messages)
             provider_started = time.perf_counter()
-            reply = self.provider.complete(messages, TOOLS)
+            self._emit("round", {"index": round_index})
+            reply = self._complete(messages, tools)
             provider_ms += (time.perf_counter() - provider_started) * 1000
             if not reply.get("tool_calls"):
                 text = reply.get("content", "")
@@ -446,17 +515,21 @@ class Conversation:
             this_turn.append(assistant)
 
             for call in reply["tool_calls"]:
-                tool_started = time.perf_counter()
-                result = self.session.dispatch(call["name"], call["arguments"])
-                tool_ms += (time.perf_counter() - tool_started) * 1000
+                if self.plan_tool and call["name"] == "update_plan":
+                    steps = _plan_steps(call["arguments"])
+                    if steps is not None:
+                        self.plan = steps
+                        self._emit("plan", {"steps": steps})
+                    content = json.dumps({"ok": steps is not None} if steps is not None else
+                                         {"ok": False, "error": "steps 须为 1–20 项，每项含 title 与 status"},
+                                         ensure_ascii=False)
+                    tool_msg = {"role": "tool", "tool_call_id": call["id"], "content": content}
+                    messages.append(tool_msg)
+                    this_turn.append(tool_msg)
+                    continue
+                result, elapsed = self._run_tool(call["name"], call["arguments"], on_tool, call["id"])
+                tool_ms += elapsed
                 calls.append((call["name"], call["arguments"]))
-                if on_tool is not None:
-                    try:
-                        on_tool(call["name"], call["arguments"], result.ok)
-                    except Exception:               # noqa: BLE001
-                        # 回调是界面的事。它出问题不该把这一轮对话带垮——
-                        # 模型已经改过的东西不会因为显示不出来就撤销
-                        pass
                 tool_msg = {"role": "tool", "tool_call_id": call["id"],
                             "content": tool_message_content(result)}
                 messages.append(tool_msg)
@@ -495,3 +568,30 @@ class Conversation:
     def reset_history(self) -> None:
         """只清对话，不动模型——"重新问一遍，但别推倒重建"。"""
         self.history.clear()
+
+    def drop_last_exchange(self) -> Exchange | None:
+        """去掉最后一个回合，供"重新生成 / 编辑后重发"使用；模型状态由调用方处理。"""
+        return self.history.pop() if self.history else None
+
+    def export_history(self) -> list[dict[str, Any]]:
+        """可写入 JSON 的完整回合记录，重启后用 ``import_history`` 恢复上下文。"""
+        return [{"user": ex.user, "reply": ex.reply, "messages": ex.messages,
+                 "tool_calls": [[name, args] for name, args in ex.tool_calls],
+                 "rounds": ex.rounds, "stopped_by_limit": ex.stopped_by_limit}
+                for ex in self.history]
+
+    def import_history(self, records: list[dict[str, Any]]) -> None:
+        """恢复 ``export_history`` 的结果；配对断裂的记录整体丢弃，不发出坏上下文。"""
+        restored = []
+        for item in records or []:
+            try:
+                messages = list(item["messages"])
+                if check_pairing(messages):
+                    continue
+                restored.append(Exchange(str(item["user"]), str(item["reply"]), messages,
+                                         [(str(n), dict(a)) for n, a in item.get("tool_calls", [])],
+                                         int(item.get("rounds", 0)),
+                                         bool(item.get("stopped_by_limit", False))))
+            except (KeyError, TypeError, ValueError):
+                continue
+        self.history = restored

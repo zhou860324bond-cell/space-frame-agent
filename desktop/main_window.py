@@ -153,6 +153,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.agent_splitter.setSizes([460, 880])
         self.chat_dock = WorkspaceHandle(self.chat, self)
         self.chat.locate_requested.connect(self._on_picked)
+        self.chat.image_dropped.connect(self._recognize_dropped_image)
 
         # 手绘草图 → 模型：独立窗口，从建模页的「草图识别」打开。它是一次走完
         # 就关的流程、要宽画布，不和常驻参考的面板挤在抽屉里。
@@ -2357,6 +2358,12 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.set_prompt("多模态草图识别：选择图片 → 核对覆盖标注 → 标定尺度 → 确认加载")
         else:
             self.set_prompt("就绪 | 选择上方功能区模块开始建模")
+
+    def _recognize_dropped_image(self, path: str) -> None:
+        """对话面板拖入的图纸：打开草图识别面板并载入，后续核对与确认仍由用户完成。"""
+        if not self.sketch_dock.isVisible():
+            self.open_sketch_ai()
+        self.sketch.load_image(path)
 
     def _generate_from_sketch(self, data: dict) -> None:
         """把 2D 草图转换成 3D 模型，支持沿进深方向拉伸。"""

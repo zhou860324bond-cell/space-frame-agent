@@ -979,6 +979,14 @@ class DeepSeekProvider:
             return {"tool_calls": calls}
         return {"content": message.content or ""}
 
+    def complete_stream(self, messages: list[dict], tools: list[dict], on_text) -> dict:
+        """与 ``complete`` 返回相同，只是文字边生成边交给 ``on_text``。"""
+        from llm_stream import openai_stream
+        return openai_stream(self._client, {
+            "model": self._model, "messages": messages, "tools": tools,
+            "temperature": self._temperature,
+            "stream_options": {"include_usage": True}}, on_text, self.usage)
+
 
 # --------------------------------------------------------------------------- 主循环
 

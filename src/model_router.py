@@ -133,6 +133,21 @@ class _OpenAICompatibleProvider:
             return {"tool_calls": calls}
         return {"content": message.content or ""}
 
+    def complete_stream(self, messages: list[dict], tools: list[dict], on_text) -> dict:
+        """与 ``complete`` 返回相同，只是文字边生成边交给 ``on_text``。"""
+        from urllib.parse import urlsplit
+        from llm_stream import openai_stream
+        request = {"model": self._model, "messages": messages, "tools": tools}
+        if self._temperature is not None:
+            request["temperature"] = self._temperature
+        if self._max_tokens is not None:
+            request[self._token_parameter] = self._max_tokens
+        # 用量统计分片不是所有兼容接口都认，只对已知支持的主机开启
+        host = urlsplit(str(self._client.base_url)).hostname or ""
+        if host in ("api.openai.com", "api.deepseek.com"):
+            request["stream_options"] = {"include_usage": True}
+        return openai_stream(self._client, request, on_text, self.usage)
+
 
 class ModelRouter:
     """多模型路由 + 自动降级。

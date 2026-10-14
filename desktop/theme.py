@@ -881,5 +881,49 @@ QFrame#chatComposer {{
 QPlainTextEdit#chatEntry {{ background: transparent; border: none; padding: 4px 6px; }}
 QFrame#chatComposer QLabel {{ background: transparent; }}
 QFrame#chatComposer QPushButton {{ padding: 4px 14px; }}
-QTextBrowser#assistantConversation {{ border-radius: {RADIUS_MD}; }}
+QScrollArea#assistantConversation {{
+    background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: {RADIUS_MD};
+}}
+QWidget#transcriptInner {{ background: {PANEL_ALT}; }}
+QFrame#chatWelcome, QFrame#chatWelcome QLabel {{ background: transparent; }}
+QLabel[chat="welcomeTitle"] {{ color: {ACCENT_DIM}; font-size: 12pt; font-weight: 600; }}
+QFrame[entry="user"] {{
+    background: {SELECTION}; border: 1px solid #b9d4ea; border-radius: {RADIUS_LG};
+}}
+QFrame[entry="assistant"], QFrame[entry="note"] {{ background: transparent; border: none; }}
+QFrame[entry="change"] {{
+    background: {PANEL_ALT}; border: 1px solid {BORDER}; border-left: 3px solid {ACCENT};
+    border-radius: {RADIUS_SM};
+}}
+QFrame[entry="approval"] {{
+    background: #fbf3e6; border: 1px solid #e3c493; border-left: 3px solid {WARN};
+    border-radius: {RADIUS_SM};
+}}
+QFrame[entry] QLabel {{ background: transparent; }}
+QLabel[chat="user"] {{ color: {INK}; }}
+QLabel[chat="assistant"] {{ color: {INK}; }}
+QLabel[chat="speaker"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
+QLabel[chat="caption"] {{ color: {INK_DIM}; font-size: 8pt; }}
+QLabel[chat="warn"] {{ color: {WARN}; }}
+QLabel[chat="mono"] {{
+    color: {INK_MUTED}; font-family: Consolas, "Cascadia Mono", monospace; font-size: 8pt;
+}}
+QLabel[chat="planDone"] {{ color: {INK_DIM}; }}
+QLabel[chat="planActive"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
+QFrame#planCard {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_SM};
+}}
+QFrame#toolCard {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_SM};
+}}
+QFrame#toolCard[state="failed"] {{ border-color: #d9a2a2; background: #f7e9e9; }}
+QFrame#toolCard[state="running"] {{ border-color: {ACCENT}; }}
+QToolButton#toolCardHeader {{
+    text-align: left; border: none; background: transparent; padding: 4px 6px;
+    color: {INK_MUTED}; font-size: 8.5pt;
+}}
+QToolButton#toolCardHeader:hover {{ color: {ACCENT_DIM}; }}
+QFrame#toolCard[state="failed"] QToolButton#toolCardHeader {{ color: {ERROR}; }}
+QToolButton[chat="primaryLink"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
+QListWidget#chatHistory::item {{ padding: 6px 6px; border-bottom: 1px solid {BORDER}; }}
 """

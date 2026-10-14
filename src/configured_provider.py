@@ -18,13 +18,17 @@ class FallbackProvider:
         self.providers = {}
         self.call_history = []
 
-    def complete(self, messages, tools):
+    def complete(self, messages, tools, on_text=None):
         for index, (label, factory) in enumerate(self.connections):
             start = time.monotonic()
             try:
                 if index not in self.providers:
                     self.providers[index] = factory()
-                result = self.providers[index].complete(messages, tools)
+                provider = self.providers[index]
+                if on_text is not None and hasattr(provider, "complete_stream"):
+                    result = provider.complete_stream(messages, tools, on_text)
+                else:
+                    result = provider.complete(messages, tools)
                 self.call_history.append(CallRecord(label, True, (time.monotonic() - start) * 1000,
                                                     was_fallback=index > 0))
                 return result
@@ -33,6 +37,9 @@ class FallbackProvider:
                 self.call_history.append(CallRecord(label, False, (time.monotonic() - start) * 1000,
                                                     error=error[:200], was_fallback=index > 0))
         raise RuntimeError(self.call_history[-1].error)
+
+    def complete_stream(self, messages, tools, on_text):
+        return self.complete(messages, tools, on_text)
 
     def close(self):
         for provider in self.providers.values():
@@ -46,7 +53,7 @@ class AnthropicProvider:
         profile.validate()
         self.profile = profile
 
-    def _request(self, path: str, payload=None):
+    def _request(self, path: str, payload=None, on_lines=None):
         data = json.dumps(payload).encode() if payload is not None else None
         request = urllib.request.Request(
             self.profile.base_url.rstrip("/") + path, data=data,
@@ -58,11 +65,27 @@ class AnthropicProvider:
                 return None
         try:
             with urllib.request.build_opener(NoRedirect).open(request, timeout=90) as response:
-                return json.load(response)
+                return on_lines(response) if on_lines is not None else json.load(response)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(f"API 请求被拒绝（HTTP {exc.code}），请检查密钥、模型与地址") from None
 
+    def complete_stream(self, messages, tools, on_text):
+        from llm_stream import collect_anthropic_events
+        payload = dict(self._payload(messages, tools), stream=True)
+        return self._request("/messages", payload,
+                             on_lines=lambda response: collect_anthropic_events(response, on_text))
+
     def complete(self, messages, tools):
+        result = self._request("/messages", self._payload(messages, tools))
+        if result.get("stop_reason") == "max_tokens":
+            raise RuntimeError("模型达到输出上限，请增加输出上限或缩短请求后重试")
+        calls = [{"id": b["id"], "name": b["name"], "arguments": b["input"]}
+                 for b in result["content"] if b["type"] == "tool_use"]
+        if calls:
+            return {"tool_calls": calls}
+        return {"content": "\n".join(b["text"] for b in result["content"] if b["type"] == "text")}
+
+    def _payload(self, messages, tools):
         system, converted = [], []
         for message in messages:
             role = message["role"]
@@ -92,14 +115,7 @@ class AnthropicProvider:
                               "input_schema": t["function"]["parameters"]} for t in tools]}
         if self.profile.temperature is not None:
             payload["temperature"] = self.profile.temperature
-        result = self._request("/messages", payload)
-        if result.get("stop_reason") == "max_tokens":
-            raise RuntimeError("模型达到输出上限，请增加输出上限或缩短请求后重试")
-        calls = [{"id": b["id"], "name": b["name"], "arguments": b["input"]}
-                 for b in result["content"] if b["type"] == "tool_use"]
-        if calls:
-            return {"tool_calls": calls}
-        return {"content": "\n".join(b["text"] for b in result["content"] if b["type"] == "text")}
+        return payload
 
 
 def create_provider(profile: ModelProfile):
