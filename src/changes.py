@@ -178,6 +178,25 @@ def prune_feature_regions(model: dict[str, Any]) -> dict[str, int]:
     return counted
 
 
+def prune_instances(model: dict[str, Any]) -> list[str]:
+    """实例记录里剪掉已删的杆件与节点；杆件删光的实例记录一并去掉，返回去掉的名字。"""
+    instances = (model.get("assembly") or {}).get("instances")
+    if not instances:
+        return []
+    members = {int(m["id"]) for m in model.get("members") or []}
+    nodes = {int(n["id"]) for n in model.get("nodes") or []}
+    kept, dropped = [], []
+    for record in instances:
+        record["members"] = [k for k in record["members"] if int(k) in members]
+        record["nodes"] = [k for k in record["nodes"] if int(k) in nodes]
+        (kept if record["members"] else dropped).append(record)
+    if kept:
+        model["assembly"]["instances"] = kept
+    else:
+        model.pop("assembly")
+    return [r["name"] for r in dropped]
+
+
 def prune_mesh_seeds(model: dict[str, Any]) -> list[int]:
     """删掉指向已不存在杆件的逐杆布种，返回被删的杆件编号。
 
@@ -249,5 +268,7 @@ def apply(model: dict[str, Any], change: Change, *,
             report["pruned_mesh_seeds"] = stale
         if trimmed := prune_feature_regions(model):
             report["pruned_feature_regions"] = trimmed
+        if dropped := prune_instances(model):
+            report["pruned_instances"] = dropped
 
     return report

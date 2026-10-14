@@ -616,6 +616,9 @@ def build(window) -> Ribbon:
     p = r.page("装配")
     g = p.group("拓扑与区域")
     g.add_large(a["assembly_check"]); g.add_large(a["model_sets"])
+    g = p.group("实例")
+    g.add_large(a["create_instance"]); g.add_large(a["linear_pattern"])
+    g.add_small(a["radial_pattern"]); g.add_small(a["instance_manager"])
 
     # ========== 分析步 ==========
     p = r.page("分析")

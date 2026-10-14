@@ -131,6 +131,16 @@ DIMENSIONS = {
     "steps.num_modes": None,
     "steps.loads": None, "steps.deactivate_loads": None,
     "steps.deactivate_supports": None, "steps.deactivation_owners": None,
+    # 装配实例记录：平移与旋转中心是长度，轴方向与角度无量纲，其余是名字与编号
+    "assembly.instances.transform.translate": "length",
+    "assembly.instances.transform.rotate.point": "length",
+    "assembly.instances.transform.rotate.axis": None,
+    "assembly.instances.transform.rotate.angle_deg": None,
+    "assembly.instances.name": None, "assembly.instances.pattern": None,
+    "assembly.instances.source.set": None, "assembly.instances.source.nodes": None,
+    "assembly.instances.source.members": None,
+    "assembly.instances.members": None, "assembly.instances.nodes": None,
+    "assembly.instances.features.kind": None, "assembly.instances.features.name": None,
     # 分析步里改写的支座：与顶层 supports 同一批字段，同一批量纲。
     "steps.supports": "support_entry",
 }
@@ -227,6 +237,12 @@ def _kitchen_sink_body():
                      "offset_i": [0.1, 0.0, 0.0], "offset_j": [0.0, 0.0, 0.05],
                      "connections": {"i": {"rz": 1e8, "ux": 5e7},
                                      "j": {"ry": 2e8}}}],
+        "assembly": {"instances": [{"name": "I-1", "source": {"members": [1]},
+                                    "transform": {"translate": [0.0, 0.0, 3.0],
+                                                  "rotate": {"axis": [0.0, 0.0, 1.0],
+                                                             "angle_deg": 90.0,
+                                                             "point": [1.0, 2.0, 0.0]}},
+                                    "members": [1], "nodes": [2]}]},
         # 平动刚接、转动弹性支承：fix 与 spring 不能撞在同一个自由度上，
         # 撞了会被语义校验挡住（刚性约束会让弹簧完全失效）。
         # rx 刚接（沉降要给在被约束的方向上），ry/rz 弹性支承。

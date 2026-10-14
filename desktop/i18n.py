@@ -78,6 +78,8 @@ ZH_EN: dict[str, str] = {
     "加支撑": "Bracing", "载荷管理器": "Loads",
     "荷载组合": "Combos", "重力": "Gravity",
     "支座管理器": "Supports", "创建边界条件": "Create BC", "创建约束": "Create Constraint",
+    "创建实例": "Create Instance", "线性阵列": "Linear Pattern", "环形阵列": "Radial Pattern",
+    "实例管理器": "Instance Manager",
     "约束管理器": "Constraint Manager",
     "创建载荷": "Create Load", "选择节点": "Node",
     "选择杆件": "Member", "建节点": "+Node", "建杆件": "+Member",

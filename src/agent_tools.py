@@ -253,6 +253,79 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "create_instance",
+            "description":
+                "实例（Abaqus Assembly 的 Create Instance + Translate/Rotate，独立实例）：把一组杆件复制一份，"
+                "先绕 rotate_point、方向 rotate_axis 的轴转 rotate_angle 度，再平移 translate。"
+                "与已有节点重合处直接共用；截面指派、梁方向随副本走，荷载与边界条件不复制。",
+            "parameters": {"type": "object", "required": ["name", "region"],
+                           "properties": {
+                               "name": {"type": "string"}, "region": {"description": "部件：集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "translate": {"type": "array", "items": {"type": "number"}}, "rotate_axis": {"type": "array", "items": {"type": "number"}},
+                               "rotate_angle": {"type": "number"}, "rotate_point": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "linear_pattern",
+            "description":
+                "线性阵列（Abaqus Linear Pattern）：沿一个或两个方向等距复制一组杆件，number 含原件。"
+                "例：沿 x 每 6 m 一跨共 4 跨 → direction1=[1,0,0], spacing1=6, number1=4。"
+                "相邻副本重合的节点共用、重合的杆件跳过。",
+            "parameters": {"type": "object",
+                           "required": ["name", "region", "direction1", "spacing1", "number1"],
+                           "properties": {
+                               "name": {"type": "string"}, "region": {"description": "部件：集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "direction1": {"type": "array", "items": {"type": "number"}}, "spacing1": {"type": "number"},
+                               "number1": {"type": "integer"}, "direction2": {"type": "array", "items": {"type": "number"}},
+                               "spacing2": {"type": "number"}, "number2": {"type": "integer"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "radial_pattern",
+            "description":
+                "环形阵列（Abaqus Radial Pattern）：绕过 point、方向 axis 的轴每隔 angle_deg 度复制一份，"
+                "number 含原件。梁方向随副本旋转。",
+            "parameters": {"type": "object", "required": ["name", "region", "number", "angle_deg", "axis"],
+                           "properties": {
+                               "name": {"type": "string"}, "region": {"description": "部件：集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "number": {"type": "integer"}, "angle_deg": {"type": "number"},
+                               "axis": {"type": "array", "items": {"type": "number"}}, "point": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_instance",
+            "description": "删除实例或整个阵列（给阵列名）：撤掉它新建的杆件、不再用到的节点和带过去的属性对象。",
+            "parameters": {"type": "object", "required": ["name"],
+                           "properties": {"name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_instances",
+            "description": "列出装配里的实例：来源杆件、变换、副本杆件数。",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "inspect_step",
             "description":
                 "切换会话里供后处理的分析步结果，不重解（solve_steps 之后每一步的结果都留着）。"

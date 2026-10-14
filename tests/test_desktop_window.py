@@ -1365,3 +1365,28 @@ def test_results_tree_lists_steps_frames_and_modes(qt_app):
     assert (shown == s.solution[w.case].frames[0][1]).all()
     w._on_tree_action("result_mode", ("频率", 1))
     assert "第 2 阶" in w.statusBar().currentMessage()
+
+
+def test_linear_pattern_from_the_assembly_page_and_delete_in_the_manager(qt_app, monkeypatch):
+    """装配页：选部件杆件 → 线性阵列参数 → 副本；模型树列实例；实例管理器整份删除。"""
+    from desktop import window_assembly
+    from desktop.assembly_dialogs import InstanceManagerDialog
+    s = built()
+    before = len(s.model["members"])
+    w = MainWindow(s)
+    monkeypatch.setattr(window_assembly, "InstanceDialog", lambda *a, **k: _Accept(values={
+        "name": "沿Y", "direction1": [0, 1, 0], "spacing1": 6.0, "number1": 3,
+        "direction2": [0, 0, 0], "spacing2": 0.0, "number2": 1}))
+    w.linear_pattern_ui()
+    assert w.region_pick.active and "部件" in w.lbl_prompt.text()
+    w.viewport.region_selection.apply("member", [m["id"] for m in s.model["members"]])
+    w.region_pick.finish()
+    assert len(s.model["members"]) == 3 * before
+    labels = [w.tree.topLevelItem(k).text(0) for k in range(w.tree.topLevelItemCount())]
+    assert "装配（2 个实例）" in labels
+    monkeypatch.setattr(window_assembly.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: window_assembly.QMessageBox.StandardButton.Yes))
+    manager = InstanceManagerDialog(w)
+    manager.table.selectRow(0)
+    manager._delete(pattern=True)
+    assert len(s.model["members"]) == before and "assembly" not in s.model

@@ -61,6 +61,18 @@ COMMANDS: tuple[Command, ...] = (
             "检查重合节点、重复杆件和端点引用，报告问题位置", "check_assembly"),
     Command("model_sets", "命名集合", "table",
             "为节点或杆件组建立可保存、可复用的名字", "open_model_sets"),
+    Command("create_instance", "创建实例", "portal",
+            "Abaqus 式 Create Instance：在视口选部件杆件（Shift 加选、Ctrl 减选、拖框，或使用集合）"
+            "→ 平移、绕轴旋转放一份副本；重合节点直接共用，截面指派随副本走", "create_instance_ui"),
+    Command("linear_pattern", "线性阵列", "frame",
+            "Abaqus 式 Linear Pattern：选部件杆件 → 沿一个或两个方向等距复制（数量含原件），"
+            "相邻副本重合的杆件只留一根", "linear_pattern_ui"),
+    Command("radial_pattern", "环形阵列", "sweep",
+            "Abaqus 式 Radial Pattern：选部件杆件 → 绕轴每隔一个角度复制一份，梁方向随副本旋转",
+            "radial_pattern_ui"),
+    Command("instance_manager", "实例管理器", "table",
+            "列出装配里的实例与阵列：变换、杆件数；删除实例会撤掉它新建的杆件与节点",
+            "open_instance_manager"),
     Command("batch_assignment", "批量属性指派", "assign_section",
             "按编号、方向或集合挑出多根杆件，建一个截面指派对象（与截面指派同一种对象，"
             "在截面指派管理器里管理）", "assign_member_group"),

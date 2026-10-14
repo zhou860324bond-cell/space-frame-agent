@@ -154,6 +154,7 @@ from session_solving import SolvingMixin
 from session_query import QueryMixin
 from session_checks import ChecksMixin
 from session_features import FeaturesMixin
+from session_assembly import AssemblyMixin
 from session_part import PartMixin
 
 
@@ -167,7 +168,7 @@ BATCH_EDIT_THRESHOLD = 2
 
 @dataclass
 class Session(ModelingMixin, LoadsMixin, SolvingMixin,
-              QueryMixin, ChecksMixin, FeaturesMixin, PartMixin):
+              QueryMixin, ChecksMixin, FeaturesMixin, PartMixin, AssemblyMixin):
     """一次会话持有的全部确定性状态。模型与结果只在这里，不在提示词里。"""
     model: dict[str, Any] = field(default_factory=dict)
     frame: Any = None

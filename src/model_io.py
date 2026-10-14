@@ -20,6 +20,7 @@ from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Constraint, Frame
                      member_endpoints)
 from span_loads import KINDS as SPAN_KINDS
 from span_loads import SpanLoad
+from features import _REGION as _FEATURE_REGION
 from features import SCHEMA as _FEATURES_SCHEMA
 
 CURRENT_SCHEMA_VERSION = 1
@@ -175,6 +176,31 @@ MODEL_SCHEMA: dict[str, Any] = {
         # 建模对象（截面指派、边界条件、荷载）：Abaqus 式对象施加在区域上，
         # 上面的逐条目由它派生。见 features.py。
         "features": _FEATURES_SCHEMA,
+        # 装配（Abaqus 的 Assembly）：独立实例的记录。副本本身是普通节点与杆件，
+        # 这里记它从哪组杆件、按什么变换来，删实例时据此整份撤掉。见 session_assembly。
+        "assembly": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"instances": {"type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["name", "source", "transform", "members", "nodes"],
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "pattern": {"type": "string", "minLength": 1},
+                    "source": _FEATURE_REGION,
+                    "transform": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {
+                            "translate": _VEC3,
+                            "rotate": {"type": "object", "additionalProperties": False,
+                                       "properties": {"axis": _VEC3, "angle_deg": {"type": "number"},
+                                                      "point": _VEC3}}}},
+                    "members": {"type": "array", "items": {"type": "integer"}},
+                    "nodes": {"type": "array", "items": {"type": "integer"}},
+                    "features": {"type": "array", "items": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {"kind": {"type": "string"}, "name": {"type": "string"}}}},
+                }}}},
+        },
         # 基准点（Abaqus 的 Datum Point）：只用于定位与吸附，不参与计算。
         "datums": {
             "type": "object", "additionalProperties": False,

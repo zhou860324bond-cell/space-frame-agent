@@ -243,6 +243,14 @@ class ModelTree(QTreeWidget):
                     (("nodes", "节点"), ("members", "杆件")) if entry.get(key)]
             self._child(set_node, f"{name}　" + "，".join(bits), "sets", name)
 
+        instances = (model.get("assembly") or {}).get("instances") or []
+        if instances:
+            asm = self._child(self, f"装配（{len(instances)} 个实例）", "instances")
+            for record in instances:
+                pattern = f"　阵列 {record['pattern']}" if record.get("pattern") else ""
+                self._child(asm, f"{record['name']}　{len(record['members'])} 根杆件{pattern}",
+                            "instance", record["name"])
+
         geo = self._child(self, "几何", "geometry")
         self._child(geo, f"节点　{len(model.get('nodes') or [])}", "nodes")
         released = [m for m in model.get("members") or [] if m.get("releases")]

@@ -54,6 +54,8 @@ MUTATING = frozenset({
     "edit_feature", "rename_feature", "copy_feature", "suppress_feature", "delete_feature",
     # Part 模块：分割杆件加顶点、基准点
     "partition_member", "create_datum_point", "delete_datum_point",
+    # Assembly 模块：实例与阵列
+    "create_instance", "linear_pattern", "radial_pattern", "delete_instance",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -215,6 +217,12 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
         step = args.get("step")
         return (f"在「{step}」失活边界条件「{args.get('name')}」" if step
                 else f"重新激活边界条件「{args.get('name')}」")
+    if tool in ("create_instance", "linear_pattern", "radial_pattern"):
+        verb = {"create_instance": "实例", "linear_pattern": "线性阵列",
+                "radial_pattern": "环形阵列"}[tool]
+        return f"{verb}「{args.get('name')}」：{len(payload.get('members') or [])} 根杆件"
+    if tool == "delete_instance":
+        return f"删除实例「{args.get('name')}」"
     if tool == "partition_member":
         return f"分割杆件 {args.get('member_id')}：顶点为节点 {payload.get('node')}"
     if tool == "create_datum_point":

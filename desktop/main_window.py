@@ -44,6 +44,7 @@ from .window_preferences import WindowPreferencesMixin, _settings
 from .window_results import WindowResultsMixin
 from .window_objects import WindowObjectsMixin
 from .window_jobs import WindowJobsMixin
+from .window_assembly import WindowAssemblyMixin
 from .window_viz import WindowVizMixin
 from .region_prompt import RegionPickController
 
@@ -87,7 +88,8 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 MODES = ("模型", "分析网格", "变形", "云图", "实体云图", "内力图", "应力比", "模态")
 
 
-class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowCommandsMixin,
+class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, WindowVizMixin,
+                 WindowCommandsMixin,
                  WindowPreferencesMixin,
                  WindowResultsMixin, QMainWindow):
     def __init__(self, session: Session | None = None):
@@ -3226,6 +3228,9 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
         if action == "feature_branch":
             self.open_object_manager(str(payload))
             return
+        if action == "instances":
+            self.open_instance_manager()
+            return
         if action == "sets":
             self.open_model_sets()
             return
@@ -3258,6 +3263,12 @@ class MainWindow(WindowObjectsMixin, WindowJobsMixin, WindowVizMixin, WindowComm
         elif action == "results" and payload:
             self.case = str(payload)
             self.set_mode("变形")
+        elif action == "instance" and payload:
+            record = next((r for r in (self.session.model.get("assembly") or {}).get("instances") or []
+                           if r["name"] == payload), None)
+            if record is not None:
+                self.viewport.highlight_region("member", record["members"])
+                self.statusBar().showMessage(f"实例「{payload}」：{len(record['members'])} 根杆件", 5000)
         elif action == "result_step":
             self.show_step_result(str(payload))
         elif action == "result_frame":

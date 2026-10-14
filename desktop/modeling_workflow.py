@@ -30,8 +30,9 @@ STAGES = (
                   "定义材料及梁截面，向杆件指派属性，并复核局部轴与截面强弱轴。",
                   ("material", "beam_section", "assign_section", "beam_orientation")),
     ModelingStage("assembly", "3 装配 · Assembly", "装配",
-                  "当前使用全局坐标下的杆系。检查节点编号与端点连接，并创建可复用集合。几何相交不自动代表连接。",
-                  ("assembly_check", "model_sets", "tables")),
+                  "全局坐标下的杆系。可把一组杆件当部件做实例、线性或环形阵列（独立实例，重合节点共用）；"
+                  "检查节点编号与端点连接，并创建可复用集合。几何相交不自动代表连接。",
+                  ("assembly_check", "model_sets", "create_instance", "linear_pattern")),
     ModelingStage("step", "4 分析步 · Step", "分析",
                   "独立工况使用求解设置；需逐步改变载荷或约束时定义分析步及幅值。步骤各自重解，不继承塑性状态。位移、反力和杆端力固定输出。",
                   ("solve_options", "step_manager", "amplitude")),

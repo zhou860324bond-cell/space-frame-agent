@@ -219,6 +219,18 @@ def convert_model(model: dict, to: str) -> dict:
             for pt in model["datums"].get("points") or []]}
     if model.get("features"):
         out["features"] = _convert_features(model["features"], f)
+    if (model.get("assembly") or {}).get("instances"):
+        def placed(record):
+            t = record["transform"]
+            moved = {**t, **({"translate": [v * f["length"] for v in t["translate"]]}
+                             if "translate" in t else {})}
+            if "rotate" in t:
+                moved["rotate"] = {**t["rotate"], **({"point": [v * f["length"]
+                                                                 for v in t["rotate"]["point"]]}
+                                                      if "point" in t["rotate"] else {})}
+            return {**record, "transform": moved}
+        out["assembly"] = {**model["assembly"],
+                           "instances": [placed(r) for r in model["assembly"]["instances"]]}
     if model.get("imperfection"):
         out["imperfection"] = {**model["imperfection"],
                                "amplitude": model["imperfection"]["amplitude"] * f["length"]}
