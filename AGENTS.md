@@ -44,3 +44,6 @@ python -m ruff check .      :: 必须干净
 - 注释与提交信息用中文，提交信息按 `feat(范围): …` / `fix(…)` / `perf(…)` / `docs: …` 的格式。
 - 新增修复要带回归测试，测试的文档字符串写清楚它防的是哪个真实问题。
 - Windows 是目标平台：注意路径分隔符、换行符（CRLF）和中文编码。
+- 编码 skill 放在 `.claude/skills/`，Codex 直接读对应的 SKILL.md：
+  - 改 `src/` 数值代码（求解、内力、校核、编译、结果库）前读 `frame-kernel`；
+  - 准备加类型标志、字符串分支、案例标定常数或为某个测试专门加规则时读 `generalize-first`。

@@ -1,5 +1,9 @@
 # 变更日志
 
+## 编码 skill — 2026-10-14
+
+- 新增 `.claude/skills/frame-kernel` 与 `.claude/skills/generalize-first` 两个编码 skill，固化内核坐标/单位/映射/测试约定和“先抽象再修补”检查；AGENTS.md 增加指引，Claude Code 与 Codex 共用。
+
 ## 优化范围与交付核对 — 2026-10-09
 
 - 记录 PR #25 的用户合并授权、三平台验收和已完成优化范围；明确最初 100 条建议尚未全部实施，保留后续实体单元查询、模型定位和交互性能测量计划。本轮不打包。
