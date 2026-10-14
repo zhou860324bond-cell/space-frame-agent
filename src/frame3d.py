@@ -366,6 +366,9 @@ class Frame:
         default_factory=dict)
     load_cases: dict[str, LoadCase] = field(default_factory=_default_cases)
     combos: dict[str, dict[str, float]] = field(default_factory=dict)
+    #: 节点集中质量：节点 → (m, Ixx, Iyy, Izz)，全局轴。只进质量阵，不产生荷载；
+    #: 单位与密度同一套（N-m-Pa 下 kg、kg·m²）。来源见 masses.py。
+    masses: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)
     #: 幅值曲线，供非线性分析做非比例加载。线性静力用不到。
     amplitudes: dict[str, Amplitude] = field(default_factory=dict)
     # 单位制只影响自重的 g 与结果的显示换算，不影响刚度方程本身

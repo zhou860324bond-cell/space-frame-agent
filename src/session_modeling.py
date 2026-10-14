@@ -297,6 +297,79 @@ class ModelingMixin:
             "note": "之后凡是要杆件编号的地方，都可以直接写这个名字。",
         })
 
+    @_records
+    def seed_mesh(self, divisions: int | None = None, members=None,
+                  clear: bool = False) -> ToolResult:
+        """布种：每根物理杆件剖成几个分析单元。
+
+        · 只给 ``divisions``：设全局默认段数；
+        · 给 ``members``（编号列表或集合名）+ ``divisions``：逐杆覆盖；
+        · ``clear=True``：清掉 ``members`` 的逐杆布种，不给 ``members`` 则全部清掉。
+
+        频率、屈曲与 P-Δ 分析本来就会把每杆至少剖成
+        ``model_compiler.ANALYSIS_MIN_DIVISIONS`` 段；布种用于要求更细，或让
+        线性静力的结果图在杆内也有节点。
+        """
+        from model_compiler import ANALYSIS_MIN_DIVISIONS, CompilationError, compile_model
+        if not self.model.get("members"):
+            return ToolResult(False, {"error": "当前没有杆件，先建模再布种"})
+        mesh = dict(self.model.get("mesh") or {})
+        per_member = dict(mesh.get("members") or {})
+        try:
+            ids = self._expand_members(members) if members is not None else None
+        except ValueError as exc:
+            return ToolResult(False, {"error": str(exc)})
+        known = {int(m["id"]) for m in self.model["members"]}
+        if ids is not None:
+            bad = sorted(set(ids) - known)
+            if bad:
+                return ToolResult(False, {"error": f"杆件 {bad} 不存在"})
+
+        if clear:
+            if ids is None:
+                mesh = {}
+                per_member = {}
+            else:
+                for k in ids:
+                    per_member.pop(str(k), None)
+        else:
+            if divisions is None:
+                return ToolResult(False, {
+                    "error": "要给 divisions（每根杆剖成几段，1~200 的整数）",
+                    "example": {"divisions": 4, "members": "柱"}})
+            n = int(divisions)
+            if not 1 <= n <= 200:
+                return ToolResult(False, {"error": f"divisions 要在 1~200 之间，收到 {n}"})
+            if ids is None:
+                mesh["divisions"] = n
+            else:
+                for k in ids:
+                    per_member[str(k)] = n
+        if per_member:
+            mesh["members"] = per_member
+        else:
+            mesh.pop("members", None)
+        candidate = dict(self.model)
+        if mesh:
+            candidate["mesh"] = mesh
+        else:
+            candidate.pop("mesh", None)
+        try:
+            compiled = compile_model(candidate)
+        except CompilationError as exc:
+            return ToolResult(False, {"errors": list(exc.diagnostics)})
+        self.model = candidate
+        return ToolResult(True, {
+            "global_divisions": int(mesh.get("divisions") or 1),
+            "member_divisions": {int(k): v for k, v in sorted(
+                per_member.items(), key=lambda item: int(item[0]))},
+            "physical_members": len(known),
+            "analysis_elements": len(compiled.analysis_model.members),
+            "note": (f"频率、屈曲与 P-Δ 分析会把每杆至少剖成 {ANALYSIS_MIN_DIVISIONS} 段，"
+                     "布种只能要求更细。线性静力的内力在单元内解析恢复，"
+                     "布种不改变它的数值，只增加杆内的结果节点。"),
+        })
+
     def list_sets(self) -> ToolResult:
         sets = self.model.get("sets") or {}
         return ToolResult(True, {

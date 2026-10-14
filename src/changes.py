@@ -114,6 +114,13 @@ def prune_loads(model: dict[str, Any], *,
     clean(model)                                    # 单工况写法
     for case in model.get("load_cases") or []:      # 多工况写法
         clean(case)
+    # 节点质量不是荷载，但同样挂在节点上：节点删了它必须一起走，
+    # 否则下一次校验报「masses 指向不存在的节点」，指向的却不是删除那一步。
+    if nodes and model.get("masses"):
+        kept = [e for e in model["masses"] if int(e["node"]) not in nodes]
+        if len(kept) != len(model["masses"]):
+            counted["masses"] = len(model["masses"]) - len(kept)
+        model["masses"] = kept
     return counted
 
 
@@ -148,6 +155,24 @@ def prune_sets(model: dict[str, Any]) -> tuple[dict[str, int], list[str]]:
             emptied.append(name)
     model["sets"] = kept_sets
     return pruned, emptied
+
+
+def prune_mesh_seeds(model: dict[str, Any]) -> list[int]:
+    """删掉指向已不存在杆件的逐杆布种，返回被删的杆件编号。
+
+    和集合一样随杆件删除一起清理；不清的话下一次校验会因为悬空的布种
+    拒绝整个模型，而报错指向的却不是删杆那一步。
+    """
+    mesh = model.get("mesh")
+    if not mesh or not mesh.get("members"):
+        return []
+    alive = {str(int(m["id"])) for m in model.get("members") or []}
+    stale = sorted(int(k) for k in mesh["members"] if k not in alive)
+    if stale:
+        mesh["members"] = {k: v for k, v in mesh["members"].items() if k in alive}
+        if not mesh["members"]:
+            del mesh["members"]
+    return stale
 
 
 def prune_orphan_nodes(model: dict[str, Any]) -> list[int]:
@@ -196,5 +221,7 @@ def apply(model: dict[str, Any], change: Change, *,
             report["pruned_sets"] = pruned
         if emptied:
             report["emptied_sets"] = emptied
+        if stale := prune_mesh_seeds(model):
+            report["pruned_mesh_seeds"] = stale
 
     return report

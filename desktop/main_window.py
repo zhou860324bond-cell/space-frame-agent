@@ -973,19 +973,21 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         elif self.mode == "模态":
             # 同一个 Frame 只算一次。原来每次重画（切工况、改放大系数、开关
             # 标注）都把模态分析完整跑**两遍**——校验一遍、画图再一遍。
-            cached = getattr(self, "_modal_view", None)
-            if cached is not None and cached[0] is frame:
-                r = cached[1]
-            else:
+            #
+            # 振型画在 Session 算模态时用的**那个**分析模型上（每杆至少剖成
+            # 4 段），不能拿静力的 Frame 再算一遍：剖分不同，图上的频率就和
+            # 结果表里的对不上。
+            cached = self.session.modal_view
+            if cached is None or cached[0] != self.session._model_key():
                 got = self.session.modal_analysis(num_modes=6)
                 if not got.ok:
                     QMessageBox.information(self, "无法进行模态分析",
-                                            str(got.payload.get("error", ""))[:400])
+                                            str(got.payload.get("error")
+                                                or got.payload.get("errors", ""))[:400])
                     self.set_mode("模型")
                     return
-                from modal import modal
-                r = modal(frame, 6)
-                self._modal_view = (frame, r)
+                cached = self.session.modal_view
+            frame, r = cached[2], cached[3]
             f1 = r.frequencies[0]
             self.viewport.show_mode(frame, r.shapes, 0,
                                     f"第 1 阶　{f1:.3f} Hz　周期 {1 / f1:.4f} s")
@@ -1056,7 +1058,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self._displayed_solution = self.session.solution
             self._last_probe = None
             self._utilization = None
-            self._modal_view = None
             self.diagram.attach(self.session, self.case)
             self.viewport.set_result_marker(None)
         if stale or changed or (self.result is not None and self.result.ok

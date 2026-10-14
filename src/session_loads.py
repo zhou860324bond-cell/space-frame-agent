@@ -1139,6 +1139,93 @@ class LoadsMixin:
                     "产生弯矩，κ=α·ΔT/h。静定结构两者都不产生内力。"})
 
     @_records
+    def set_nodal_mass(self, nodes, mass: float, inertia=None,
+                       name: str = "附加质量") -> ToolResult:
+        """节点集中质量（设备、配重、楼面质量）。只进质量阵，不产生荷载。
+
+        单位与密度同一套：N-m-Pa 下 kg、kg·m²，N-mm-MPa 下 t、t·mm²。
+        同一节点同名的旧质量被替换；``mass=0`` 删除这些节点上的同名质量。
+        """
+        if not self.model.get("nodes"):
+            return ToolResult(False, {"error": "当前没有模型"})
+        try:
+            ids = self._expand_nodes(nodes)
+        except ValueError as exc:
+            return ToolResult(False, {"error": str(exc)})
+        known = {int(n["id"]) for n in self.model["nodes"]}
+        bad = sorted(set(ids) - known)
+        if bad or not ids:
+            return ToolResult(False, {"error": f"节点 {bad} 不存在" if bad else "没有给节点"})
+        value = float(mass)
+        if not np.isfinite(value) or value < 0.0:
+            return ToolResult(False, {"error": f"质量必须是非负有限数，收到 {mass}"})
+        rot = None
+        if inertia is not None:
+            rot = [float(v) for v in inertia]
+            if len(rot) != 3 or any(not np.isfinite(v) or v < 0.0 for v in rot):
+                return ToolResult(False, {"error": "inertia 要三个非负数 [Ixx, Iyy, Izz]（全局轴）"})
+        label = str(name).strip() or "附加质量"
+        targets = set(ids)
+        kept = [e for e in self.model.get("masses") or []
+                if not (int(e["node"]) in targets and e.get("name", "") == label)]
+        if value > 0.0 or (rot and any(rot)):
+            kept.extend({"name": label, "node": k, "mass": value,
+                         **({"inertia": rot} if rot else {})} for k in sorted(targets))
+        if kept:
+            self.model["masses"] = kept
+        else:
+            self.model.pop("masses", None)
+        self._invalidate()
+        scale = self.units.mass_scale
+        return ToolResult(True, {
+            "name": label, "nodes": sorted(targets),
+            "mass_each_kg": round(value * scale, 6),
+            "total_mass_kg": round(sum(float(e["mass"]) for e in kept) * scale, 6),
+            "note": "节点质量只进模态、反应谱的质量阵，不产生静力荷载；"
+                    "要它产生重力，另在工况里加节点荷载。"})
+
+    @_records
+    def masses_from_loads(self, cases: dict[str, float],
+                          name: str = "重力荷载代表值") -> ToolResult:
+        """GB 50011 重力荷载代表值：工况竖向向下荷载 × 组合值系数 ÷ g → 节点质量。
+
+        例：``{"DL": 1.0, "LL": 0.5}``（恒载取 1.0，一般楼面活载取 0.5）。
+        同名的旧换算结果整体替换，反复调用不会叠加。
+        """
+        from masses import masses_from_loads as convert
+        errors = validate_payload(self.model)
+        if errors:
+            return ToolResult(False, {"errors": errors})
+        if not cases:
+            return ToolResult(False, {
+                "error": "要给工况和组合值系数",
+                "example": {"cases": {"DL": 1.0, "LL": 0.5}}})
+        try:
+            table, report = convert(self.model, {str(k): float(v) for k, v in cases.items()})
+        except ValueError as exc:
+            return ToolResult(False, {"error": str(exc)})
+        label = str(name).strip() or "重力荷载代表值"
+        kept = [e for e in self.model.get("masses") or [] if e.get("name", "") != label]
+        kept.extend({"name": label, "node": node, "mass": float(m)}
+                    for node, m in table.items())
+        if not table:
+            return ToolResult(False, {
+                "error": "这些工况里没有竖向向下的荷载，换不出质量",
+                "detail": report})
+        self.model["masses"] = kept
+        self._invalidate()
+        scale = self.units.mass_scale
+        return ToolResult(True, {
+            "name": label, "nodes": len(table),
+            "total_mass_kg": round(sum(table.values()) * scale, 6),
+            "skipped_self_weight": report["skipped_self_weight"],
+            "ignored_upward": report["ignored_upward"],
+            "ignored_horizontal_components": report["ignored_horizontal_components"],
+            "note": "只换竖向向下的分量；杆上荷载按简支杠杆关系分到两端节点。"
+                    "带密度材料的自重荷载已跳过——一致质量阵里本来就有 ρA，"
+                    "再换一次会算两遍。"})
+
+    @_records
     def add_self_weight(self, case: str | None = None,
                         factor: float = 1.0) -> ToolResult:
         """按 ρ·A·g 生成各杆自重，作为均布荷载追加到某个工况。"""

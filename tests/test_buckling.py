@@ -254,20 +254,21 @@ def _beam_session(n: int):
     return s
 
 
-def test_coarse_mesh_is_called_out_in_buckling():
-    """一跨一个单元时屈曲报得太高，必须当场说出来。
+def test_one_element_per_span_is_refined_before_buckling():
+    """一跨一个单元时屈曲曾经报得太高，现在默认先剖够再算。
 
     实测单跨门式刚架每构件一个单元：λ=1.66，而收敛值 0.82——**偏高 102%**，
-    方向是偏不安全那一侧。λ=1.66 在说"还有 66% 余量"，真相是它已经失稳。
-    静力内力是解析恢复的、与网格无关，几何刚度阵不是，这个差别看不见，
-    所以只能由工具自己讲出来。
+    方向是偏不安全那一侧。原来的处理是附一条网格提示让用户自己加节点；
+    参数化模型恰好一杆一单元，最常见的情形拿到的就是错的数。现在每根物理
+    杆件至少剖成 4 段，用户不加节点也得到收敛值，提示也就不该再出现。
     """
-    r = _beam_session(1).buckling_analysis()
-    assert r.ok
-    warn = r.payload.get("mesh_warning")
-    assert warn is not None, "一跨一个单元却没有任何网格提示"
-    assert warn["elements_in_span"] == 1
-    assert "偏不安全" in warn["message"]
+    coarse = _beam_session(1).buckling_analysis()
+    fine = _beam_session(4).buckling_analysis()
+    assert coarse.ok and fine.ok
+    assert "mesh_warning" not in coarse.payload
+    assert coarse.payload["mesh"]["analysis_elements"] >= 4
+    assert coarse.payload["critical_factor"] == pytest.approx(
+        fine.payload["critical_factor"], rel=5e-3)
 
 
 def test_a_properly_meshed_span_is_not_nagged():
@@ -282,33 +283,34 @@ def test_a_properly_meshed_span_is_not_nagged():
     assert "mesh_warning" not in r.payload, "细分够了还提示，属于误报"
 
 
-def test_coarse_mesh_beats_load_direction_as_the_suspect():
-    """网格太粗导致解不出临界因子时，别把人指向荷载方向。
+def test_a_fixed_fixed_single_member_beam_now_buckles():
+    """两端固接只剖一个单元时，跨内没有可屈曲的自由度，屈曲必然失败。
 
-    两端固接的梁只剖一个单元时，跨内没有可屈曲的自由度，屈曲必然失败。
-    原来只报"没有找到正的临界荷载因子，检查荷载方向与约束"——照着这句话
-    去查荷载方向永远查不出问题，因为荷载方向是对的。
+    原来只报"没有找到正的临界荷载因子"，后来补了 likely_cause 指向网格；
+    现在默认剖够，这个模型直接给出临界因子，用户不需要先读懂失败原因。
+    闭合解 Pcr = 4π²EI/L²（弱轴 Iy）。
     """
+    import math
     s = _beam_session(1)
     s.model["supports"] = [{"node": 1, "fix": [1, 1, 1, 1, 1, 1]},
                            {"node": 2, "fix": [0, 1, 1, 1, 1, 1]}]
     r = s.buckling_analysis()
-    assert not r.ok
-    assert "likely_cause" in r.payload, "失败了却没说最可能的原因"
-    assert "单元" in r.payload["likely_cause"]
+    assert r.ok, r.payload
+    euler = 4 * math.pi ** 2 * 2.06e11 * 3.0e-5 / 8.0 ** 2
+    assert r.payload["critical_factor"] * 1.0e6 == pytest.approx(euler, rel=2e-2)
 
 
-def test_coarse_mesh_is_called_out_in_modal_too():
-    """一致质量阵和几何刚度阵同理，都从上方逼近——模态也要提示。
+def test_modal_is_refined_the_same_way():
+    """一致质量阵和几何刚度阵同理，都从上方逼近——模态也默认剖够。
 
-    实测 8 m 简支梁一个单元 f1 偏高 11.0%，四个单元降到 0.026%。
-    模态走的是**物理模型**（不编译），所以这里单独验一遍它也接上了。
+    实测 8 m 简支梁一个单元 f1 偏高 11.0%。一根杆和手工拆成四根杆，
+    现在应给出同一个基频，且都不再附网格提示。
     """
     coarse = _beam_session(1).modal_analysis(num_modes=4)
     fine = _beam_session(4).modal_analysis(num_modes=4)
     assert coarse.ok and fine.ok
-    assert "mesh_warning" in coarse.payload
+    assert "mesh_warning" not in coarse.payload
     assert "mesh_warning" not in fine.payload
-    # 偏高的方向也一并钉住：粗网格的频率必须更高
     assert (coarse.payload["modes"][0]["frequency_Hz"]
-            > fine.payload["modes"][0]["frequency_Hz"])
+            == pytest.approx(fine.payload["modes"][0]["frequency_Hz"], rel=1e-3))
+

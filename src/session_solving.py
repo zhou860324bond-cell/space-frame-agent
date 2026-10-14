@@ -22,10 +22,10 @@ from typing import Any
 import numpy as np
 
 from frame3d import check_equilibrium, solve
-from model_compiler import compile_model
+from model_compiler import ANALYSIS_MIN_DIVISIONS, compile_model
 from model_io import validate_payload
 from result_db import from_solution as result_db_from_solution
-from session_base import ToolResult
+from session_base import ToolResult, _records
 import capsule as _capsule
 import silent_failures as _silent
 from task_control import TaskCancelled, checkpoint
@@ -152,6 +152,46 @@ class SolvingMixin:
             out[case] = curve.at(1.0)
         return out
 
+    @_records
+    def set_imperfection(self, mode: int = 1, amplitude: float | None = None,
+                         height_ratio: float | None = None, case: str | None = None,
+                         clear: bool = False) -> ToolResult:
+        """初始几何缺陷：第 mode 阶屈曲模态缩放后叠到分析几何上，二阶分析时生效。
+
+        幅值二选一：``amplitude`` 直接给长度（模型单位，负值表示反向），或
+        ``height_ratio`` 乘结构总高（z 向跨度；平面结构取最大尺寸），如 1/250。
+        """
+        if clear:
+            removed = self.model.pop("imperfection", None) is not None
+            self._invalidate()
+            return ToolResult(True, {"cleared": removed, "imperfection": None})
+        if not self.model.get("nodes"):
+            return ToolResult(False, {"error": "当前没有模型"})
+        if (amplitude is None) == (height_ratio is None):
+            return ToolResult(False, {
+                "error": "amplitude 与 height_ratio 二选一",
+                "example": {"mode": 1, "height_ratio": 1 / 250}})
+        if amplitude is None:
+            xyz = np.array([[n["x"], n["y"], n["z"]] for n in self.model["nodes"]], float)
+            extent = xyz.max(axis=0) - xyz.min(axis=0)
+            height = float(extent[2]) if extent[2] > 0 else float(extent.max())
+            amplitude = float(height_ratio) * height
+        spec: dict[str, Any] = {"mode": int(mode), "amplitude": float(amplitude)}
+        if case:
+            spec["case"] = str(case)
+        candidate = {**self.model, "imperfection": spec}
+        errors = [e for e in validate_payload(candidate) if "imperfection" in e]
+        if errors:
+            return ToolResult(False, {"errors": errors})
+        self.model["imperfection"] = spec
+        self._invalidate()
+        return ToolResult(True, {
+            "imperfection": spec,
+            "amplitude_mm": round(spec["amplitude"] * self.units.disp_scale, 6),
+            "note": "缺陷在 solve_model(analysis='pdelta') 或 'step' 时生效，"
+                    "取完善结构的屈曲模态；线性静力与屈曲分析仍按完善几何。"
+                    "幅值按所用规范确定，这里不替用户选规范。"})
+
     def solve_model(self, analysis: str = "linear", increments: int = 10,
                     max_iter: int = 40, tolerance: float = 1e-7,
                     amplitudes: dict | None = None) -> ToolResult:
@@ -194,8 +234,32 @@ class SolvingMixin:
         if errors:
             return ToolResult(False, {"errors": errors,
                                       "hint": "先按上面的清单修正模型，再重新求解"})
-        self.compilation = compile_model(self.model, validated=True)
+        # P-Δ（含按幅值加载的 step）在单元上装配几何刚度阵，和屈曲一样
+        # 一杆一单元会偏刚，所以同样默认剖够；线性静力与轴向塑性不需要
+        # （前者内力解析恢复，后者轴力沿杆不变），保持布种原样。
+        refine = analysis in ("pdelta", "step")
+        spec = self.model.get("imperfection")
+        if refine and spec:
+            from imperfection import MIN_DIVISIONS as floor
+        else:
+            floor = ANALYSIS_MIN_DIVISIONS if refine else 1
+        self.compilation = compile_model(self.model, validated=True,
+                                         min_divisions=floor)
         self.frame = self.compilation.analysis_model
+        imperfection_info = None
+        if refine and spec:
+            # 缺陷叠在加密后的分析模型上：模态要在同一套单元上求，坐标才对得上。
+            from imperfection import apply_mode_imperfection
+            try:
+                self.frame, imperfection_info = apply_mode_imperfection(
+                    self.frame, int(spec["mode"]), float(spec["amplitude"]),
+                    spec.get("case"))
+            except (np.linalg.LinAlgError, ValueError) as exc:
+                self.solution = None
+                return ToolResult(False, {
+                    "error": f"初始缺陷施加失败：{exc}",
+                    "hint": "缺陷取屈曲模态，参考工况里要有受压杆件。"
+                            "换一个 imperfection.case，或先用 buckling_analysis 确认能求出模态。"})
         self.result_db = None
         checkpoint()
         try:
@@ -315,6 +379,20 @@ class SolvingMixin:
                 "diagnostics": list(self.compilation.diagnostics),
             },
         }
+
+        if imperfection_info is not None:
+            peak = imperfection_info["peak_node"]
+            where = self.compilation.mapping.generated_nodes.get(peak)
+            payload["imperfection"] = {
+                **imperfection_info,
+                "amplitude_mm": round(imperfection_info["amplitude"] * U.disp_scale, 6),
+                "peak_at": (f"杆件 {where[0]} 的 {where[1]:.2f}L 处" if where
+                            else f"节点 {peak}"),
+                "note": "缺陷只改分析模型的坐标；报出的位移是相对有缺陷构形的附加位移。"}
+        elif spec:
+            payload["imperfection_note"] = (
+                "模型设置了初始缺陷，但它只在 pdelta / step 二阶分析中生效，"
+                f"这次是 {analysis}，按完善几何计算。")
 
         # 1. 静默失败检测：8 项检查，把"算出来了但结果可疑"的情况挑出来
         try:

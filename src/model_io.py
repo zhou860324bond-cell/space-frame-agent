@@ -152,6 +152,49 @@ MODEL_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        # 布种：每根物理杆件剖成几个分析单元。全局默认 + 逐杆覆盖，键是杆件
+        # 编号的字符串（JSON 的对象键只能是字符串）。语义见
+        # model_compiler.member_divisions；不写等于每杆 1 段。
+        "mesh": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "divisions": {"type": "integer", "minimum": 1, "maximum": 200},
+                "members": {
+                    "type": "object", "additionalProperties": False,
+                    "patternProperties": {
+                        "^[1-9][0-9]*$": {"type": "integer", "minimum": 1,
+                                          "maximum": 200}},
+                },
+            },
+        },
+        # 初始几何缺陷：第 mode 阶屈曲模态缩放到 amplitude（长度，可为负表示
+        # 反向）叠到分析模型上，只在二阶分析（pdelta / step）中生效。case 是
+        # 求缺陷模态用的参考工况或组合，缺省取内力最大者。见 imperfection.py。
+        "imperfection": {
+            "type": "object", "required": ["mode", "amplitude"],
+            "additionalProperties": False,
+            "properties": {
+                "mode": {"type": "integer", "minimum": 1, "maximum": 20},
+                "amplitude": {"type": "number"},
+                "case": {"type": "string", "minLength": 1},
+            },
+        },
+        # 节点集中质量（附加质量、由荷载换算的重力荷载代表值）。只进质量阵，
+        # 不产生荷载。同一节点可以有多条，按名字区分来源；语义见 masses.py。
+        "masses": {
+            "type": "array",
+            "items": {
+                "type": "object", "required": ["node", "mass"],
+                "additionalProperties": False,
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "node": {"type": "integer"},
+                    "mass": {"type": "number", "minimum": 0},
+                    "inertia": {"type": "array", "minItems": 3, "maxItems": 3,
+                                "items": {"type": "number", "minimum": 0}},
+                },
+            },
+        },
         "materials": {
             "type": "array", "minItems": 1,
             "items": {
@@ -476,6 +519,10 @@ def from_dict(data: dict[str, Any]) -> Frame:
         if s.get("spring"):
             f.springs[int(s["node"])] = tuple(float(v) for v in s["spring"])
 
+    from masses import nodal_mass_table
+    f.masses = {node: tuple(float(v) for v in row)
+                for node, row in nodal_mass_table(data).items()}
+
     _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):
         _fill_case(f, f.case(str(c["name"])), c)
@@ -559,6 +606,27 @@ def _validate(data: dict[str, Any], schema: dict[str, Any], *,
                 f"[语义] 节点 {s.get('node')} 的方向 {clash} 既写了 fix=1 又给了"
                 "弹簧刚度。刚性约束会让弹簧完全失效，两者只能取一个："
                 "要刚接就把 spring 那一项设为 0，要弹性支承就把 fix 那一项设为 0。")
+    imperfection = data.get("imperfection") or {}
+    if imperfection:
+        if not imperfection.get("amplitude"):
+            errors.append("[语义] imperfection/amplitude 不能为 0：零幅值等于没有缺陷，删掉这一项即可。")
+        ref = imperfection.get("case")
+        names = ({"default"} | {c.get("name") for c in data.get("load_cases") or []}
+                 | {c.get("name") for c in data.get("combos") or []})
+        if ref and ref not in names:
+            errors.append(f"[语义] imperfection/case 指向不存在的工况或组合 {ref!r}。")
+    known_nodes = {int(n["id"]) for n in data.get("nodes") or []}
+    lost = sorted({int(e["node"]) for e in data.get("masses") or []} - known_nodes)
+    if lost:
+        errors.append(f"[语义] masses 指向不存在的节点 {lost}。删掉这几项或改成现有节点。")
+    seeded = {int(k) for k in ((data.get("mesh") or {}).get("members") or {})}
+    stale = sorted(seeded - {int(m["id"]) for m in data.get("members") or []})
+    if stale:
+        # 布种指向不存在的杆件本身算不错什么，但它说明模型被改过而布种没跟上：
+        # 用户以为某根杆分了 8 段，实际那根杆已经换了编号。
+        errors.append(
+            f"[语义] mesh/members 给不存在的杆件 {stale} 设置了布种。"
+            "删掉这几项，或改成现在的杆件编号。")
     unique(data.get("materials") or [], "name", "材料名")
     unique(data.get("sections") or [], "name", "截面名")
     unique(data.get("nodes") or [], "id", "节点编号")

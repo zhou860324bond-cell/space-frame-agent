@@ -168,6 +168,114 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "seed_mesh",
+            "description":
+                "布种：设定每根杆件剖成几个分析单元（Abaqus 式），写进模型，存盘后仍在。"
+                "只给 divisions 是全局默认；再给 members（编号列表或集合名）是逐杆覆盖；"
+                "clear=true 清掉布种。**频率、屈曲、反应谱与 P-Δ 已经自动把每杆至少剖成 4 段**，"
+                "用户没提精度要求时不必调用；用户要求「加密网格」「每根杆分 8 段」时才用。"
+                "线性静力的内力在单元内解析恢复，布种不改变它的数值。"
+                "返回里 analysis_elements 是编译后的分析单元总数。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "divisions": {"type": "integer", "minimum": 1, "maximum": 200,
+                                  "description": "每根杆剖成几段"},
+                    "members": {
+                        "description": "只对这些杆件布种：编号列表或集合名；不给则设全局默认",
+                        "oneOf": [
+                            {"type": "array",
+                             "items": {"oneOf": [{"type": "integer"},
+                                                 {"type": "string"}]}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "clear": {"type": "boolean",
+                              "description": "清掉布种（给 members 只清这些杆件）"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_imperfection",
+            "description":
+                "初始几何缺陷（Abaqus 的 *IMPERFECTION）：取完善结构第 mode 阶屈曲模态，"
+                "缩放到给定幅值叠到分析几何上，之后 solve_model(analysis='pdelta') 按有缺陷的"
+                "几何做二阶分析。用户问「考虑初始缺陷」「二阶分析加缺陷」「直接分析法」时用。"
+                "幅值二选一：amplitude 直接给长度（模型单位，负值反向），或 height_ratio×结构总高"
+                "（如 1/250）。**规范取值按用户所用规范确定，不确定就问用户，不要自己编。**"
+                "线性静力和屈曲分析不受影响；clear=true 清除。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "integer", "minimum": 1, "description": "第几阶屈曲模态，默认 1"},
+                    "amplitude": {"type": "number", "description": "缺陷幅值，长度，模型单位"},
+                    "height_ratio": {"type": "number", "description": "幅值 = 该比例 × 结构总高"},
+                    "case": {"type": "string", "description": "求屈曲模态的参考工况或组合；缺省取内力最大者"},
+                    "clear": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_nodal_mass",
+            "description":
+                "节点集中质量：设备、配重、楼面质量。只进模态与反应谱的质量阵，**不产生静力荷载**。"
+                "单位与材料密度同一套：N-m-Pa 下 kg，N-mm-MPa 下 t（吨）；转动惯量是质量·长度²。"
+                "同一节点同名的旧质量会被替换，mass=0 删除。"
+                "要把楼面恒载、活载换成质量，用 masses_from_loads，不要自己算。",
+            "parameters": {
+                "type": "object",
+                "required": ["nodes", "mass"],
+                "properties": {
+                    "nodes": {
+                        "description": "节点编号列表或节点集合名",
+                        "oneOf": [{"type": "array", "items": {"type": "integer"}},
+                                  {"type": "string"}],
+                    },
+                    "mass": {"type": "number", "minimum": 0,
+                             "description": "每个节点的平动质量"},
+                    "inertia": {"type": "array", "items": {"type": "number"},
+                                "minItems": 3, "maxItems": 3,
+                                "description": "可选，[Ixx, Iyy, Izz]，全局轴"},
+                    "name": {"type": "string", "description": "这份质量的来源名，默认「附加质量」"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "masses_from_loads",
+            "description":
+                "按 GB 50011 重力荷载代表值，把若干工况的竖向向下荷载乘组合值系数、除以 g，"
+                "换成节点质量（杆上荷载按简支杠杆关系分到两端节点）。"
+                "做地震相关的模态、反应谱之前用它——不换的话楼面质量不进质量阵，周期偏短。"
+                "组合值系数：恒载 1.0，一般楼面活载 0.5（按规范取，不确定就问用户）。"
+                "带密度材料的自重荷载会自动跳过，避免和一致质量阵重复。同名结果整体替换。",
+            "parameters": {
+                "type": "object",
+                "required": ["cases"],
+                "properties": {
+                    "cases": {"type": "object",
+                              "additionalProperties": {"type": "number"},
+                              "description": "工况名 → 组合值系数，如 {\"DL\": 1.0, \"LL\": 0.5}"},
+                    "name": {"type": "string", "description": "默认「重力荷载代表值」"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "define_set",
             "description":
                 "给一组杆件或节点起个名字，之后凡是要杆件编号的地方都能直接写这个名字。"
@@ -1605,9 +1713,10 @@ TOOLS: list[dict[str, Any]] = [
             "description": "自振频率与振型。需要材料有 density。"
                            "用户问「自振周期」「基频」「动力特性」「共振」时用这个。"
                            "结果是结构固有属性，与荷载无关——不要传工况。"
-                           "\n返回里出现 mesh_warning 时**必须转达**：一致质量阵靠形函数"
-                           "装配，网格越粗频率报得越高。实测 8 m 简支梁一跨一个单元时"
-                           "基频偏高 11%，四个单元降到 0.026%。"
+                           "\n一致质量阵靠形函数装配，网格越粗频率报得越高（8 m 简支梁一个单元"
+                           "偏高 11%），所以每根杆件**自动**至少剖成 4 段再算，返回的 mesh "
+                           "写着实际用了几个单元，不需要用户手工加节点。"
+                           "仍出现 mesh_warning（布种被压低时）就必须转达。"
                            "\n\n**参与质量比的分母是 participable_mass，不是 total_mass。**"
                            "压在支座上的质量永远不参与振动，两者的差随网格变粗而变大"
                            "——一根剖成 4 段的悬臂柱，按 total_mass 算把振型取满也只有"
@@ -1632,11 +1741,11 @@ TOOLS: list[dict[str, Any]] = [
                            "用户问「稳定」「屈曲」「临界荷载」「安全储备」时用这个。"
                            "**这是线性特征值屈曲，给的是上限**——真实结构有初始缺陷，"
                            "实际承载力更低，回答时必须说明这一点。"
-                           "\n\n**返回里出现 mesh_warning 时必须转达，它比上面那句更要命。**"
-                           "几何刚度阵靠形函数装配，网格越粗 λ 报得越高。实测单跨门式刚架"
-                           "每构件一个单元时 λ=1.66，收敛值 0.82——偏高 102%：前者在说"
-                           "「还有 66% 余量」，后者意味着它已经失稳。generate_frame 生成的"
-                           "恰好是每构件一个单元，所以这是最容易撞上的情形。"
+                           "\n\n几何刚度阵靠形函数装配，网格越粗 λ 报得越高（单跨门式刚架一杆"
+                           "一单元时 λ=1.66，收敛值 0.82），所以每根杆件**自动**至少剖成 4 段，"
+                           "参考轴力也在同一套单元上重新求得；返回的 mesh 写着实际单元数，"
+                           "most_compressed_member 是物理杆件编号。"
+                           "仍出现 mesh_warning 时必须转达，它比上面那句更要命。"
                            "\n失败时若有 likely_cause，先讲它，不要照搬「检查荷载方向」。",
             "parameters": {
                 "type": "object",

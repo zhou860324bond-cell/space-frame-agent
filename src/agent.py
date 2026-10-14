@@ -171,6 +171,8 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
     frame: Any = None
     solution: Any = None
     compilation: Any = None
+    #: (模型指纹, 阶数, 分析模型, ModalResult)：界面画振型用同一份，见 modal_analysis
+    modal_view: Any = field(default=None, repr=False, compare=False)
     result_db: Any = None
     result_identity: dict[str, Any] | None = None
     solve_summary: ToolResult | None = field(default=None, repr=False)
