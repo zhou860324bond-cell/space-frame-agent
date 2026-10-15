@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QPushButton,
-                               QScrollArea, QSizePolicy, QStatusBar, QToolBar,
+                               QScrollArea, QSizePolicy, QSplitter, QStatusBar, QToolBar,
                                QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -126,7 +126,10 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
         row.addWidget(self.left_rail)
-        row.addWidget(self.viewport, 1)
+        self.agent_splitter = QSplitter(Qt.Orientation.Horizontal, center)
+        self.agent_splitter.setChildrenCollapsible(False)
+        row.addWidget(self.agent_splitter, 1)
+        self.agent_splitter.addWidget(self.viewport)
         row.addWidget(self.right_rail)
         self.setCentralWidget(center)
 
@@ -147,10 +150,17 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.chat = ChatPanel(self.session, self.runner, self)
         self.chat.model_changed.connect(self._on_chat_changed)
         self.chat.busy_changed.connect(self._on_busy)
-        # **默认收起。** 它只在"想让 AI 帮忙建模"时才用；没配密钥时开局
-        # 还是一大段配置说明——第一眼看到的不该是一条错误。
-        # 入口是右侧窄栏最上面那颗「AI」按钮，一点召唤，再点收起。
-        self.chat_dock = self.right_drawer.add_page("chat", "AI 助手", self.chat)
+        # 默认使用用户选择的并排布局，右侧 AI 入口可以恢复完整模型视口。
+        from .agent_workspace import WorkspaceHandle
+        self.chat.setMinimumWidth(320)
+        self.viewport.setMinimumWidth(250)
+        self.agent_splitter.insertWidget(0, self.chat)
+        self.agent_splitter.setStretchFactor(0, 1)
+        self.agent_splitter.setStretchFactor(1, 1)
+        self.agent_splitter.setSizes([460, 880])
+        self.chat_dock = WorkspaceHandle(self.chat, self)
+        self.chat.locate_requested.connect(self._on_picked)
+        self.chat.image_dropped.connect(self._recognize_dropped_image)
 
         # 手绘草图 → 模型：独立窗口，从建模页的「草图识别」打开。它是一次走完
         # 就关的流程、要宽画布，不和常驻参考的面板挤在抽屉里。
@@ -213,10 +223,13 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self._last_probe = None
         self.results.setMinimumHeight(120)
         self.results_dock = self.bottom_drawer.add_page("results", "结果表", self.results)
+        # 明细表默认独立查看，避免打开结果时覆盖模型的下半部。
+        self.results_dock.prefer_floating = True
 
         self.diagram = DiagramPanel(self)
         self.diagram.locate.connect(self.locate)
         self.diagram_dock = self.bottom_drawer.add_page("diagram", "单杆内力图", self.diagram)
+        self.diagram_dock.prefer_floating = True
 
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
         self.section_opt_dock = self.bottom_drawer.add_page(
@@ -234,6 +247,8 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self._build_rails()
 
         self._build_actions()
+        self.chat_dock.visibilityChanged.connect(lambda _on: self._sync_rails())
+        self._sync_rails()
         self._build_empty_state()
         self._build_ribbon()
         self._build_menus()
@@ -360,6 +375,9 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.agent_button = self.right_rail.buttons["chat"]
 
     def _on_rail(self, key: str) -> None:
+        if key == "chat":
+            self.toggle_agent_panel()
+            return
         drawer, _button = self._rail_targets[key]
         drawer.toggle_page(key)
         if key == "tree" and not drawer.is_open():
@@ -393,7 +411,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
     def _sync_rails(self) -> None:
         """窄栏按钮、功能区开关动作，与抽屉的真实状态保持一致。"""
         for key, (drawer, button) in self._rail_targets.items():
-            on = drawer.page(key).handle.isVisible()
+            on = self.chat_dock.isVisible() if key == "chat" else drawer.page(key).handle.isVisible()
             if button.isChecked() != on:
                 button.setChecked(on)
         for action_name, handle in (("chat", self.chat_dock), ("props", self.props_dock),
@@ -674,8 +692,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.viewport.set_selection(None, None)
         self.viewport.set_problem_refs([])
         self._last_probe = None
-        self.chat.session = session
-        self.chat.conversation = None
+        self.chat.reset_session(session)
         self.properties.session = session
         self.properties.clear()
         self.bc.session = session
@@ -828,6 +845,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         """
         busy = bool(busy or self.runner.busy)
         idle = not busy
+        self.chat.set_task_busy(busy)
         if busy and not self._task_busy:
             self._busy_action_states = {
                 name: action.isEnabled() for name, action in self.actions_by_name.items()
@@ -1063,6 +1081,8 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             self.lbl_last.setText("最近：尚未建模")
         self.act_solve.setEnabled(not self.runner.busy and bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
+        # 工具栏改了模型，对话面板的后续建议也要跟着换（例如求解后改为问位移）
+        self.chat.refresh_suggestions()
         dialog = getattr(self, "_modeling_dialog", None)
         if dialog is not None and dialog.isVisible():
             dialog.refresh()
@@ -1664,6 +1684,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self._viewport_context_menu().exec(global_pos)
 
     def _on_picked(self, kind: str, ident: int) -> None:
+        self.chat.set_selection(kind, ident)
         self._selected_kind = kind
         self._selected_id = ident
         if self.viewport.selection != (kind, ident):
@@ -2266,6 +2287,12 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         else:
             self.set_prompt("就绪 | 选择上方功能区模块开始建模")
 
+    def _recognize_dropped_image(self, path: str) -> None:
+        """对话面板拖入的图纸：打开草图识别面板并载入，后续核对与确认仍由用户完成。"""
+        if not self.sketch_dock.isVisible():
+            self.open_sketch_ai()
+        self.sketch.load_image(path)
+
     def _generate_from_sketch(self, data: dict) -> None:
         """把 2D 草图转换成 3D 模型，支持沿进深方向拉伸。"""
         try:
@@ -2558,7 +2585,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
 
     def toggle_agent_panel(self) -> None:
         """召唤/收起 AI 助手（右侧窄栏的「AI」按钮与 Ctrl+G 共用）。"""
-        self.right_drawer.toggle_page("chat")
+        self.chat_dock.setVisible(not self.chat_dock.isVisible())
         if self.chat_dock.isVisible():
             self._on_drawer_page_opened("chat")
             self.chat.setFocus()
@@ -3175,6 +3202,10 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         except OSError:
             pass
         self._save_preferences()
+        self.chat.shutdown()
+        # QDialog 不会因父窗口 close() 自动隐藏，退出时同步关闭各独立面板。
+        for name in self.PANELS:
+            getattr(self, name).hide()
         try:
             self.viewport.shutdown()
         except Exception:                       # noqa: BLE001

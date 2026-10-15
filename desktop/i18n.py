@@ -25,6 +25,17 @@ _LANG = "zh"
 
 #: 中文 → 英文。键必须与界面上出现的中文**一字不差**。
 ZH_EN: dict[str, str] = {
+    "Agent 任务": "Agent tasks", "Agent 协作任务": "Collaborative agent task",
+    "开始任务": "Start agent task", "继续任务": "Continue agent task",
+    "新建任务": "New agent task",
+    "预览候选": "Preview candidate", "应用候选": "Apply candidate",
+    "候选变更审阅": "Review candidate changes",
+    "模型连接设置": "Model connection settings", "工程对话": "Engineering chat",
+    "新建对话": "New conversation", "选择工程对象": "Select engineering objects",
+    "加入视口所选": "Attach viewport selection", "清除引用": "Clear references",
+    "导入密钥文件": "Import API key file", "读取模型目录": "Read model directory",
+    "检测工具调用": "Test tool calling", "保存并使用": "Save and use connection",
+    "删除连接": "Delete connection", "加入对话": "Attach to conversation",
     "刚架建模全流程": "Frame modeling workflow",
     "装配检查": "Assembly check", "命名集合": "Named sets",
     "批量属性指派": "Batch property assignment", "梁截面方向": "Beam orientation",

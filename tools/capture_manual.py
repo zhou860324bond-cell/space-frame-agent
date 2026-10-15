@@ -78,12 +78,12 @@ def main() -> None:
         window.run_strength_check()
         window.runner.wait(60000)
         window.results_dock.show()
-        window.bottom_drawer.set_extent(600)
-        result_area = window.bottom_drawer.stack.currentWidget()
+        result_area = window.results_dock._container
         result_area.verticalScrollBar().setValue(0)
         window.view_fit()
         settle()
-        capture(window, "03-强度验算结果.png")
+        # 明细默认独立显示，手册图直接取同一个真实结果窗口。
+        window.results_dock._window.grab().save(str(output / "03-强度验算结果.png"))
 
         window.results_dock.hide()
         window.component = "M"

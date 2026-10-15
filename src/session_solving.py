@@ -494,7 +494,8 @@ class SolvingMixin:
         # 2. 实验胶囊存档：完整输入+结果摘要，便于复现和回归对比
         try:
             cap_path = _capsule.save_capsule(
-                self.model, self.frame, self.solution, source="solve_model")
+                self.model, self.frame, self.solution, source="solve_model",
+                directory=getattr(self, "capsule_directory", None))
             payload["capsule"] = str(cap_path)
         except Exception as exc:                      # noqa: BLE001
             payload["capsule_error"] = f"{type(exc).__name__}: {exc}"

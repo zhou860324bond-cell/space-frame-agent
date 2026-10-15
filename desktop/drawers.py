@@ -11,7 +11,7 @@
 抽屉取两者之长：**位置由视口决定**（永远在视口矩形之内，碰不到工具栏），
 **尺寸不影响视口**（叠在上方，关掉即还原），并且跟着主窗口移动、最小化。
 同一侧只有一个抽屉，多个面板在抽屉里用页签切换，而不是摞成一堆窗。
-需要宽画布的截面优化默认独立打开；其他面板由标题栏按钮移出，原入口仍可
+结果表、单杆内力图和截面优化默认独立打开；其他面板由标题栏按钮移出，原入口仍可
 关闭与重开，同一个面板搬动而非复制，保留未提交输入和结果。
 
 为什么是顶层 Tool 窗而不是视口的子控件
@@ -139,6 +139,11 @@ class PanelHandle(QObject):
         self._window = PanelWindow(self._title, self._container, drawer.host.window,
                                    size=(1000, 580) if drawer.side == BOTTOM else (480, 680),
                                    dock_back=self.dock_panel)
+        if drawer.side == BOTTOM:
+            # 高缩放的小屏幕也留出主视口，宽表格可以滚动或由用户放大窗口。
+            available = drawer.host.window.screen().availableGeometry()
+            self._window.resize(min(self._window.width(), int(available.width() * 0.8)),
+                                min(self._window.height(), int(available.height() * 0.75)))
         self._floating = True
         self._window.visibilityChanged.connect(self.visibilityChanged.emit)
         self.setVisible(True)
