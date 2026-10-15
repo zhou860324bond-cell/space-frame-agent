@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QF
                                QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 from .dialog_styles import DialogHeader, HintLabel, button_box, style_dialog
+from .glyphs import WARN
 
 DOF_LABELS = ("U1", "U2", "U3", "UR1", "UR2", "UR3")
 
@@ -417,7 +418,7 @@ def describe_region(feature: dict[str, Any], expanded: dict[str, Any]) -> str:
     noun = "节点" if "nodes" in expanded else "杆件"
     text += f"　{len(ids)} 个{noun}"
     if expanded.get("problem"):
-        text += f"　⚠ {expanded['problem']}"
+        text += f"　{WARN} {expanded['problem']}"
     return text
 
 

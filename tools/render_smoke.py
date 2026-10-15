@@ -151,9 +151,21 @@ def main(report_path: Path | None = None) -> int:
         check(f"{side} 抽屉在视口内", area.contains(rect),
               f"抽屉 {rect.getRect()} / 视口 {area.getRect()}")
         check(f"{side} 抽屉就在分给它的位置", rect == window.drawers.geometry_for(side))
-    check("底部抽屉不压两侧抽屉",
-          not geometry["bottom"].intersects(geometry["left"])
-          and ("right" not in geometry or not geometry["bottom"].intersects(geometry["right"])))
+    # 模型树与AI助手现为布局面板，左抽屉只有打开辅助页时才存在。
+    # 不能假定有left键，否则新版真渲染验收会在完成检查前直接退出。
+    check("底部抽屉不压两侧抽屉", all(
+        not geometry["bottom"].intersects(rect)
+        for side, rect in geometry.items() if side != "bottom"))
+    from PySide6.QtCore import QPoint, QRect
+
+    def workspace_rect(widget):
+        return QRect(widget.mapTo(window, QPoint(0, 0)), widget.size())
+
+    viewport_rect = workspace_rect(window.viewport)
+    check("常驻模型栏不遮挡视口",
+          not workspace_rect(window.model_panel).intersects(viewport_rect))
+    check("并排AI助手不遮挡视口",
+          not workspace_rect(window.chat).intersects(viewport_rect))
     left, right, bottom = window.drawers.insets()
     width = max(1, window.viewport.width())
     height = max(1, window.viewport.height())

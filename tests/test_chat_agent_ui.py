@@ -243,7 +243,8 @@ def test_plan_card_rendered_from_plan_tool(panel, monkeypatch):
     _turn(panel, "分步骤帮我建模")
     reply = next(e for e in panel.record["entries"] if e["type"] == "assistant")
     assert [s["title"] for s in reply["plan"]] == ["建立几何", "求解"]
-    assert "✓ 建立几何" in panel.view.toPlainText()
+    from desktop.glyphs import TICK
+    assert f"{TICK} 建立几何" in panel.view.toPlainText()
 
 
 def test_pending_batch_change_gets_confirm_card(panel, monkeypatch):
@@ -304,17 +305,19 @@ def test_chat_persists_and_restores_with_context(panel, monkeypatch, tmp_path):
     other.close()
 
 
-def test_dropped_drawing_goes_to_sketch_recognition(panel):
+def test_dropped_drawing_goes_to_sketch_recognition(panel, tmp_path):
+    """拖图保留本机中文路径，防止用 Windows 盘符假定 Linux 的 QUrl 行为。"""
     got = []
     panel.image_dropped.connect(got.append)
     from PySide6.QtCore import QMimeData, QUrl
     mime = QMimeData()
-    mime.setUrls([QUrl.fromLocalFile("C:/图纸/刚架.png")])
+    drawing = (tmp_path / "图纸" / "刚架.png").as_posix()
+    mime.setUrls([QUrl.fromLocalFile(drawing)])
     accepted = []
     event = SimpleNamespace(mimeData=lambda: mime, acceptProposedAction=lambda: accepted.append(1))
     panel.dragEnterEvent(event)
     panel.dropEvent(event)
-    assert got == ["C:/图纸/刚架.png"] and len(accepted) == 2
+    assert got == [drawing] and len(accepted) == 2
     assert "草图识别" in panel.view.toPlainText()
 
 

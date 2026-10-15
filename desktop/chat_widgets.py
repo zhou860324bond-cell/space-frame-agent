@@ -22,6 +22,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QToolButton,
                                QVBoxLayout, QWidget)
 
+from . import glyphs
 
 TOOL_LABELS = {
     "define_materials_and_sections": "定义材料与截面", "generate_frame": "生成规则框架",
@@ -57,7 +58,7 @@ COLLECTIONS = {"nodes": "节点", "members": "杆件", "materials": "材料", "s
 # 模型文件的内部字段，变了对用户没有意义
 _HIDDEN_FIELDS = {"schema_version"}
 
-PLAN_MARK = {"pending": "○", "in_progress": "◐", "done": "✓"}
+PLAN_MARK = {"pending": "○", "in_progress": glyphs.BUSY, "done": glyphs.TICK}
 
 
 _BOLD = re.compile(r"\*\*([^*\n]+?)\*\*")
@@ -245,7 +246,7 @@ class ToolCard(QFrame):
 
     def update_segment(self, seg: dict) -> None:
         state = seg.get("state", "running")
-        mark = {"running": "…", "ok": "✓", "failed": "✕"}[state]
+        mark = {"running": "…", "ok": glyphs.TICK, "failed": glyphs.CROSS}[state]
         took = f"　{seg['ms'] / 1000:.2f} s" if seg.get("ms") is not None else ""
         self.header.setText(f"{mark}  {tool_label(seg['name'])}　{brief_args(seg.get('args') or {}, 48)}{took}")
         self.header.setToolTip(f"{seg['name']}（点击展开参数与结果）")

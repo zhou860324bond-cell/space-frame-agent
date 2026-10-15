@@ -124,6 +124,33 @@ def test_the_factor_is_proportional_to_bending_stiffness():
     assert buckling(stiff, num_modes=1).critical == pytest.approx(2 * base, rel=1e-6)
 
 
+@pytest.mark.parametrize("units", [SI, MM])
+def test_refined_column_keeps_torsional_buckling_when_end_twists_are_fixed(units):
+    """原节点锁扭转不等于整杆锁扭转，防止为满足旧扫描测试而删掉内部失稳模态。"""
+    from agent import Session
+
+    inertia = 1e-3
+    payload = {
+        "units": SI,
+        "materials": [{"name": "M", "E": E, "nu": NU, "density": RHO}],
+        "sections": [{"name": "S", "A": A, "Iy": inertia, "Iz": inertia, "J": J}],
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": L, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "section": "S", "material": "M"}],
+        "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0]},
+                     {"node": 2, "fix": [0, 1, 1, 1, 0, 0]}],
+        "load_cases": [{"name": "P", "nodal_loads": [
+            {"node": 2, "load": [-P, 0, 0, 0, 0, 0]}]}],
+    }
+    session = Session(model=convert_model(payload, units))
+    result = session.buckling_analysis(case="P", num_modes=1)
+    assert result.ok, result.payload
+    # 均匀杆的 Saint-Venant 扭转失稳：Pcr = GJ / r0²，r0² = (Iy + Iz) / A。
+    exact = E / (2 * (1 + NU)) * J * A / (2 * inertia) / P
+    assert result.payload["critical_factor"] == pytest.approx(exact, rel=1e-8)
+    assert result.payload["mesh"]["analysis_elements"] > 1
+
+
 def test_the_weak_axis_governs_when_both_planes_are_free():
     """两个方向都不约束时，先绕弱轴失稳。λ 之比等于 Iy/Iz。
 
