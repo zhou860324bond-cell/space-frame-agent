@@ -85,6 +85,7 @@ CONTRACTS: dict[str, tuple[tuple[str, ...], str]] = {
     "suppress_feature": (("kind", "name", "changed"), "抑制状态"),
     "delete_feature": (("kind", "deleted"), "删掉的对象"),
     "list_features": (("features",), "按类别列出对象"),
+    "convert_direct_supports": (("converted", "bcs", "groups"), "转成的边界条件与各组节点"),
     "partition_member": (("member", "node", "ratio"), "被分割的杆件与新顶点"),
     "create_datum_point": (("name", "xyz"), "基准点坐标"),
     "delete_datum_point": (("deleted",), "删掉的基准点"),

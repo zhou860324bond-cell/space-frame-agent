@@ -542,3 +542,34 @@ def test_deactivating_a_settled_bc_releases_its_displacement_in_that_step():
     mm = Session(model=convert_model(deepcopy(s.model), "N-mm-MPa"))
     bc = next(f for f in mm.model["features"]["bcs"] if f["name"] == "BC-右")
     assert bc["displacement"][2] == pytest.approx(-10.0)
+
+
+def test_direct_supports_convert_to_bc_objects_in_one_undoable_step():
+    """生成器写的直接支座一键转成边界条件对象：结果不变、可撤销、同名不同约束分开。
+
+    界面删掉旧边界表单后，生成器的支座在管理器里看不到也改不了；分两步转换又会被
+    两条校验卡死（先删→没有支座；先建→与直接条目冲突），所以要一个原子操作。
+    """
+    s = Session()
+    assert s.define_materials_and_sections(
+        [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0}],
+        [{"name": "C", "A": 8e-3, "Iy": 2e-5, "Iz": 1.5e-4, "J": 5e-7},
+         {"name": "R", "A": 6e-3, "Iy": 1e-5, "Iz": 9e-5, "J": 3e-7}]).ok
+    assert s.generate_portal_frame(spans=[18.0], eave_height=6.0, ridge_rise=1.0,
+                                   column_section="C", rafter_section="R",
+                                   material="Q355", base="pinned").ok
+    assert s.set_load_cases([{"name": "W"}]).ok
+    top = max(s.model["nodes"], key=lambda n: n["z"])["id"]
+    assert s.set_nodal_load(top, [1e4, 0, -2e4, 0, 0, 0], case_name="W").ok
+    assert s.solve_model().ok
+    before_u = s.solution.cases["W"].U.copy()
+    before_model = deepcopy(s.model)
+    got = s.convert_direct_supports()
+    assert got.ok, got.payload
+    assert all(e.get("owners") for e in s.model["supports"])
+    assert got.payload["bcs"] == len(s.model["features"]["bcs"])
+    assert s.solve_model().ok
+    np.testing.assert_allclose(s.solution.cases["W"].U, before_u, rtol=1e-12, atol=1e-15)
+    assert s.undo() and s.model == before_model, "一步转换、一步撤销"
+    assert s.redo()
+    assert not s.convert_direct_supports().ok, "全是对象了，再转报错"

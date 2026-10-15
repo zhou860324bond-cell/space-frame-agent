@@ -417,6 +417,55 @@ class FeaturesMixin:
         candidate["features"][kind] = kept
         return self._commit_features(candidate, {"kind": kind, "deleted": name})
 
+    @_records
+    def convert_direct_supports(self) -> ToolResult:
+        """把直接定义的支座（生成器、旧工具写的逐节点条目）转成边界条件对象。
+
+        按（名字、约束、弹簧）分组，每组在同样的节点上建一个边界条件，约束与弹簧
+        原样保留，求解结果不变。同名但约束不同的分成几组，名字加后缀；没名字的
+        叫 BC-direct-1、BC-direct-2……
+
+        必须一步完成：先删直接条目，模型会因为一个支座都没有而不合法；先建对象，
+        又和直接条目在同一节点上冲突——两条校验互相卡死，分两步做不下去。
+        """
+        direct = [s for s in self.model.get("supports") or [] if not s.get("owners")]
+        if not direct:
+            return ToolResult(False, {"error": "没有直接定义的支座，所有支座都已经是边界条件对象"})
+        candidate = deepcopy(self.model)
+        candidate["supports"] = [s for s in candidate["supports"] if s.get("owners")]
+        groups: dict[tuple, list[int]] = {}
+        for entry in direct:
+            spring = tuple(float(v) for v in entry.get("spring") or ()) if any(
+                entry.get("spring") or ()) else ()
+            key = (entry.get("name") or None, tuple(int(v) for v in entry["fix"]), spring)
+            groups.setdefault(key, []).append(int(entry["node"]))
+        taken = {f["name"] for f in (candidate.get("features") or {}).get("bcs") or []}
+        names_used = [name for name, _fix, _spring in groups]
+        converted = []
+        unnamed = 0
+        for (name, fix, spring), nodes in groups.items():
+            if name is None:
+                unnamed += 1
+                base = f"BC-direct-{unnamed}"
+            elif names_used.count(name) > 1:
+                base = f"{name}-{''.join(str(v) for v in fix)}"     # 同名不同约束：按约束区分
+            else:
+                base = name
+            final, k = base, 2
+            while final in taken:
+                final, k = f"{base}-{k}", k + 1
+            taken.add(final)
+            feature: dict[str, Any] = {"name": final, "region": {"nodes": sorted(nodes)},
+                                       "fix": list(fix)}
+            if spring:
+                feature["spring"] = list(spring)
+            self._feature_list(candidate, "bcs").append(feature)
+            converted.append({"name": final, "was": name, "nodes": sorted(nodes), "fix": list(fix)})
+        return self._commit_features(candidate, {
+            "converted": [c["name"] for c in converted], "bcs": len(converted),
+            "groups": converted,
+            "note": "约束与弹簧原样保留，求解结果不变；之后在边界条件管理器里编辑。"})
+
     def list_features(self, kind: str | None = None) -> ToolResult:
         """列出对象：名字、区域、展开后的编号、是否抑制、派生问题。"""
         kinds = [self._feature_kind(kind)] if kind else list(_features.KINDS)

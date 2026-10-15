@@ -460,6 +460,17 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "convert_direct_supports",
+            "description":
+                "把直接定义的支座（框架生成器、旧工具写的逐节点条目）一次转成边界条件对象，"
+                "按名字与约束分组，约束与弹簧原样保留，结果不变。转换后可在边界条件管理器里编辑、"
+                "按分析步修改或失活。",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_features",
             "description": "列出建模对象：名字、区域、展开后的编号、是否抑制。不给 kind 列出全部。",
             "parameters": {"type": "object",
