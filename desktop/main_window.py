@@ -424,33 +424,52 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             return draft_target(status)[1]
         return "作业" if status.phase is WorkflowPhase.READY else "结果"
 
-    def _sync_tab_states(self, status) -> None:
-        """在下一步所在的模块页签上点一个圆点。
+    def _sync_tab_states(self, status=None) -> None:
+        """在下一步所在的模块页签上标一个绿色箭头，当前就在那一页时不标。
 
         流程条整行删掉之后，"现在该去哪一页"由页签自己说：只标一个页签，
         用图标而不改页签文字（文字要参与中英切换，动态拼接会被翻译缓存错认）。
+
+        原来标的是蓝色圆点，和当前页的蓝色下划线同色：当前页同时带圆点和
+        下划线，求解后「结果」页没选中也带圆点，两种"这里"读起来分不开。
+        现在下一步是绿色箭头，当前页只靠下划线，两种含义各用各的记号。
         """
-        from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
+        if status is not None:
+            self._next_status = status
+        status = getattr(self, "_next_status", None)
+        if status is None:
+            return
         target = self.next_page(status)
-        if not hasattr(self, "_next_dot"):
-            pixmap = QPixmap(10, 10)
+        if not hasattr(self, "_next_marker"):
+            pixmap = QPixmap(24, 24)            # 按 2 倍像素画，高缩放屏上不发虚
+            pixmap.setDevicePixelRatio(2.0)
             pixmap.fill(QColor(0, 0, 0, 0))
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(QColor(theme.ACCENT))
-            painter.setPen(QColor(0, 0, 0, 0))
-            painter.drawEllipse(1, 1, 8, 8)
+            # 带杆的箭头读作"去那里"；单个实心三角容易被看成"运行"按钮
+            pen = QPen(QColor(theme.SUCCESS), 1.8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(1.5, 6), QPointF(7, 6))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(theme.SUCCESS))
+            painter.drawPolygon(QPolygonF([QPointF(6, 2), QPointF(11, 6), QPointF(6, 10)]))
             painter.end()
-            self._next_dot = QIcon(pixmap)
+            self._next_marker = QIcon(pixmap)
         tip = self.workflow_bar.next_button.toolTip()
+        current = self.ribbon.currentWidget()
         for title, page in self.ribbon.pages.items():
             index = self.ribbon.indexOf(page)
-            self.ribbon.setTabIcon(index, self._next_dot if title == target else QIcon())
-            self.ribbon.setTabToolTip(index, f"下一步在这里：{tip}" if title == target else "")
+            marked = title == target and page is not current
+            self.ribbon.setTabIcon(index, self._next_marker if marked else QIcon())
+            self.ribbon.setTabToolTip(index, f"下一步：{tip}" if title == target else "")
 
     def _on_ribbon_page_changed(self, index: int) -> None:
         """把当前模块的下一步操作写出来，避免用户在功能区里猜流程。"""
         page = self.ribbon.tabText(index)
+        self._sync_tab_states()
         self.quickbar.show_context_for(page, self.mode)
         hints = {
             "项目": "项目：新建或打开模型；建模过程可随时撤销。",

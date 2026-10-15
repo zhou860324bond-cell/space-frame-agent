@@ -243,7 +243,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("analysis_mesh", "分析网格", "mesh",
             "只读查看物理杆件经自动剖分后，求解器实际使用的节点和杆段",
             "show_analysis_mesh", "", True),
-    Command("solid_joint", "节点实体", "contour",
+    Command("solid_joint", "节点实体", "solid_contour",
             "选中已求解的圆管节点，用自研 C3D10 局部实体求解器计算应力；"
             "Gmsh只负责网格，Abaqus保留为独立对标后端",
             "run_solid_joint"),
@@ -255,7 +255,7 @@ COMMANDS: tuple[Command, ...] = (
             "show_deformed", "Ctrl+2", True),
     Command("contour", "梁内力云图", "contour", "梁中心线内力结果；不是实体截面应力云图。合量用顺序色标，有符号局部分量关于零对称",
             "show_contour", "Ctrl+3", True),
-    Command("solid_contour", "实体云图", "contour",
+    Command("solid_contour", "实体云图", "solid_contour",
             "在主视口查看节点实体应力与位移，可旋转、缩放并切换网格档位",
             "show_solid_contour", "Ctrl+7", True),
     Command("open_solid_result", "打开实体结果", "open",
