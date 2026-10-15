@@ -145,10 +145,21 @@ class Ribbon(QTabWidget):
         # 有测试按它来断言每个按钮背后都挂着 QAction。折叠开关是视图 chrome，
         # 不是命令，借用那个名字会把那条断言变成假红。
         self._toggle.setProperty("ribbonChrome", "collapse")
-        self.setCornerWidget(self._toggle, Qt.Corner.TopRightCorner)
+        # 页签行右端是**整窗唯一**放流程状态、下一步与 AI 开关的地方：原来它们
+        # 各占一整行（流程条）或一条窄栏，同一件事在屏幕上出现两三次。
+        self.corner = QWidget(self)
+        self._corner_row = QHBoxLayout(self.corner)
+        self._corner_row.setContentsMargins(0, 0, 4, 0)
+        self._corner_row.setSpacing(4)
+        self._corner_row.addWidget(self._toggle)
+        self.setCornerWidget(self.corner, Qt.Corner.TopRightCorner)
         self._toggle.clicked.connect(self.toggle_collapsed)
         self.tabBarDoubleClicked.connect(lambda _index: self.toggle_collapsed())
         self._sync_toggle()
+
+    def add_corner(self, widget: QWidget) -> None:
+        """在收起按钮左侧加一个页签行部件。"""
+        self._corner_row.insertWidget(self._corner_row.count() - 1, widget)
 
     def toggle_collapsed(self) -> None:
         self.set_collapsed(not self._collapsed)
@@ -435,7 +446,10 @@ class QuickBar(QWidget):
         solid_row = QHBoxLayout(solid_page)
         solid_row.setContentsMargins(0, 0, 0, 0)
         section("实体结果", solid_row)
-        labelled("open_solid_result", solid_row)
+        # 「打开实体结果」在结果页，「实体云图」在右段显示模式里；这里不再重复放按钮
+        hint = QLabel("网格档位、分量与色标在左侧「实体结果」面板中设置", self)
+        hint.setProperty("toolbar", "hint")
+        solid_row.addWidget(hint)
         self.context.addWidget(solid_page)
         self._context_pages = {"建模": 0, "结果": 1, "实体结果": 2}
 
@@ -597,7 +611,6 @@ def build(window) -> Ribbon:
     g.add_small(a["datum_point"]); g.add_small(a["measure"])
     g = p.group("查看")
     g.add_small(a["tables"]); g.add_small(a["json"])
-    g.add_small(a["modeling_workflow"])
 
     # ========== 属性 ==========
     p = r.page("属性")
@@ -682,17 +695,17 @@ def build(window) -> Ribbon:
     g = p.group("显示")
     g.add_large(a["diagram"])
     g.add_small(a["animate"]); g.add_small(a["clear_results"])
+    # 实体云图是显示模式，在常驻工作条右段切换；这里只放「打开已保存的实体结果」
     g = p.group("实体结果")
-    g.add_large(a["solid_contour"])
-    g.add_small(a["open_solid_result"])
+    g.add_large(a["open_solid_result"])
     g = p.group("查询")
-    g.add_small(a["curve"]); g.add_small(a["path_plot"]); g.add_small(a["deflection"])
-    g.add_small(a["envelope"]); g.add_small(a["report"])
+    g.add_small(a["results_table"]); g.add_small(a["curve"]); g.add_small(a["path_plot"])
+    g.add_small(a["deflection"]); g.add_small(a["envelope"]); g.add_small(a["report"])
     # 校核单独成一组：它回答的是"够不够"，与"是多少"不是一回事，
     # 混在查询里会让人以为它只是又一种查询方式。
     g = p.group("校核")
     g.add_large(a["strength"])
-    g.add_small(a["symmetry"]); g.add_small(a["bandwidth"])
+    g.add_small(a["symmetry"]); g.add_small(a["bandwidth"]); g.add_small(a["section_opt_panel"])
 
     # ========== 视图 ==========
     # 注意：标准视角（前/侧/顶/等轴测/适应）和编号标注在下方常驻快捷栏
@@ -715,8 +728,9 @@ def build(window) -> Ribbon:
     p = r.page("项目")
     g = p.group("文件")
     g.add_large(a["new"]); g.add_small(a["open"]); g.add_small(a["save"])
+    # AI 助手的开关在页签行右端（每页都看得见），这里只放模型栏与命令面板
     g = p.group("面板")
-    g.add_small(a["chat"])
+    g.add_small(a["tree_panel"]); g.add_small(a["command_palette"])
     g = p.group("Agent 学习")
     g.add_small(a["learning_trace"])
 

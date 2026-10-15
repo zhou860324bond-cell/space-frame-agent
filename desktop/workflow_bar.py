@@ -38,6 +38,8 @@ class WorkflowBar(QWidget):
 
     stage_requested = Signal(str)
     modeling_requested = Signal()
+    # 每次重算流程状态后发出（参数是 inspect_workflow 的结果），页签据此标出下一步所在模块
+    state_changed = Signal(object)
     STAGES = (
         ("model", "1  建模"),
         ("define", "2  定义"),
@@ -188,6 +190,7 @@ class WorkflowBar(QWidget):
         if self.stage_menu is not None:
             self.flow_button.setToolTip(i18n.tr(message))
             self.next_button.setToolTip(i18n.tr(message))
+        self.state_changed.emit(status)
 
     def _request_next(self) -> None:
         self.stage_requested.emit(self._next_stage)

@@ -26,11 +26,12 @@ BC_TYPES = (("位移/转角（逐个勾选）", None), ("固接 ENCASTRE", "ENCA
             ("Y 对称 YSYMM", "YSYMM"), ("Z 对称 ZSYMM", "ZSYMM"),
             ("弹性支承", "SPRING"))
 LOAD_TYPES = (("集中力", "concentrated_force"), ("力矩", "moment"),
-              ("线荷载", "line_load"), ("重力", "gravity"))
+              ("线荷载", "line_load"), ("重力", "gravity"),
+              ("给定位移（支座沉降）", "settlement"))
 LOAD_REGION = {"concentrated_force": "node", "moment": "node",
-               "line_load": "member", "gravity": "member"}
+               "line_load": "member", "gravity": "member", "settlement": "node"}
 LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
-              "gravity": "g"}
+              "gravity": "g", "settlement": "d"}
 KIND_LABEL = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
               "bcs": "边界条件", "loads": "荷载", "constraints": "约束"}
 #: Interaction 模块的约束类型（Abaqus 的 Create Constraint 列表里梁模型用得上的几种）
@@ -224,7 +225,7 @@ class EditLoadDialog(QDialog):
     """第二段：荷载的三个全局分量。"""
 
     UNITS = {"concentrated_force": "力", "moment": "力×长度",
-             "line_load": "力/长度", "gravity": "加速度"}
+             "line_load": "力/长度", "gravity": "加速度", "settlement": "长度"}
 
     def __init__(self, name: str, load_type: str, vector: list[float], unit_system: str,
                  parent=None):
@@ -244,7 +245,9 @@ class EditLoadDialog(QDialog):
             form.addRow(f"{axis} 分量", spin)
             self.values_.append(spin)
         layout.addLayout(form)
-        self.hint = HintLabel("", self)
+        self.hint = HintLabel(
+            "支座沉降是强加位移：只在 Initial 中已约束的方向生效，向下沉降填负的 Z 分量。"
+            if load_type == "settlement" else "", self)
         layout.addWidget(self.hint)
         box = button_box(self)
         box.accepted.connect(self._accept)

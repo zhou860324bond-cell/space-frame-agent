@@ -168,7 +168,7 @@ def test_busy_runner_blocks_editors_and_recent_file_open(qt_app, tmp_path):
         assert window.runner.submit(lambda: release.wait(5))
         for name in ("new", "open", "units", "tables", "undo", "model_node"):
             assert not window.actions_by_name[name].isEnabled()
-        for widget in (window.properties, window.bc, window.timeline, window.sketch):
+        for widget in (window.properties, window.timeline, window.sketch):
             assert not widget.isEnabled()
         assert window.actions_by_name["front"].isEnabled()
         assert not window._load_model_path(tmp_path / "other.json")

@@ -113,7 +113,8 @@ def test_export_screenshot_positions_tool_drawers_in_window_coordinates(qt_app, 
     w = MainWindow(built())
     w.move(150, 90)
     w.show()
-    w.tree_dock.show()
+    w.timeline_dock.dock_panel()
+    w.timeline_dock.show()
     qt_app.processEvents()
     monkeypatch.setattr(w.viewport.plotter, "screenshot",
                         lambda **_kw: np.full((40, 40, 3), (255, 0, 0), dtype=np.uint8))
@@ -357,7 +358,6 @@ def test_new_model_clears_everything(qt_app):
     assert w.chat.conversation is None
     assert w.lbl_last.text() == "最近：尚未建模"
     assert w.properties.session is w.session
-    assert w.bc.session is w.session
     assert w.sketch.session is w.session
     assert w.section_opt.session is w.session
 
@@ -392,7 +392,7 @@ def test_picking_a_case_in_the_tree_switches_to_it(qt_app):
     assert w.case == "L"
 
 
-def test_tree_lists_named_load_objects_and_opens_their_target(qt_app):
+def test_tree_lists_named_load_objects_and_opens_their_target(qt_app, monkeypatch):
     s = built()
     member = s.model["load_cases"][0]["member_loads"][0]["member"]
     s.model["load_cases"][0]["member_loads"][0]["name"] = "Roof-UDL"
@@ -409,10 +409,12 @@ def test_tree_lists_named_load_objects_and_opens_their_target(qt_app):
         labels.extend(descendants(w.tree.topLevelItem(index)))
     assert any("Roof-UDL" in label and f"杆件 {member}" in label for label in labels)
 
+    opened = []
+    monkeypatch.setattr(w, "open_load_manager", lambda: opened.append("loads"))
     w._on_tree_action("load_object", {"case": "D", "kind": "member", "id": member})
     assert w.case == "D"
     assert w._selected_kind == "member" and w._selected_id == member
-    assert w.bc._current_member == member
+    assert opened == ["loads"], "荷载统一在荷载管理器里编辑（旧边界表单已删除）"
 
 
 def test_tree_folders_dispatch_to_real_editors(qt_app, monkeypatch):

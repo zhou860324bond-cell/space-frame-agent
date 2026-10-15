@@ -162,6 +162,8 @@ class Viewport(QWidget):
     escape_pressed = Signal()
     # 右键菜单由主窗口组装，这里只报告屏幕坐标。
     context_requested = Signal(object)
+    # 在空白处单击：取消当前选择
+    cleared = Signal()
     #: 区域拾取（Abaqus 提示区选择）的当前选择集变了：(类型, 编号列表)
     region_changed = Signal(str, list)
 
@@ -186,10 +188,9 @@ class Viewport(QWidget):
         layout.addWidget(self.plotter.interactor)
         self.plotter.interactor.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
-        self.plotter.interactor.customContextMenuRequested.connect(
-            lambda pos: self.context_requested.emit(
-                self.plotter.interactor.mapToGlobal(pos)))
+        self.plotter.interactor.customContextMenuRequested.connect(self._context_at)
         self.plotter.interactor.installEventFilter(self)
+        self._click_origin = None
 
         if CAN_RENDER:
             self.plotter.set_background(theme.VIEWPORT_BG)
@@ -933,8 +934,59 @@ class Viewport(QWidget):
             return "remove"
         return "replace"
 
+    def _idle_picking(self) -> bool:
+        """没有任何拾取、建模或区域选择模式时，单击直接选中对象。"""
+        return (self.region_pick is None and self.model_mode is None
+                and self.pick_mode is None)
+
+    def click_select(self, x: float, y: float, clear: bool = True) -> tuple | None:
+        """在屏幕 (x, y) 处选中最近的节点或杆件（节点优先）；点空了按需取消选择。
+
+        原来进视口必须先按「选择节点 / 选择杆件」进入拾取模式，单击才有反应——
+        主流 CAD 里默认就能点选，模式按钮只是过滤器。
+        """
+        if self._frame is None:
+            return None
+        node_ids, nodes, member_ids, segments = self._screen_geometry()
+        hit = picking.nearest_point(nodes, (x, y)) if len(node_ids) else None
+        if hit is not None:
+            found = ("node", int(node_ids[hit]))
+        else:
+            seg = picking.nearest_segment(segments, (x, y)) if len(member_ids) else None
+            found = None if seg is None else ("member", int(self._owner(member_ids[seg])))
+        if found is not None:
+            self.set_selection(*found)
+            self.picked.emit(*found)
+        elif clear and self.selection is not None and self.selection[0] is not None:
+            self.set_selection(None, None)
+            self.cleared.emit()
+        return found
+
+    def _context_at(self, pos) -> None:
+        """右键：先选中光标下的对象，菜单才能给出针对它的操作。"""
+        if self._idle_picking():
+            self.click_select(pos.x(), pos.y(), clear=False)
+        self.context_requested.emit(self.plotter.interactor.mapToGlobal(pos))
+
     def eventFilter(self, watched, event):  # noqa: N802  Qt 的命名
-        """区域拾取时接管左键：单击点选，拖动画框；其余照常交给相机。"""
+        """区域拾取时接管左键：单击点选，拖动画框；其余照常交给相机。
+
+        空闲时不接管：左键照样转相机，只在「按下到松开几乎没动」时当作单击选择。
+        """
+        if watched is self.plotter.interactor and self.region_pick is None:
+            if self._idle_picking():
+                kind = event.type()
+                if (kind == QEvent.Type.MouseButtonPress
+                        and event.button() == Qt.MouseButton.LeftButton):
+                    self._click_origin = event.position().toPoint()
+                elif (kind == QEvent.Type.MouseButtonRelease
+                        and event.button() == Qt.MouseButton.LeftButton
+                        and self._click_origin is not None):
+                    current = event.position().toPoint()
+                    if (current - self._click_origin).manhattanLength() <= 4:
+                        self.click_select(current.x(), current.y())
+                    self._click_origin = None
+            return super().eventFilter(watched, event)
         if self.region_pick is None or watched is not self.plotter.interactor:
             return super().eventFilter(watched, event)
         kind = event.type()

@@ -34,10 +34,19 @@ COMMANDS: tuple[Command, ...] = (
     Command("units", "单位制", "units",
             "在 N-m-Pa 与 N-mm-MPa 之间转换整份模型的数值",
             "edit_units", ""),
-    Command("chat", "Agent 对话", "chat", "显示或隐藏右侧的对话面板",
+    Command("chat", "AI 助手", "chat", "显示或隐藏右侧的 AI 助手（工程对话）",
             "toggle_chat", "Ctrl+G", True),
     Command("props", "属性", "table",
             "显示选中节点或杆件的属性并就地修改", "toggle_props", "Ctrl+P", True),
+    Command("tree_panel", "模型树", "geometry",
+            "显示或隐藏左侧的模型树与属性栏", "toggle_tree", "Ctrl+B", True),
+    Command("command_palette", "命令面板", "labels",
+            "按名称搜索并执行任意命令；没有匹配的命令时，把这句话交给 AI 助手",
+            "open_command_palette", "Ctrl+Shift+P"),
+    Command("results_table", "结果表", "table",
+            "位移、反力、杆端力与校验清单（独立窗口）", "show_results_table", "", True),
+    Command("section_opt_panel", "截面优化", "sweep",
+            "在给定截面库中按应力比与挠度筛选截面", "show_section_opt", "", True),
 
     # --- 编辑 ---
     #

@@ -72,6 +72,37 @@ class WindowObjectsMixin:
                                                         step=step)
         self._object_result(result, f"已创建边界条件「{name}」。")
 
+    def direct_supports(self) -> list[dict]:
+        """没有对象来源的支座条目（框架生成器与旧模型写的「直接定义」）。"""
+        return [s for s in self.session.model.get("supports") or [] if not s.get("owners")]
+
+    def convert_direct_supports(self, confirm: bool = True) -> bool:
+        """把「直接定义」的支座转成边界条件对象，之后统一在管理器里编辑。
+
+        旧的「边界条件」表单删掉以后，生成器建出来的支座只有这一条路能改：
+        管理器只管对象，看不见直接条目。转换必须在模型层一次完成——界面里
+        先删后建会被「支座不能为空」挡住，先建后删又会被「直接定义与对象重叠」
+        挡住，所以这里只调用 Session.convert_direct_supports。
+        """
+        direct = self.direct_supports()
+        if not direct:
+            return False
+        convert = getattr(self.session, "convert_direct_supports", None)
+        if convert is None:
+            QMessageBox.information(
+                self, "暂不能转换",
+                f"这 {len(direct)} 个支座来自旧式「直接定义」，需要模型层的转换功能才能交给"
+                "边界条件管理器编辑；该功能尚未合入。可以先在「模型表格」的支座表里修改。")
+            return False
+        if confirm and QMessageBox.question(
+                self, "转成边界条件对象",
+                f"这 {len(direct)} 个支座来自旧式「直接定义」（框架生成器或旧模型），"
+                "边界条件管理器看不到它们。\n\n转成边界条件对象后，可以在管理器里编辑、复制、"
+                "删除，并按分析步修改或失活；约束方向保持不变，可以撤销。现在转换吗？"
+        ) != QMessageBox.StandardButton.Yes:
+            return False
+        return self._object_result(convert(), f"已把 {len(direct)} 个直接定义的支座转成边界条件对象。")
+
     # --- 约束（Interaction 模块） ---
 
     def create_constraint_ui(self) -> None:
@@ -152,9 +183,32 @@ class WindowObjectsMixin:
                                 self.session.model.get("units", "N-m-Pa"), self)
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
+        if load_type == "settlement":
+            self._finish_settlement(name, case, region, editor.vector())
+            return
         result = self.session.create_load(name, case, load_type, region,
                                           **{LOAD_FIELD[load_type]: editor.vector()})
         self._object_result(result, f"已创建载荷「{name}」。")
+
+    def _finish_settlement(self, name: str, case: str, region: dict, vector: list[float]) -> None:
+        """支座沉降：对区域内每个节点施加给定位移（工况内的强加变形，不计入外力）。
+
+        原来只能在旧的「边界条件」表单里逐个节点填；那张表单与边界条件管理器
+        重复，收敛界面时删掉了，这条路径搬到「创建载荷」里，按区域一次施加。
+        """
+        from features import region_ids
+        nodes, problem = region_ids(self.session.model, region, "nodes")
+        if problem:
+            QMessageBox.warning(self, "沉降未施加", f"{problem}。请重新选择支座节点。")
+            return
+        result = None
+        for node in nodes:
+            label = name if len(nodes) == 1 else f"{name}-N{node}"
+            result = self.session.set_prescribed_displacement(
+                node, [*vector, 0.0, 0.0, 0.0], case, name=label)
+            if not result.ok:
+                break
+        self._object_result(result, f"已在 {len(nodes)} 个节点施加支座沉降「{name}」（工况 {case}）。")
 
     # --- 截面指派 ---
 

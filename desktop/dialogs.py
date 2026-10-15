@@ -104,7 +104,7 @@ class ParametricDialog(QDialog):
         common.addRow("梁上均布荷载", self.beam_load)
         box.addWidget(self.quick_group)
         self.quick_group.setVisible(False)
-        self.quick_setup.toggled.connect(self.quick_group.setVisible)
+        self.quick_setup.toggled.connect(self._toggle_quick_setup)
 
         self.hint = QLabel()
         self.hint.setWordWrap(True)
@@ -118,6 +118,12 @@ class ParametricDialog(QDialog):
         self._switch()
 
     # --- 页 ---
+
+    def _toggle_quick_setup(self, on: bool) -> None:
+        """展开/收起快捷指派。收起后窗口要跟着缩回，否则留下一大片空白。"""
+        self.quick_group.setVisible(on)
+        self.layout().activate()
+        self.resize(self.width(), self.sizeHint().height())
 
     def _frame_page(self) -> QWidget:
         page = QWidget(self)

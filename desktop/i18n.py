@@ -160,7 +160,7 @@ ZH_EN: dict[str, str] = {
     "视角管理": "Cameras", "语言": "Language", "Agent 学习": "Agent Learning",
     # --- 停靠面板标题 ---
     "问题": "Issues", "对话": "Chat", "内力图表": "Diagrams",
-    "模型树": "Model Tree", "AI 助手": "AI Assistant",
+    "模型树": "Model Tree", "AI 助手": "AI Assistant", "命令面板": "Command Palette",
     "分析流程": "Workflow",
     # --- 分级下拉。逐条列出来而不是套模板：套模板就得在界面上拼字符串，
     #     而"N 级"和"N bands"的词序未必总是一致。
