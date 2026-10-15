@@ -175,7 +175,7 @@ def test_bigger_is_better_for_the_buckling_factor():
     s = Session()
     # 单独改变 Iz 会同时增大极惯性矩，固定 GJ 下的扭转临界力反而降低。
     # 这里验证扫描的限值方向，故用足够大的 J 保持弯曲控制；扭转另验闭合解。
-    sections = [dict(sec, J=1e-3) for sec in SECTIONS]
+    sections = [dict(sec, J=8e-5) for sec in SECTIONS]
     s.define_materials_and_sections(MATERIALS, sections)
     s.set_model(model={
         "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
