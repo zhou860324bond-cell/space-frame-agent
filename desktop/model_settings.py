@@ -30,7 +30,7 @@ class ModelSettings(QDialog):
         outer.addWidget(dialog_styles.DialogHeader(
             "模型连接设置", "每个连接独立保存地址与密钥。检测只发送固定探针；正式对话会发送对话与工程上下文。"))
         box = QVBoxLayout()
-        box.setContentsMargins(14, 10, 14, 12)
+        box.setContentsMargins(12, 12, 12, 12)
         box.setSpacing(8)
         outer.addLayout(box)
         top = QHBoxLayout()

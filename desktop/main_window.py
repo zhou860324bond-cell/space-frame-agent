@@ -279,7 +279,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         # 改成按内容定高，把省下来的位置用来说清楚下一步会发生什么。
         panel.setFixedWidth(520)
         box = QVBoxLayout(panel)
-        box.setContentsMargins(28, 22, 28, 22)
+        box.setContentsMargins(24, 24, 24, 24)
         box.setSpacing(8)
         title = QLabel("创建第一个结构模型", panel)
         title.setProperty("emptyState", "title")
@@ -3278,7 +3278,8 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             # 抽屉是独立的 Tool 窗口，空模型引导卡片在视口上层；
             # VTK 画面贴回后必须把这些覆盖层再贴一次，否则导出图里会消失。
             for overlay in (self.empty_state, self.viewport.axis_indicator,
-                            self.viewport.result_overlay, self.left_drawer,
+                            self.viewport.result_overlay, self.viewport.color_scale,
+                            self.viewport.symbol_key, self.left_drawer,
                             self.right_drawer, self.bottom_drawer):
                 if overlay.isVisible():
                     painter.drawPixmap(self.mapFromGlobal(overlay.mapToGlobal(overlay.rect().topLeft())),

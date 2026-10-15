@@ -796,12 +796,17 @@ def support_glyphs(frame, size: float | None = None) -> dict[str, pv.PolyData]:
             continue
         p = np.asarray(frame.nodes[nid].xyz, dtype=float)
         kind = classify_support(mask)
+        # 固接画成扁平底板、铰接画成锥加一块地面板：结构图里"嵌固"和"铰支"
+        # 本来就是这两种画法。原来固接是一个与杆件等宽的立方体，在等轴测下
+        # 看上去是一团灰色六边形，读不出是支座。
         if kind == "固接":
-            g = pv.Cube(center=p - [0, 0, r], x_length=2.2 * r,
-                        y_length=2.2 * r, z_length=2 * r)
+            g = pv.Cube(center=p - [0, 0, 0.35 * r], x_length=3.4 * r,
+                        y_length=3.4 * r, z_length=0.7 * r)
         elif kind == "铰接":
             g = pv.Cone(center=p - [0, 0, r], direction=[0, 0, 1],
-                        height=2 * r, radius=1.2 * r, resolution=32)
+                        height=2 * r, radius=1.2 * r, resolution=32).merge(
+                pv.Cube(center=p - [0, 0, 2.2 * r], x_length=3.0 * r,
+                        y_length=3.0 * r, z_length=0.4 * r))
         else:
             g = pv.Sphere(radius=0.9 * r, center=p,
                           theta_resolution=24, phi_resolution=24)

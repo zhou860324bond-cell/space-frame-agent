@@ -31,7 +31,7 @@ class CommandPalette(QDialog):
         self.setObjectName("commandPalette")
         self.resize(520, 420)
         box = QVBoxLayout(self)
-        box.setContentsMargins(10, 10, 10, 10)
+        box.setContentsMargins(12, 12, 12, 12)
         box.setSpacing(6)
         self.search = QLineEdit(self)
         self.search.setPlaceholderText("输入命令名，例如：截面指派、支座沉降、求解……")

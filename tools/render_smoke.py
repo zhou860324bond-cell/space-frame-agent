@@ -108,6 +108,25 @@ def main(report_path: Path | None = None) -> int:
         plotter.render()
         return plotter.screenshot(return_img=True)
 
+    # 适应窗口：包围盒八个角点都要投影在视口里。改前三维框架固定再放大
+    # 1.3 倍，四个角都出了画面，手册截图只能手动缩相机来拍。
+    window.set_mode("模型")
+    window.view_fit()
+    settle()
+    import numpy as np
+    renderer = plotter.renderer
+    box = window.viewport._model_bounds()
+    size = renderer.GetSize()
+    inside = box is not None
+    for x in box[0:2] if box else ():
+        for y in box[2:4]:
+            for z in box[4:6]:
+                renderer.SetWorldPoint(x, y, z, 1.0)
+                renderer.WorldToDisplay()
+                px, py, _ = renderer.GetDisplayPoint()
+                inside &= 0 <= px <= size[0] and 0 <= py <= size[1]
+    check("适应窗口：模型完整在视口内", bool(inside), f"包围盒 {np.round(box, 2) if box else None}")
+
     coloured_modes = {"云图", "内力图", "应力比"}
     for mode in ("模型", "变形", "云图", "内力图", "应力比", "模态"):
         before = len(errors)
@@ -125,11 +144,8 @@ def main(report_path: Path | None = None) -> int:
         if mode in coloured_modes:
             fraction = _colourful_fraction(image)
             check(f"{mode}：画面有彩色", fraction > 0.003, f"彩色像素 {fraction:.2%}")
-            try:
-                bar = plotter.scalar_bar
-            except (AttributeError, IndexError, KeyError, StopIteration):
-                bar = None
-            check(f"{mode}：有色标", bar is not None)
+            scale = window.viewport.color_scale
+            check(f"{mode}：有色标", scale.active and scale.isVisible() and bool(scale.colors))
 
     # 分级云图走的是另一条几何（按色带切段），单独画一遍
     window.results.levels.setCurrentIndex(window.results.levels.findData(12))
@@ -169,16 +185,15 @@ def main(report_path: Path | None = None) -> int:
     left, right, bottom = window.drawers.insets()
     width = max(1, window.viewport.width())
     height = max(1, window.viewport.height())
-    try:
-        bar = plotter.scalar_bar
-        x, y = bar.GetPosition()
-        bar_right = (x + bar.GetWidth()) * width
-        bar_bottom = y * height
+    scale = window.viewport.color_scale
+    if scale.active and scale.isVisible():
+        bar_right = scale.geometry().right()
+        bar_bottom = height - scale.geometry().bottom()
         check("色标不在右抽屉底下", bar_right <= width - right + 1,
               f"色标右沿 {bar_right:.0f} px，右抽屉占 {right} px")
         check("色标不在底部抽屉底下", bar_bottom >= bottom - 1,
-              f"色标下沿 {bar_bottom:.0f} px，底部抽屉占 {bottom} px")
-    except (AttributeError, IndexError, KeyError, StopIteration):
+              f"色标下沿离视口底 {bar_bottom:.0f} px，底部抽屉占 {bottom} px")
+    else:
         check("抽屉打开后仍有色标", False)
     check("右侧 AI 按钮看得见", window.agent_button.isVisible())
 
@@ -208,13 +223,15 @@ def main(report_path: Path | None = None) -> int:
         actor = plotter.actors["_solid_result"]
         check("实体云图：应力按单元着色", actor.GetMapper().GetScalarMode() == 2)
         # VTK 图层合成后，Qt 绘制的坐标指示器也必须保留在导出画面中。
-        from PySide6.QtCore import QPoint
+        from PySide6.QtCore import QPoint, QPointF
         from PySide6.QtGui import QImage
 
         saved = Path(directory) / "solid_view.png"
         window.export_screenshot(str(saved))
         indicator = window.viewport.axis_indicator
-        point = indicator.mapTo(window, QPoint(65, 48))
+        tip = indicator.axis_tip("x")
+        middle = (tip + QPointF(indicator.width() / 2, indicator.height() / 2)) / 2
+        point = indicator.mapTo(window, QPoint(round(middle.x()), round(middle.y())))
         dpr = window.devicePixelRatioF()
         colour = QImage(str(saved)).pixelColor(round(point.x() * dpr), round(point.y() * dpr))
         check("实体云图：导出保留坐标指示器", colour.red() > colour.green() + 30)

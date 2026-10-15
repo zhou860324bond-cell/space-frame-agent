@@ -67,7 +67,7 @@ class WorkflowBar(QWidget):
         super().__init__(parent)
         self.setObjectName("workflowBar")
         row = QHBoxLayout(self)
-        row.setContentsMargins(10, 4, 10, 4)
+        row.setContentsMargins(12, 4, 12, 4)
         row.setSpacing(4)
         label = QLabel("分析流程", self)
         label.setProperty("workflow", "caption")

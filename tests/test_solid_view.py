@@ -239,7 +239,11 @@ def test_solid_analysis_dialog_exposes_geometry_mesh_and_backend(app, monkeypatc
 
 
 def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatch):
-    """防止截面轮廓成为最后一个图层后，MPa色标错误绑定轮廓数组或默认色谱。"""
+    """防止截面轮廓成为最后一个图层后，MPa色标错误绑定轮廓数组或默认色谱。
+
+    色标改由 Qt 绘制后，颜色显式取自 _solid_result 那一层的映射器；
+    这里守住量程与分级仍然跟实体结果走，而不是跟最后加进来的轮廓线走。
+    """
     import pyvista as pv
     from desktop import viewport
     view=viewport.Viewport()
@@ -257,12 +261,11 @@ def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatc
             mapper=pv.DataSetMapper(dataset=dataset)
             mapper.scalar_range=options.get('clim',(-1.,1.))
             actor=pv.Actor(mapper=mapper)
+            if options.get('name') == '_solid_result':
+                self.solid_actor=actor
             self.actors[options.get('name')]=actor
             self.last_mapper=mapper
             return actor
-        def add_scalar_bar(self,**options):
-            self.legend_options=options
-            self.legend_range=options.get('mapper',self.last_mapper).scalar_range
     plotter=LegendPlotter()
     view.plotter=plotter
     monkeypatch.setattr(viewport,'CAN_RENDER',True)
@@ -272,9 +275,11 @@ def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatc
     result=view.show_solid_result(grid,'节点65',show_edges=False)
     assert plotter.solid_options['cmap'].N == 12
     assert plotter.solid_options['n_colors'] == 12
-    assert plotter.legend_options['n_labels'] == 13
     assert '_solid_feature_edges' in plotter.actors
     assert plotter.last_mapper.scalar_range == (-1.,1.)
-    assert plotter.legend_range == pytest.approx(result['clim'])
-    assert plotter.legend_range[1]>1000
+    scale = view.color_scale
+    assert scale.active and scale.banded, "Abaqus 十二级色谱的色标也要分级"
+    assert scale.clim == pytest.approx(result['clim'])
+    assert scale.clim[1] > 1000
+    assert "MPa" in scale.title
     view.close()

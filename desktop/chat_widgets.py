@@ -227,8 +227,8 @@ class ToolCard(QFrame):
         box.addWidget(self.header)
         self.body = QWidget(self)
         body = QVBoxLayout(self.body)
-        body.setContentsMargins(22, 2, 8, 6)
-        body.setSpacing(3)
+        body.setContentsMargins(24, 2, 8, 6)
+        body.setSpacing(4)
         self.args_label = _label(role="mono")
         self.result_label = _label(role="mono")
         self.refs_row = QHBoxLayout()
@@ -290,7 +290,7 @@ class ThinkingCard(QFrame):
         self.header.toggled.connect(self._toggle)
         box.addWidget(self.header)
         self.body = _label("", "thinking")
-        self.body.setContentsMargins(22, 0, 8, 6)
+        self.body.setContentsMargins(24, 0, 8, 6)
         box.addWidget(self.body)
         self._user_choice = None
         self.header.clicked.connect(lambda checked: setattr(self, "_user_choice", checked))
@@ -316,7 +316,7 @@ class PlanCard(QFrame):
         super().__init__(parent)
         self.setObjectName("planCard")
         self.box = QVBoxLayout(self)
-        self.box.setContentsMargins(10, 6, 10, 6)
+        self.box.setContentsMargins(12, 6, 12, 6)
         self.box.setSpacing(2)
         self.set_steps(steps)
 
@@ -346,7 +346,7 @@ class EntryWidget(QFrame):
         self.entry = entry
         self.setProperty("entry", entry["type"])
         self.box = QVBoxLayout(self)
-        self.box.setContentsMargins(10, 8, 10, 8)
+        self.box.setContentsMargins(12, 8, 12, 8)
         self.box.setSpacing(4)
         self._tool_cards: dict[int, ToolCard] = {}
         self._text_labels: dict[int, QLabel] = {}

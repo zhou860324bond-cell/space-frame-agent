@@ -92,7 +92,8 @@ class _NullPlotter:
 
 
 #: VTK 能读的中文字体文件（FreeType 读 .ttf 最稳，.ttc 取第一个字面）。
-_CJK_FONT_FILES = ("C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/Deng.ttf",
+# 等线排在黑体前面：黑体的西文是等宽字形，"σ = 48.4 MPa" 会被撑成一个字一格。
+_CJK_FONT_FILES = ("C:/Windows/Fonts/Deng.ttf", "C:/Windows/Fonts/simhei.ttf",
                    "C:/Windows/Fonts/msyh.ttc",
                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                    "/System/Library/Fonts/PingFang.ttc")
@@ -104,43 +105,75 @@ def cjk_font_file() -> str | None:
 
 
 def _use_cjk_font_for_labels(plotter) -> None:
-    """文字含非 ASCII 字符时给 VTK 指定中文字体文件。
+    """VTK 文字按屏幕缩放放大，含非 ASCII 字符时指定中文字体文件。
 
     VTK 的默认字体没有中文字形：基准点名、约束名、「第 1 阶」这类标注在真窗口里
     整个消失，无头测试看不出来。只对含非 ASCII 的文字换字体，英文标注保持原样。
+
+    VTK 的字号和线宽按**物理像素**算，Qt 按逻辑像素算：150% 缩放下视口里的
+    标注只有界面文字的三分之二大，云图杆件也细一圈。这里统一乘上缩放比。
     """
     font = cjk_font_file()
-    if font is None:
-        return
+
+    def ratio() -> float:
+        try:
+            return max(1.0, float(plotter.interactor.devicePixelRatioF()))
+        except (AttributeError, RuntimeError):
+            return 1.0
+
+    def scaled(kwargs: dict, *keys: str) -> dict:
+        r = ratio()
+        for key in keys:
+            if isinstance(kwargs.get(key), (int, float)) and r != 1.0:
+                kwargs[key] = max(1, round(kwargs[key] * r))
+        return kwargs
 
     def wrap(method, index: int, keyword: str):
         def call(*args, **kwargs):
             text = args[index] if len(args) > index else kwargs.get(keyword)
             items = [text] if isinstance(text, str) else list(text) if text is not None else []
-            if any(isinstance(t, str) and not t.isascii() for t in items):
+            if font is not None and any(isinstance(t, str) and not t.isascii() for t in items):
                 kwargs.setdefault("font_file", font)
-            return method(*args, **kwargs)
+            return method(*args, **scaled(kwargs, "font_size", "point_size"))
         return call
+
+    add_mesh = plotter.add_mesh
+
+    def add_mesh_scaled(*args, **kwargs):
+        return add_mesh(*args, **scaled(kwargs, "line_width", "point_size"))
 
     plotter.add_text = wrap(plotter.add_text, 0, "text")
     plotter.add_point_labels = wrap(plotter.add_point_labels, 1, "labels")
+    plotter.add_mesh = add_mesh_scaled
 
 
-# 视口图例的文字。**必须是 ASCII**：VTK 用自己的字体引擎，默认字体没有中文
-# 字形——实测中文图例渲染成三个小点，色标那边也栽过同一个坑。要显示中文得给
-# VTK 单独加载字体文件，那是另一件事；在此之前，英文术语比一排方块可读。
+# 符号图例的文字。图例由 Qt 绘制（viewport_legend.SymbolKey），可以直接写中文。
 _LEGEND_TEXT = {
-    "杆件": "Member",
-    "杆端铰": "Hinge",
-    "固接": "Support: fixed",
-    "铰接": "Support: pinned",
-    "部分约束": "Support: partial",
-    "节点荷载": "Nodal force",
-    "节点力矩": "Nodal moment",
-    "杆间荷载": "Span load",
-    "给定位移": "Prescribed disp.",
-    "给定转角": "Prescribed rot.",
+    "杆件": "杆件",
+    "杆端铰": "杆端铰",
+    "固接": "支座：固接",
+    "铰接": "支座：铰接",
+    "部分约束": "支座：部分约束",
+    "节点荷载": "节点荷载",
+    "节点力矩": "节点力矩",
+    "杆间荷载": "杆间荷载",
+    "给定位移": "给定位移",
+    "给定转角": "给定转角",
 }
+
+def peak_tag(prefix: str, value: float, unit: str, member, x: float) -> str:
+    """极值标注：第一行是数值，第二行是位置。
+
+    画在 VTK 里，只用 ASCII 标点：中文字体文件里未必有 U+2212 减号和
+    间隔点，缺字形时整个字符消失——负的峰值会被读成正的（改前实测）。
+    """
+    where = (f"Member {member}, x = {x:.3g}" if i18n.language() == "en"
+             else f"杆件 {member}, x = {x:.3g}")
+    return f"{prefix}{value:+.3g} {unit}\n{where}"
+
+
+#: 适应窗口时模型占可用区域的比例。留一圈边，杆端和支座符号不贴着视口边缘。
+FIT_FILL = 0.86
 
 
 class Viewport(QWidget):
@@ -194,8 +227,10 @@ class Viewport(QWidget):
 
         if CAN_RENDER:
             self.plotter.set_background(theme.VIEWPORT_BG)
-            self.plotter.add_axes(color=theme.VIEWPORT_INK_MUTED)
+            # 坐标指示器由 Qt 画（左下角 AxisIndicator），这里不再加 VTK 自带的
+            # 三轴：两个指示器并排、朝向还不一致，用户不知道该信哪个。
             self.plotter.enable_anti_aliasing("fxaa")
+            self.plotter.renderer.AddObserver("StartEvent", self._sync_axis_indicator)
         self._first_render = True
         self._annotation_context = None
 
@@ -274,8 +309,12 @@ class Viewport(QWidget):
         self.mode_badge.setStyleSheet(
             f"QLabel{{background:{theme.ACCENT_DIM}; color:#ffffff; "
             f"border:1px solid {theme.ACCENT}; border-radius:3px; "
-            f"padding:4px 10px; font-size:9pt; font-weight:600;}}")
+            f"padding:4px 12px; font-size:9pt; font-weight:600;}}")
         self.result_overlay = ResultOverlay(self)
+        # 右上角：结果视图放色标，模型视图放符号图例，同一位置、同一宽度
+        from .viewport_legend import ColorScale, SymbolKey
+        self.color_scale = ColorScale(self)
+        self.symbol_key = SymbolKey(self)
 
     # --- 视口外观 ---
 
@@ -429,14 +468,19 @@ class Viewport(QWidget):
         return Viewport._hex_lum(hexc) > 160
 
     def _refresh_axes_color(self) -> None:
-        """坐标轴颜色随背景明暗调整。"""
-        if not CAN_RENDER:
-            return
+        """视口浮层（坐标指示器、色标、图例）随背景明暗换配色。"""
+        light = self._is_light_bg()
+        for overlay in (self.axis_indicator, self.color_scale, self.symbol_key):
+            overlay.set_light(light)
+
+    def _sync_axis_indicator(self, *_args) -> None:
+        """每帧渲染前把相机朝向交给坐标指示器；没变就不重画。"""
         try:
-            axes_color = "#333333" if self._is_light_bg() else theme.INK_MUTED
-            self.plotter.add_axes(color=axes_color)
-        except Exception:  # noqa: BLE001  可选视觉效果：画不出来不该让整个视口刷新失败
-            pass
+            matrix = self.plotter.renderer.GetActiveCamera().GetViewTransformMatrix()
+            rotation = [[matrix.GetElement(i, j) for j in range(3)] for i in range(3)]
+        except (AttributeError, RuntimeError):
+            return
+        self.axis_indicator.set_rotation(rotation)
 
     def toggle_grid_floor(self, on: bool) -> None:
         """显示/隐藏 z=0 网格地面。"""
@@ -504,36 +548,6 @@ class Viewport(QWidget):
 
     _contour_actors = False
 
-    def _place_contour_overlays(self) -> None:
-        """色标、色标标题、云图说明放进**没被抽屉盖住**的那一块。
-
-        原来是写死的视口比例坐标：底部结果抽屉一开，色标下半截就进了抽屉
-        底下；左上角那段说明又被模式提示压着。这里按抽屉遮挡重新摆，
-        抽屉开合时只挪这几个 2D 对象，不重画整张云图。
-        """
-        if not CAN_RENDER or not self._contour_actors:
-            return
-        width, height = max(1, self.width()), max(1, self.height())
-        left, right, bottom = self._insets
-        x_right = 1.0 - right / width
-        y_bottom = bottom / height + 0.04
-        # 色标高度随可用高度收缩，顶上给标题留位置
-        bar_height = max(0.18, min(0.58, 0.84 - y_bottom - 0.12))
-        try:
-            bar = self.plotter.scalar_bar
-        except (AttributeError, IndexError, KeyError, StopIteration):
-            bar = None
-        actors = getattr(self.plotter, "actors", None)
-        lookup = actors.get if isinstance(actors, dict) else (lambda _name: None)
-        # 只动真正的 VTK 2D actor；无头测试里的桩对象什么属性都"有"
-        if hasattr(bar, "SetHeight"):
-            bar.SetPosition(x_right - 0.075, y_bottom)
-            bar.SetHeight(bar_height)
-        title = lookup("_contour_bar_title")
-        if hasattr(title, "SetPosition"):
-            title.SetPosition(x_right - 0.19, y_bottom + bar_height + 0.015)
-        self._place_overlays()
-
     def _inset_camera(self) -> bool:
         """让模型落在**没被抽屉盖住**的那一块里，而不是躲在抽屉后面。
 
@@ -551,28 +565,117 @@ class Viewport(QWidget):
         if not CAN_RENDER:
             return False
         width, height = max(1, self.width()), max(1, self.height())
-        left, right, bottom = self._insets
-        top = (self.result_overlay.geometry().bottom() + 12
-               if getattr(self, "_solid_active", False) and self.result_overlay.isVisible()
-               else 0)
-        free_w = max(1, width - left - right)
-        free_h = max(1, height - bottom - top)
-        center_x = left + free_w / 2.0
-        center_y = top + free_h / 2.0               # 从上沿量起
-        nx = (center_x - width / 2.0) / (width / 2.0)
-        ny = (height / 2.0 - center_y) / (height / 2.0)
+        left, top, right, bottom = self._free_rect()
+        free_w, free_h = right - left, bottom - top
+        nx = (left + right - width) / width
+        ny = (height - top - bottom) / height
         camera = self.plotter.renderer.GetActiveCamera()
-        # VTK 在投影之后平移 -WindowCenter，所以要把焦点送到 (nx, ny) 就取负
-        before = camera.GetWindowCenter()
-        camera.SetWindowCenter(-nx, -ny)
         target = min(free_w / width, free_h / height)
         ratio = target / self._inset_zoom
-        changed = abs(before[0] + nx) > 1e-9 or abs(before[1] + ny) > 1e-9
+        # 适应窗口时记下的模型中心偏移随缩放同比例变化
+        ox, oy = self._fit_offset
+        ox, oy = ox * target, oy * target
+        # VTK 在投影之后平移 -WindowCenter，所以要把焦点送到 (nx, ny) 就取负
+        before = camera.GetWindowCenter()
+        camera.SetWindowCenter(ox - nx, oy - ny)
+        changed = abs(before[0] - ox + nx) > 1e-9 or abs(before[1] - oy + ny) > 1e-9
         if abs(ratio - 1.0) > 1e-9:
             camera.Zoom(ratio)
             self._inset_zoom = target
             changed = True
         return changed
+
+    _fit_offset = (0.0, 0.0)
+
+    def _free_rect(self) -> tuple[int, int, int, int]:
+        """模型该落在视口里的哪一块：(左, 上, 右, 下)，像素，从左上角量起。
+
+        扣掉抽屉盖住的边，右边再扣一条给色标/图例——不论当前有没有色标都
+        扣，切换显示模式时相机保持不动，模型不会因为色标出现而左右跳。
+        视口太窄时不扣，先保证模型本身看得见。
+        """
+        width, height = max(1, self.width()), max(1, self.height())
+        left, right, bottom = self._insets
+        top = (self.result_overlay.geometry().bottom() + 12
+               if getattr(self, "_solid_active", False) and self.result_overlay.isVisible()
+               else 0)
+        from .viewport_legend import WIDTH
+        reserve = WIDTH + 2 * theme.SPACE_LG
+        if width - left - right - reserve >= 360:
+            right += reserve
+        return (left, top, max(left + 1, width - right), max(top + 1, height - bottom))
+
+    def _model_bounds(self):
+        """要装进画面的范围。网格地面只是参照，不算在内。"""
+        renderer = self.plotter.renderer
+        actors = getattr(self.plotter, "actors", None)
+        floor = actors.get("_grid_floor") if isinstance(actors, dict) else None
+        visible = floor.GetVisibility() if floor is not None else False
+        if floor is not None:
+            floor.SetVisibility(False)
+        try:
+            bounds = renderer.ComputeVisiblePropBounds()
+        finally:
+            if floor is not None:
+                floor.SetVisibility(visible)
+        if bounds is None or bounds[0] > bounds[1] or not np.all(np.isfinite(bounds)):
+            return None
+        return bounds
+
+    def _fit_camera(self) -> None:
+        """把模型装进可用区域，四周留一圈边。
+
+        原来是 ResetCamera 之后固定再放大 1.3 倍。ResetCamera 按外接球取距离，
+        平面框架的外接球比它在屏幕上的投影大得多，放大 1.3 倍刚好合适；
+        换成三维框架，外接球几乎就是它的投影，再放大 1.3 倍四个角都出了画面
+        （改前实测 2×2 跨两层框架，投影超出视口左右各 6%、上下各 12%）。
+        这里按包围盒八个角点的**实际投影**算缩放，透视投影下迭代几次收敛。
+        """
+        camera = self.plotter.renderer.GetActiveCamera()
+        camera.SetWindowCenter(0.0, 0.0)
+        self._fit_offset = (0.0, 0.0)
+        self._inset_zoom = 1.0
+        bounds = self._model_bounds()
+        if bounds is None:
+            # 场景还是空的（结果在后台算，或者还没建模）：现在缩放没有依据，
+            # 等下一次真正画出东西时再适应。原来这里照样放大 1.3 倍，后台
+            # 结果画完沿用这台相机，模型直接撑出视口（改前应力比图实测）。
+            self._first_render = True
+            self._inset_camera()
+            return
+        corners = np.array([[x, y, z] for x in bounds[0:2] for y in bounds[2:4]
+                            for z in bounds[4:6]], dtype=float)
+        width, height = max(1, self.width()), max(1, self.height())
+        left, top, right, bottom = self._free_rect()
+        half_w = (right - left) / width
+        half_h = (bottom - top) / height
+        renderer = self.plotter.renderer
+
+        def project():
+            aspect = renderer.GetTiledAspectRatio()
+            m = camera.GetCompositeProjectionTransformMatrix(aspect, -1, 1)
+            matrix = np.array([[m.GetElement(i, j) for j in range(4)] for i in range(4)])
+            points = np.c_[corners, np.ones(len(corners))] @ matrix.T
+            return points[:, :2] / points[:, 3:4]
+
+        for _ in range(6):
+            ndc = project()
+            extent = np.maximum((ndc.max(axis=0) - ndc.min(axis=0)) / 2.0, 1e-9)
+            factor = FIT_FILL * min(half_w / extent[0], half_h / extent[1])
+            if abs(factor - 1.0) < 2e-3:
+                break
+            camera.Zoom(factor)
+        ndc = project()
+        centre = (ndc.min(axis=0) + ndc.max(axis=0)) / 2.0
+        # 偏移按"整视口"缩放记账，_inset_camera 再按可用区域比例换算
+        target = min(half_w, half_h)
+        self._fit_offset = (float(centre[0]) / target, float(centre[1]) / target)
+        self._inset_zoom = target
+        self._inset_camera()
+
+    def _place_contour_overlays(self) -> None:
+        """色标放进**没被抽屉盖住**的那一块；抽屉开合时只挪浮层，不重画云图。"""
+        self._place_overlays()
 
     def _place_overlays(self) -> None:
         if hasattr(self, 'axis_indicator'):
@@ -581,15 +684,56 @@ class Viewport(QWidget):
                 self.height() - self.axis_indicator.height() - 10 - self._insets[2]
             )
             self.axis_indicator.raise_()
+        self._place_legends()
         if hasattr(self, "result_overlay") and self.result_overlay.active:
             left, right, bottom = self._insets
-            limit = 300 if getattr(self, "_solid_active", False) else 370
+            limit = 300 if getattr(self, "_solid_active", False) else 320
             self.result_overlay.setFixedWidth(max(100, min(limit, self.width() - left - right - 24)))
             self.result_overlay.adjustSize()
             y = self.mode_badge.geometry().bottom() + 8 if self.mode_badge.isVisible() else 12
             self.result_overlay.move(left + 12, y)
             self.result_overlay.setVisible(y + self.result_overlay.height() <= self.height() - bottom - 8)
             self.result_overlay.raise_()
+
+    def _place_legends(self) -> None:
+        """色标与符号图例贴在可用区域右上角，与左上角的结果摘要顶边对齐。"""
+        if not hasattr(self, "color_scale"):
+            return
+        left, right, bottom = self._insets
+        x_right = self.width() - right - theme.SPACE_LG
+        top = theme.SPACE_LG
+        room = self.height() - bottom - top - theme.SPACE_LG
+        for card in (self.color_scale, self.symbol_key):
+            if not card.active:
+                continue
+            if card is self.color_scale:
+                card.setFixedHeight(max(120, min(card.preferred_height(), room)))
+            card.move(x_right - card.width(), top)
+            card.setVisible(room >= 120 and x_right - card.width() >= left)
+            card.raise_()
+
+    def _show_color_scale(self, actor, title: str, clim, *, cmap=None, n_colors: int = 256,
+                          banded: bool = False, annotations=None) -> None:
+        """右上角色标。颜色优先读云图映射器的查找表，与杆件上的颜色同源。"""
+        from .viewport_legend import lookup_colors
+        colors = lookup_colors(actor) if actor is not None else []
+        if not colors and cmap is not None:
+            colors = [tuple(cmap(i / max(1, n_colors - 1)))[:3] for i in range(n_colors)]
+        if not colors:
+            return
+        self.color_scale.set_light(self._is_light_bg())
+        self.color_scale.set_scale(title, colors, clim, banded=banded,
+                                   annotations=annotations)
+        self._place_legends()
+
+    def _add_tag(self, point, text: str, name: str, *, marker: bool = True) -> None:
+        """结果极值、探针这类要指认位置的标注：带底板，压在杆件上也读得清。"""
+        card = theme.viewport_card(self._is_light_bg())
+        self.plotter.add_point_labels(
+            [point], [text], name=name, font_size=11, text_color=card["ink"],
+            shape="rounded_rect", shape_color=tuple(v / 255 for v in card["surface"][:3]),
+            shape_opacity=1.0, margin=5, always_visible=True,
+            show_points=marker, point_color=theme.HIGHLIGHT, point_size=10)
 
     def _show_result_summary(self, summary: dict) -> None:
         self.result_overlay.set_content(**summary, light=self._is_light_bg())
@@ -726,6 +870,8 @@ class Viewport(QWidget):
             self._first_render = True
         self._solid_active = False
         self.result_overlay.reset()
+        self.color_scale.reset()
+        self.symbol_key.reset()
         if not CAN_RENDER:
             return
         self.plotter.clear()
@@ -1062,10 +1208,7 @@ class Viewport(QWidget):
         self.plotter.add_mesh(marker, color=theme.HIGHLIGHT,
                               name="_result_marker", smooth_shading=True)
         if label:
-            self.plotter.add_point_labels(
-                [point], [label], name="_result_marker_label", font_size=10,
-                text_color=theme.VIEWPORT_INK, shape=None,
-                always_visible=True, show_points=False)
+            self._add_tag(point, label, "_result_marker_label", marker=False)
         self.plotter.render()
 
     @_batched
@@ -1300,10 +1443,8 @@ class Viewport(QWidget):
         else:
             self.plotter.enable_parallel_projection()
         getattr(self.plotter, f"view_{name}", self.plotter.view_isometric)()
-        self.plotter.camera.zoom(1.3)
         # 标准视角会重置相机，之前为抽屉做的缩放随之作废，按当前遮挡重做
-        self._inset_zoom = 1.0
-        self._inset_camera()
+        self._fit_camera()
 
     def reset_camera(self) -> None:
         if not CAN_RENDER:
@@ -1321,24 +1462,10 @@ class Viewport(QWidget):
     # --- 显示模式 ---
 
     def _add_legend(self, entries: list) -> None:
-        """在视口角上列出画了哪些东西。
-
-        支座和荷载靠形状区分，但形状是要学的；没有图例，用户只能猜那个小锥子
-        是铰接还是滚动。**符号系统必须自带说明**，否则它只是好看，不是可读。
-        条目为空时不画——一个空框比没有框更碍事。
-        """
-        if not entries:
-            return
-        try:
-            self.plotter.add_legend(
-                labels=[[label, color] for label, color in entries],
-                bcolor=theme.VIEWPORT_BG, border=False,
-                # 尺寸压到刚好够读：0.20/0.045 那一档实测把左上角的梁盖住了，
-                # 图例挡住它要解释的东西，等于没有。
-                size=(0.115, min(0.24, 0.024 * len(entries))),
-                loc="upper left", face="none", font_family="arial")
-        except Exception:  # noqa: BLE001  可选视觉效果：画不出来不该让整个视口刷新失败
-            pass
+        """在视口右上角列出画了哪些东西；条目为空时不画。"""
+        self.symbol_key.set_light(self._is_light_bg())
+        self.symbol_key.set_entries(entries)
+        self._place_legends()
 
     def _member_ink(self) -> tuple[str, str]:
         """杆件本体色与棱边色，按底色深浅各给一套。
@@ -1581,20 +1708,19 @@ class Viewport(QWidget):
         lines = got["lines"]
         bands = len(scene.UTILIZATION_COLORS)
         if lines.n_cells:
-            # 分档文字挂在颜色映射表上（annotations），色标会把它们画在各档旁边；
-            # 数值刻度关掉——这张图读的是"落在哪一档"，不是连续数值。
-            self.plotter.add_mesh(
-                lines, scalars="band", cmap=ListedColormap(scene.UTILIZATION_COLORS),
+            # 色标每档旁边写分档文字，不标连续刻度——这张图读的是
+            # "落在哪一档"，不是连续数值。
+            cmap = ListedColormap(scene.UTILIZATION_COLORS)
+            actor = self.plotter.add_mesh(
+                lines, scalars="band", cmap=cmap,
                 clim=(-0.5, bands - 0.5), n_colors=bands,
-                annotations={float(k): text for k, text in
-                             enumerate(scene.UTILIZATION_LABELS)},
                 render_lines_as_tubes=True, line_width=CONTOUR_LINE_PX,
                 lighting=True, ambient=0.42, diffuse=0.58, show_scalar_bar=False,
                 name="_utilization")
-            self.plotter.add_scalar_bar(
-                title="", n_labels=0, n_colors=bands, vertical=True,
-                color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
-                width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+            self._show_color_scale(
+                actor, "Utilization" if i18n.language() == "en" else "应力比",
+                (-0.5, bands - 0.5), cmap=cmap, n_colors=bands, banded=True,
+                annotations=list(scene.UTILIZATION_LABELS))
         grey = got["inconclusive"]
         if grey.n_cells:
             self.plotter.add_mesh(grey, color=theme.VIEWPORT_INK_MUTED,
@@ -1614,9 +1740,6 @@ class Viewport(QWidget):
         unclear = len(payload.get("inconclusive_members") or [])
         total = len(payload.get("members") or [])
         worst = got["worst"]
-        self.plotter.add_text("utilization", position=(0.795, 0.735),
-                              viewport=True, color=theme.VIEWPORT_INK,
-                              font_size=10, name="_contour_bar_title")
         english = i18n.language() == "en"
         peak = (f"{worst['ratio']:.4g} · " + (f"Member {worst['member']}" if english else f"杆件 {worst['member']}")) if worst["member"] is not None else "—"
         self._show_result_summary({
@@ -1669,25 +1792,15 @@ class Viewport(QWidget):
         if ribbon.n_points:
             # 发散色标：正负画在杆的两侧，颜色也跟着分两头，零是中性灰。
             # 不打光——这是一张"图"，不是三维物体，明暗只会干扰读色。
-            self.plotter.add_mesh(
-                ribbon, scalars="value", cmap=theme.diverging_cmap(), clim=clim,
+            cmap = theme.diverging_cmap()
+            actor = self.plotter.add_mesh(
+                ribbon, scalars="value", cmap=cmap, clim=clim,
                 opacity=0.82, lighting=False, show_scalar_bar=False,
                 interpolate_before_map=True, name="_diagram_fill")
-            self.plotter.add_scalar_bar(
-                title="", n_labels=7, n_colors=256, vertical=True, fmt="%.3g",
-                color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
-                width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+            self._show_color_scale(actor, f"{component} ({unit})", clim, cmap=cmap)
             self.plotter.add_mesh(got["outline"], color=theme.VIEWPORT_INK,
                                   line_width=1.6, name="_diagram_outline")
         shown = got["peak"]
-        label = component
-        if component == "M":
-            label = "M (dominant plane)"
-        elif component == "V":
-            label = "V (dominant plane)"
-        self.plotter.add_text(f"{label}  [{unit}]", position=(0.795, 0.735),
-                              viewport=True, color=theme.VIEWPORT_INK,
-                              font_size=10, name="_contour_bar_title")
         bending = component in {"M", "Mz", "My"}
         english = i18n.language() == "en"
         convention = ("Drawn on the tension side" if bending else "Drawn toward + local axis") if english else ("弯矩图绘于受拉侧" if bending else "沿局部坐标正向绘制")
@@ -1698,13 +1811,9 @@ class Viewport(QWidget):
             "status": convention,
             "details": convention + (". One scale for all members." if english else "。各杆件采用同一比例尺；内力图表示梁内力，不是截面应力。")})
         if shown["member"] is not None and shown["point"] is not None:
-            self.plotter.add_point_labels(
-                [shown["point"]],
-                [f"{shown['value']:+.3g} {unit} | M{shown['member']} "
-                 f"x={shown['x']:.3g}"],
-                name="_diagram_peak", font_size=9, text_color=theme.VIEWPORT_INK,
-                shape=None, always_visible=True, show_points=True,
-                point_color=theme.HIGHLIGHT, point_size=10)
+            self._add_tag(shown["point"], peak_tag(
+                f"{component} = ", shown["value"], unit, shown["member"], shown["x"]),
+                "_diagram_peak")
         self._contour_actors = True
         self._place_contour_overlays()
         self._decorate(frame)
@@ -1779,22 +1888,17 @@ class Viewport(QWidget):
         # 屏幕像素宽度着色，明暗由着色器按像素算，粗细与模型尺寸无关。
         shade = dict(lighting=True, ambient=0.42, diffuse=0.58,
                      specular=0.22, specular_power=30, smooth_shading=True)
-        self.plotter.add_mesh(
+        contour_actor = self.plotter.add_mesh(
             tubes, scalars=scalars, cmap=cmap, clim=clim, n_colors=colors,
             interpolate_before_map=True, show_scalar_bar=False,
             render_lines_as_tubes=True, line_width=CONTOUR_LINE_PX,
             **(shade if self.contour_shading else {"lighting": False}))
-        # 色标竖着放在右侧：横放时 VTK 把标题和刻度挤在同一条带上（实测重叠），
-        # 而且十几级的刻度横向根本排不开。
-        #
-        # **必须紧挨着云图那一层加。** add_scalar_bar 绑的是最后一个加进来的
-        # 网格的映射器；等把"量程外"那层纯色网格加完再加色标，色标画的就是
-        # 那层的默认查找表——一条 0…1 的彩虹，和图上任何东西都对不上。
-        self.plotter.add_scalar_bar(
-            title="", n_labels=7 if continuous else n + 1, n_colors=colors,
-            vertical=True, fmt="%.3g",
-            color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
-            width=0.040, height=0.58, position_x=0.905, position_y=0.14)
+        # 色标颜色取自**这一层**的映射器，不是"最后加进来的那层"：原来用
+        # VTK 色标时它绑的是最后一个网格，等"量程外"那层纯色网格加完再加，
+        # 画出来的是一条 0…1 的默认彩虹，和图上任何东西都对不上。
+        label = (scene.STRESS_LABEL if component == scene.STRESS else component)
+        self._show_color_scale(contour_actor, f"{label} ({unit})", clim,
+                               cmap=cmap, n_colors=colors, banded=not continuous)
         if clipped and not continuous:
             # 超出量程的段单独画。分级之后饱和的那一级和正常的一级长得一样，
             # 峰值所在的位置会消失在一片同色里。
@@ -1809,15 +1913,6 @@ class Viewport(QWidget):
                                       name="_contour_out_of_range")
         self._contour_last = dict(palette=self.contour_palette,
                                   shading=self.contour_shading, bands=n)
-        # 标题自己画。交给 VTK 画会和最上面那个刻度撞在一起。
-        # 披露文字用 ASCII：VTK 的色标与文字用自己的字体引擎，默认字体没有
-        # 中文字形（实测中文渲染成方块）。写成方块等于没披露。
-        label = (scene.STRESS_LABEL_ASCII if component == scene.STRESS
-                 else component)
-        bar_title = f"{label}  [{unit}]"
-        self.plotter.add_text(
-            bar_title, position=(0.795, 0.735), viewport=True,
-            color=theme.VIEWPORT_INK, font_size=10, name="_contour_bar_title")
         self._show_result_summary(scene.contour_summary(
             component, unit, clim,
             float(np.abs(np.asarray(line["unfiltered_values"])).max()) if line.n_points else None,
@@ -1838,13 +1933,9 @@ class Viewport(QWidget):
             from .result_inspector import global_extreme
             extreme = global_extreme(frame, solution, component, case)
             if extreme["member"] is not None:
-                peak_text = (f"{label}={extreme['value']:+.3g} {extreme['unit']}"
-                             f" | M{extreme['member']} x={extreme['x']:.3g}")
-                self.plotter.add_point_labels(
-                    [extreme["point"]], [peak_text], name="_contour_extreme",
-                    font_size=9, text_color=theme.VIEWPORT_INK, shape=None,
-                    always_visible=True, show_points=True,
-                    point_color=theme.HIGHLIGHT, point_size=9)
+                self._add_tag(extreme["point"], peak_tag(
+                    f"{label} = ", extreme["value"], extreme["unit"],
+                    extreme["member"], extreme["x"]), "_contour_extreme")
         for mesh in scene.support_glyphs(frame).values():
             self.plotter.add_mesh(
                 mesh, color=theme.SUPPORT, smooth_shading=True,
@@ -1915,22 +2006,15 @@ class Viewport(QWidget):
             features = surface.extract_feature_edges(feature_angle=40, manifold_edges=False)
             self.plotter.add_mesh(features, color=theme.VIEWPORT_INK_MUTED, opacity=0.32,
                                   line_width=1, name='_solid_feature_edges', pickable=False)
-        self.plotter.add_scalar_bar(
-            mapper=solid_actor.mapper, title="", n_labels=13 if palette == "abaqus" else 7, vertical=True, fmt="%.3g",
-            color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
-            width=0.040, height=0.58, position_x=0.905, position_y=0.14)
-        bar_label = {"Mises_MPa": "Mises [MPa]", "AbsPrincipal_MPa": "|Principal| [MPa]",
-                     "DisplacementMagnitude_mm": "Displacement [mm]"}[field]
-        self.plotter.add_text(bar_label, position=(0.795, 0.735), viewport=True,
-                              color=theme.VIEWPORT_INK, font_size=10,
-                              name="_contour_bar_title")
+        self._show_color_scale(solid_actor, f"{label} ({unit})", (0.0, high),
+                               cmap=theme.solid_cmap(palette),
+                               n_colors=12 if palette == "abaqus" else 256,
+                               banded=palette == "abaqus")
         index = int(np.argmax(values))
         point = (displayed.cell_centers().points[index] if association == "cell"
                  else displayed.points[index])
-        self.plotter.add_point_labels(
-            [point], [f"MAX {peak:.6g} {unit}"], name="_solid_peak", font_size=9,
-            text_color=theme.VIEWPORT_INK, shape=None, always_visible=True,
-            show_points=True, point_color=theme.HIGHLIGHT, point_size=8)
+        self._add_tag(point, f"{'Max' if i18n.language() == 'en' else '最大'} {peak:.6g} {unit}",
+                      "_solid_peak")
         if reset_camera or current_camera is None:
             self._apply_view("isometric")
         else:

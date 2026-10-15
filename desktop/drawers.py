@@ -332,7 +332,7 @@ class Drawer(QFrame):
         self.stack = QStackedWidget(self)
 
         header = QHBoxLayout()
-        header.setContentsMargins(10, 4, 4, 0)
+        header.setContentsMargins(12, 4, 4, 0)
         header.setSpacing(6)
         header.addWidget(self.title)
         header.addWidget(self.tabs, 1)
@@ -641,7 +641,7 @@ class SideRail(QFrame):
         self.setProperty("side", side)
         self.setFixedWidth(self.WIDTH)
         self._box = QVBoxLayout(self)
-        self._box.setContentsMargins(3, 6, 3, 6)
+        self._box.setContentsMargins(4, 6, 4, 6)
         self._box.setSpacing(4)
         self._tail = QVBoxLayout()
         self._tail.setSpacing(4)

@@ -959,33 +959,87 @@ def test_the_stress_contour_is_refused_at_the_click_not_after_switching(
 
 def test_the_colour_bar_is_bound_to_the_contour_layer_not_the_overflow_layer(
         qt_app):
-    """色标必须紧挨着云图那一层加。
+    """色标颜色必须取自云图那一层的查找表，而不是最后加进来的那一层。
 
-    add_scalar_bar 绑的是**最后一个加进来的网格**的映射器。等把"量程外"
+    原来用 VTK 色标，它绑的是**最后一个加进来的网格**的映射器：等把"量程外"
     那层纯色网格加完再加色标，色标画的就是那层的默认查找表——一条 0…1 的
-    彩虹，和图上任何东西都对不上。这个错在有屏幕的机器上一眼能看见，
-    但没人会想到去查加网格的顺序。
+    彩虹，和图上任何东西都对不上。现在色标由 Qt 画，颜色显式从云图那一层的
+    映射器读，这里守住"读的是哪一层"。
     """
     window = solved(MainWindow(built()))
-    order: list[str] = []
     plotter = window.viewport.plotter
-    plotter.add_mesh = lambda mesh=None, **kw: order.append(
-        kw.get("name") or ("contour" if "scalars" in kw else "other"))
-    plotter.add_scalar_bar = lambda **kw: order.append("scalar_bar")
+
+    class Table:
+        def __init__(self, colours):
+            self.colours = colours
+
+        def GetNumberOfTableValues(self):
+            return len(self.colours)
+
+        def GetTableValue(self, i):
+            return (*self.colours[i], 1.0)
+
+    class Actor:
+        def __init__(self, colours):
+            self.table = Table(colours)
+
+        def GetMapper(self):
+            return self
+
+        def GetLookupTable(self):
+            return self.table
+
+    contour = [(0.1, 0.2, 0.9), (0.9, 0.3, 0.1)]
+    plotter.add_mesh = lambda mesh=None, **kw: Actor(
+        contour if "scalars" in kw else [(1.0, 0.0, 1.0)] * 4)
+    plotter.add_point_labels = lambda *a, **k: None
 
     import desktop.viewport as vp
     was = vp.CAN_RENDER
     vp.CAN_RENDER = True
     try:
         window.viewport.show_contour(window.session.frame,
-                                     window.session.solution, "D", "Mz")
+                                     window.session.solution, "D", "Mz", levels=12)
     finally:
         vp.CAN_RENDER = was
 
-    assert "scalar_bar" in order
-    assert order.index("contour") < order.index("scalar_bar")
-    if "_contour_out_of_range" in order:
-        assert order.index("scalar_bar") < order.index("_contour_out_of_range")
+    scale = window.viewport.color_scale
+    assert scale.active
+    import numpy as np
+
+    got = np.array([c.getRgbF()[:3] for c in scale.colors])
+    assert got.shape == (2, 3) and np.allclose(got, contour, atol=1 / 255)
+    assert scale.banded, "分级云图的色标也要分级，否则读不出每一级的区间"
+    assert "Mz" in scale.title
+
+
+def test_colour_scale_ticks_keep_both_ends_and_never_overlap(qt_app):
+    """刻度太密时隔一个标一个，但**两端必标**：只标中间、不标最大值的色标
+    读不出量程。"""
+    from desktop.viewport_legend import ColorScale
+
+    scale = ColorScale()
+    scale.set_scale("σ (MPa)", [(0.0, 0.0, 1.0), (1.0, 0.0, 0.0)] * 12, (-40.0, 40.0),
+                    banded=True)
+    scale.resize(scale.width(), 160)
+    shown = []
+    painter_text = []
+
+    from PySide6.QtGui import QPainter
+    original = QPainter.drawText
+
+    def capture(self, *args):
+        painter_text.append(args[-1])
+        return original(self, *args)
+
+    QPainter.drawText = capture
+    try:
+        scale.grab()
+    finally:
+        QPainter.drawText = original
+    shown = [t for t in painter_text if t != "σ (MPa)"]
+    assert shown[0] == "−40" and shown[-1] == "40"
+    assert len(shown) < 25, "160 像素高放不下 25 个刻度，必须隔着标"
 
 
 def test_result_marker_imports_pyvista_itself(qt_app):

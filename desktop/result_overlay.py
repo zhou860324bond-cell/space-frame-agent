@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu,
                                QToolButton, QVBoxLayout, QWidget, QWidgetAction)
 
-from . import i18n
+from . import i18n, theme
 from .qt_style import ElidedLabel
 
 
@@ -16,8 +16,8 @@ class ResultOverlay(QFrame):
         self.setObjectName("viewportResultCard")
         self.active = False
         box = QVBoxLayout(self)
-        box.setContentsMargins(6, 4, 6, 4)
-        box.setSpacing(3)
+        box.setContentsMargins(theme.SPACE_MD, theme.SPACE_SM + 2, theme.SPACE_MD, theme.SPACE_MD)
+        box.setSpacing(theme.SPACE_XS)
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         self.title = ElidedLabel(self)
@@ -71,17 +71,24 @@ class ResultOverlay(QFrame):
 
     def set_light(self, light: bool) -> None:
         """切换背景时同步文字配色，不重建模型和结果。"""
-        surface = "rgba(248,250,253,240)" if light else "rgba(27,37,49,235)"
-        ink = "#253444" if light else "#edf3fa"
-        muted = "#526b83" if light else "#b7c6d6"
+        card = theme.viewport_card(light)
+        surface = "rgba({},{},{},{})".format(*card["surface"])
+        edge = "rgb({},{},{})".format(*card["edge"][:3])
+        ink, muted = card["ink"], card["muted"]
         self.setStyleSheet(f"""
-            QFrame#viewportResultCard {{ background:{surface}; border:0; border-radius:0; }}
-            QFrame#viewportResultCard QLabel {{ background:transparent; color:{ink}; font-size:9.5pt; }}
-            QLabel#resultOverlayTitle {{ font-size:10pt; font-weight:600; }}
-            QLabel#resultOverlayStatus {{ color:{muted}; font-size:9pt; }}
-            QFrame#viewportResultCard QToolButton {{ color:{ink}; background:transparent; border:0; padding:2px 4px; }}
+            QFrame#viewportResultCard {{ background:{surface}; border:1px solid {edge};
+                                        border-radius:{theme.RADIUS_SM}; }}
+            QFrame#viewportResultCard QLabel {{ background:transparent; border:0; color:{ink};
+                                               font-size:{theme.FONT_BODY}; }}
+            QLabel#resultOverlayTitle {{ font-size:{theme.FONT_STRONG}; font-weight:600; }}
+            QLabel#resultOverlayStatus {{ color:{muted}; font-size:{theme.FONT_CAPTION}; }}
+            QFrame#viewportResultCard QToolButton {{ color:{muted}; background:transparent;
+                                                    border:0; padding:2px 4px; }}
+            QFrame#viewportResultCard QToolButton:hover {{ color:{ink}; }}
         """)
-        self.info_menu.setStyleSheet("QMenu { background:#ffffff; border:1px solid #b4c1ce; } QLabel { color:#253444; background:transparent; font-size:10pt; }")
+        self.info_menu.setStyleSheet(
+            f"QMenu {{ background:{theme.PANEL_ALT}; border:1px solid {theme.BORDER_LIGHT}; }}"
+            f" QLabel {{ color:{theme.INK}; background:transparent; font-size:{theme.FONT_BODY}; }}")
 
     def reset(self) -> None:
         self.active = False

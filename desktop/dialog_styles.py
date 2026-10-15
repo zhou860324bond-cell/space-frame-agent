@@ -26,7 +26,7 @@ class DialogHeader(QWidget):
             f"border-bottom: 1px solid {theme.BORDER};")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 6, 14, 6)
+        layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(1)
 
         title_label = QLabel(title)
@@ -58,13 +58,13 @@ class DialogSection(QFrame):
         """)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 12, 10, 10)
+        outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(6)
 
         # 标题用与面板同色的底，把上边框线遮出一个缺口——QGroupBox 的标准做法
         title_label = QLabel(f"  {title}  ")
         title_label.setStyleSheet(
-            f"color: {theme.INK_MUTED}; font-size: 8.5pt; "
+            f"color: {theme.INK_MUTED}; font-size: 9pt; "
             f"background: {theme.PANEL}; border: none;")
         title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         # 让标题上移压到边框线上
@@ -184,7 +184,7 @@ def style_dialog(dialog, min_width: int = 420, min_height: int = 300):
         }}
         QDialogButtonBox QPushButton {{
             min-width: 76px;
-            padding: 5px 18px;
+            padding: 6px 16px;
         }}
     """)
 

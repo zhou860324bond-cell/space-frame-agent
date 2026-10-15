@@ -84,8 +84,8 @@ class AmplitudeDialog(QDialog):
             "荷载在分析步内怎么随伪时间变化。改变的是加载路径，不是弹性解的终点"))
 
         body = QVBoxLayout()
-        body.setContentsMargins(14, 10, 14, 0)
-        body.setSpacing(10)
+        body.setContentsMargins(12, 12, 12, 0)
+        body.setSpacing(12)
 
         listing = DialogSection("已有曲线")
         self.table = _table(["名称", "类型", "表 (伪时间, 系数)"])
@@ -197,8 +197,8 @@ class StepManagerDialog(QDialog):
             "荷载与边界条件在步之间传播：上一步有而这一步没提的会自动沿用"))
 
         body = QVBoxLayout()
-        body.setContentsMargins(14, 10, 14, 0)
-        body.setSpacing(10)
+        body.setContentsMargins(12, 12, 12, 0)
+        body.setSpacing(12)
 
         listing = DialogSection("分析步（按顺序执行）")
         self.table = _table(["分析步", "分析类型", "声明的变化", "实际生效的荷载",
