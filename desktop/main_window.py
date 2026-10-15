@@ -915,6 +915,17 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             animate.setChecked(False)
         self._redraw()
 
+    def _sync_element_owner(self, frame) -> None:
+        """视口要画的是求解用的分析模型时，告诉它分析杆段属于哪根物理杆件。
+
+        求解过之后，连「模型」显示画的也是分析模型（preview_frame 直接返回它）；
+        不同步的话，点选、显示组拿到的是杆段号，隐藏一根柱只隐藏了它的一段。
+        """
+        compilation = self.session.compilation
+        self.viewport.element_owner = (
+            {e: compilation.mapping.physical_member_id(e) for e in frame.members}
+            if compilation is not None and frame is self.session.frame else {})
+
     def _redraw(self) -> None:
         self._sync_result_validity()
         if self.mode == "实体云图" and self._solid_grid is not None:
@@ -939,6 +950,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         if not draft and not frame.members:
             self.viewport.clear()
             return
+        self._sync_element_owner(frame)
 
         if self.mode == "分析网格":
             preview = self.session.preview_analysis_mesh()
@@ -953,6 +965,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             self.viewport.show_model(frame, self.case)
             return
         frame = self.session.frame or frame
+        self._sync_element_owner(frame)
         if self.mode == "变形":
             scale = self.scale or self._auto_scale(frame)
             self.viewport.show_deformed(frame, self._frame_solution(),

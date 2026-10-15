@@ -91,6 +91,41 @@ class _NullPlotter:
         return None
 
 
+#: VTK 能读的中文字体文件（FreeType 读 .ttf 最稳，.ttc 取第一个字面）。
+_CJK_FONT_FILES = ("C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/Deng.ttf",
+                   "C:/Windows/Fonts/msyh.ttc",
+                   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                   "/System/Library/Fonts/PingFang.ttc")
+
+
+def cjk_font_file() -> str | None:
+    import os
+    return next((path for path in _CJK_FONT_FILES if os.path.isfile(path)), None)
+
+
+def _use_cjk_font_for_labels(plotter) -> None:
+    """文字含非 ASCII 字符时给 VTK 指定中文字体文件。
+
+    VTK 的默认字体没有中文字形：基准点名、约束名、「第 1 阶」这类标注在真窗口里
+    整个消失，无头测试看不出来。只对含非 ASCII 的文字换字体，英文标注保持原样。
+    """
+    font = cjk_font_file()
+    if font is None:
+        return
+
+    def wrap(method, index: int, keyword: str):
+        def call(*args, **kwargs):
+            text = args[index] if len(args) > index else kwargs.get(keyword)
+            items = [text] if isinstance(text, str) else list(text) if text is not None else []
+            if any(isinstance(t, str) and not t.isascii() for t in items):
+                kwargs.setdefault("font_file", font)
+            return method(*args, **kwargs)
+        return call
+
+    plotter.add_text = wrap(plotter.add_text, 0, "text")
+    plotter.add_point_labels = wrap(plotter.add_point_labels, 1, "labels")
+
+
 # 视口图例的文字。**必须是 ASCII**：VTK 用自己的字体引擎，默认字体没有中文
 # 字形——实测中文图例渲染成三个小点，色标那边也栽过同一个坑。要显示中文得给
 # VTK 单独加载字体文件，那是另一件事；在此之前，英文术语比一排方块可读。
@@ -145,6 +180,7 @@ class Viewport(QWidget):
         if CAN_RENDER:
             from pyvistaqt import QtInteractor
             self.plotter = QtInteractor(self)
+            _use_cjk_font_for_labels(self.plotter)
         else:
             self.plotter = _NullPlotter(self)
         layout.addWidget(self.plotter.interactor)
@@ -190,6 +226,10 @@ class Viewport(QWidget):
         self.hidden_members: set[int] = set()
         # 基准点（Abaqus 的 Datum Point）：名称 → 坐标。只画参考标记、供建节点吸附
         self.datum_points: dict[str, list[float]] = {}
+        # 结果视图画的是分析模型（杆件剖成多个分析杆段）：分析杆段 → 物理杆件。
+        # 拾取、高亮、显示组对外一律用物理杆件编号，见 _owner / _elements。
+        # 空表示当前画的就是物理模型。
+        self.element_owner: dict[int, int] = {}
         # 约束（MPC / 运动耦合）：(名称, 主节点坐标, [从节点坐标])，画成主节点到各从节点的连线
         self.constraint_links: list[tuple[str, list[float], list[list[float]]]] = []
         # 动画（Abaqus 的 Animate: Scale Factor）：按比例系数循环播放变形或振型
@@ -562,6 +602,17 @@ class Viewport(QWidget):
             self._inset_camera()
 
     @_batched
+    def _owner(self, element: int) -> int:
+        """分析杆段所属的物理杆件；画的是物理模型时原样返回。"""
+        return self.element_owner.get(element, element)
+
+    def _elements(self, members) -> list[int]:
+        """物理杆件 → 当前所画模型里的杆段编号。"""
+        if not self.element_owner:
+            return list(members)
+        wanted = set(members)
+        return [e for e, p in self.element_owner.items() if p in wanted]
+
     def visible_frame(self, frame):
         """去掉显示组里隐藏的杆件（及挂在它们上面的杆件荷载）后的 Frame 视图。"""
         if frame is None or not self.hidden_members:
@@ -569,14 +620,15 @@ class Viewport(QWidget):
         from copy import copy
         hidden = self.hidden_members
         view = copy(frame)
-        view.members = {k: v for k, v in frame.members.items() if k not in hidden}
+        view.members = {k: v for k, v in frame.members.items() if self._owner(k) not in hidden}
         cases = {}
         for name, case in frame.load_cases.items():
             c = copy(case)
             for key in ("member_loads", "member_spans", "member_strains", "member_curvatures"):
                 table = getattr(case, key, None)
                 if isinstance(table, dict):
-                    setattr(c, key, {k: v for k, v in table.items() if k not in hidden})
+                    setattr(c, key, {k: v for k, v in table.items()
+                                     if self._owner(k) not in hidden})
             cases[name] = c
         view.load_cases = cases
         return view
@@ -692,8 +744,8 @@ class Viewport(QWidget):
             pts = np.array([self.datum_points[n] for n in names], float)
             self.plotter.add_mesh(pv.PolyData(pts), color=theme.REFERENCE, point_size=9,
                                   render_points_as_spheres=False, name="_datum_points")
-            self.plotter.add_point_labels(pts, names, name="_datum_labels", font_size=9,
-                                          text_color=theme.REFERENCE, shape=None,
+            self.plotter.add_point_labels(pts, names, name="_datum_labels", font_size=13,
+                                          text_color=theme.VIEWPORT_INK, shape=None,
                                           always_visible=True, show_points=False)
         if frame is not None and CAN_RENDER and self.constraint_links:
             import pyvista as pv
@@ -706,11 +758,12 @@ class Viewport(QWidget):
                     points += [master, slave]
             if points:
                 self.plotter.add_mesh(pv.PolyData(np.array(points, float), lines=np.array(lines)),
-                                      color=theme.REFERENCE, line_width=2, name="_constraint_links")
+                                      color=theme.HINGE, line_width=2, name="_constraint_links")
+            # 用杆端铰的琥珀色：与未变形轮廓（参考灰）区分开，约束与铰同属“连接”
             self.plotter.add_point_labels(np.array(masters, float), names, name="_constraint_labels",
-                                          font_size=9, text_color=theme.REFERENCE, shape=None,
+                                          font_size=13, text_color=theme.HINGE, shape=None,
                                           always_visible=True, show_points=True, point_size=8,
-                                          point_color=theme.REFERENCE)
+                                          point_color=theme.HINGE)
         if frame is None or not CAN_RENDER:
             return
         # 模型范围变了，网格地面跟着重算大小
@@ -731,17 +784,19 @@ class Viewport(QWidget):
         if self.selection:
             kind, ident = self.selection
             if kind == "member":
-                mesh = scene.highlight_members(frame, [ident])
+                segments = self._elements([ident])
+                mesh = scene.highlight_members(frame, segments)
                 if mesh.n_cells:
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_selection", opacity=0.85)
+                first = segments[0] if segments else ident
                 for axis, glyph in scene.member_local_axis_glyphs(
-                        frame, ident).items():
+                        frame, first).items():
                     self.plotter.add_mesh(
                         glyph, color=theme.LOCAL_AXES[axis],
                         name=f"_local_axis_{axis}", smooth_shading=True,
                         render=True)
-                points, texts = scene.member_local_axis_labels(frame, ident)
+                points, texts = scene.member_local_axis_labels(frame, first)
                 if points:
                     self.plotter.add_point_labels(
                         points, texts, name="_local_axis_labels", font_size=9,
@@ -756,7 +811,7 @@ class Viewport(QWidget):
         if self.region_selection:
             kind, ids = self.region_selection.kind, self.region_selection.ids
             if kind == "member":
-                mesh = scene.highlight_members(frame, ids)
+                mesh = scene.highlight_members(frame, self._elements(ids))
                 if mesh.n_cells:
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_region_selection", opacity=0.9)
@@ -771,7 +826,7 @@ class Viewport(QWidget):
         node_ids = [ident for kind, ident in self.problem_refs
                     if kind == "node"]
         if member_ids:
-            mesh = scene.highlight_members(frame, member_ids, radius_scale=2.0)
+            mesh = scene.highlight_members(frame, self._elements(member_ids), radius_scale=2.0)
             if mesh.n_cells:
                 self.plotter.add_mesh(mesh, color=theme.ERROR,
                                       name="_problem_members", opacity=0.9)
@@ -846,7 +901,7 @@ class Viewport(QWidget):
             picked = [] if hit is None else [node_ids[hit]]
         else:
             hit = picking.nearest_segment(segments, (x, y))
-            picked = [] if hit is None else [member_ids[hit]]
+            picked = [] if hit is None else [self._owner(member_ids[hit])]
         if not picked and mode != "replace":
             return                         # 加选、减选时点空了什么也不改
         self.region_selection.apply(self.region_pick, picked, mode)
@@ -863,7 +918,10 @@ class Viewport(QWidget):
             picked = [k for k, keep in zip(node_ids, mask, strict=True) if keep]
         else:
             mask = picking.segments_in_rect(segments, rect)
-            picked = [k for k, keep in zip(member_ids, mask, strict=True) if keep]
+            inside = {k for k, keep in zip(member_ids, mask, strict=True) if keep}
+            # 物理杆件的每个分析杆段都框住才算框住（与“完全框住”的规则一致）
+            picked = sorted({self._owner(k) for k in inside
+                             if all(e in inside for e in self._elements([self._owner(k)]))})
         self.region_selection.apply(self.region_pick, picked, mode)
         self._refresh_region()
 
@@ -1168,10 +1226,11 @@ class Viewport(QWidget):
         found = scene.nearest(self._frame, pt, self.pick_mode)
         if found is None:
             return
-        self.set_selection(self.pick_mode, found)
-        self.picked.emit(self.pick_mode, found)
+        ident = self._owner(found) if self.pick_mode == "member" else found
+        self.set_selection(self.pick_mode, ident)
+        self.picked.emit(self.pick_mode, ident)
         if self.pick_mode == "member":
-            self.probed.emit(found, pt.copy())
+            self.probed.emit(found, pt.copy())     # 探针按点中的那个分析杆段取值
 
     def _fit(self) -> None:
         """首次显示时摆好相机；之后保持用户转过的视角。
@@ -1858,7 +1917,8 @@ class Viewport(QWidget):
             scene.displaced_node_points(frame, phi, scale),
             color=theme.HIGHLIGHT, point_size=5, render_points_as_spheres=True)
         if label:
-            self.plotter.add_text(label, position="upper_left",
+            # 左上角被视口顶部的工作平面提示条盖住（真窗口验收发现），放右上角
+            self.plotter.add_text(label, position="upper_right",
                                   color=theme.VIEWPORT_INK, font_size=10)
         self._decorate(frame)
         self._fit()

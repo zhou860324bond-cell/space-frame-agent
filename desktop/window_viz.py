@@ -36,7 +36,9 @@ class WindowVizMixin:
         where = ("最终帧" if frame_index is None
                  else f"增量 {frame_index + 1}/{len(frames)}，荷载因子 {frames[frame_index]:g}")
         self.set_mode("变形")
-        self.refresh()
+        # 不整棵重建模型树：逐帧点着看时，重建会把选中项和展开状态都丢掉
+        self.lbl_solve.setText(self._solve_text())
+        self.quickbar.set_cases(list(self.result.payload["cases"]), self.case)
         self.statusBar().showMessage(f"结果：分析步 {step}，{where}", 8000)
 
     def _frame_solution(self):

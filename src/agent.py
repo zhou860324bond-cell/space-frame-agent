@@ -228,6 +228,10 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
 
     def goto_step(self, cursor: int) -> bool:
         """跳到第 cursor 步之后的状态。cursor = -1 表示回到空模型。"""
+        if cursor == self.history.cursor and -1 <= cursor < len(self.history.steps):
+            # 跳到当前所在的这一步：模型不变，不能顺手把结果清掉（真窗口里双击
+            # 时间线当前行，已求解的结果就没了）
+            return True
         model = self.history.goto(cursor)
         if model is None:
             return False

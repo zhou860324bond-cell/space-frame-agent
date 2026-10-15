@@ -1390,3 +1390,51 @@ def test_linear_pattern_from_the_assembly_page_and_delete_in_the_manager(qt_app,
     manager.table.selectRow(0)
     manager._delete(pattern=True)
     assert len(s.model["members"]) == before and "assembly" not in s.model
+
+
+def test_picks_in_a_refined_result_view_report_physical_members(qt_app):
+    """P-Δ、分析步把杆件剖成多段求解：结果视图里点选、框选、显示组都要按物理杆件。
+
+    真窗口验收发现：14 根杆件的模型点中一根，状态栏和探针写的是「杆件 32」——
+    那是分析杆段号，用户在模型里找不到。
+    """
+    s = built()
+    assert s.add_step("二阶", analysis="pdelta", loads={"D": "RAMP"}, increments=2).ok
+    w = MainWindow(s)
+    got = s.solve_steps()
+    assert got.ok, got.payload
+    w._steps_solved(got)
+    w.redraw()
+    owner = w.viewport.element_owner
+    physical = {int(m["id"]) for m in s.model["members"]}
+    assert set(owner.values()) == physical and len(owner) > len(physical)
+    member = min(physical)
+    segments = w.viewport._elements([member])
+    assert len(segments) > 1 and all(owner[e] == member for e in segments)
+    w.viewport.set_hidden_members({member})
+    view = w.viewport.visible_frame(s.frame)
+    assert not set(segments) & set(view.members), "隐藏物理杆件要隐藏它的全部分析杆段"
+    last = segments[-1]
+    w.probe_member_result(last, s.frame.nodes[s.frame.members[last].j].xyz)
+    caption = w.results.caption.text()
+    assert f"杆件 {member}（分析杆段 {last}）" in caption
+    whole = next(m for m in s.model["members"] if m["id"] == member)
+    ends = [next(n for n in s.model["nodes"] if n["id"] == whole[e]) for e in ("i", "j")]
+    length = sum((ends[1][k] - ends[0][k]) ** 2 for k in "xyz") ** 0.5
+    assert f"x={length:.4g}/{length:.4g}" in caption, "位置按整根物理杆件量"
+
+
+def test_hiding_a_member_in_model_view_after_solving_hides_all_its_segments(qt_app):
+    """求解后切回「模型」显示，画的仍是分析模型：隐藏一根柱要整根隐藏，而不是只藏一段。"""
+    s = built()
+    assert s.add_step("二阶", analysis="pdelta", loads={"D": "RAMP"}, increments=2).ok
+    w = MainWindow(s)
+    got = s.solve_steps()
+    assert got.ok
+    w._steps_solved(got)
+    w.set_mode("模型")
+    member = min(int(m["id"]) for m in s.model["members"])
+    assert len(w.viewport._elements([member])) > 1
+    w.viewport.set_hidden_members({member})
+    view = w.viewport.visible_frame(s.frame)
+    assert not set(w.viewport._elements([member])) & set(view.members)

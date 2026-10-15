@@ -85,10 +85,17 @@ class ModelTree(QTreeWidget):
         elif action:
             self.activated_item.emit(action, item.data(0, PAYLOAD))
 
+    #: 单击即生效的项：只切换显示、不弹对话框。结果树里逐帧、逐阶地点着看，
+    #: 每次都要双击太费劲（真窗口验收时单击没反应，像是坏了）。
+    _SINGLE_CLICK = ("result_step", "result_frame", "result_mode", "instance")
+
     def _on_click(self, item: QTreeWidgetItem, _column: int) -> None:
-        if item.data(0, ACTION) == "feature":
+        action = item.data(0, ACTION)
+        if action == "feature":
             kind, name, _suppressed = item.data(0, PAYLOAD)
             self.feature_selected.emit(kind, name)
+        elif action in self._SINGLE_CLICK:
+            self.activated_item.emit(action, item.data(0, PAYLOAD))
 
     def context_actions(self, item: QTreeWidgetItem) -> list[tuple[str, str]]:
         """某一项的右键菜单：(动作, 文字)。单独成函数，便于无头测试。"""
@@ -174,6 +181,7 @@ class ModelTree(QTreeWidget):
         analysis = entry["analysis"]
         node = self._child(parent, f"{name}　{self._ANALYSIS_LABEL.get(analysis, analysis)}",
                            "result_step", name)
+        node.setExpanded(True)          # 帧与振型默认摊开，点哪一帧看哪一帧
         if analysis == "frequency":
             r = entry["view"][3]
             for k, f in enumerate(r.frequencies):
