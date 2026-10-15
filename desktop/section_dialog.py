@@ -41,8 +41,8 @@ DEFAULT_DIMENSIONS = {
 
 
 # 双轴对称的截面：形心在几何中心，极端纤维距离就是半高、半宽，**是精确值**。
-# 槽钢、等边角钢、T 型钢不在此列：它们形心偏置，而本对话框的 Iz（槽钢、角钢）
-# 与 Iy（T 型钢）本来就标着"近似"。给一个精确的 c 配一个近似的 I，
+# 槽钢、等边角钢、T 型钢不在此列：它们形心偏置，槽钢的剪心不在形心，角钢的
+# 主轴斜 45°，这些都超出了梁单元按形心主轴计算应力的前提。给它们配一个 c，
 # 算出来的应力照样是错的，只是错得看不出来。所以**这三种干脆不给**，
 # 强度验算会明确拒绝——那比给一个来路不明的应力安全。
 _SYMMETRIC_FIBRES = {
@@ -59,7 +59,10 @@ OFFSET_CENTROID_SHAPES = ("槽钢", "等边角钢", "T 型钢")
 def calc_section(section_type: str, params: dict) -> dict:
     """根据截面类型和尺寸计算 A, Iy, Iz, J，以及极端纤维距离 cy/cz。
 
-    y 轴沿截面高度方向，z 轴沿截面宽度方向。
+    轴的约定与内核（``src/sections.py``）一致：局部 y 沿截面高度 h，z 沿宽度 b；
+    ``Iz = ∫y²dA`` 绕 z 轴，是高度方向受弯的**强轴**，``Iy = ∫z²dA`` 是弱轴。
+    以前这里把 b·h³/12 写进了 Iy，水平工字钢梁的竖向挠度因此大了 Iz/Iy
+    倍（默认 I 型钢约 13 倍），而且不报错。惯性矩一律对形心取。
 
     ``cy``/``cz`` 是强度验算算弯曲应力必需的（σ = N/A ± M·c/I）。少了它们，
     在对话框里建的截面**做不了强度验算**——这是从界面走一遍才发现的：
@@ -68,14 +71,14 @@ def calc_section(section_type: str, params: dict) -> dict:
     if section_type == "I 型钢":
         h, b, tw, tf = params["h"], params["b"], params["tw"], params["tf"]
         A = b * tf * 2 + (h - 2 * tf) * tw
-        Iy = (b * h ** 3 - (b - tw) * (h - 2 * tf) ** 3) / 12
-        Iz = (2 * tf * b ** 3 + (h - 2 * tf) * tw ** 3) / 12
+        Iz = (b * h ** 3 - (b - tw) * (h - 2 * tf) ** 3) / 12
+        Iy = (2 * tf * b ** 3 + (h - 2 * tf) * tw ** 3) / 12
         J = (2 * b * tf ** 3 + (h - 2 * tf) * tw ** 3) / 3
     elif section_type == "矩形管":
         b, h, t = params["b"], params["h"], params["t"]
         A = b * h - (b - 2 * t) * (h - 2 * t)
-        Iy = (b * h ** 3 - (b - 2 * t) * (h - 2 * t) ** 3) / 12
-        Iz = (h * b ** 3 - (h - 2 * t) * (b - 2 * t) ** 3) / 12
+        Iz = (b * h ** 3 - (b - 2 * t) * (h - 2 * t) ** 3) / 12
+        Iy = (h * b ** 3 - (h - 2 * t) * (b - 2 * t) ** 3) / 12
         # 薄壁矩形管扭转常数近似
         J = 2 * t * (b - t) * (h - t) ** 2 / (b + h - 2 * t)
     elif section_type == "圆管":
@@ -88,8 +91,8 @@ def calc_section(section_type: str, params: dict) -> dict:
     elif section_type == "矩形":
         b, h = params["b"], params["h"]
         A = b * h
-        Iy = b * h ** 3 / 12
-        Iz = h * b ** 3 / 12
+        Iz = b * h ** 3 / 12
+        Iy = h * b ** 3 / 12
         long_side, short_side = max(b, h), min(b, h)
         J = long_side * short_side ** 3 * (
             1 / 3 - 0.21 * short_side / long_side
@@ -102,24 +105,38 @@ def calc_section(section_type: str, params: dict) -> dict:
         J = math.pi * r ** 4 / 2
     elif section_type == "槽钢":
         h, b, tw, tf = params["h"], params["b"], params["tw"], params["tf"]
-        A = 2 * b * tf + (h - 2 * tf) * tw
-        Iy = (b * h ** 3 - (b - tw) * (h - 2 * tf) ** 3) / 12
-        # 槽钢 Iz 需要考虑形心偏移，这里近似
-        Iz = (2 * tf * b ** 3 + (h - 2 * tf) * tw ** 3) / 12
-        J = (2 * b * tf ** 3 + (h - 2 * tf) * tw ** 3) / 3
+        hw = h - 2 * tf
+        A = 2 * b * tf + hw * tw
+        # 关于 y 轴（腹板所在平面）对称，强轴不受形心偏移影响
+        Iz = (b * h ** 3 - (b - tw) * hw ** 3) / 12
+        # 弱轴要对形心取：形心从腹板外侧偏向翼缘一侧 z̄。原来直接对腹板外侧
+        # 求和，默认尺寸下弱轴惯性矩只有真实值的一半
+        z_bar = (2 * b * tf * b / 2 + hw * tw * tw / 2) / A
+        Iy = (2 * (tf * b ** 3 / 12 + b * tf * (b / 2 - z_bar) ** 2)
+              + hw * tw ** 3 / 12 + hw * tw * (tw / 2 - z_bar) ** 2)
+        J = (2 * b * tf ** 3 + hw * tw ** 3) / 3
     elif section_type == "等边角钢":
         b, t = params["b"], params["t"]
         A = 2 * b * t - t ** 2
-        Iy = Iz = (b ** 3 * t + (b - t) ** 3 * t) / 12 - A * (b / (2 * math.sqrt(2))) ** 2
-        # 近似
-        Iy = Iz = (2 * t * b ** 3 - (b - t) ** 3 * t) / 12
+        # 对平行于两肢的形心轴取，即型钢表里的 Ix = Iy。两肢沿局部 y、z，
+        # 这两根轴不是主轴（惯性积不为零，主轴斜 45°），内核只认主轴，
+        # 这里忽略惯性积——仍是近似，所以本对话框不给角钢 cy/cz。
+        c = (b * t * b / 2 + (b - t) * t * t / 2) / A   # 形心到肢背的距离
+        Iy = Iz = (t * b ** 3 / 12 + b * t * (b / 2 - c) ** 2
+                   + (b - t) * t ** 3 / 12 + (b - t) * t * (t / 2 - c) ** 2)
         J = (2 * b - t) * t ** 3 / 3
     elif section_type == "T 型钢":
         h, b, tw, tf = params["h"], params["b"], params["tw"], params["tf"]
-        A = b * tf + (h - tf) * tw
-        Iy = (b * h ** 3 - (b - tw) * (h - tf) ** 3) / 12
-        Iz = (tf * b ** 3 + (h - tf) * tw ** 3) / 12
-        J = (b * tf ** 3 + (h - tf) * tw ** 3) / 3
+        hw = h - tf
+        A = b * tf + hw * tw
+        # 强轴要对形心取：形心从腹板底端向翼缘偏到 ȳ。原来对翼缘外侧整块
+        # 外框相减，默认尺寸下强轴惯性矩大了七成
+        y_bar = (hw * tw * hw / 2 + b * tf * (hw + tf / 2)) / A
+        Iz = (tw * hw ** 3 / 12 + hw * tw * (hw / 2 - y_bar) ** 2
+              + b * tf ** 3 / 12 + b * tf * (hw + tf / 2 - y_bar) ** 2)
+        # 关于 y 轴（腹板中面）对称，弱轴不受形心偏移影响
+        Iy = (tf * b ** 3 + hw * tw ** 3) / 12
+        J = (b * tf ** 3 + hw * tw ** 3) / 3
     else:
         A, Iy, Iz, J = 0.01, 1e-5, 1e-5, 1e-7
 

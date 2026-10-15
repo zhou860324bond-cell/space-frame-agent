@@ -1,5 +1,13 @@
 # 工作进度
 
+## 截面对话框强弱轴修正（2026-10-15）
+
+- 来源：排查实体节点截面时发现 desktop/section_dialog.py 的 calc_section 与内核轴约定相反。以默认300×150工字钢4 m水平悬臂、10 kN竖向端荷载实测：sections.i_section 截面挠度11.674 mm，与PL³/(3EIz)一致；对话框截面153.155 mm，正好差Iz/Iy=13.12倍，确认缺陷。
+- 修正：I型钢、矩形管、矩形、槽钢、T型钢的Iy/Iz对调；槽钢弱轴、T型钢强轴改为对形心取；等边角钢改为型钢表Ix（仍忽略惯性积、仍不给cy/cz）。cy/cz原本就按内核约定，未改。删除角钢处被覆盖的死代码。
+- 兼容：主窗口写回模型的白名单不含geometry/type，旧模型无法分辨哪些截面出自对话框，故不做自动迁移；求解后的section_orientation静默失效检查（Iy>1.5·Iz）会标出这类截面，CHANGELOG写明重新创建同名截面覆盖。
+- 新增7项回归（tests/test_dialogs.py），用旧代码确认7项全部失败、新代码全部通过。按约定只跑增量：test_dialogs、test_silent_failures、test_sections、文档闸通过；收集总数2762（2755+7）由collect-only得出，未经全量运行确认。
+- 后续可做：create_section白名单放行geometry，让对话框截面在视口按真实轮廓绘制、编辑时可回填尺寸，并为日后迁移保留截面来源。
+
 ## 窗口外框与侧边面板美化（2026-10-15）
 
 - 承接上一轮令牌与视口改动（已随#33进入master），本轮只改功能区、页签、模型树、对话面板与显示模式按钮，不动三维视口。改前/改后基线用tools/capture_ui_states.py在1440×900与1366×768各拍七种状态，位于results/ui_panels（不入库）。
