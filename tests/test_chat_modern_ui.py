@@ -236,3 +236,30 @@ def test_history_list_shows_unselectable_day_headers(panel):
     assert first.text() == "今天"
     assert first.flags() == Qt.ItemFlag.NoItemFlags
     assert panel.history_list.item(1).data(Qt.ItemDataRole.UserRole) == panel.record["id"]
+
+
+def test_model_list_offers_adding_a_provider_connection(panel, monkeypatch):
+    """用户反馈"为啥没有模型的选择界面"：没配过连接时下拉框只有「离线演示」一项，
+    添加入口藏在顶栏连接图标的菜单里。现在下拉框直接列出各提供商的添加入口，
+    选中后打开该提供商模板的连接设置，当前模型保持不变。"""
+    from desktop.model_settings import PROVIDERS
+    selector = panel.model_selector
+    labels = [selector.itemText(i) for i in range(selector.count())]
+    for name in PROVIDERS:
+        assert f"添加 {name} 连接…" in labels
+    opened = []
+    monkeypatch.setattr(panel, "open_settings", lambda preset=None: opened.append(preset))
+    before = selector.currentData()
+    selector.setCurrentIndex(selector.findData("add:2"))
+    assert opened == [2]
+    assert selector.currentData() == before == "offline"
+    assert panel._offline
+
+
+def test_settings_window_opens_on_the_chosen_provider_template(panel):
+    from desktop.model_settings import ModelSettings
+    dialog = ModelSettings(panel.runner, [], "", panel, preset=2)
+    assert dialog.preset.currentText() == "Anthropic"
+    assert dialog.protocol.currentData() == "anthropic"
+    assert dialog.saved.currentData() == "" and not dialog.key.text()
+    dialog.close()

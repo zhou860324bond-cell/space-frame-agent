@@ -289,7 +289,7 @@ class ChatPanel(QWidget):
         self.model_selector.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.model_selector.setMinimumWidth(0)
         self._populate_models()
-        self.model_selector.currentIndexChanged.connect(self._switch_model)
+        self.model_selector.currentIndexChanged.connect(self._model_picked)
         header.addWidget(self.model_selector)
         header.addStretch(1)
         self.btn_history = _icon_button("history", "对话记录", "查看、搜索、重命名以前的对话；记录保存在本机")
@@ -501,9 +501,29 @@ class ChatPanel(QWidget):
         for p in self.profiles:
             suffix = "" if p.api_key else " · 请配置密钥"
             self.model_selector.addItem(f"{p.label} · {p.model}{suffix}", p.id)
+        # 添加入口直接列在下拉框里：没配过模型时下拉框只有「离线演示」一项，
+        # 用户不知道还能选别的，而入口藏在顶栏连接图标的菜单里。
+        self.model_selector.insertSeparator(self.model_selector.count())
+        from .model_settings import PROVIDERS
+        for index, name in enumerate(PROVIDERS):
+            self.model_selector.addItem(f"添加 {name} 连接…", f"add:{index}")
+        if self.profiles:
+            self.model_selector.addItem("管理模型连接…", "manage")
         selected = self.selected_profile or ("legacy" if credentials.load_api_key() else "offline")
         self.model_selector.setCurrentIndex(max(0, self.model_selector.findData(selected)))
         self.model_selector.blockSignals(False)
+
+    def _model_picked(self, index):
+        """下拉框里选了「添加…」「管理…」：退回原来的模型，打开连接设置。"""
+        data = self.model_selector.itemData(index)
+        if not (isinstance(data, str) and (data.startswith("add:") or data == "manage")):
+            self._switch_model(index)
+            return
+        self.model_selector.blockSignals(True)
+        self.model_selector.setCurrentIndex(max(0, self.model_selector.findData(
+            self.selected_profile or "offline")))
+        self.model_selector.blockSignals(False)
+        self.open_settings(int(data[4:]) if data.startswith("add:") else None)
 
     def _refresh_status(self):
         import credentials
@@ -591,11 +611,12 @@ class ChatPanel(QWidget):
         self.lbl_call_status.clear()
         self.lbl_call_status.hide()
 
-    def open_settings(self):
+    def open_settings(self, preset: int | None = None):
+        """``preset`` 给出提供商序号时，窗口直接以该提供商模板新建连接。"""
         if self.runner.busy or self._chat_busy:
             return
         from .model_settings import ModelSettings
-        dialog = ModelSettings(self.runner, self.profiles, self.selected_profile, self)
+        dialog = ModelSettings(self.runner, self.profiles, self.selected_profile, self, preset=preset)
         dialog.profiles_changed.connect(self._profiles_changed)
         # 保留所有者，隐藏期间后台检测的回调仍可安全访问窗口。
         self._dialogs.append(dialog)
