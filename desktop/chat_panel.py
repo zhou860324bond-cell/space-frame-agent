@@ -20,9 +20,14 @@
 把调用链摊开，答案就是自明的——模型只决定调什么，数从求解器出来。
 
 面板按主流 Agent 桌面端的方式组织：回答流式显示；每次工具调用是一张可展开的
-卡片（参数、结果、耗时、定位到视口）；多步任务有计划清单；每轮改了模型就给出
-改动摘要，可以保留或整轮撤销；批量修改要在卡片上确认；对话落盘，重启后在
-「对话」页找回；输入框支持 @ 引用杆件节点、/ 命令和拖入图纸。
+卡片（参数、结果、耗时、定位到视口），连续几次收成一张写明调用链的卡片；多步
+任务有计划清单；每轮改了模型就给出改动摘要，可以保留或整轮撤销；批量修改要在
+卡片上确认；对话落盘，重启后在「对话记录」里找回；输入框支持 @ 引用杆件节点、
+/ 命令和拖入图纸。
+
+外观也按这一类软件来：顶栏只有模型名和四个图标按钮，记录区不加边框，用户
+消息靠右成气泡，发送与停止是输入卡片右下角同一个位置的圆形按钮，Esc 停止、
+空输入框里按 ↑ 取回上一条消息。
 
 面板本身不算不画：`Conversation` 改的是同一个 `Session`，改完发信号，
 主窗口去重画。所以对话和工具栏操作是**同一份模型**，不会各改各的。
@@ -34,8 +39,8 @@ import re
 import time
 from copy import deepcopy
 
-from PySide6.QtCore import QSize, QStringListModel, Qt, QTimer, Signal
-from PySide6.QtGui import QKeyEvent, QTextCursor
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, QStringListModel, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPen, QPolygonF, QTextCursor
 from PySide6.QtWidgets import (QApplication, QComboBox, QCompleter, QFrame,
                                QHBoxLayout, QInputDialog, QLabel, QLayout,
                                QLineEdit, QListWidget, QListWidgetItem, QMenu,
@@ -43,8 +48,8 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QCompleter, QFrame,
                                QSizePolicy, QStackedWidget, QToolButton,
                                QVBoxLayout, QWidget)
 
-from . import glyphs, icons
-from .chat_widgets import TranscriptView, diff_lines, entry_text, tool_label
+from . import glyphs, icons, theme
+from .chat_widgets import Avatar, TranscriptView, diff_lines, entry_text, tool_label
 
 # 离线时用的脚本。**不是假装在跟大模型说话**——它照样把真工具跑一遍，
 # 出来的数还是求解器算的。没有密钥、没有网的场合（答辩现场很常见）
@@ -82,6 +87,8 @@ class PromptEdit(QPlainTextEdit):
 
     submitted = Signal()
     mention_chosen = Signal(str, int)
+    # 空输入框里按 ↑：取回上一条发出的消息（不撤销那一轮，只是把文字放回来）
+    recall_requested = Signal()
 
     MAX_LINES = 6
     MIN_LINES = 2
@@ -90,7 +97,7 @@ class PromptEdit(QPlainTextEdit):
         super().__init__(parent)
         # 占位文字要短；键位说明放进 tooltip
         self.setPlaceholderText("描述工程需求，@ 引用杆件，/ 使用命令…")
-        self.setToolTip("Enter 发送　Shift+Enter 换行　@ 引用节点或杆件　/ 命令")
+        self.setToolTip("Enter 发送　Shift+Enter 换行　↑ 取回上一条　@ 引用节点或杆件　/ 命令")
         self.setTabChangesFocus(True)
         self.document().documentLayout().documentSizeChanged.connect(
             lambda *_: self._fit_height())
@@ -202,6 +209,9 @@ class PromptEdit(QPlainTextEdit):
         if enter and not shift:
             self.submitted.emit()
             return
+        if event.key() == Qt.Key.Key_Up and not self.toPlainText():
+            self.recall_requested.emit()
+            return
         super().keyPressEvent(event)
 
 
@@ -217,6 +227,8 @@ class ChatPanel(QWidget):
 
     def __init__(self, session, runner, parent=None):
         super().__init__(parent)
+        self.setObjectName("chatPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.session = session
         self.runner = runner
         self.conversation = None
@@ -266,32 +278,32 @@ class ChatPanel(QWidget):
         layout.setSpacing(6)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
 
-        # 第一行：标题 + 对话记录 / 新建 / 协作任务 / 连接设置
+        # 顶栏：左边是当前模型（兼作标题），右边四个图标按钮。原来是「工程对话」
+        # 大标题加四个文字按钮一行、整宽的模型下拉框再一行，读起来像一张表单。
         header = QHBoxLayout()
         header.setSpacing(2)
-        self.title_label = QLabel("工程对话")
-        self.title_label.setObjectName("chatTitle")
-        header.addWidget(self.title_label)
+        self.model_selector = QComboBox()
+        self.model_selector.setObjectName("chatModel")
+        self.model_selector.setToolTip("当前对话使用的模型。切换模型保留对话历史与当前工程；运行期间不可切换")
+        self.model_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.model_selector.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.model_selector.setMinimumWidth(0)
+        self._populate_models()
+        self.model_selector.currentIndexChanged.connect(self._switch_model)
+        header.addWidget(self.model_selector)
         header.addStretch(1)
-        self.btn_history = _tool_button("对话记录", "查看、搜索、重命名以前的对话；记录保存在本机")
+        self.btn_history = _icon_button("history", "对话记录", "查看、搜索、重命名以前的对话；记录保存在本机")
         self.btn_history.clicked.connect(self.show_history)
-        self.btn_new_chat = _tool_button("新建", "新建对话（当前对话已自动保存）")
+        self.btn_new_chat = _icon_button("new_chat", "新建", "新建对话（当前对话已自动保存）")
         self.btn_new_chat.clicked.connect(self.new_chat)
-        self.btn_tasks = _tool_button("协作任务", "主 Agent 分派建模与检查子任务，候选在审阅应用前不修改原工程")
+        self.btn_tasks = _icon_button("agents", "协作任务",
+                                      "主 Agent 分派建模与检查子任务，候选在审阅应用前不修改原工程")
         self.btn_tasks.clicked.connect(self.open_task_dialog)
-        self.btn_settings = _tool_button("连接设置", "配置模型地址、密钥与备用连接")
+        self.btn_settings = _icon_button("connection", "连接设置", "配置模型地址、密钥与备用连接")
         self.btn_settings.clicked.connect(self._settings_menu)
         for button in (self.btn_history, self.btn_new_chat, self.btn_tasks, self.btn_settings):
             header.addWidget(button)
         layout.addLayout(header)
-
-        self.model_selector = QComboBox()
-        self.model_selector.setToolTip("切换模型保留对话历史与当前工程；运行期间不可切换")
-        self.model_selector.setMinimumWidth(0)
-        self.model_selector.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self._populate_models()
-        self.model_selector.currentIndexChanged.connect(self._switch_model)
-        layout.addWidget(self.model_selector)
         # 备用连接与本次运行打开过的对话仍是真实的下拉数据源，只是不常驻界面
         self.backup_selector = QComboBox(self)
         self.backup_selector.setToolTip("仅在模型请求失败时启用所选连接；各提供商使用自己的密钥")
@@ -303,12 +315,12 @@ class ChatPanel(QWidget):
         self.chat_selector.currentIndexChanged.connect(self._switch_chat)
         self.chat_selector.hide()
 
-        # 连接说明只留一行小字，完整说明放在悬停提示里：原来两行正文压在
-        # 模型下拉下面，比下拉本身还高，挤占了对话区。
+        # 连接说明只留一行小字，放在输入卡片下面当脚注（主流对话软件提示
+        # "回答可能有误"的位置），完整说明放在悬停提示里。
         self.lbl_status = QLabel()
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setProperty("chat", "caption")
-        layout.addWidget(self.lbl_status)
+        self.lbl_status.setProperty("chat", "footnote")
+        self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.view = TranscriptView(self)
         self.view.set_welcome(self._welcome())
@@ -327,6 +339,7 @@ class ChatPanel(QWidget):
         self.suggestion_row.setContentsMargins(0, 0, 0, 0)
         self.suggestion_row.setSpacing(4)
         self.suggestions = QWidget(self)
+        self.suggestions.setObjectName("chatSuggestions")
         self.suggestions.setLayout(self.suggestion_row)
         layout.addWidget(self.suggestions)
         self.followups = []
@@ -342,6 +355,9 @@ class ChatPanel(QWidget):
         self.entry.submitted.connect(self.send)
         self.entry.objects_provider = self._mention_names
         self.entry.mention_chosen.connect(self._add_reference)
+        self.entry.recall_requested.connect(self._recall_last)
+        self.entry.installEventFilter(self)
+        self.composer = composer
         card.addWidget(self.entry)
         bar = QHBoxLayout()
         bar.setContentsMargins(6, 2, 6, 6)
@@ -363,13 +379,14 @@ class ChatPanel(QWidget):
         self.lbl_context.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.btn_clear = _tool_button("清除", "清除本轮引用的对象")
         self.btn_clear.clicked.connect(self.clear_references)
-        self.btn_stop = QPushButton("停止", composer)
+        # 发送与停止在同一个位置：空闲时是蓝色上箭头，运行中换成方块停止键
+        self.btn_stop = RoundButton("stop", composer)
         self.btn_stop.setEnabled(False)
         self.btn_stop.hide()
-        self.btn_stop.setToolTip("中止本轮后续工具调用。已执行的调用不会回滚，可在改动卡片上撤销本轮")
+        self.btn_stop.setToolTip("停止（Esc）：中止本轮后续工具调用。已执行的调用不会回滚，可在改动卡片上撤销本轮")
         self.btn_stop.clicked.connect(self.stop)
-        self.btn_send = QPushButton("发送", composer)
-        self.btn_send.setProperty("role", "primary")
+        self.btn_send = RoundButton("send", composer)
+        self.btn_send.setToolTip("发送（Enter）")
         self.btn_send.clicked.connect(self.send)
         for widget in (self.btn_objects, self.btn_attach):
             bar.addWidget(widget)
@@ -379,6 +396,7 @@ class ChatPanel(QWidget):
             bar.addWidget(widget)
         card.addLayout(bar)
         layout.addWidget(composer)
+        layout.addWidget(self.lbl_status)
 
         self.pages.addWidget(self._build_history_page())
 
@@ -395,7 +413,22 @@ class ChatPanel(QWidget):
         # 小屏幕保留模型、输入与引用，辅助说明按可用空间收起。
         self.lbl_status.setVisible(self.height() >= 420)
         self.suggestions.setVisible(self.height() >= 300 and bool(self.followups))
-        self.title_label.setVisible(self.width() >= 380)
+        # 模型名再长也给右侧四个图标留位
+        self.model_selector.setMaximumWidth(max(120, self.width() - 4 * 30 - 28))
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if watched is self.entry and event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+            # Qt 样式表没有 :focus-within，输入框获得焦点时由这里给整张输入卡片描蓝边
+            self.composer.setProperty("focused", event.type() == QEvent.Type.FocusIn)
+            self.composer.style().unpolish(self.composer)
+            self.composer.style().polish(self.composer)
+        return super().eventFilter(watched, event)
+
+    def _recall_last(self) -> None:
+        last = next((e["text"] for e in reversed(self.record["entries"]) if e["type"] == "user"), "")
+        if last:
+            self.entry.setPlainText(last)
+            self.entry.moveCursor(QTextCursor.MoveOperation.End)
 
     def _has_messages(self):
         return bool(self.view.entries)
@@ -403,24 +436,28 @@ class ChatPanel(QWidget):
     # --- 欢迎与状态 ---
 
     def _welcome(self) -> QWidget:
-        """空对话时的说明卡片：三种用法各一行，图标在左，底下一行说明数值来源。
+        """空对话时的欢迎区：在记录区里居中，头像、一句问候、三行用法。
 
-        原来是标题加两段长句，没有边界，铺在整块空白对话区顶端，读起来像
-        散落的说明文字。收成一张有边框的卡片，一眼看完就能开始输入。
+        上一版是贴在记录区顶端的一张边框卡片，下面一大片空白；主流对话软件的
+        空状态是居中的问候，开始输入后让位给消息。
         """
         from PySide6.QtWidgets import QGridLayout
         box = QFrame()
         box.setObjectName("chatWelcome")
         column = QVBoxLayout(box)
-        column.setContentsMargins(12, 8, 12, 8)
-        column.setSpacing(6)
-        title = QLabel("结构建模助手")
+        column.setContentsMargins(8, 0, 8, 0)
+        column.setSpacing(12)
+        column.addStretch(3)
+        column.addWidget(Avatar(40), 0, Qt.AlignmentFlag.AlignHCenter)
+        title = QLabel("想建一个什么样的结构？")
         title.setProperty("chat", "welcomeTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setWordWrap(True)
         column.addWidget(title)
         rows = QGridLayout()
-        rows.setContentsMargins(0, 0, 0, 0)
+        rows.setContentsMargins(0, 4, 0, 4)
         rows.setHorizontalSpacing(8)
-        rows.setVerticalSpacing(4)
+        rows.setVerticalSpacing(6)
         for row, (name, text) in enumerate((
                 ("chat", "描述结构几何、材料、约束和荷载，助手调用建模工具完成"),
                 ("pick_member", "键入 @ 引用杆件或节点，键入 / 查看命令"),
@@ -432,13 +469,16 @@ class ChatPanel(QWidget):
             rows.addWidget(mark, row, 0)
             label = QLabel(text)
             label.setWordWrap(True)
+            label.setProperty("chat", "welcomeTip")
             rows.addWidget(label, row, 1)
         rows.setColumnStretch(1, 1)
         column.addLayout(rows)
         note = QLabel("每次工具调用都会列出参数与结果，数值全部来自确定性求解器。")
         note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         note.setProperty("chat", "caption")
         column.addWidget(note)
+        column.addStretch(4)
         return box
 
     def _show_welcome(self) -> None:
@@ -639,7 +679,19 @@ class ChatPanel(QWidget):
     def _fill_history(self, *_):
         import time
         self.history_list.clear()
+        today = time.localtime()
+        group = None
         for item in self.store.search(self.history_search.text()):
+            label = day_group(time.localtime(item["updated"]), today)
+            if label != group:
+                group = label
+                head = QListWidgetItem(label)
+                head.setFlags(Qt.ItemFlag.NoItemFlags)
+                font = head.font()
+                font.setBold(True)
+                head.setFont(font)
+                head.setForeground(QColor(theme.INK_DIM))
+                self.history_list.addItem(head)
             stamp = time.strftime("%m-%d %H:%M", time.localtime(item["updated"]))
             current = "　（当前）" if item["id"] == self.record["id"] else ""
             row = QListWidgetItem(f"{item['title']}{current}\n{stamp} · {item['messages']} 条消息 · {item['preview']}")
@@ -1228,12 +1280,16 @@ class ChatPanel(QWidget):
         self.btn_stop.setEnabled(False)
 
     def _set_busy(self, busy: bool) -> None:
+        refocus = self.entry.hasFocus() or self.btn_stop.hasFocus()
         self._chat_busy = busy
         self.set_task_busy(bool(busy or self.runner.busy))
         self.entry.setReadOnly(busy)
-        self.btn_send.setText("思考中…" if busy else "发送")
         self.btn_stop.setEnabled(busy)
         self.btn_stop.setVisible(busy)
+        self.btn_send.setVisible(not busy)
+        # 焦点交给停止键，按 Esc 就能停；结束后回到输入框，接着打下一句
+        if refocus:
+            (self.btn_stop if busy else self.entry).setFocus()
         self.busy_changed.emit(busy)
 
     def set_task_busy(self, busy):
@@ -1304,6 +1360,102 @@ class ChatPanel(QWidget):
 
     def _append_note(self, text: str, level: str = "warn") -> None:
         self._add_entry({"type": "note", "level": level, "text": text})
+
+
+def day_group(stamp, today) -> str:
+    """对话记录按更新日期分组：今天、昨天、近 7 天、更早。"""
+    import time
+    midnight = (lambda t: time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+    days = round((midnight(today) - midnight(stamp)) / 86400)
+    if days <= 0:
+        return "今天"
+    if days == 1:
+        return "昨天"
+    return "近 7 天" if days < 7 else "更早"
+
+
+def _icon_button(icon: str, name: str, tip: str) -> QToolButton:
+    """顶栏的图标按钮：只显示图标，名称和用途写在悬停提示里。"""
+    button = QToolButton()
+    button.setText(name)
+    button.setIcon(icons.icon(icon))
+    button.setIconSize(QSize(18, 18))
+    button.setToolTip(f"{name}：{tip}")
+    button.setProperty("chat", "icon")
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    return button
+
+
+class RoundButton(QPushButton):
+    """输入卡片右下角的圆形按钮：``send`` 是蓝底白色上箭头，``stop`` 是描边圆里一个方块。
+
+    自己画而不用文字：「发送」「思考中…」宽度不同，运行时按钮变宽，把引用
+    状态挤走；图形按钮尺寸固定。停止键获得焦点时按 Esc 即停止。
+    """
+
+    def __init__(self, kind: str, parent=None):
+        super().__init__(parent)
+        self.kind = kind
+        self.setObjectName("chatSend" if kind == "send" else "chatStop")
+        self.setText("发送" if kind == "send" else "停止")
+        self.setFixedSize(32, 32)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def event(self, event):
+        # 主窗口也有 Esc 快捷键；停止键有焦点时先把 Esc 留给自己
+        if (self.kind == "stop" and event.type() == QEvent.Type.ShortcutOverride
+                and event.key() == Qt.Key.Key_Escape):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event):  # noqa: N802
+        if self.kind == "stop" and event.key() == Qt.Key.Key_Escape:
+            if self.isEnabled():
+                self.click()
+            return
+        super().keyPressEvent(event)
+
+    def enterEvent(self, event):  # noqa: N802
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):  # noqa: N802
+        super().leaveEvent(event)
+        self.update()
+
+    def paintEvent(self, _event):  # noqa: N802
+        g = QPainter(self)
+        g.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        enabled = self.isEnabled()
+        hover = enabled and self.underMouse()
+        c = rect.center()
+        if self.kind == "send":
+            g.setPen(Qt.PenStyle.NoPen)
+            fill = (theme.ACCENT if hover else theme.ACCENT_DIM) if enabled else theme.PANEL_HOVER
+            g.setBrush(QColor(fill))
+            g.drawEllipse(rect)
+            pen = QPen(QColor(theme.ON_ACCENT if enabled else theme.INK_DIM), 2.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            g.setPen(pen)
+            g.drawLine(QPointF(c.x(), c.y() + 6), QPointF(c.x(), c.y() - 6))
+            g.drawPolyline(QPolygonF([QPointF(c.x() - 5, c.y() - 1), QPointF(c.x(), c.y() - 6),
+                                      QPointF(c.x() + 5, c.y() - 1)]))
+        else:
+            g.setPen(QPen(QColor(theme.ACCENT if hover else theme.BORDER_LIGHT), 1.5))
+            g.setBrush(QColor(theme.SELECTION if hover else theme.SURFACE))
+            g.drawEllipse(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+            g.setPen(Qt.PenStyle.NoPen)
+            g.setBrush(QColor(theme.INK if enabled else theme.INK_DIM))
+            g.drawRoundedRect(QRectF(c.x() - 5, c.y() - 5, 10, 10), 2, 2)
+        if self.hasFocus():
+            g.setPen(QPen(QColor(theme.ACCENT), 1.2, Qt.PenStyle.DotLine))
+            g.setBrush(Qt.BrushStyle.NoBrush)
+            g.drawEllipse(rect)
+        g.end()
 
 
 def _tool_button(text: str, tip: str, icon: str = "") -> QToolButton:

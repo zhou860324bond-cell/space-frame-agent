@@ -39,6 +39,8 @@ SUCCESS = "#237a4b"
 ERROR = "#b53a3a"
 # 状态色的浅底与描边：提示框、结果卡片、失败的工具卡片共用，不再各写一套近似色。
 ON_ACCENT = "#ffffff"
+# 对话面板的最上层表面（输入卡片、消息气泡、工具明细），比 PANEL_ALT 再亮一档
+SURFACE = "#ffffff"
 SELECTION_BORDER = "#b9d4ea"
 ERROR_SOFT = "#f7e3e3"
 ERROR_SOFT_HOVER = "#f0d5d5"
@@ -259,6 +261,9 @@ TREE_OPEN = _chevron_file(INK_MUTED, "tree-open", "tree-open")
 RADIUS_SM = "4px"
 RADIUS_MD = "6px"
 RADIUS_LG = "8px"
+# 只用于对话面板：输入卡片、消息气泡与建议按钮沿用主流对话软件的大圆角，
+# 让这一栏一眼读作"对话"，与左侧工程表格、功能区的小圆角区分开。
+RADIUS_XL = "12px"
 
 
 STYLESHEET = f"""
@@ -616,10 +621,11 @@ QLabel[panel="hint"] {{
     color: {INK_MUTED};
 }}
 QPushButton[role="suggestion"] {{
-    background: {PANEL_ALT};
+    background: {SURFACE};
     border-color: {BORDER};
+    border-radius: {RADIUS_XL};
     color: {INK_MUTED};
-    padding: 4px 8px;
+    padding: 4px 12px;
 }}
 QPushButton[role="suggestion"]:hover {{
     color: {ACCENT_DIM};
@@ -922,72 +928,123 @@ QToolButton#drawerFloat, QToolButton#drawerClose {{
 QToolButton#drawerFloat:hover {{ background: {PANEL_HOVER}; }}
 
 QLabel#chatTitle {{ font-size: {FONT_TITLE}; font-weight: 600; color: {INK}; padding-right: 6px; }}
+QWidget#chatPanel, QWidget#chatPanel QStackedWidget > QWidget {{ background: {PANEL_ALT}; }}
+QWidget#chatSuggestions, QWidget#chatActions, QWidget#toolBody {{ background: transparent; }}
+QToolButton[chat="link"] {{
+    color: {ACCENT_DIM}; background: transparent; border: none; padding: 0px;
+}}
+QToolButton[chat="link"]:hover {{ color: {ACCENT}; text-decoration: underline; }}
 QToolButton[chat="tool"] {{
     color: {INK_MUTED}; background: transparent; border: 1px solid transparent;
-    border-radius: {RADIUS_SM}; padding: 4px 8px;
+    border-radius: {RADIUS_MD}; padding: 4px 8px;
 }}
-QToolButton[chat="tool"]:hover {{ color: {ACCENT_DIM}; background: {PANEL_HOVER}; border-color: {BORDER}; }}
+QToolButton[chat="tool"]:hover {{ color: {ACCENT_DIM}; background: {PANEL_HOVER}; }}
 QToolButton[chat="tool"]:disabled {{ color: {INK_DIM}; }}
+QToolButton[chat="icon"] {{
+    background: transparent; border: 1px solid transparent; border-radius: {RADIUS_MD}; padding: 4px;
+}}
+QToolButton[chat="icon"]:hover {{ background: {PANEL_HOVER}; }}
+QToolButton[chat="icon"]:pressed {{ background: {SELECTION}; }}
+QToolButton[chat="action"] {{
+    background: transparent; border: none; border-radius: {RADIUS_SM}; padding: 2px;
+}}
+QToolButton[chat="action"]:hover {{ background: {PANEL_HOVER}; }}
 QToolButton[chat="chip"] {{
-    color: {INK}; background: {PANEL}; border: 1px solid {BORDER};
-    border-radius: {RADIUS_SM}; padding: 2px 6px;
+    color: {INK_MUTED}; background: {SURFACE}; border: 1px solid {BORDER};
+    border-radius: {RADIUS_XL}; padding: 2px 8px;
 }}
 QToolButton[chat="chip"]:hover {{ color: {ACCENT_DIM}; background: {SELECTION}; border-color: {ACCENT}; }}
 QToolButton[chat="chip"]:disabled {{ color: {INK_DIM}; background: transparent; border-color: {BORDER}; }}
-QFrame#chatComposer {{
-    background: {PANEL_ALT}; border: 1px solid {BORDER_LIGHT}; border-radius: {RADIUS_MD};
+QComboBox#chatModel {{
+    background: transparent; border: 1px solid transparent; border-radius: {RADIUS_MD};
+    font-weight: 600; padding: 4px 8px;
 }}
+QComboBox#chatModel:hover {{ background: {PANEL_HOVER}; }}
+QFrame#chatComposer {{
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_XL};
+}}
+QFrame#chatComposer[focused="true"] {{ border-color: {ACCENT}; }}
 QPlainTextEdit#chatEntry {{ background: transparent; border: none; padding: 4px 6px; }}
 QFrame#chatComposer QLabel {{ background: transparent; }}
-QFrame#chatComposer QPushButton {{ padding: 4px 12px; }}
-QScrollArea#assistantConversation {{
-    background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: {RADIUS_MD};
+QPushButton#chatSend, QPushButton#chatStop {{
+    background: transparent; border: none; padding: 0px;
 }}
+QLabel[chat="footnote"] {{ color: {INK_DIM}; font-size: {FONT_CAPTION}; background: transparent; }}
+QScrollArea#assistantConversation {{ background: {PANEL_ALT}; border: none; }}
 QWidget#transcriptInner {{ background: {PANEL_ALT}; }}
-QFrame#chatWelcome {{
-    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_MD};
+QToolButton#chatScrollDown {{
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 14px; padding: 4px;
+    color: {INK_MUTED}; font-weight: 600;
 }}
+QToolButton#chatScrollDown:hover {{ color: {ACCENT_DIM}; border-color: {ACCENT}; }}
+QFrame#chatWelcome {{ background: transparent; border: none; }}
 QFrame#chatWelcome QLabel {{ background: transparent; border: none; }}
-QLabel[chat="welcomeTitle"] {{ color: {ACCENT_DIM}; font-size: {FONT_TITLE}; font-weight: 600; }}
-QFrame[entry="user"] {{
-    background: {SELECTION}; border: 1px solid {SELECTION_BORDER}; border-radius: {RADIUS_LG};
+QLabel[chat="welcomeTitle"] {{ color: {INK}; font-size: {FONT_DISPLAY}; font-weight: 600; }}
+QLabel[chat="welcomeTip"] {{ color: {INK_MUTED}; }}
+QFrame[chat="bubble"] {{
+    background: {SELECTION}; border: 1px solid {SELECTION_BORDER}; border-radius: {RADIUS_XL};
 }}
-QFrame[entry="assistant"], QFrame[entry="note"] {{ background: transparent; border: none; }}
+QFrame[entry="user"], QFrame[entry="assistant"], QFrame[entry="note"] {{
+    background: transparent; border: none;
+}}
 QFrame[entry="change"] {{
-    background: {PANEL_ALT}; border: 1px solid {BORDER}; border-left: 3px solid {ACCENT};
-    border-radius: {RADIUS_SM};
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_LG};
 }}
 QFrame[entry="approval"] {{
-    background: {WARN_SOFT}; border: 1px solid {WARN_BORDER}; border-left: 3px solid {WARN};
-    border-radius: {RADIUS_SM};
+    background: {WARN_SOFT}; border: 1px solid {WARN_BORDER}; border-radius: {RADIUS_LG};
 }}
 QFrame[entry] QLabel {{ background: transparent; }}
 QLabel[chat="user"] {{ color: {INK}; }}
 QLabel[chat="assistant"] {{ color: {INK}; }}
-QLabel[chat="speaker"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
+QLabel[chat="speaker"] {{ color: {INK}; font-weight: 600; }}
+QLabel[chat="cardTitle"] {{ color: {INK}; font-weight: 600; }}
 QLabel[chat="caption"] {{ color: {INK_DIM}; font-size: {FONT_CAPTION}; }}
 QLabel[chat="warn"] {{ color: {WARN}; }}
+QLabel[chat="note"] {{ color: {INK_MUTED}; font-size: {FONT_CAPTION}; }}
+QLabel[chat="noteWarn"] {{ color: {WARN}; font-size: {FONT_CAPTION}; }}
+QFrame[chat="notePill"] {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_LG};
+}}
+QFrame[chat="notePill"][level="warn"] {{ background: {WARN_SOFT}; border-color: {WARN_BORDER}; }}
 QLabel[chat="mono"] {{
     color: {INK_MUTED}; font-family: Consolas, "Cascadia Mono", monospace; font-size: {FONT_CAPTION};
 }}
+QLabel[chat="refs"] {{ color: {ACCENT_DIM}; font-size: {FONT_CAPTION}; }}
 QLabel[chat="planDone"] {{ color: {INK_DIM}; }}
 QLabel[chat="planActive"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
 QFrame#planCard {{
-    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_SM};
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_LG};
 }}
-QFrame#toolCard {{
-    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_SM};
+QProgressBar#planProgress {{
+    background: {PANEL}; border: none; border-radius: 2px; max-height: 4px; min-height: 4px;
 }}
+QProgressBar#planProgress::chunk {{ background: {ACCENT}; border-radius: 2px; }}
+QFrame#toolCard, QFrame#toolGroup {{
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_LG};
+}}
+QFrame#toolGroup QFrame#toolCard {{ border: none; border-top: 1px solid {PANEL}; border-radius: 0px; }}
 QFrame#toolCard[state="failed"] {{ border-color: {ERROR_BORDER}; background: {ERROR_SOFT}; }}
-QFrame#toolCard[state="running"] {{ border-color: {ACCENT}; }}
+QFrame#toolGroup QFrame#toolCard[state="failed"] {{ background: {ERROR_SOFT}; }}
+QFrame#toolCard[state="running"], QFrame#toolGroup[state="running"] {{ border-color: {ACCENT}; }}
 QToolButton#toolCardHeader {{
-    text-align: left; border: none; background: transparent; padding: 4px 6px;
-    color: {INK_MUTED}; font-size: {FONT_BODY};
+    text-align: left; border: none; background: transparent; padding: 0px;
+    border-radius: {RADIUS_LG};
 }}
-QToolButton#toolCardHeader:hover {{ color: {ACCENT_DIM}; }}
-QFrame#toolCard[state="failed"] QToolButton#toolCardHeader {{ color: {ERROR}; }}
-QFrame#thinkingCard {{ background: transparent; border: none; border-left: 2px solid {BORDER_LIGHT}; }}
+QToolButton#toolCardHeader:hover {{ background: {PANEL_ALT}; }}
+QLabel[chat="toolName"] {{ color: {INK}; font-weight: 600; }}
+QLabel[chat="toolArgs"] {{ color: {INK_DIM}; font-size: {FONT_CAPTION}; }}
+QLabel[chat="toolTime"] {{ color: {INK_DIM}; font-size: {FONT_CAPTION}; }}
+QFrame#toolCard[state="failed"] QLabel[chat="toolName"] {{ color: {ERROR}; }}
+QFrame#toolDetail {{
+    background: {PANEL_ALT}; border: 1px solid {PANEL}; border-radius: {RADIUS_MD};
+}}
+QFrame#thinkingCard {{ background: transparent; border: none; }}
+QFrame#thinkingBody {{ background: transparent; border: none; border-left: 2px solid {BORDER}; }}
 QLabel[chat="thinking"] {{ color: {INK_DIM}; font-size: {FONT_CAPTION}; }}
 QToolButton[chat="primaryLink"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
-QListWidget#chatHistory::item {{ padding: 6px 6px; border-bottom: 1px solid {BORDER}; }}
+QFrame#chatComposer QPushButton, QFrame[entry] QPushButton {{ padding: 4px 12px; }}
+QListWidget#chatHistory {{ background: transparent; border: none; }}
+QListWidget#chatHistory::item {{ padding: 6px 8px; border: none; border-radius: {RADIUS_MD}; }}
+QListWidget#chatHistory::item:hover {{ background: {PANEL_HOVER}; }}
+QListWidget#chatHistory::item:selected {{ background: {SELECTION}; color: {INK}; }}
 """
