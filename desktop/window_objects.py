@@ -16,7 +16,8 @@ from __future__ import annotations
 from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
 from .object_dialogs import (BC_TYPES, CONSTRAINT_TYPES, LOAD_FIELD, LOAD_REGION, LOAD_TYPES,
-                             AssignSectionDialog, CreateObjectDialog, EditBCDialog,
+                             AssignSectionDialog, CreateObjectDialog, DisplacementBCDialog,
+                             EditBCDialog,
                              EditConstraintDialog, EditLoadDialog, ObjectManagerDialog,
                              OrientationDialog, next_name)
 
@@ -64,6 +65,9 @@ class WindowObjectsMixin:
                                self._initial_region("node"))
 
     def _finish_bc(self, name: str, step: str, preset, region: dict) -> None:
+        if preset == "DISPLACEMENT":
+            self._finish_displacement_bc(name, step, region)
+            return
         editor = EditBCDialog(name, _PRESET_FIX[preset or "SPRING"], parent=self)
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
@@ -176,6 +180,23 @@ class WindowObjectsMixin:
                                lambda region: self._finish_load(name, case, load_type, region),
                                initial)
 
+    def _finish_displacement_bc(self, name: str, step: str, region: dict) -> None:
+        """给定位移（支座沉降、强迫转角）：Abaqus 的 Displacement/Rotation 边界条件给非零值。"""
+        cases = [c["name"] for c in self.session.model.get("load_cases") or []]
+        editor = DisplacementBCDialog(name, cases, self.session.model.get("units", "N-m-Pa"), self)
+        if editor.exec() != QDialog.DialogCode.Accepted:
+            return
+        fix, displacement, case = editor.values()
+        if case not in cases:
+            created = self.session.add_load_case(case)
+            if not created.ok:
+                QMessageBox.warning(self, "工况未创建", self._explain(created.payload))
+                return
+        note = "" if step == "Initial" else "（给定位移的边界条件在 Initial 创建，随工况激活）"
+        result = self.session.create_boundary_condition(name, region, fix=fix,
+                                                        displacement=displacement, case=case)
+        self._object_result(result, f"已创建给定位移「{name}」，随工况 {case} 施加{note}。")
+
     def _finish_load(self, name: str, case: str, load_type: str, region: dict) -> None:
         default = {"gravity": [0.0, 0.0, -self.session.units.gravity]}.get(load_type,
                                                                             [0.0, 0.0, 0.0])
@@ -183,32 +204,9 @@ class WindowObjectsMixin:
                                 self.session.model.get("units", "N-m-Pa"), self)
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
-        if load_type == "settlement":
-            self._finish_settlement(name, case, region, editor.vector())
-            return
         result = self.session.create_load(name, case, load_type, region,
                                           **{LOAD_FIELD[load_type]: editor.vector()})
         self._object_result(result, f"已创建载荷「{name}」。")
-
-    def _finish_settlement(self, name: str, case: str, region: dict, vector: list[float]) -> None:
-        """支座沉降：对区域内每个节点施加给定位移（工况内的强加变形，不计入外力）。
-
-        原来只能在旧的「边界条件」表单里逐个节点填；那张表单与边界条件管理器
-        重复，收敛界面时删掉了，这条路径搬到「创建载荷」里，按区域一次施加。
-        """
-        from features import region_ids
-        nodes, problem = region_ids(self.session.model, region, "nodes")
-        if problem:
-            QMessageBox.warning(self, "沉降未施加", f"{problem}。请重新选择支座节点。")
-            return
-        result = None
-        for node in nodes:
-            label = name if len(nodes) == 1 else f"{name}-N{node}"
-            result = self.session.set_prescribed_displacement(
-                node, [*vector, 0.0, 0.0, 0.0], case, name=label)
-            if not result.ok:
-                break
-        self._object_result(result, f"已在 {len(nodes)} 个节点施加支座沉降「{name}」（工况 {case}）。")
 
     # --- 截面指派 ---
 

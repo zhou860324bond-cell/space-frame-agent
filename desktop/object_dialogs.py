@@ -24,14 +24,14 @@ DOF_LABELS = ("U1", "U2", "U3", "UR1", "UR2", "UR3")
 BC_TYPES = (("位移/转角（逐个勾选）", None), ("固接 ENCASTRE", "ENCASTRE"),
             ("铰接 PINNED", "PINNED"), ("X 对称 XSYMM", "XSYMM"),
             ("Y 对称 YSYMM", "YSYMM"), ("Z 对称 ZSYMM", "ZSYMM"),
-            ("弹性支承", "SPRING"))
+            ("弹性支承", "SPRING"),
+            ("位移/转角（给定值，如支座沉降）", "DISPLACEMENT"))
 LOAD_TYPES = (("集中力", "concentrated_force"), ("力矩", "moment"),
-              ("线荷载", "line_load"), ("重力", "gravity"),
-              ("给定位移（支座沉降）", "settlement"))
+              ("线荷载", "line_load"), ("重力", "gravity"))
 LOAD_REGION = {"concentrated_force": "node", "moment": "node",
-               "line_load": "member", "gravity": "member", "settlement": "node"}
+               "line_load": "member", "gravity": "member"}
 LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
-              "gravity": "g", "settlement": "d"}
+              "gravity": "g"}
 KIND_LABEL = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
               "bcs": "边界条件", "loads": "荷载", "constraints": "约束"}
 #: Interaction 模块的约束类型（Abaqus 的 Create Constraint 列表里梁模型用得上的几种）
@@ -154,6 +154,73 @@ class EditBCDialog(QDialog):
         return fix, (spring if any(spring) else None)
 
 
+class DisplacementBCDialog(QDialog):
+    """给定位移边界条件：勾选约束方向，并给出该方向的给定值（支座沉降、强迫转角）。
+
+    给定值只能写在约束方向上（自由方向谈不上"给定"），随所选荷载工况施加；
+    想在不同阶段施加不同的值，就放在不同的工况里。
+    """
+
+    def __init__(self, name: str, cases: list[str], unit_system: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"编辑边界条件 {name}")
+        layout = QVBoxLayout(self)
+        length = "m" if unit_system == "N-m-Pa" else "mm"
+        layout.addWidget(DialogHeader(
+            f"给定位移 {name}",
+            f"勾选的方向被约束；给定值不为 0 时按该值强加位移（平动 {length}，转动 rad）。"))
+        grid = QGridLayout()
+        self.checks: list[QCheckBox] = []
+        self.values_: list[QDoubleSpinBox] = []
+        for k, label in enumerate(DOF_LABELS):
+            box = QCheckBox(label, self)
+            box.setChecked(k < 3)
+            value = QDoubleSpinBox(self)
+            value.setRange(-1e9, 1e9)
+            value.setDecimals(6)
+            value.setToolTip("给定值；0 表示该方向固定不动。向下沉降在 U3 填负值")
+            box.toggled.connect(value.setEnabled)
+            grid.addWidget(box, k, 0)
+            grid.addWidget(QLabel("给定值", self), k, 1)
+            grid.addWidget(value, k, 2)
+            self.checks.append(box)
+            self.values_.append(value)
+        layout.addLayout(grid)
+        form = QFormLayout()
+        self.case = QComboBox(self)
+        self.case.setEditable(True)
+        self.case.addItems(cases or ["Settlement"])
+        self.case.setToolTip("给定位移随这个工况施加；输入新名称会就地新建工况")
+        form.addRow("随工况施加", self.case)
+        layout.addLayout(form)
+        self.hint = HintLabel("带给定位移的边界条件在 Initial 创建；它在哪一步起作用，"
+                              "由所选工况在哪一步被激活决定。", self)
+        layout.addWidget(self.hint)
+        box = button_box(self)
+        box.accepted.connect(self._accept)
+        box.rejected.connect(self.reject)
+        layout.addWidget(box)
+        style_dialog(self, 420, 380)
+
+    def _accept(self) -> None:
+        if not any(c.isChecked() for c in self.checks):
+            self.hint.setText("至少约束一个方向；给定值只能写在约束的方向上。")
+            return
+        if not any(c.isChecked() and v.value() for c, v in zip(self.checks, self.values_, strict=True)):
+            self.hint.setText("所有给定值都是 0，这就是普通固定支座；"
+                              "请填写沉降或强迫转角，或改用「位移/转角（逐个勾选）」。")
+            return
+        if not self.case.currentText().strip():
+            self.hint.setText("请选择或输入给定位移所属的工况。")
+            return
+        self.accept()
+
+    def values(self) -> tuple[list[int], list[float], str]:
+        fix = [int(c.isChecked()) for c in self.checks]
+        disp = [v.value() if c.isChecked() else 0.0 for c, v in zip(self.checks, self.values_, strict=True)]
+        return fix, disp, self.case.currentText().strip()
+
+
 class EditConstraintDialog(QDialog):
     """约束的编辑对话框：类型、主节点、（运动耦合的）被约束自由度。"""
 
@@ -225,7 +292,7 @@ class EditLoadDialog(QDialog):
     """第二段：荷载的三个全局分量。"""
 
     UNITS = {"concentrated_force": "力", "moment": "力×长度",
-             "line_load": "力/长度", "gravity": "加速度", "settlement": "长度"}
+             "line_load": "力/长度", "gravity": "加速度"}
 
     def __init__(self, name: str, load_type: str, vector: list[float], unit_system: str,
                  parent=None):
@@ -245,9 +312,7 @@ class EditLoadDialog(QDialog):
             form.addRow(f"{axis} 分量", spin)
             self.values_.append(spin)
         layout.addLayout(form)
-        self.hint = HintLabel(
-            "支座沉降是强加位移：只在 Initial 中已约束的方向生效，向下沉降填负的 Z 分量。"
-            if load_type == "settlement" else "", self)
+        self.hint = HintLabel("", self)
         layout.addWidget(self.hint)
         box = button_box(self)
         box.accepted.connect(self._accept)
@@ -373,6 +438,10 @@ def describe_values(kind: str, feature: dict[str, Any]) -> str:
         text = "固定 " + ("、".join(fixed) if fixed else "无")
         if feature.get("spring"):
             text += "；弹性支承"
+        given = [f"{DOF_LABELS[k]}={v:g}" for k, v in enumerate(feature.get("displacement") or [])
+                 if v]
+        if given:
+            text += f"；给定 {' '.join(given)}（工况 {feature.get('case')}）"
         return text
     label = dict((v, k) for k, v in LOAD_TYPES)[feature["type"]]
     vec = feature.get(LOAD_FIELD[feature["type"]]) or []

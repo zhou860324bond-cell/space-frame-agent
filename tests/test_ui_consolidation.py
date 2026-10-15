@@ -79,20 +79,36 @@ def test_next_step_marked_on_one_tab(qt_app):
     assert marked == ["建模"]
 
 
-def test_old_bc_form_removed_and_settlement_kept(qt_app, monkeypatch):
-    """旧边界表单删掉后，它独有的给定位移（支座沉降）必须仍能从「创建载荷」施加。"""
-    from desktop.object_dialogs import LOAD_REGION, LOAD_TYPES
+def test_old_bc_form_removed_and_settlement_is_a_boundary_condition(qt_app, monkeypatch):
+    """旧边界表单删掉后，它独有的给定位移（支座沉降）要能从「创建边界条件」施加，
+    并且是边界条件对象（Abaqus 的 Displacement/Rotation 给非零值），不是荷载。"""
+    from PySide6.QtWidgets import QDialog
+    from desktop import window_objects
+    from desktop.object_dialogs import BC_TYPES, LOAD_TYPES
     from tools.render_smoke import build_session
-    assert "settlement" in [v for _, v in LOAD_TYPES] and LOAD_REGION["settlement"] == "node"
+    assert "DISPLACEMENT" in [v for _, v in BC_TYPES]
+    assert "settlement" not in [v for _, v in LOAD_TYPES]
     w = MainWindow(build_session())
     assert not hasattr(w, "bc") and not hasattr(w, "bc_dock")
-    assert w.session.add_load_case("Settle").ok
-    case = "Settle"
-    supports = [int(s["node"]) for s in w.session.model.get("supports") or []][:2]
-    w._finish_settlement("Settle", case, {"nodes": supports}, [0.0, 0.0, -0.01])
-    entries = next(c for c in w.session.model["load_cases"] if c["name"] == case)["settlements"]
-    assert sorted(e["node"] for e in entries) == sorted(supports)
-    assert all(e["d"][2] == -0.01 for e in entries)
+
+    class _Accept:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def values(self):
+            return [1, 1, 1, 0, 0, 0], [0.0, 0.0, -0.01, 0.0, 0.0, 0.0], "Settle"
+
+    monkeypatch.setattr(window_objects, "DisplacementBCDialog", _Accept)
+    node = max(int(n["id"]) for n in w.session.model["nodes"])
+    w._finish_bc("Settle-1", "Initial", "DISPLACEMENT", {"nodes": [node]})
+    feature = next(f for f in w.session.model["features"]["bcs"] if f["name"] == "Settle-1")
+    assert feature["displacement"][2] == -0.01 and feature["case"] == "Settle"
+    assert "Settle" in [c["name"] for c in w.session.model["load_cases"]]
+    from desktop.object_dialogs import describe_values
+    assert "给定 U3=-0.01" in describe_values("bcs", feature)
 
 
 def test_click_selects_without_entering_pick_mode(qt_app, monkeypatch):
