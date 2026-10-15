@@ -113,7 +113,8 @@ def test_export_screenshot_positions_tool_drawers_in_window_coordinates(qt_app, 
     w = MainWindow(built())
     w.move(150, 90)
     w.show()
-    w.tree_dock.show()
+    w.timeline_dock.dock_panel()
+    w.timeline_dock.show()
     qt_app.processEvents()
     monkeypatch.setattr(w.viewport.plotter, "screenshot",
                         lambda **_kw: np.full((40, 40, 3), (255, 0, 0), dtype=np.uint8))
@@ -145,7 +146,9 @@ def test_the_tree_lists_every_part(qt_app):
     assert w.empty_state.isHidden()
     labels = [w.tree.topLevelItem(k).text(0)
               for k in range(w.tree.topLevelItemCount())]
-    for want in ("材料", "截面", "几何", "约束", "荷载工况", "建模过程"):
+    # 与 Abaqus 模型树同序：对象分支（截面指派、边界条件、荷载）放在几何与分析步之后
+    for want in ("材料", "截面", "截面指派", "集合", "几何", "分析步", "边界条件", "荷载",
+                 "建模过程"):
         assert any(want in lab for lab in labels), (want, labels)
 
 
@@ -355,7 +358,6 @@ def test_new_model_clears_everything(qt_app):
     assert w.chat.conversation is None
     assert w.lbl_last.text() == "最近：尚未建模"
     assert w.properties.session is w.session
-    assert w.bc.session is w.session
     assert w.sketch.session is w.session
     assert w.section_opt.session is w.session
 
@@ -390,7 +392,7 @@ def test_picking_a_case_in_the_tree_switches_to_it(qt_app):
     assert w.case == "L"
 
 
-def test_tree_lists_named_load_objects_and_opens_their_target(qt_app):
+def test_tree_lists_named_load_objects_and_opens_their_target(qt_app, monkeypatch):
     s = built()
     member = s.model["load_cases"][0]["member_loads"][0]["member"]
     s.model["load_cases"][0]["member_loads"][0]["name"] = "Roof-UDL"
@@ -407,10 +409,12 @@ def test_tree_lists_named_load_objects_and_opens_their_target(qt_app):
         labels.extend(descendants(w.tree.topLevelItem(index)))
     assert any("Roof-UDL" in label and f"杆件 {member}" in label for label in labels)
 
+    opened = []
+    monkeypatch.setattr(w, "open_load_manager", lambda: opened.append("loads"))
     w._on_tree_action("load_object", {"case": "D", "kind": "member", "id": member})
     assert w.case == "D"
     assert w._selected_kind == "member" and w._selected_id == member
-    assert w.bc._current_member == member
+    assert opened == ["loads"], "荷载统一在荷载管理器里编辑（旧边界表单已删除）"
 
 
 def test_tree_folders_dispatch_to_real_editors(qt_app, monkeypatch):
@@ -439,32 +443,61 @@ def test_desktop_can_export_a_verified_agent_learning_trace(
     assert "正样本" in shown[0][2]
 
 
-def test_property_assignment_updates_material_and_section_together(
-        qt_app, monkeypatch):
-    from PySide6.QtWidgets import QDialog
-    from desktop import assignment_dialog
+class _Accept:
+    """替身对话框：exec 直接确定，values/vector 返回预先给定的值。"""
 
-    class FakeAssignmentDialog:
-        def __init__(self, *args, **kwargs):
-            pass
+    def __init__(self, *args, values=None, vector=None, **kwargs):
+        self._values, self._vector = values, vector
+        self.name = type("N", (), {"setEnabled": lambda *_: None})()
 
-        def exec(self):
-            return QDialog.DialogCode.Accepted
+    def exec(self):
+        from PySide6.QtWidgets import QDialog
+        return QDialog.DialogCode.Accepted
 
-        def get_assignment(self):
-            return "RAFTER", "Q235"
+    def values(self):
+        return self._values
 
-    monkeypatch.setattr(assignment_dialog, "AssignmentDialog", FakeAssignmentDialog)
+    def vector(self):
+        return self._vector
+
+
+@pytest.fixture(autouse=True)
+def _no_modal_boxes(monkeypatch):
+    """对象命令失败时会弹 QMessageBox；无头环境里没人点，测试会永远挂住。"""
+    from desktop import window_objects
+    monkeypatch.setattr(window_objects.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(window_objects.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+
+
+def _stub(monkeypatch, name, **kwargs):
+    from desktop import window_objects
+    monkeypatch.setattr(window_objects, name,
+                        lambda *a, **k: _Accept(*a, **{**k, **kwargs}))
+
+
+def test_assign_section_picks_a_region_first_then_creates_one_object(qt_app, monkeypatch):
+    """Abaqus 的截面指派：先在视口选区域（可多选），再选截面；结果是一个可管理的对象。
+
+    原来要先单选一根杆件，多根只能重复整套流程，指派也不是对象。
+    """
     s = built()
-    s.model["materials"].append(
-        {"name": "Q235", "E": 2.0e11, "nu": 0.3, "density": 7850.0})
-    member = s.model["members"][0]["id"]
+    s.model["materials"].append({"name": "Q235", "E": 2.0e11, "nu": 0.3, "density": 7850.0})
     w = MainWindow(s)
-    w._selected_kind, w._selected_id = "member", member
+    _stub(monkeypatch, "AssignSectionDialog", values=("SA-椽", "RAFTER", "Q235"))
     w.assign_section()
-    updated = next(item for item in s.model["members"] if item["id"] == member)
-    assert updated["section"] == "RAFTER"
-    assert updated["material"] == "Q235"
+    assert w.region_pick.active and w.viewport.region_pick == "member"
+    assert "截面指派" in w.lbl_prompt.text() and "拖框" in w.lbl_prompt.text()
+    targets = [m["id"] for m in s.model["members"][:2]]
+    w.viewport.region_selection.apply("member", targets)
+    w.region_pick.finish()
+    assert not w.region_pick.active
+    for member in s.model["members"]:
+        if member["id"] in targets:
+            assert (member["section"], member["material"]) == ("RAFTER", "Q235")
+            assert member["assignment"] == "SA-椽"
+    assert [f["name"] for f in s.model["features"]["section_assignments"]] == ["SA-椽"]
 
 
 def test_the_camera_is_not_reset_on_every_redraw(qt_app):
@@ -474,79 +507,88 @@ def test_the_camera_is_not_reset_on_every_redraw(qt_app):
     assert not w.viewport._first_render, "首帧之后就不该再自动摆相机了"
 
 
-def test_selection_commands_are_always_clickable_and_say_what_to_pick(qt_app):
-    """要作用在某个对象上的命令**始终可点**，提示里写明要点什么。
-
-    置灰比"点了没反应"好，但仍然要用户先猜对顺序；实测最常见的抱怨正是
-    "很多按钮点不了"。现在是命令在前、拾取在后，见下一条。
-    """
+def test_object_commands_are_clickable_without_a_prior_selection(qt_app):
+    """命令在前、区域在后：没选中任何东西也能点，提示里说明怎么选。"""
     w = MainWindow()
-    load = w.actions_by_name["create_load"]
-    bc = w.actions_by_name["create_bc"]
-    assert load.isEnabled() and bc.isEnabled()
-    assert "点选" in load.toolTip() and "节点或杆件" in load.toolTip()
-
-    w._on_picked("member", 1)
-    assert load.isEnabled() and bc.isEnabled()
-    assert "节点" in bc.toolTip() and "点选" in bc.toolTip(), "杆件不能加边界条件"
+    for name in ("create_load", "create_bc", "assign_section"):
+        action = w.actions_by_name[name]
+        assert action.isEnabled()
+        assert "集合" in action.toolTip() and "Shift" in action.toolTip()
 
 
-def test_a_command_without_a_selection_waits_for_a_pick_then_runs(qt_app):
-    """没选中就点「创建载荷」：进入拾取、提示去点什么；点中后自动接着走。"""
+def test_create_bc_follows_the_abaqus_sequence_and_takes_many_nodes(qt_app, monkeypatch):
+    """创建 → 选区域（多选）→ 编辑：一次给多个柱脚加约束，结果是一个边界条件对象。"""
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("BC-柱脚", "Initial", "PINNED"))
+    _stub(monkeypatch, "EditBCDialog", values=([1, 1, 1, 0, 0, 0], None))
+    warnings = []
+    from desktop import window_objects
+    monkeypatch.setattr(window_objects.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warnings.append(a[2])))
+    w.create_bc()
+    assert w.region_pick.active and w.viewport.region_pick == "node"
+    # 门架模型每个节点都有面外约束的直接支座；清掉后才能用对象重新约束
+    s.model["supports"] = []
+    feet = [1, 2]
+    w.viewport.region_selection.apply("node", feet)
+    w.region_pick.finish()
+    assert not warnings, warnings
+    assert [f["name"] for f in s.model["features"]["bcs"]] == ["BC-柱脚"]
+    owned = [x for x in s.model["supports"] if x.get("owners") == ["BC-柱脚"]]
+    assert sorted(x["node"] for x in owned) == sorted(feet)
+
+
+def test_the_selection_before_the_command_becomes_the_default_region(qt_app, monkeypatch):
+    """先选后点的老习惯保留：命令开始时已选中的同类对象直接带进区域。"""
     s = built()
     w = MainWindow(s)
     member = s.model["members"][0]["id"]
-    calls = []
-    w.create_load()                              # 真实入口：没选中
-    assert w._pending_command is not None
-    assert w.pick_actions["member"].isChecked(), "荷载默认拾杆件"
-    assert "点选" in w.lbl_prompt.text()
-
-    w.create_load = lambda: calls.append(w._selected_id)   # 续上时调的是它
     w._on_picked("member", member)
-    qt_app.processEvents()
-    assert calls == [member]
-    assert w._pending_command is None
+    w.assign_section()
+    assert w.viewport.region_selection.ids == [member]
 
 
-def test_a_pick_of_the_wrong_kind_keeps_waiting(qt_app):
-    """边界条件只能加在节点上：点中杆件不续上，继续等节点。"""
+def test_using_a_set_makes_the_region_a_live_reference(qt_app, monkeypatch):
     s = built()
     w = MainWindow(s)
-    w.create_bc()
-    assert w.pick_actions["node"].isChecked()
-    w._on_picked("member", s.model["members"][0]["id"])
-    qt_app.processEvents()
-    assert w._pending_command is not None
+    s.define_set(name="全部杆件", member_ids=[m["id"] for m in s.model["members"]])
+    s.set_load_cases([{"name": "DL"}])
+    _stub(monkeypatch, "CreateObjectDialog", values=("屋面", "DL", "line_load"))
+    _stub(monkeypatch, "EditLoadDialog", vector=[0.0, 0.0, -1e3])
+    from desktop import region_prompt
+    monkeypatch.setattr(region_prompt.QInputDialog, "getItem",
+                        staticmethod(lambda *a, **k: ("全部杆件", True)))
+    w.create_load()
+    w.region_pick.choose_set()
+    feature = s.model["features"]["loads"][0]
+    assert feature["region"] == {"set": "全部杆件"}
 
 
-def test_running_another_command_abandons_a_waiting_pick(qt_app):
-    """点了「创建载荷」又改主意去做别的：之后点中杆件不能再弹出载荷对话框。"""
+def test_escape_and_a_new_command_cancel_a_region_pick(qt_app, monkeypatch):
+    """Esc 取消选择；开始另一个对象命令时上一个选择作废，不会把区域交给错的命令。"""
     s = built()
     w = MainWindow(s)
-    w.actions_by_name["create_load"].trigger()
-    assert w._pending_command is not None
-    w.actions_by_name["iso"].trigger()            # 改主意：换个视角
-    assert w._pending_command is None
-    popped = []
-    w.create_load = lambda: popped.append(True)
-    w._on_picked("member", s.model["members"][0]["id"])
-    qt_app.processEvents()
-    assert not popped
-
-
-def test_triggering_the_same_command_again_keeps_waiting(qt_app):
-    w = MainWindow(built())
-    w.actions_by_name["create_bc"].trigger()
-    w.actions_by_name["create_bc"].trigger()
-    assert w._pending_command is not None
-
-
-def test_escape_abandons_a_waiting_command(qt_app):
-    w = MainWindow(built())
+    _stub(monkeypatch, "CreateObjectDialog", values=("BC-1", "Initial", "ENCASTRE"))
     w.create_bc()
     w.cancel_interaction()
-    assert w._pending_command is None
+    assert not w.region_pick.active and w.viewport.region_pick is None
+    created = []
+    w.create_bc()
+    w.region_pick.start("member", "截面指派", created.append)
+    assert w.viewport.region_pick == "member"
+    w.viewport.region_selection.apply("member", [s.model["members"][0]["id"]])
+    w.region_pick.finish()
+    assert created and "members" in created[0]
+    assert not (s.model.get("features") or {}).get("bcs"), "被顶掉的边界条件命令不能再落地"
+
+
+def test_region_pick_rejects_finishing_with_nothing_selected(qt_app):
+    w = MainWindow(built())
+    delivered = []
+    w.region_pick.start("node", "测试", delivered.append)
+    w.region_pick.finish()
+    assert not delivered and w.region_pick.active
 
 
 def test_solving_fills_the_result_summary_without_popping_it_open(qt_app):
@@ -979,3 +1021,422 @@ def test_result_marker_imports_pyvista_itself(qt_app):
     assert meshes[0]["name"] == "_result_marker"
     # 真造出了一个球，而不是 None 混过去
     assert meshes[0]["mesh"].n_points > 0
+
+
+def _tree_items(tree):
+    out, stack = [], [tree.topLevelItem(k) for k in range(tree.topLevelItemCount())]
+    while stack:
+        item = stack.pop()
+        out.append(item)
+        stack.extend(item.child(k) for k in range(item.childCount()))
+    return out
+
+
+def test_model_tree_shows_objects_with_the_manager_context_menu(qt_app, monkeypatch):
+    """对象进模型树：单击高亮区域，右键是管理器的同一组操作（Abaqus 模型树的用法）。"""
+    from desktop import model_tree, window_objects
+    s = built()
+    s.define_set(name="椽", member_ids=[m["id"] for m in s.model["members"]][:2])
+    assert s.create_section_assignment("SA-椽", "椽", "RAFTER", "Q355").ok
+    w = MainWindow(s)
+    feature = next(i for i in _tree_items(w.tree)
+                   if i.data(0, model_tree.ACTION) == "feature")
+    assert feature.data(0, model_tree.PAYLOAD) == ("section_assignments", "SA-椽", False)
+    assert [a for a, _ in w.tree.context_actions(feature)] == [
+        "edit", "region", "copy", "rename", "suppress", "delete"]
+    branch = feature.parent()
+    assert [a for a, _ in w.tree.context_actions(branch)] == ["create", "manager"]
+
+    w.tree.feature_selected.emit("section_assignments", "SA-椽")
+    assert w.viewport.region_selection.kind == "member"
+    assert len(w.viewport.region_selection.ids) == 2
+
+    monkeypatch.setattr(window_objects.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: window_objects.QMessageBox.StandardButton.Yes))
+    w.tree.feature_action.emit("section_assignments", "delete", "SA-椽")
+    assert not (s.model.get("features") or {}).get("section_assignments")
+
+
+def test_the_prompt_resets_after_a_region_is_delivered(qt_app):
+    """真窗口实测发现：点「完成」后提示区仍停在「选择节点…」，像是还在等输入。"""
+    w = MainWindow(built())
+    w.region_pick.start("node", "测试", lambda region: None)
+    w.viewport.region_selection.apply("node", [1])
+    w.region_pick.finish()
+    assert "选择" not in w.lbl_prompt.text()
+
+
+def test_assign_beam_orientation_follows_the_region_first_flow(qt_app, monkeypatch):
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "OrientationDialog", values=("Ori-1", [0.0, 1.0, 0.0]))
+    w.actions_by_name["beam_orientation"].trigger()
+    assert w.region_pick.active and w.viewport.region_pick == "member"
+    target = s.model["members"][0]["id"]
+    w.viewport.region_selection.apply("member", [target])
+    w.region_pick.finish()
+    member = next(m for m in s.model["members"] if m["id"] == target)
+    assert member["ref_vector"] == [0.0, 1.0, 0.0] and member["orientation"] == "Ori-1"
+
+
+def test_create_load_can_name_a_new_case_on_the_spot(qt_app, monkeypatch):
+    """荷载属于工况；原来没有工况时只弹提示让用户去别处建，现在输入新名字即就地新建。"""
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("屋面活载", "LL", "line_load"))
+    _stub(monkeypatch, "EditLoadDialog", vector=[0.0, 0.0, -500.0])
+    w.create_load()
+    w.viewport.region_selection.apply("member", [s.model["members"][0]["id"]])
+    w.region_pick.finish()
+    assert "LL" in [c["name"] for c in s.model["load_cases"]]
+    assert [f["name"] for f in s.model["features"]["loads"]] == ["屋面活载"]
+
+
+def test_seed_edges_follows_the_region_flow_and_seed_part_sets_the_default(qt_app, monkeypatch):
+    """网格模块的布种：全局段数与逐杆覆盖（Abaqus Seed Part / Seed Edges）。"""
+    from desktop import window_objects
+    s = built()
+    w = MainWindow(s)
+    answers = iter([3, 8])
+    monkeypatch.setattr(window_objects.QInputDialog, "getInt",
+                        staticmethod(lambda *a, **k: (next(answers), True)))
+    w.seed_part()
+    assert s.model["mesh"]["divisions"] == 3
+    target = s.model["members"][0]["id"]
+    w.seed_edges()
+    w.viewport.region_selection.apply("member", [target])
+    w.region_pick.finish()
+    assert s.model["mesh"]["members"] == {str(target): 8}
+    w.clear_seeds()
+    assert "mesh" not in s.model
+
+
+def _synchronous_runner(w, monkeypatch):
+    """作业在后台线程里跑；测试里改成同步执行，回调立刻发生。"""
+    def submit(fn, on_done=None, on_failed=None, on_progress=None):
+        on_done(fn())
+        return True
+    monkeypatch.setattr(w.runner, "submit", submit)
+
+
+def test_job_manager_records_how_and_what_was_solved(qt_app, monkeypatch):
+    """作业管理器：数据检查、提交、消息、结果与模型版本对应。
+
+    原来 F5 直接求解，算过什么、出了什么警告只在状态栏闪一下；改了模型之后旧结果
+    还对不对应当前模型，只能靠记忆。
+    """
+    from desktop.job_manager import Job
+    s = built()
+    w = MainWindow(s)
+    _synchronous_runner(w, monkeypatch)
+    job = Job("Job-1", "cases", "linear")
+    w.jobs.append(job)
+    w.job_action("check", job)
+    assert job.status == "数据检查通过"
+    w.job_action("submit", job)
+    assert job.status == "完成" and job.finished
+    assert any("平衡校核通过" in m for m in job.messages)
+    assert any("静默失败检查" in m for m in job.messages)
+
+    infos = []
+    from desktop import window_jobs
+    monkeypatch.setattr(window_jobs.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: infos.append(a[2])))
+    w.job_action("results", job)
+    assert not infos and w.mode == "变形"
+    s.model["nodes"][0]["x"] += 0.1                     # 改了模型
+    w.job_action("results", job)
+    assert infos and "旧模型" not in infos[-1] and "重新提交" in infos[-1]
+
+
+def test_a_steps_job_reports_frequency_and_buckling_steps(qt_app, monkeypatch):
+    from desktop.job_manager import Job
+    s = built()
+    case = s.model["load_cases"][0]["name"] if s.model.get("load_cases") else "default"
+    assert s.add_step("S1", loads={case: "RAMP"}).ok
+    assert s.add_step("F1", analysis="frequency", num_modes=2).ok
+    w = MainWindow(s)
+    _synchronous_runner(w, monkeypatch)
+    job = Job("Job-步", "steps")
+    w.jobs.append(job)
+    w.job_action("submit", job)
+    assert job.status == "完成", job.messages
+    assert any("F1（频率）" in m and "Hz" in m for m in job.messages)
+
+
+def test_display_group_hides_members_from_drawing_and_picking(qt_app):
+    """显示组：仅显示 / 隐藏 / 全部显示；隐藏的杆件不进绘制用的 Frame，也就不参与拾取。"""
+    s = built()
+    w = MainWindow(s)
+    ids = [m["id"] for m in s.model["members"]]
+    w.display_only()
+    w.viewport.region_selection.apply("member", ids[:1])
+    w.region_pick.finish()
+    assert w.viewport.hidden_members == set(ids[1:])
+    view = w.viewport.visible_frame(w.session.preview_frame())
+    assert set(view.members) == {ids[0]}
+    assert set(view.nodes) == set(w.session.preview_frame().nodes), "节点不过滤，位移下标不能错位"
+    w.display_all()
+    assert not w.viewport.hidden_members
+
+
+def test_path_plot_draws_along_a_chain_of_members(qt_app, monkeypatch):
+    from desktop import window_viz
+    s = built()
+    w = MainWindow(s)
+    solved(w)
+    shown = []
+
+    import desktop.path_plot as path_plot
+    original = path_plot.PathPlotDialog
+
+    class Capture:
+        def __init__(self, window, ordered):
+            self.dialog = original(window, ordered)
+            shown.append(self.dialog.draw())
+
+        def exec(self):
+            return 0
+    monkeypatch.setattr(path_plot, "PathPlotDialog", Capture)
+    first = s.model["members"][0]
+    neighbour = next(m for m in s.model["members"][1:]
+                     if {m["i"], m["j"]} & {first["i"], first["j"]})
+    w.path_plot()
+    w.viewport.region_selection.apply("member", [first["id"], neighbour["id"]])
+    w.region_pick.finish()
+    assert shown and shown[0]["points"] > 0
+    assert window_viz is not None
+
+
+def test_animation_toggle_needs_a_result_view(qt_app, monkeypatch):
+    from desktop import window_viz
+    w = MainWindow(built())
+    told = []
+    monkeypatch.setattr(window_viz.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: told.append(a[2])))
+    w.actions_by_name["animate"].setChecked(True)
+    w.toggle_animation()
+    assert told and not w.actions_by_name["animate"].isChecked()
+
+
+def test_part_commands_partition_datum_and_measure(qt_app, monkeypatch):
+    """Part 模块的三个命令都走提示区拾取：分割杆件、两节点中点基准点、测距离。"""
+    from desktop import window_objects
+    s = built()
+    w = MainWindow(s)
+    monkeypatch.setattr(window_objects.QInputDialog, "getDouble",
+                        staticmethod(lambda *a, **k: (0.5, True)))
+    member = s.model["members"][0]
+    before = len(s.model["nodes"])
+    w.partition_member_ui()
+    w.viewport.region_selection.apply("member", [member["id"]])
+    w.region_pick.finish()
+    assert len(s.model["nodes"]) == before + 1
+
+    choices = iter(["两节点中点（在视口选两个节点）", "两节点距离"])
+    monkeypatch.setattr(window_objects.QInputDialog, "getItem",
+                        staticmethod(lambda *a, **k: (next(choices), True)))
+    w.datum_point_ui()
+    w.viewport.region_selection.apply("node", [member["i"], member["j"]])
+    w.region_pick.finish()
+    assert list(s.datum_points()) == ["Datum-1"]
+    w.redraw()
+    assert "Datum-1" in w.viewport.datum_points, "重画时把基准点同步给视口（显示与吸附）"
+    w.measure_ui()
+    w.viewport.region_selection.apply("node", [member["i"], member["j"]])
+    w.region_pick.finish()
+    assert "距离" in w.lbl_prompt.text()
+
+
+def test_create_constraint_picks_master_then_slaves(qt_app, monkeypatch):
+    """Interaction 模块的创建约束：名称与类型 → 选一个主节点 → 选从节点区域 → 编辑。
+
+    结果是一个约束对象：视口画出主从连线，模型树有「约束」分支，求解时偏心点随主节点动。
+    """
+    s = built()
+    eave = next(n for n in s.model["nodes"] if n["z"] == pytest.approx(7.5))
+    assert s.add_nodes([[eave["x"], 0.6, eave["z"]]]).ok
+    slave = max(n["id"] for n in s.model["nodes"])
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("刚臂", "", "beam"))
+    _stub(monkeypatch, "EditConstraintDialog", values=("beam", eave["id"], None))
+    w.create_constraint_ui()
+    assert w.region_pick.active and "主节点" in w.lbl_prompt.text()
+    w.viewport.region_selection.apply("node", [eave["id"]])
+    w.region_pick.finish()
+    assert w.region_pick.active and "从节点" in w.lbl_prompt.text()
+    w.viewport.region_selection.apply("node", [slave])
+    w.region_pick.finish()
+    assert [f["name"] for f in s.model["features"]["constraints"]] == ["刚臂"]
+    w.redraw()
+    assert [link[0] for link in w.viewport.constraint_links] == ["刚臂"]
+    labels = [w.tree.topLevelItem(k).text(0) for k in range(w.tree.topLevelItemCount())]
+    assert "约束（1）" in labels
+    assert s.solve_model().ok
+
+
+def test_bc_manager_modifies_and_deactivates_in_the_selected_step(qt_app, monkeypatch):
+    """边界条件管理器的步矩阵：点选某一步的格子，编辑即在该步修改，失活从该步起生效。"""
+    from desktop.object_dialogs import ObjectManagerDialog
+    s = Session()
+    assert s.add_nodes([[0, 0, 0], [6, 0, 0]]).ok
+    assert s.define_materials_and_sections(
+        [{"name": "S", "E": 2e11, "nu": 0.3}],
+        [{"name": "R", "A": 1e-2, "Iy": 2e-5, "Iz": 8e-5, "J": 1e-5}]).ok
+    assert s.add_members([[1, 2]]).ok
+    assert s.create_section_assignment("SA", [1], "R", "S").ok
+    assert s.create_boundary_condition("BC-左", [1], preset="ENCASTRE").ok
+    assert s.create_boundary_condition("BC-右", [2], preset="ENCASTRE").ok
+    assert s.set_load_cases([{"name": "DL"}]).ok
+    assert s.create_load("均布", "DL", "line_load", [1], w=[0, 0, -1e4]).ok
+    assert s.add_step("S1", loads={"DL": "RAMP"}).ok and s.add_step("S2").ok and s.add_step("S3").ok
+    w = MainWindow(s)
+    manager = ObjectManagerDialog(w, "bcs")
+    assert manager.steps == ["Initial", "S1", "S2", "S3"]
+    row = next(r for r in range(manager.table.rowCount()) if manager.table.item(r, 0).text() == "BC-右")
+    first = len(manager.COLUMNS["bcs"])
+    _stub(monkeypatch, "EditBCDialog", values=([1, 1, 1, 0, 0, 0], None))
+    manager.table.setCurrentCell(row, first + 2)                     # S2 列
+    manager._run("edit")
+    manager.table.setCurrentCell(row, first + 3)                     # S3 列
+    manager._run("deactivate")
+    feature = next(f for f in s.model["features"]["bcs"] if f["name"] == "BC-右")
+    assert feature["modifications"]["S2"]["fix"] == [1, 1, 1, 0, 0, 0]
+    assert feature["deactivated"] == "S3"
+    cells = [manager.table.item(row, first + k).text() for k in range(4)]
+    assert cells == ["创建", "传播", "修改", "失活"]
+    assert s.solve_steps().ok
+
+
+def test_gravity_and_batch_assignment_create_objects_like_their_abaqus_counterparts(qt_app, monkeypatch):
+    """重力按钮与批量属性指派不再写逐杆直接条目：得到的是载荷管理器、截面指派管理器里的对象。
+
+    原来同一件事有两条路，结果是两种数据：一种能在管理器里编辑、抑制，另一种只能去表格里删。
+    """
+    s = built()
+    w = MainWindow(s)
+    _stub(monkeypatch, "CreateObjectDialog", values=("Gravity-1", "D", "gravity"))
+    _stub(monkeypatch, "EditLoadDialog", vector=[0.0, 0.0, -9.80665])
+    w.apply_gravity()
+    assert w.region_pick.active
+    assert sorted(w.viewport.region_selection.ids) == sorted(m["id"] for m in s.model["members"]), \
+        "重力的区域默认全部杆件"
+    w.region_pick.finish()
+    load = next(f for f in s.model["features"]["loads"] if f["name"] == "Gravity-1")
+    assert load["type"] == "gravity"
+
+    from desktop import assignment_dialog
+    target = [m["id"] for m in s.model["members"][:2]]
+
+    class _Batch:
+        def __init__(self, *a, **k):
+            self.target = type("T", (), {"member_ids": lambda _self: target})()
+
+        def exec(self):
+            from PySide6.QtWidgets import QDialog
+            return QDialog.DialogCode.Accepted
+
+        def get_assignment(self):
+            return "COLUMN", "Q355"
+
+    monkeypatch.setattr(assignment_dialog, "BatchAssignmentDialog", _Batch)
+    w.assign_member_group()
+    assignment = s.model["features"]["section_assignments"][0]
+    assert assignment["region"] == {"members": sorted(target)}
+    assert "support" not in w.actions_by_name, "支座管理器与边界条件管理器是同一个，只留一个入口"
+
+
+def test_results_tree_lists_steps_frames_and_modes(qt_app):
+    """结果树按 分析步 → 帧 / 模态 展开；点增量帧画的是那一帧的位移，点模态画那一步的振型。"""
+    s = built()
+    assert s.add_step("静力", loads={"D": "RAMP"}).ok
+    assert s.add_step("二阶", analysis="pdelta", increments=3).ok
+    assert s.add_step("频率", analysis="frequency", num_modes=2).ok
+    w = MainWindow(s)
+    got = s.solve_steps()
+    assert got.ok, got.payload
+    w._steps_solved(got)
+    root = next(w.tree.topLevelItem(k) for k in range(w.tree.topLevelItemCount())
+                if w.tree.topLevelItem(k).text(0) == "结果")
+    steps = [root.child(k).text(0) for k in range(root.childCount())]
+    assert steps == ["静力　线性静力", "二阶　P-Δ", "频率　频率"]
+    assert root.child(1).childCount() == 3 and root.child(2).childCount() == 2
+    w._on_tree_action("result_frame", ("二阶", 0))
+    assert w.result_frame == 0
+    shown = w._frame_solution()[w.case].U
+    assert (shown == s.solution[w.case].frames[0][1]).all()
+    w._on_tree_action("result_mode", ("频率", 1))
+    assert "第 2 阶" in w.statusBar().currentMessage()
+
+
+def test_linear_pattern_from_the_assembly_page_and_delete_in_the_manager(qt_app, monkeypatch):
+    """装配页：选部件杆件 → 线性阵列参数 → 副本；模型树列实例；实例管理器整份删除。"""
+    from desktop import window_assembly
+    from desktop.assembly_dialogs import InstanceManagerDialog
+    s = built()
+    before = len(s.model["members"])
+    w = MainWindow(s)
+    monkeypatch.setattr(window_assembly, "InstanceDialog", lambda *a, **k: _Accept(values={
+        "name": "沿Y", "direction1": [0, 1, 0], "spacing1": 6.0, "number1": 3,
+        "direction2": [0, 0, 0], "spacing2": 0.0, "number2": 1}))
+    w.linear_pattern_ui()
+    assert w.region_pick.active and "部件" in w.lbl_prompt.text()
+    w.viewport.region_selection.apply("member", [m["id"] for m in s.model["members"]])
+    w.region_pick.finish()
+    assert len(s.model["members"]) == 3 * before
+    labels = [w.tree.topLevelItem(k).text(0) for k in range(w.tree.topLevelItemCount())]
+    assert "装配（2 个实例）" in labels
+    monkeypatch.setattr(window_assembly.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: window_assembly.QMessageBox.StandardButton.Yes))
+    manager = InstanceManagerDialog(w)
+    manager.table.selectRow(0)
+    manager._delete(pattern=True)
+    assert len(s.model["members"]) == before and "assembly" not in s.model
+
+
+def test_picks_in_a_refined_result_view_report_physical_members(qt_app):
+    """P-Δ、分析步把杆件剖成多段求解：结果视图里点选、框选、显示组都要按物理杆件。
+
+    真窗口验收发现：14 根杆件的模型点中一根，状态栏和探针写的是「杆件 32」——
+    那是分析杆段号，用户在模型里找不到。
+    """
+    s = built()
+    assert s.add_step("二阶", analysis="pdelta", loads={"D": "RAMP"}, increments=2).ok
+    w = MainWindow(s)
+    got = s.solve_steps()
+    assert got.ok, got.payload
+    w._steps_solved(got)
+    w.redraw()
+    owner = w.viewport.element_owner
+    physical = {int(m["id"]) for m in s.model["members"]}
+    assert set(owner.values()) == physical and len(owner) > len(physical)
+    member = min(physical)
+    segments = w.viewport._elements([member])
+    assert len(segments) > 1 and all(owner[e] == member for e in segments)
+    w.viewport.set_hidden_members({member})
+    view = w.viewport.visible_frame(s.frame)
+    assert not set(segments) & set(view.members), "隐藏物理杆件要隐藏它的全部分析杆段"
+    last = segments[-1]
+    w.probe_member_result(last, s.frame.nodes[s.frame.members[last].j].xyz)
+    caption = w.results.caption.text()
+    assert f"杆件 {member}（分析杆段 {last}）" in caption
+    whole = next(m for m in s.model["members"] if m["id"] == member)
+    ends = [next(n for n in s.model["nodes"] if n["id"] == whole[e]) for e in ("i", "j")]
+    length = sum((ends[1][k] - ends[0][k]) ** 2 for k in "xyz") ** 0.5
+    assert f"x={length:.4g}/{length:.4g}" in caption, "位置按整根物理杆件量"
+
+
+def test_hiding_a_member_in_model_view_after_solving_hides_all_its_segments(qt_app):
+    """求解后切回「模型」显示，画的仍是分析模型：隐藏一根柱要整根隐藏，而不是只藏一段。"""
+    s = built()
+    assert s.add_step("二阶", analysis="pdelta", loads={"D": "RAMP"}, increments=2).ok
+    w = MainWindow(s)
+    got = s.solve_steps()
+    assert got.ok
+    w._steps_solved(got)
+    w.set_mode("模型")
+    member = min(int(m["id"]) for m in s.model["members"])
+    assert len(w.viewport._elements([member])) > 1
+    w.viewport.set_hidden_members({member})
+    view = w.viewport.visible_frame(s.frame)
+    assert not set(w.viewport._elements([member])) & set(view.members)

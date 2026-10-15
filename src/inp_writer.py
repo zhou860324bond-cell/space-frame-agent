@@ -130,6 +130,20 @@ def write_inp(model: dict, element: str = "B33", path: Path | None = None,
             if flag:
                 L.append(" %d, %d, %d" % (int(sup["node"]), k + 1, k + 1))
 
+    # 运动约束：MPC 与运动耦合写在模型定义里。漏写不会报错，只会让 Abaqus
+    # 那边算的是一个约束全断开的结构，对拍对不上还找不到原因
+    import features as _features
+    for c in _features.resolved_constraints(model):
+        if c["type"] == "coupling":
+            L.append("*KINEMATIC COUPLING, REF NODE=%d" % c["master"])
+            for s in c["slaves"]:
+                for k in c["dofs"]:
+                    L.append(" %d, %d, %d" % (s, k + 1, k + 1))
+        else:
+            L.append("*MPC")
+            for s in c["slaves"]:
+                L.append(" %s, %d, %d" % (c["type"].upper(), s, c["master"]))
+
     # 给定位移不能放在线性摄动步里——摄动步的边界条件是相对基态的增量
     L.append("*STEP, NAME=STATIC" + ("" if given else ", PERTURBATION"))
     L.append("*STATIC")

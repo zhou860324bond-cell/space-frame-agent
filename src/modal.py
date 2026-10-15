@@ -30,11 +30,11 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.linalg import eigh
-from scipy.sparse import coo_matrix
+from scipy.sparse import coo_matrix, diags
 from scipy.sparse.linalg import eigsh
 
 from frame3d import (DOF_PER_NODE, Frame, _member_matrices, assemble,
-                     constrained_dofs, member_endpoints,
+                     dof_basis, member_endpoints,
                      member_local_displacements, project_secondary_matrix,
                      scatter_blocks)
 
@@ -53,7 +53,7 @@ class ModalResult:
     frequencies: np.ndarray          # (n_modes,) Hz
     omega: np.ndarray                # (n_modes,) rad/s
     shapes: np.ndarray               # (n_dofs, n_modes) 全自由度，支座行为 0
-    total_mass: float                # Σ ρAL，结构的全部质量
+    total_mass: float                # Σ ρAL + Σ 节点质量，结构的全部质量
     effective_mass: np.ndarray       # (n_modes, 3) 三个平动方向的有效质量
     #: (3,) 各方向**能参与振动**的质量 rᵀM_ff r。压在支座上的那部分不在内，
     #: 所以它总是小于 total_mass——判"阶数取够没有"要拿它当分母。
@@ -138,7 +138,18 @@ def assemble_mass(model: Frame) -> coo_matrix:
         Me = project_secondary_matrix(Me, cond)
         all_dofs.append(model.node_dofs(m.i) + model.node_dofs(m.j))
         blocks.append(B.T @ T.T @ Me @ T @ B)
-    return scatter_blocks(model.num_dofs, all_dofs, blocks)
+    M = scatter_blocks(model.num_dofs, all_dofs, blocks)
+    lumped = getattr(model, "masses", None) or {}
+    if lumped:
+        # 集中质量直接加在节点自由度的对角线上：三个平动同一个 m，三个转动
+        # 各自的转动惯量（全局轴）。编译剖分不会动原有节点，所以位置不变。
+        diag = np.zeros(model.num_dofs)
+        for node, (m, ixx, iyy, izz) in lumped.items():
+            if node in model.nodes:
+                dofs = model.node_dofs(node)
+                diag[dofs] += (m, m, m, ixx, iyy, izz)
+        M = (M + diags(diag)).tocsr()
+    return M
 
 
 def modal(model: Frame, num_modes: int = 6) -> ModalResult:
@@ -150,10 +161,11 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     """
     if not model.members:
         raise ValueError("模型里没有杆件，无法做模态分析")
-    if all(not model.materials[m.material].density for m in model.members.values()):
+    if (all(not model.materials[m.material].density for m in model.members.values())
+            and not any(row[0] > 0 for row in (getattr(model, "masses", None) or {}).values())):
         raise ValueError(
-            "所有材料的 density 都是 0，质量矩阵为零，模态分析没有意义。"
-            "给材料加上 density（kg/m³，钢约 7850）再算。")
+            "所有材料的 density 都是 0，也没有节点质量，质量矩阵为零，模态分析没有意义。"
+            "给材料加上 density（kg/m³，钢约 7850），或用节点质量 / 荷载换算质量再算。")
     if num_modes < _MIN_MODES:
         raise ValueError(f"至少要求 {_MIN_MODES} 阶")
 
@@ -161,13 +173,15 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     M = assemble_mass(model)
 
     n = model.num_dofs
-    fixed = constrained_dofs(model)
-    free = np.setdiff1d(np.arange(n), fixed)
+    basis = dof_basis(model)
+    free = basis.free
     if free.size == 0:
         raise ValueError("所有自由度都被约束了，没有可振动的自由度")
 
-    Kff = K[free][:, free]
-    Mff = M[free][:, free]
+    # 运动约束下质量也经 Pᵀ·M·P 缩到主节点：从节点上的质量带着刚臂，
+    # 自然成为主节点的转动惯量（刚性楼板的 m·r² 就是这么来的）
+    Kff = basis.reduce(K)
+    Mff = basis.reduce(M)
     # 对称化：装配时的浮点误差会让两边差 1e-16 量级，eigh 要求严格对称
     Kff = 0.5 * (Kff + Kff.T)
     Mff = 0.5 * (Mff + Mff.T)
@@ -177,7 +191,7 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
 
     if free.size <= DENSE_EIGEN_LIMIT or num_modes >= free.size - 1:
         Kff, Mff = Kff.toarray(), Mff.toarray()
-        vals, vecs = eigh(Kff, Mff)
+        vals, vecs = _dense_modes(Kff, Mff)
     else:
         vals, vecs = _lowest_modes_sparse(Kff.tocsc(), Mff.tocsc(), num_modes)
     # 数值噪声会让最低几阶出现极小的负值，截到 0 而不是让 sqrt 变 nan
@@ -185,14 +199,14 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
     keep = min(num_modes, vals.size)
     omega = np.sqrt(vals[:keep])
 
-    shapes = np.zeros((n, keep))
-    shapes[free, :] = vecs[:, :keep]
+    shapes = basis.expand(vecs[:, :keep])
 
     total = float(sum(model.materials[m.material].density
                       * model.sections[m.section].A
                       * float(np.linalg.norm(member_endpoints(model, m)[1]
                                              - member_endpoints(model, m)[0]))
                       for m in model.members.values()))
+    total += float(sum(row[0] for row in (getattr(model, "masses", None) or {}).values()))
 
     # 有效质量：振型对刚体平动的参与程度。取够阶数时它们的和有一个**精确**
     # 的归宿，而那个归宿不是 Σ ρAL。
@@ -226,6 +240,29 @@ def modal(model: Frame, num_modes: int = 6) -> ModalResult:
                        participation=factors, modal_mass=np.array(
                            [float(vecs[:, k] @ Mff @ vecs[:, k])
                             for k in range(keep)]))
+
+
+def _dense_modes(Kff: np.ndarray, Mff: np.ndarray):
+    """稠密广义特征值问题，振型按质量归一化（φᵀMφ = 1）。
+
+    M 正定时直接 ``eigh(K, M)``。只有节点质量、杆件没有密度时，转动等自由度
+    上质量为零，M 只是半正定，``eigh(K, M)`` 会拒算；这时改解
+    ``M φ = μ K φ``（K 正定），ω² = 1/μ，μ = 0 的是无质量自由度对应的无穷大
+    频率，丢掉。和屈曲那边把不定的 K_g 放左边是同一个手法。
+    """
+    try:
+        return eigh(Kff, Mff)
+    except np.linalg.LinAlgError:
+        pass
+    mu, vecs = eigh(Mff, Kff)
+    scale = max(float(np.abs(mu).max(initial=0.0)), 1e-300)
+    keep = mu > 1e-12 * scale
+    mu, vecs = mu[keep], vecs[:, keep]
+    order = np.argsort(-mu)                     # μ 大 ↔ ω 小
+    mu, vecs = mu[order], vecs[:, order]
+    modal_mass = np.einsum("ik,ij,jk->k", vecs, Mff, vecs)
+    vecs = vecs / np.sqrt(modal_mass)
+    return 1.0 / mu, vecs
 
 
 def _lowest_modes_sparse(Kff, Mff, num_modes: int):

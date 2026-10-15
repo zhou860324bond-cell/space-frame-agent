@@ -34,7 +34,7 @@ from scipy.linalg import eigh
 from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import eigsh
 
-from frame3d import (Frame, _member_matrices, assemble, constrained_dofs,
+from frame3d import (Frame, _member_matrices, assemble, dof_basis,
                      project_secondary_matrix, scatter_blocks, solve)
 from modal import DENSE_EIGEN_LIMIT
 
@@ -134,14 +134,13 @@ def buckling(model: Frame, case: str | None = None,
     K, _, _ = assemble(model)
     Kg = assemble_geometric(model, axial)
 
-    n = model.num_dofs
-    fixed = constrained_dofs(model)
-    free = np.setdiff1d(np.arange(n), fixed)
+    basis = dof_basis(model)
+    free = basis.free
     if free.size == 0:
         raise ValueError("所有自由度都被约束了，不存在屈曲模态")
 
-    Kff = K[free][:, free]
-    Gff = Kg[free][:, free]
+    Kff = basis.reduce(K)
+    Gff = basis.reduce(Kg)
     Kff = 0.5 * (Kff + Kff.T)
     Gff = 0.5 * (Gff + Gff.T)
 
@@ -165,7 +164,6 @@ def buckling(model: Frame, case: str | None = None,
         raise ValueError("没有找到正的临界荷载因子，检查荷载方向与约束")
     order = order[:num_modes]
 
-    shapes = np.zeros((n, len(order)))
-    shapes[free, :] = vecs[:, order]
+    shapes = basis.expand(vecs[:, order])
     return BucklingResult(factors=lam[order], shapes=shapes, case=name,
                           axial=axial)

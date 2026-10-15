@@ -59,6 +59,11 @@ def read_result(path: str | Path):
             grid.cell_data["Mises_MPa"] = data["element_mises"]
             grid.cell_data["AbsPrincipal_MPa"] = data["element_abs_principal"]
             grid.point_data["Displacement_mm"] = data["displacement"]
+            if "gauss_stress" in data:
+                from solid3d import SolidMesh, nodal_display_stress
+                vm, principal = nodal_display_stress(SolidMesh(nodes, elements), data["gauss_stress"])
+                grid.point_data["Display_Mises_MPa"] = vm
+                grid.point_data["Display_AbsPrincipal_MPa"] = principal
     elif suffix == ".vtu":
         grid = pv.read(path)
     else:
@@ -80,6 +85,12 @@ def read_result(path: str | Path):
     index = next((i for i, p in enumerate(paths) if p.stem == path.stem), len(paths) - 1)
     caption = (f"节点 {summary.get('node_id')} · 工况 {summary.get('case')}"
                if summary else path.stem)
+    if summary.get('loading_method') == 'displacement':
+        caption += ' · 位移驱动'
+        if (summary.get('boundary_spec') or {}).get('local_loads'):
+            caption += ' · 保留区外载已重建'
+    elif summary.get('loading_method') == 'force':
+        caption += ' · 内力加载对照'
     return grid, summary, paths, index, caption
 
 
@@ -107,6 +118,17 @@ class SolidResultPanel(QWidget):
             self.field.addItem(f"{label} ({unit})", key)
         self.field.currentIndexChanged.connect(self._changed)
         form.addRow("结果量", self.field)
+        self.palette = QComboBox()
+        for label, value in (("Abaqus彩虹", "abaqus"), ("柔和蓝红", "engineering"),
+                             ("蓝绿黄", "viridis"), ("蓝黄", "cividis")):
+            self.palette.addItem(label, value)
+        self.palette.currentIndexChanged.connect(self._changed)
+        form.addRow("实体配色", self.palette)
+        self.averaging = QCheckBox("节点平均着色")
+        self.averaging.setChecked(True)
+        self.averaging.setToolTip("仅改变连续云图显示；原始单元峰值和单元查询数值保留。")
+        self.averaging.toggled.connect(self._changed)
+        form.addRow("应力显示", self.averaging)
         self.range = QComboBox()
         self.range.addItem("P99 色标", 99)
         self.range.addItem("完整范围", None)
@@ -137,7 +159,7 @@ class SolidResultPanel(QWidget):
             box.addWidget(button)
         box.addStretch(1)
 
-    def bind(self, paths, index, caption, *, saved=False):
+    def bind(self, paths, index, caption, *, saved=False, geometry=None):
         self._filling = True
         try:
             self.caption.setText(caption + ("\n已保存结果，独立于当前整体模型" if saved else ""))
@@ -145,14 +167,43 @@ class SolidResultPanel(QWidget):
             for i, path in enumerate(paths):
                 self.levels.addItem(f"第 {i + 1} 档", str(path))
             self.levels.setCurrentIndex(index)
-            self.source.setText(f"结果文件：{paths[index].name}")
+            details = ""
+            if isinstance(geometry, dict):
+                try:
+                    if geometry.get("algorithm") == "column-host+constrained-rolling-ball":
+                        radius = float(geometry["applied_fillet_radius_mm"])
+                        if not np.isfinite(radius) or radius <= 0:
+                            raise ValueError("invalid radius")
+                        details = f"\n一体连续实体 · 柱截面保持 · 过渡半径 {radius:.6g} mm"
+                    elif geometry.get("algorithm") == "column-host-butt-joint":
+                        host = int(geometry['host_member_id'])
+                        height = float(geometry['head_extension_mm'])
+                        if host < 1 or not np.isfinite(height) or height < 0:
+                            raise ValueError("invalid column host")
+                        details = f"\n柱截面保持 · 柱杆件 {host} · 梁端贴合"
+                    elif geometry.get("algorithm") == "g2-bezier-sweep":
+                        radius = float(geometry['minimum_centerline_radius_mm'])
+                        if not np.isfinite(radius) or radius <= 0:
+                            raise ValueError("invalid radius")
+                        details = f"\nG2曲率连续过渡 · 最小中心线半径 {radius:.6g} mm"
+                    elif geometry.get("algorithm") == "halfspace-miter+rolling-ball":
+                        radius = float(geometry.get("applied_fillet_radius_mm", 0.))
+                        if not np.isfinite(radius) or radius < 0:
+                            raise ValueError("invalid radius")
+                        details = f"\n斜接裁切 · 圆角半径 {radius:.6g} mm" if radius else "\n斜接裁切 · 未形成圆角"
+                    elif geometry.get("algorithm") == "convex-envelope":
+                        details = "\n截面包络填充（原方式）"
+                except (KeyError, TypeError, ValueError):
+                    details = "\n几何记录无效，请核对原始结果文件。"
+            self.source.setText(f"结果文件：{paths[index].name}"+details)
             self.source.setToolTip(str(paths[index]))
         finally:
             self._filling = False
 
     def options(self):
         return dict(field=self.field.currentData(), percentile=self.range.currentData(),
-                    scale=self.scale.value(), show_edges=self.edges.isChecked())
+                    scale=self.scale.value(), show_edges=self.edges.isChecked(),
+                    averaging=self.averaging.isChecked(), palette=self.palette.currentData())
 
     def _changed(self, *_args):
         if not self._filling:

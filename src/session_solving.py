@@ -22,10 +22,10 @@ from typing import Any
 import numpy as np
 
 from frame3d import check_equilibrium, solve
-from model_compiler import compile_model
+from model_compiler import ANALYSIS_MIN_DIVISIONS, compile_model
 from model_io import validate_payload
 from result_db import from_solution as result_db_from_solution
-from session_base import ToolResult
+from session_base import ToolResult, _records
 import capsule as _capsule
 import silent_failures as _silent
 from task_control import TaskCancelled, checkpoint
@@ -33,6 +33,30 @@ from task_control import TaskCancelled, checkpoint
 
 class SolvingMixin:
     """求解：自研内核、Abaqus 对标、实体子模型。见模块 docstring。"""
+    def _perturbation_step(self, eff, original) -> dict[str, Any]:
+        """频率步做模态、屈曲步做线性屈曲，都在这一步的支座配置上算。"""
+        entry: dict[str, Any] = {"step": eff.name, "analysis": eff.analysis,
+                                 "loads": dict(eff.loads), "supports": sorted(eff.supports),
+                                 "changes": list(eff.changes)}
+        if eff.analysis == "frequency":
+            got = self.modal_analysis(num_modes=eff.num_modes)
+            if not got.ok:
+                return {**entry, "error": got.payload}
+            entry["frequencies_Hz"] = [m["frequency_Hz"] for m in got.payload["modes"]]
+            return entry
+        factors = self._amplitude_factors(eff.loads, original)
+        self.model = dict(self.model)
+        self.model["combos"] = [{"name": eff.name, "factors": factors}]
+        static = self.solve_model(analysis="linear")
+        if not static.ok:
+            return {**entry, "error": static.payload}
+        got = self.buckling_analysis(case=eff.name, num_modes=eff.num_modes)
+        if not got.ok:
+            return {**entry, "error": got.payload}
+        entry["critical_factor"] = got.payload["critical_factor"]
+        entry["factors"] = got.payload["factors"]
+        return entry
+
     def solve_steps(self, inspect: str | None = None) -> ToolResult:
         """按顺序求解模型里声明的全部分析步。
 
@@ -62,7 +86,18 @@ class SolvingMixin:
                                       "hint": "分析步没有执行，模型保持不变"})
 
         names = [e.name for e in effective]
-        target = inspect if inspect is not None else names[-1]
+        general = [e.name for e in effective if e.analysis not in step_module.PERTURBATION]
+        if not general:
+            return ToolResult(False, {
+                "error": "全是线性摄动步（频率、屈曲），没有一般分析步提供基态",
+                "hint": "先加一个 linear 或 pdelta 分析步"})
+        # 会话里留作后处理的是一般步的静力结果；摄动步的频率与临界因子写在汇总里
+        target = inspect if inspect is not None else general[-1]
+        if target in names and target not in general:
+            return ToolResult(False, {
+                "error": f"分析步 {target!r} 是线性摄动步，没有静力结果可留作后处理",
+                "hint": "它的频率或临界因子在 solve_steps 的汇总里；inspect 请指定一般分析步",
+                "general_steps": general})
         if target not in names:
             return ToolResult(False, {
                 "error": f"没有名为 {target!r} 的分析步", "steps": names})
@@ -72,10 +107,24 @@ class SolvingMixin:
                             self.result_identity, self.solve_summary, self._solution_model_key)
         completed = False
         summary = []
+        stored: dict[str, dict[str, Any]] = {}
         try:
             for eff in effective:
                 checkpoint()
                 self.model = step_module.payload_for(eff, original)
+                if eff.loads:
+                    self.model = step_module.active_cases_only(self.model, set(eff.loads))
+                if eff.analysis in step_module.PERTURBATION:
+                    summary.append(self._perturbation_step(eff, original))
+                    if summary[-1].get("error"):
+                        return ToolResult(False, {
+                            "error": f"分析步 {eff.name!r} 求解失败",
+                            "detail": summary[-1],
+                            "completed": [s["step"] for s in summary[:-1]]})
+                    view = self.modal_view if eff.analysis == "frequency" else self.buckling_view
+                    stored[eff.name] = {"analysis": eff.analysis, "summary": summary[-1],
+                                        "view": view}
+                    continue
                 if eff.analysis == "pdelta":
                     outcome = self.solve_model(
                         analysis="step", amplitudes=dict(eff.loads),
@@ -104,6 +153,11 @@ class SolvingMixin:
                     "max_deflection_mm": entry.get("max_deflection_mm"),
                     "max_displacement_mm": entry.get("max_displacement_mm"),
                     "equilibrium_ok": entry.get("equilibrium_ok")})
+                stored[eff.name] = {"analysis": eff.analysis, "summary": summary[-1],
+                                    "case": case_key,
+                                    "snapshot": (self.solution, self.result_db, self.frame,
+                                                 self.compilation, self.result_identity,
+                                                 self.solve_summary)}
                 if eff.name == target:
                     kept = (self.solution, self.result_db,
                             self.frame, self.compilation, self.result_identity,
@@ -119,6 +173,7 @@ class SolvingMixin:
         (self.solution, self.result_db, self.frame, self.compilation,
          self.result_identity, self.solve_summary) = kept
         self._solution_model_key = self._model_key()
+        self.step_results, self.step_results_key = stored, self._solution_model_key
         if self.result_identity is not None:
             self.result_identity["model_fingerprint"] = self._solution_model_key.hex()
             self.result_identity["step"] = target
@@ -131,6 +186,38 @@ class SolvingMixin:
             "limitation": "每一步都从未变形、无应力状态重解，不把上一步的状态"
                           "带进来；杆件也不能在步之间生灭。所以这表达的是"
                           "「同一结构的几种配置」，不是施工过程。"})
+
+    def inspect_step(self, step: str) -> ToolResult:
+        """切换会话里供后处理的分析步结果，不重解（Abaqus 结果树里点另一个 Step）。
+
+        solve_steps 每一步的结果都留着；模型改过之后它们作废，要重新提交。
+        线性摄动步没有静力结果，返回它的频率或临界因子。
+        """
+        import steps as step_module
+        if not self.step_results:
+            return ToolResult(False, {"error": "还没有提交分析步", "hint": "先 solve_steps"})
+        if self.step_results_key != self._model_key():
+            return ToolResult(False, {"error": "模型在提交分析步之后改过，各步结果已作废",
+                                      "hint": "重新 solve_steps"})
+        entry = self.step_results.get(step)
+        if entry is None:
+            return ToolResult(False, {"error": f"没有名为 {step!r} 的分析步结果",
+                                      "steps": list(self.step_results)})
+        if entry["analysis"] in step_module.PERTURBATION:
+            return ToolResult(True, {"inspecting": step, "perturbation": True,
+                                     "summary": entry["summary"],
+                                     "note": "线性摄动步没有静力结果，会话里的静力结果不变"})
+        (self.solution, self.result_db, self.frame, self.compilation,
+         self.result_identity, self.solve_summary) = entry["snapshot"]
+        self._solution_model_key = self._model_key()
+        if self.result_identity is not None:
+            # 结果身份写的是“哪个模型、哪一步”：快照里留的是那一步的分步模型指纹
+            self.result_identity = {**deepcopy(self.result_identity), "step": step,
+                                    "model_fingerprint": self._solution_model_key.hex()}
+        frames = self.solution[entry["case"]].frames if entry["case"] in self.solution.all_results() else []
+        return ToolResult(True, {"inspecting": step, "case": entry["case"],
+                                 "summary": entry["summary"],
+                                 "frames": [round(float(t), 6) for t, _ in frames] or [1.0]})
 
     @staticmethod
     def _amplitude_factors(loads: dict, payload: dict) -> dict:
@@ -151,6 +238,46 @@ class SolvingMixin:
                 curve = Amplitude(amp, BUILTIN_AMPLITUDES[amp])
             out[case] = curve.at(1.0)
         return out
+
+    @_records
+    def set_imperfection(self, mode: int = 1, amplitude: float | None = None,
+                         height_ratio: float | None = None, case: str | None = None,
+                         clear: bool = False) -> ToolResult:
+        """初始几何缺陷：第 mode 阶屈曲模态缩放后叠到分析几何上，二阶分析时生效。
+
+        幅值二选一：``amplitude`` 直接给长度（模型单位，负值表示反向），或
+        ``height_ratio`` 乘结构总高（z 向跨度；平面结构取最大尺寸），如 1/250。
+        """
+        if clear:
+            removed = self.model.pop("imperfection", None) is not None
+            self._invalidate()
+            return ToolResult(True, {"cleared": removed, "imperfection": None})
+        if not self.model.get("nodes"):
+            return ToolResult(False, {"error": "当前没有模型"})
+        if (amplitude is None) == (height_ratio is None):
+            return ToolResult(False, {
+                "error": "amplitude 与 height_ratio 二选一",
+                "example": {"mode": 1, "height_ratio": 1 / 250}})
+        if amplitude is None:
+            xyz = np.array([[n["x"], n["y"], n["z"]] for n in self.model["nodes"]], float)
+            extent = xyz.max(axis=0) - xyz.min(axis=0)
+            height = float(extent[2]) if extent[2] > 0 else float(extent.max())
+            amplitude = float(height_ratio) * height
+        spec: dict[str, Any] = {"mode": int(mode), "amplitude": float(amplitude)}
+        if case:
+            spec["case"] = str(case)
+        candidate = {**self.model, "imperfection": spec}
+        errors = [e for e in validate_payload(candidate) if "imperfection" in e]
+        if errors:
+            return ToolResult(False, {"errors": errors})
+        self.model["imperfection"] = spec
+        self._invalidate()
+        return ToolResult(True, {
+            "imperfection": spec,
+            "amplitude_mm": round(spec["amplitude"] * self.units.disp_scale, 6),
+            "note": "缺陷在 solve_model(analysis='pdelta') 或 'step' 时生效，"
+                    "取完善结构的屈曲模态；线性静力与屈曲分析仍按完善几何。"
+                    "幅值按所用规范确定，这里不替用户选规范。"})
 
     def solve_model(self, analysis: str = "linear", increments: int = 10,
                     max_iter: int = 40, tolerance: float = 1e-7,
@@ -194,8 +321,32 @@ class SolvingMixin:
         if errors:
             return ToolResult(False, {"errors": errors,
                                       "hint": "先按上面的清单修正模型，再重新求解"})
-        self.compilation = compile_model(self.model, validated=True)
+        # P-Δ（含按幅值加载的 step）在单元上装配几何刚度阵，和屈曲一样
+        # 一杆一单元会偏刚，所以同样默认剖够；线性静力与轴向塑性不需要
+        # （前者内力解析恢复，后者轴力沿杆不变），保持布种原样。
+        refine = analysis in ("pdelta", "step")
+        spec = self.model.get("imperfection")
+        if refine and spec:
+            from imperfection import MIN_DIVISIONS as floor
+        else:
+            floor = ANALYSIS_MIN_DIVISIONS if refine else 1
+        self.compilation = compile_model(self.model, validated=True,
+                                         min_divisions=floor)
         self.frame = self.compilation.analysis_model
+        imperfection_info = None
+        if refine and spec:
+            # 缺陷叠在加密后的分析模型上：模态要在同一套单元上求，坐标才对得上。
+            from imperfection import apply_mode_imperfection
+            try:
+                self.frame, imperfection_info = apply_mode_imperfection(
+                    self.frame, int(spec["mode"]), float(spec["amplitude"]),
+                    spec.get("case"))
+            except (np.linalg.LinAlgError, ValueError) as exc:
+                self.solution = None
+                return ToolResult(False, {
+                    "error": f"初始缺陷施加失败：{exc}",
+                    "hint": "缺陷取屈曲模态，参考工况里要有受压杆件。"
+                            "换一个 imperfection.case，或先用 buckling_analysis 确认能求出模态。"})
         self.result_db = None
         checkpoint()
         try:
@@ -316,6 +467,20 @@ class SolvingMixin:
             },
         }
 
+        if imperfection_info is not None:
+            peak = imperfection_info["peak_node"]
+            where = self.compilation.mapping.generated_nodes.get(peak)
+            payload["imperfection"] = {
+                **imperfection_info,
+                "amplitude_mm": round(imperfection_info["amplitude"] * U.disp_scale, 6),
+                "peak_at": (f"杆件 {where[0]} 的 {where[1]:.2f}L 处" if where
+                            else f"节点 {peak}"),
+                "note": "缺陷只改分析模型的坐标；报出的位移是相对有缺陷构形的附加位移。"}
+        elif spec:
+            payload["imperfection_note"] = (
+                "模型设置了初始缺陷，但它只在 pdelta / step 二阶分析中生效，"
+                f"这次是 {analysis}，按完善几何计算。")
+
         # 1. 静默失败检测：8 项检查，把"算出来了但结果可疑"的情况挑出来
         try:
             findings = _silent.detect_silent_failures(self.frame, self.solution)
@@ -331,7 +496,8 @@ class SolvingMixin:
         # 2. 实验胶囊存档：完整输入+结果摘要，便于复现和回归对比
         try:
             cap_path = _capsule.save_capsule(
-                self.model, self.frame, self.solution, source="solve_model")
+                self.model, self.frame, self.solution, source="solve_model",
+                directory=getattr(self, "capsule_directory", None))
             payload["capsule"] = str(cap_path)
         except Exception as exc:                      # noqa: BLE001
             payload["capsule_error"] = f"{type(exc).__name__}: {exc}"
@@ -487,11 +653,13 @@ class SolvingMixin:
                             mesh_sizes_mm: list[float] | None = None,
                             backend: str = "native",
                             dry_run: bool = False, levels: int = 1,
-                            progress=None) -> ToolResult:
+                            progress=None, loading_method: str = "displacement",
+                            geometry_mode: str = "transition",
+                            fillet_radius_mm: float | None = None) -> ToolResult:
         """节点局部实体子模型：看杆件相交处的应力集中。
 
-        分两段，是有意的。**建规格**（把梁模型的杆端力翻译成实体子模型的
-        边界条件、反演圆管尺寸、算名义应力）是纯计算；**跑实体**默认调用
+        分两段，是有意的。**建规格**（恢复梁切面运动或杆端力、反演圆管尺寸、
+        算名义应力）是纯计算；**跑实体**默认调用
         自研 C3D10 内核，也可切换 Abaqus 对标。dry_run 不是调试开关，而是
         在划网格前先审查几何和载荷映射的入口。
         """
@@ -499,7 +667,8 @@ class SolvingMixin:
 
         try:
             spec = solid_joint.prepare_joint_spec(
-                self, int(node_id), case, anchor_member)
+                self, int(node_id), case, anchor_member, loading_method=loading_method,
+                geometry_mode=geometry_mode, fillet_radius_mm=fillet_radius_mm)
         except solid_joint.SolidJointError as exc:
             return ToolResult(False, {"error": str(exc)})
         except (KeyError, ValueError) as exc:
@@ -507,18 +676,21 @@ class SolvingMixin:
 
         if dry_run:
             payload = spec.to_dict()
-            payload["note"] = ("只建了规格，没有调用 Abaqus。名义正应力即 Kt 的分母，"
-                               "可以先手算核对再决定是否跑实体分析。")
+            payload["note"] = ("仅建立规格，尚未调用实体求解器；切面运动来自整体梁结果。"
+                               "名义正应力为 Kt 的分母，请先核对边界与单位。")
             return ToolResult(True, payload)
         try:
             if backend == "native":
                 import native_joint
                 summary = native_joint.run_native_joint_analysis(
                     self, int(node_id), case, anchor_member, mesh_sizes_mm,
-                    levels=int(levels), progress=progress)
+                    levels=int(levels), progress=progress, loading_method=loading_method,
+                    geometry_mode=geometry_mode, fillet_radius_mm=fillet_radius_mm)
             elif backend == "abaqus":
                 summary = solid_joint.run_joint_analysis(
-                    self, int(node_id), case, anchor_member, mesh_sizes_mm)
+                    self, int(node_id), case, anchor_member, mesh_sizes_mm,
+                    loading_method=loading_method, geometry_mode=geometry_mode,
+                    fillet_radius_mm=fillet_radius_mm)
             else:
                 return ToolResult(False, {"error": f"未知实体求解后端 {backend!r}"})
         except solid_joint.SolidJointError as exc:

@@ -44,12 +44,12 @@ def _make_router_with_mocks(configs: list[tuple[str, bool]]) -> tuple[ModelRoute
     configs 是 [(模型名, 是否失败), ...]，按优先级排序。
     返回 (router, providers)，providers 可以用来断言调用情况。
     """
-    model_configs = [ModelConfig(name=n, base_url="http://mock", api_key="mock", priority=i)
+    model_configs = [ModelConfig(name=n, base_url="http://mock", api_key="mock-credential", priority=i)
                      for i, (n, _) in enumerate(configs)]
     router = ModelRouter(model_configs)
     providers = [_MockProvider(n, fail) for n, fail in configs]
     # 替换掉真实的 provider 懒加载，直接用 mock
-    router._providers = {p.name: p for p in providers}  # type: ignore
+    router._providers = {c.identity(): p for c, p in zip(model_configs, providers, strict=True)}  # type: ignore
     return router, providers
 
 
@@ -109,7 +109,7 @@ def test_all_models_fail_raises_last_error():
     router, _ = _make_router_with_mocks([
         ("a", True), ("b", True)])
     # 把第二个的错误信息改一下，确认抛的是最后一个
-    router._providers["b"].error_msg = "second error"  # type: ignore
+    router._providers[router._configs[1].identity()].error_msg = "second error"  # type: ignore
     with pytest.raises(RuntimeError, match="second error"):
         router.complete([], [])
     assert len(router.call_history) == 2

@@ -114,6 +114,13 @@ def prune_loads(model: dict[str, Any], *,
     clean(model)                                    # 单工况写法
     for case in model.get("load_cases") or []:      # 多工况写法
         clean(case)
+    # 节点质量不是荷载，但同样挂在节点上：节点删了它必须一起走，
+    # 否则下一次校验报「masses 指向不存在的节点」，指向的却不是删除那一步。
+    if nodes and model.get("masses"):
+        kept = [e for e in model["masses"] if int(e["node"]) not in nodes]
+        if len(kept) != len(model["masses"]):
+            counted["masses"] = len(model["masses"]) - len(kept)
+        model["masses"] = kept
     return counted
 
 
@@ -150,6 +157,64 @@ def prune_sets(model: dict[str, Any]) -> tuple[dict[str, int], list[str]]:
     return pruned, emptied
 
 
+def prune_feature_regions(model: dict[str, Any]) -> dict[str, int]:
+    """建模对象里显式写出的编号随删除一起剪掉，返回每个对象剪了几个。
+
+    集合区域不用剪：集合本身由 prune_sets 清理，对象再生成时按集合的当前内容展开。
+    剪空的对象保留，由校验报出「区域里没有节点/杆件」，让用户决定删除还是改区域。
+    """
+    alive = {"nodes": {int(n["id"]) for n in model.get("nodes") or []},
+             "members": {int(m["id"]) for m in model.get("members") or []}}
+    counted: dict[str, int] = {}
+    for items in (model.get("features") or {}).values():
+        for feature in items:
+            region = feature.get("region") or {}
+            for key in ("nodes", "members"):
+                if key in region:
+                    kept = [k for k in region[key] if int(k) in alive[key]]
+                    if len(kept) != len(region[key]):
+                        counted[feature["name"]] = len(region[key]) - len(kept)
+                        region[key] = kept
+    return counted
+
+
+def prune_instances(model: dict[str, Any]) -> list[str]:
+    """实例记录里剪掉已删的杆件与节点；杆件删光的实例记录一并去掉，返回去掉的名字。"""
+    instances = (model.get("assembly") or {}).get("instances")
+    if not instances:
+        return []
+    members = {int(m["id"]) for m in model.get("members") or []}
+    nodes = {int(n["id"]) for n in model.get("nodes") or []}
+    kept, dropped = [], []
+    for record in instances:
+        record["members"] = [k for k in record["members"] if int(k) in members]
+        record["nodes"] = [k for k in record["nodes"] if int(k) in nodes]
+        (kept if record["members"] else dropped).append(record)
+    if kept:
+        model["assembly"]["instances"] = kept
+    else:
+        model.pop("assembly")
+    return [r["name"] for r in dropped]
+
+
+def prune_mesh_seeds(model: dict[str, Any]) -> list[int]:
+    """删掉指向已不存在杆件的逐杆布种，返回被删的杆件编号。
+
+    和集合一样随杆件删除一起清理；不清的话下一次校验会因为悬空的布种
+    拒绝整个模型，而报错指向的却不是删杆那一步。
+    """
+    mesh = model.get("mesh")
+    if not mesh or not mesh.get("members"):
+        return []
+    alive = {str(int(m["id"])) for m in model.get("members") or []}
+    stale = sorted(int(k) for k in mesh["members"] if k not in alive)
+    if stale:
+        mesh["members"] = {k: v for k, v in mesh["members"].items() if k in alive}
+        if not mesh["members"]:
+            del mesh["members"]
+    return stale
+
+
 def prune_orphan_nodes(model: dict[str, Any]) -> list[int]:
     """删掉不再与任何杆件相连的节点，并连带清掉它们的约束。
 
@@ -158,6 +223,9 @@ def prune_orphan_nodes(model: dict[str, Any]) -> list[int]:
     """
     members = model.get("members") or []
     used = {int(m["i"]) for m in members} | {int(m["j"]) for m in members}
+    # 约束里的参考点、加载点不靠杆件也有刚度，不算孤立
+    import features as _features
+    used |= _features.constraint_nodes(model)
     orphans = [int(n["id"]) for n in model.get("nodes") or []
                if int(n["id"]) not in used]
     if not orphans:
@@ -196,5 +264,11 @@ def apply(model: dict[str, Any], change: Change, *,
             report["pruned_sets"] = pruned
         if emptied:
             report["emptied_sets"] = emptied
+        if stale := prune_mesh_seeds(model):
+            report["pruned_mesh_seeds"] = stale
+        if trimmed := prune_feature_regions(model):
+            report["pruned_feature_regions"] = trimmed
+        if dropped := prune_instances(model):
+            report["pruned_instances"] = dropped
 
     return report

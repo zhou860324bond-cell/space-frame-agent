@@ -126,6 +126,10 @@ def calc_section(section_type: str, params: dict) -> dict:
     # 不在模型层舍入。小截面的 m⁴ 数值本来就可能低于 1e-8，四舍五入
     # 会直接变成零，到求解阶段才报“截面惯性矩必须大于 0”。
     out = {"A": float(A), "Iy": float(Iy), "Iz": float(Iz), "J": float(J)}
+    kinds = {"I 型钢": "i", "矩形管": "box", "圆管": "tube", "矩形": "rectangle",
+             "圆钢": "circle", "槽钢": "channel", "等边角钢": "angle", "T 型钢": "tee"}
+    if section_type in kinds:
+        out["geometry"] = {"type": kinds[section_type], "dimensions": dict(params)}
     fibres = _SYMMETRIC_FIBRES.get(section_type)
     if fibres is not None:
         cy, cz, circular = fibres(params)
@@ -208,6 +212,15 @@ class SectionDialog(QDialog):
 
         if section:
             self.txt_name.setText(section.get("name", ""))
+            geometry = section.get("geometry", {})
+            types = {"i":"I 型钢", "box":"矩形管", "tube":"圆管", "rectangle":"矩形",
+                     "circle":"圆钢", "channel":"槽钢", "angle":"等边角钢", "tee":"T 型钢"}
+            if geometry.get("type") in types:
+                stype = types[geometry["type"]]
+                self.cmb_type.setCurrentText(stype)
+                for key, value in geometry.get("dimensions", {}).items():
+                    if key in self.param_spins[stype]:
+                        self.param_spins[stype][key].setValue(float(value))
             # 无法反推截面类型，默认 I 型钢
         self._on_type_changed(0)
         self._update_preview()

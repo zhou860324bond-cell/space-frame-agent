@@ -20,11 +20,11 @@ import functools
 import os
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QRubberBand, QVBoxLayout, QWidget
 
-from . import i18n, scene, theme
+from . import i18n, picking, scene, theme
 from .result_overlay import ResultOverlay
 
 # 无头环境（QT_QPA_PLATFORM=offscreen）里没有可用的 OpenGL：VTK 建不出
@@ -91,6 +91,41 @@ class _NullPlotter:
         return None
 
 
+#: VTK 能读的中文字体文件（FreeType 读 .ttf 最稳，.ttc 取第一个字面）。
+_CJK_FONT_FILES = ("C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/Deng.ttf",
+                   "C:/Windows/Fonts/msyh.ttc",
+                   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                   "/System/Library/Fonts/PingFang.ttc")
+
+
+def cjk_font_file() -> str | None:
+    import os
+    return next((path for path in _CJK_FONT_FILES if os.path.isfile(path)), None)
+
+
+def _use_cjk_font_for_labels(plotter) -> None:
+    """文字含非 ASCII 字符时给 VTK 指定中文字体文件。
+
+    VTK 的默认字体没有中文字形：基准点名、约束名、「第 1 阶」这类标注在真窗口里
+    整个消失，无头测试看不出来。只对含非 ASCII 的文字换字体，英文标注保持原样。
+    """
+    font = cjk_font_file()
+    if font is None:
+        return
+
+    def wrap(method, index: int, keyword: str):
+        def call(*args, **kwargs):
+            text = args[index] if len(args) > index else kwargs.get(keyword)
+            items = [text] if isinstance(text, str) else list(text) if text is not None else []
+            if any(isinstance(t, str) and not t.isascii() for t in items):
+                kwargs.setdefault("font_file", font)
+            return method(*args, **kwargs)
+        return call
+
+    plotter.add_text = wrap(plotter.add_text, 0, "text")
+    plotter.add_point_labels = wrap(plotter.add_point_labels, 1, "labels")
+
+
 # 视口图例的文字。**必须是 ASCII**：VTK 用自己的字体引擎，默认字体没有中文
 # 字形——实测中文图例渲染成三个小点，色标那边也栽过同一个坑。要显示中文得给
 # VTK 单独加载字体文件，那是另一件事；在此之前，英文术语比一排方块可读。
@@ -127,6 +162,10 @@ class Viewport(QWidget):
     escape_pressed = Signal()
     # 右键菜单由主窗口组装，这里只报告屏幕坐标。
     context_requested = Signal(object)
+    # 在空白处单击：取消当前选择
+    cleared = Signal()
+    #: 区域拾取（Abaqus 提示区选择）的当前选择集变了：(类型, 编号列表)
+    region_changed = Signal(str, list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -143,14 +182,15 @@ class Viewport(QWidget):
         if CAN_RENDER:
             from pyvistaqt import QtInteractor
             self.plotter = QtInteractor(self)
+            _use_cjk_font_for_labels(self.plotter)
         else:
             self.plotter = _NullPlotter(self)
         layout.addWidget(self.plotter.interactor)
         self.plotter.interactor.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
-        self.plotter.interactor.customContextMenuRequested.connect(
-            lambda pos: self.context_requested.emit(
-                self.plotter.interactor.mapToGlobal(pos)))
+        self.plotter.interactor.customContextMenuRequested.connect(self._context_at)
+        self.plotter.interactor.installEventFilter(self)
+        self._click_origin = None
 
         if CAN_RENDER:
             self.plotter.set_background(theme.VIEWPORT_BG)
@@ -179,8 +219,34 @@ class Viewport(QWidget):
         # 你不说清楚要选什么类型，用户就得靠反复试来猜自己选中了谁
         self.pick_mode: str | None = None      # None / "node" / "member"
         self.selection: tuple[str, int] | None = None
+        # 区域拾取：命令要一组节点或杆件时进入，点选 / Shift 加选 / Ctrl 减选 /
+        # 拖框选，按屏幕像素判定（见 picking.py）。与上面的单选浏览互不干扰。
+        self.region_pick: str | None = None
+        # 显示组（Abaqus 的 Display Group）：隐藏的杆件不画、也不参与拾取。节点不
+        # 过滤——位移向量按节点序号取值，删掉节点会让下标整体错位。
+        self.hidden_members: set[int] = set()
+        # 基准点（Abaqus 的 Datum Point）：名称 → 坐标。只画参考标记、供建节点吸附
+        self.datum_points: dict[str, list[float]] = {}
+        # 结果视图画的是分析模型（杆件剖成多个分析杆段）：分析杆段 → 物理杆件。
+        # 拾取、高亮、显示组对外一律用物理杆件编号，见 _owner / _elements。
+        # 空表示当前画的就是物理模型。
+        self.element_owner: dict[int, int] = {}
+        # 约束（MPC / 运动耦合）：(名称, 主节点坐标, [从节点坐标])，画成主节点到各从节点的连线
+        self.constraint_links: list[tuple[str, list[float], list[list[float]]]] = []
+        # 动画（Abaqus 的 Animate: Scale Factor）：按比例系数循环播放变形或振型
+        self._anim_timer = None
+        self._anim_frames: list = []
+        self._anim_make = None
+        self._anim_index = 0
+        self.region_selection = picking.Selection()
+        self._drag_origin: QPoint | None = None
+        self._rubber: QRubberBand | None = None
         self.problem_refs: list[tuple[str, int]] = []
         self.show_labels = False
+        # 截面渲染（Abaqus 的 Render beam profiles）：有截面几何的杆件按真实轮廓
+        # 拉伸，没有几何的照旧画圆管。默认打开——看得见工字钢的朝向，才看得出
+        # 强弱轴放反了。
+        self.render_profiles = True
         self._frame = None                     # 最近一次画的 frame，拾取要用
 
         # 人工建模状态
@@ -537,7 +603,124 @@ class Viewport(QWidget):
             self._inset_camera()
 
     @_batched
+    def _owner(self, element: int) -> int:
+        """分析杆段所属的物理杆件；画的是物理模型时原样返回。"""
+        return self.element_owner.get(element, element)
+
+    def _elements(self, members) -> list[int]:
+        """物理杆件 → 当前所画模型里的杆段编号。"""
+        if not self.element_owner:
+            return list(members)
+        wanted = set(members)
+        return [e for e, p in self.element_owner.items() if p in wanted]
+
+    def visible_frame(self, frame):
+        """去掉显示组里隐藏的杆件（及挂在它们上面的杆件荷载）后的 Frame 视图。"""
+        if frame is None or not self.hidden_members:
+            return frame
+        from copy import copy
+        hidden = self.hidden_members
+        view = copy(frame)
+        view.members = {k: v for k, v in frame.members.items() if self._owner(k) not in hidden}
+        cases = {}
+        for name, case in frame.load_cases.items():
+            c = copy(case)
+            for key in ("member_loads", "member_spans", "member_strains", "member_curvatures"):
+                table = getattr(case, key, None)
+                if isinstance(table, dict):
+                    setattr(c, key, {k: v for k, v in table.items()
+                                     if self._owner(k) not in hidden})
+            cases[name] = c
+        view.load_cases = cases
+        return view
+
+    def set_hidden_members(self, hidden: set[int]) -> None:
+        self.hidden_members = set(hidden)
+
+    # --- 动画 ---
+
+    ANIMATION_FRAMES = 16
+
+    def animating(self) -> bool:
+        return self._anim_timer is not None and self._anim_timer.isActive()
+
+    def start_animation(self, make_mesh, color: str) -> None:
+        """循环播放 ``make_mesh(系数)`` 生成的网格，系数按 sin 在 -1…1 之间变化。
+
+        第一轮按需生成并缓存，之后只替换渲染数据：大模型每帧重建管子要上百毫秒，
+        先算完全部帧再播会让界面停住好几秒。
+        """
+        self.stop_animation()
+        if not CAN_RENDER:
+            return
+        from PySide6.QtCore import QTimer
+        self._anim_make = make_mesh
+        self._anim_frames = [None] * self.ANIMATION_FRAMES
+        self._anim_index = 0
+        first = self._anim_frame(0)
+        self._anim_actor = self.plotter.add_mesh(
+            first, color=color, smooth_shading=True, pbr=True, metallic=0.16,
+            roughness=0.66, ambient=0.20, diffuse=0.80, name="_animation")
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(70)
+        self._anim_timer.timeout.connect(self._anim_tick)
+        self._anim_timer.start()
+
+    def _anim_frame(self, k: int):
+        import math
+        if self._anim_frames[k] is None:
+            factor = math.sin(2.0 * math.pi * k / self.ANIMATION_FRAMES)
+            self._anim_frames[k] = self._anim_make(factor)
+        return self._anim_frames[k]
+
+    def _anim_tick(self) -> None:
+        self._anim_index = (self._anim_index + 1) % self.ANIMATION_FRAMES
+        mesh = self._anim_frame(self._anim_index)
+        self._anim_actor.mapper.SetInputData(mesh)
+        self.plotter.render()
+
+    def stop_animation(self) -> None:
+        if self._anim_timer is not None:
+            self._anim_timer.stop()
+            self._anim_timer.deleteLater()
+        self._anim_timer = None
+        self._anim_frames = []
+        self._anim_make = None
+
+    def animate_deformed(self, frame, solution, case: str, scale: float) -> None:
+        """变形动画：在未变形轮廓上把变形按 -1…1 倍来回播放。"""
+        frame = self.visible_frame(frame)
+        self.clear()
+        if not CAN_RENDER:
+            return
+        self.plotter.add_mesh(scene.member_polylines(frame), color=theme.REFERENCE,
+                              line_width=1.5)
+        self.start_animation(lambda f: scene.member_tubes(frame, solution, case,
+                                                          scale=scale * f), theme.MEMBER)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+
+    def animate_mode(self, frame, shapes, mode: int, label: str = "") -> None:
+        """振型动画：振型是往复运动，静态图只能看到一个瞬间。"""
+        frame = self.visible_frame(frame)
+        self.clear()
+        if not CAN_RENDER:
+            return
+        scale = scene.auto_mode_scale(frame, shapes, mode)
+        self.plotter.add_mesh(scene.member_polylines(frame), color=theme.REFERENCE,
+                              line_width=1.5)
+        self.start_animation(lambda f: scene.mode_shape_tubes(frame, shapes, mode, scale * f),
+                             theme.HIGHLIGHT)
+        if label:
+            self.plotter.add_text(label, position="upper_left", color=theme.VIEWPORT_INK,
+                                  font_size=10)
+        self._decorate(frame)
+        self._fit()
+        self.plotter.render()
+
     def clear(self) -> None:
+        self.stop_animation()
         self._annotation_context = None
         if getattr(self, "_solid_active", False):
             self._first_render = True
@@ -556,6 +739,32 @@ class Viewport(QWidget):
         """编号标注 + 选中高亮。**每种显示模式画完都要调一次**，
         否则切到云图选中就没了，用户会以为选择被清掉了。"""
         self._frame = frame
+        if frame is not None and CAN_RENDER and self.datum_points:
+            import pyvista as pv
+            names = list(self.datum_points)
+            pts = np.array([self.datum_points[n] for n in names], float)
+            self.plotter.add_mesh(pv.PolyData(pts), color=theme.REFERENCE, point_size=9,
+                                  render_points_as_spheres=False, name="_datum_points")
+            self.plotter.add_point_labels(pts, names, name="_datum_labels", font_size=13,
+                                          text_color=theme.VIEWPORT_INK, shape=None,
+                                          always_visible=True, show_points=False)
+        if frame is not None and CAN_RENDER and self.constraint_links:
+            import pyvista as pv
+            points, lines, masters, names = [], [], [], []
+            for name, master, slaves in self.constraint_links:
+                masters.append(master)
+                names.append(name)
+                for slave in slaves:
+                    lines += [2, len(points), len(points) + 1]
+                    points += [master, slave]
+            if points:
+                self.plotter.add_mesh(pv.PolyData(np.array(points, float), lines=np.array(lines)),
+                                      color=theme.HINGE, line_width=2, name="_constraint_links")
+            # 用杆端铰的琥珀色：与未变形轮廓（参考灰）区分开，约束与铰同属“连接”
+            self.plotter.add_point_labels(np.array(masters, float), names, name="_constraint_labels",
+                                          font_size=13, text_color=theme.HINGE, shape=None,
+                                          always_visible=True, show_points=True, point_size=8,
+                                          point_color=theme.HINGE)
         if frame is None or not CAN_RENDER:
             return
         # 模型范围变了，网格地面跟着重算大小
@@ -576,17 +785,19 @@ class Viewport(QWidget):
         if self.selection:
             kind, ident = self.selection
             if kind == "member":
-                mesh = scene.highlight_members(frame, [ident])
+                segments = self._elements([ident])
+                mesh = scene.highlight_members(frame, segments)
                 if mesh.n_cells:
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_selection", opacity=0.85)
+                first = segments[0] if segments else ident
                 for axis, glyph in scene.member_local_axis_glyphs(
-                        frame, ident).items():
+                        frame, first).items():
                     self.plotter.add_mesh(
                         glyph, color=theme.LOCAL_AXES[axis],
                         name=f"_local_axis_{axis}", smooth_shading=True,
                         render=True)
-                points, texts = scene.member_local_axis_labels(frame, ident)
+                points, texts = scene.member_local_axis_labels(frame, first)
                 if points:
                     self.plotter.add_point_labels(
                         points, texts, name="_local_axis_labels", font_size=9,
@@ -598,12 +809,25 @@ class Viewport(QWidget):
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_selection", point_size=16,
                                           render_points_as_spheres=True)
+        if self.region_selection:
+            kind, ids = self.region_selection.kind, self.region_selection.ids
+            if kind == "member":
+                mesh = scene.highlight_members(frame, self._elements(ids))
+                if mesh.n_cells:
+                    self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
+                                          name="_region_selection", opacity=0.9)
+            else:
+                mesh = scene.highlight_nodes(frame, ids)
+                if mesh.n_points:
+                    self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
+                                          name="_region_selection", point_size=16,
+                                          render_points_as_spheres=True)
         member_ids = [ident for kind, ident in self.problem_refs
                       if kind == "member"]
         node_ids = [ident for kind, ident in self.problem_refs
                     if kind == "node"]
         if member_ids:
-            mesh = scene.highlight_members(frame, member_ids, radius_scale=2.0)
+            mesh = scene.highlight_members(frame, self._elements(member_ids), radius_scale=2.0)
             if mesh.n_cells:
                 self.plotter.add_mesh(mesh, color=theme.ERROR,
                                       name="_problem_members", opacity=0.9)
@@ -615,7 +839,188 @@ class Viewport(QWidget):
                                       render_points_as_spheres=True)
 
     @_batched
+    # --- 区域拾取 ---
+
+    def start_region_pick(self, kind: str, initial: list[int] | None = None) -> None:
+        """进入区域拾取：之后的点选、拖框都改写选择集，不再旋转相机。"""
+        if kind not in ("node", "member"):
+            raise ValueError(f"区域拾取只支持 node 或 member，收到 {kind!r}")
+        self.set_model_mode(None)
+        self.set_pick_mode(None)
+        self.region_pick = kind
+        self.region_selection.apply(kind, list(initial or []))
+        self._refresh_region()
+
+    def stop_region_pick(self) -> None:
+        self.region_pick = None
+        self.region_selection.clear()
+        self._drag_origin = None
+        if self._rubber is not None:
+            self._rubber.hide()
+        self._refresh_region()
+
+    def highlight_region(self, kind: str, ids: list[int]) -> None:
+        """只高亮一个对象的区域（模型树单击），不进入拾取。"""
+        if self.region_pick is not None:
+            return                      # 正在选区域时不打扰用户的选择集
+        self.region_selection.apply(kind, list(ids))
+        self._refresh_region()
+
+    def _refresh_region(self) -> None:
+        if self._frame is not None and CAN_RENDER:
+            self.plotter.remove_actor("_region_selection", reset_camera=False)
+            self._decorate(self._frame)
+            self.plotter.render()
+        self.region_changed.emit(self.region_selection.kind or "",
+                                 list(self.region_selection.ids))
+
+    def _screen_geometry(self):
+        """(节点编号, 节点屏幕坐标, 杆件编号, 杆件屏幕线段)，逻辑像素、左上为原点。"""
+        from frame3d import member_endpoints
+        frame = self._frame
+        widget = self.plotter.interactor
+        width, height = max(widget.width(), 1), max(widget.height(), 1)
+        camera = self.plotter.renderer.GetActiveCamera()
+        vtk_matrix = camera.GetCompositeProjectionTransformMatrix(width / height, -1, 1)
+        matrix = np.array([[vtk_matrix.GetElement(r, c) for c in range(4)] for r in range(4)])
+        node_ids = sorted(frame.nodes)
+        nodes = picking.project(matrix, (width, height),
+                                np.array([frame.nodes[k].xyz for k in node_ids]))
+        member_ids = sorted(frame.members)
+        ends = [member_endpoints(frame, frame.members[k]) for k in member_ids]
+        flat = np.array([p for pair in ends for p in pair]) if ends else np.zeros((0, 3))
+        segments = picking.project(matrix, (width, height), flat).reshape(-1, 2, 2)
+        return node_ids, nodes, member_ids, segments
+
+    def region_click(self, x: float, y: float, mode: str = "replace") -> None:
+        """在屏幕 (x, y) 处点选；mode 为 replace / add（Shift）/ remove（Ctrl）。"""
+        if self.region_pick is None or self._frame is None:
+            return
+        node_ids, nodes, member_ids, segments = self._screen_geometry()
+        if self.region_pick == "node":
+            hit = picking.nearest_point(nodes, (x, y))
+            picked = [] if hit is None else [node_ids[hit]]
+        else:
+            hit = picking.nearest_segment(segments, (x, y))
+            picked = [] if hit is None else [self._owner(member_ids[hit])]
+        if not picked and mode != "replace":
+            return                         # 加选、减选时点空了什么也不改
+        self.region_selection.apply(self.region_pick, picked, mode)
+        self._refresh_region()
+
+    def region_box(self, rect: tuple[float, float, float, float],
+                   mode: str = "replace") -> None:
+        """拖框选：完全框住的节点或杆件。"""
+        if self.region_pick is None or self._frame is None:
+            return
+        node_ids, nodes, member_ids, segments = self._screen_geometry()
+        if self.region_pick == "node":
+            mask = picking.points_in_rect(nodes, rect)
+            picked = [k for k, keep in zip(node_ids, mask, strict=True) if keep]
+        else:
+            mask = picking.segments_in_rect(segments, rect)
+            inside = {k for k, keep in zip(member_ids, mask, strict=True) if keep}
+            # 物理杆件的每个分析杆段都框住才算框住（与“完全框住”的规则一致）
+            picked = sorted({self._owner(k) for k in inside
+                             if all(e in inside for e in self._elements([self._owner(k)]))})
+        self.region_selection.apply(self.region_pick, picked, mode)
+        self._refresh_region()
+
+    @staticmethod
+    def _pick_mode_for(modifiers) -> str:
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            return "add"
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            return "remove"
+        return "replace"
+
+    def _idle_picking(self) -> bool:
+        """没有任何拾取、建模或区域选择模式时，单击直接选中对象。"""
+        return (self.region_pick is None and self.model_mode is None
+                and self.pick_mode is None)
+
+    def click_select(self, x: float, y: float, clear: bool = True) -> tuple | None:
+        """在屏幕 (x, y) 处选中最近的节点或杆件（节点优先）；点空了按需取消选择。
+
+        原来进视口必须先按「选择节点 / 选择杆件」进入拾取模式，单击才有反应——
+        主流 CAD 里默认就能点选，模式按钮只是过滤器。
+        """
+        if self._frame is None:
+            return None
+        node_ids, nodes, member_ids, segments = self._screen_geometry()
+        hit = picking.nearest_point(nodes, (x, y)) if len(node_ids) else None
+        if hit is not None:
+            found = ("node", int(node_ids[hit]))
+        else:
+            seg = picking.nearest_segment(segments, (x, y)) if len(member_ids) else None
+            found = None if seg is None else ("member", int(self._owner(member_ids[seg])))
+        if found is not None:
+            self.set_selection(*found)
+            self.picked.emit(*found)
+        elif clear and self.selection is not None and self.selection[0] is not None:
+            self.set_selection(None, None)
+            self.cleared.emit()
+        return found
+
+    def _context_at(self, pos) -> None:
+        """右键：先选中光标下的对象，菜单才能给出针对它的操作。"""
+        if self._idle_picking():
+            self.click_select(pos.x(), pos.y(), clear=False)
+        self.context_requested.emit(self.plotter.interactor.mapToGlobal(pos))
+
+    def eventFilter(self, watched, event):  # noqa: N802  Qt 的命名
+        """区域拾取时接管左键：单击点选，拖动画框；其余照常交给相机。
+
+        空闲时不接管：左键照样转相机，只在「按下到松开几乎没动」时当作单击选择。
+        """
+        if watched is self.plotter.interactor and self.region_pick is None:
+            if self._idle_picking():
+                kind = event.type()
+                if (kind == QEvent.Type.MouseButtonPress
+                        and event.button() == Qt.MouseButton.LeftButton):
+                    self._click_origin = event.position().toPoint()
+                elif (kind == QEvent.Type.MouseButtonRelease
+                        and event.button() == Qt.MouseButton.LeftButton
+                        and self._click_origin is not None):
+                    current = event.position().toPoint()
+                    if (current - self._click_origin).manhattanLength() <= 4:
+                        self.click_select(current.x(), current.y())
+                    self._click_origin = None
+            return super().eventFilter(watched, event)
+        if self.region_pick is None or watched is not self.plotter.interactor:
+            return super().eventFilter(watched, event)
+        kind = event.type()
+        left = Qt.MouseButton.LeftButton
+        if kind == QEvent.Type.MouseButtonPress and event.button() == left:
+            self._drag_origin = event.position().toPoint()
+            return True
+        if kind == QEvent.Type.MouseMove and self._drag_origin is not None:
+            current = event.position().toPoint()
+            if (current - self._drag_origin).manhattanLength() > 4:
+                if self._rubber is None:
+                    self._rubber = QRubberBand(QRubberBand.Shape.Rectangle, watched)
+                self._rubber.setGeometry(QRect(self._drag_origin, current).normalized())
+                self._rubber.show()
+            return True
+        if (kind == QEvent.Type.MouseButtonRelease and event.button() == left
+                and self._drag_origin is not None):
+            origin, current = self._drag_origin, event.position().toPoint()
+            self._drag_origin = None
+            mode = self._pick_mode_for(event.modifiers())
+            if self._rubber is not None and self._rubber.isVisible():
+                self._rubber.hide()
+                self.region_box((origin.x(), origin.y(), current.x(), current.y()), mode)
+            else:
+                self.region_click(current.x(), current.y(), mode)
+            return True
+        return super().eventFilter(watched, event)
+
     def set_selection(self, kind: str | None, ident: int | None) -> None:
+        if self.region_pick is None and self.region_selection:
+            # 模型树高亮的区域是临时的：一回到逐个点选就收起
+            self.region_selection.clear()
+            if self._frame is not None and CAN_RENDER:
+                self.plotter.remove_actor("_region_selection", reset_camera=False)
         self.selection = (kind, ident) if kind and ident is not None else None
         if self._frame is not None and CAN_RENDER:
             for name in ("_selection", "_local_axis_x", "_local_axis_y",
@@ -724,6 +1129,20 @@ class Viewport(QWidget):
                     out[i] = round(out[i] / self.snap_size) * self.snap_size
         return out
 
+    def _snap_to_datum(self, pt):
+        """靠近基准点时吸附到基准点坐标；半径与已有节点吸附相同。"""
+        if not self.datum_points or self._frame is None:
+            return pt
+        try:
+            size = scene.model_size(self._frame) or 1.0
+        except Exception:                      # noqa: BLE001
+            size = 1.0
+        limit = self._node_snap_ratio * size
+        best = min(self.datum_points.values(),
+                   key=lambda xyz: float(np.linalg.norm(pt - np.asarray(xyz, float))))
+        best = np.asarray(best, float)
+        return best if float(np.linalg.norm(pt - best)) <= limit else pt
+
     def _snap_to_existing_node(self, pt):
         """吸附半径内已有节点则返回其编号，否则 None（避免重复节点）。"""
         if self._frame is None:
@@ -821,7 +1240,7 @@ class Viewport(QWidget):
 
         # 人工建模：节点模式 —— 投影到工作平面、网格捕捉、吸附已有节点后创建
         if self.model_mode == "node":
-            snapped = self._snap_point(pt)
+            snapped = self._snap_to_datum(self._snap_point(pt))
             existing = self._snap_to_existing_node(snapped)
             if existing is not None:
                 # 点在了已有节点附近：不重复建，直接吸附并提示
@@ -859,10 +1278,11 @@ class Viewport(QWidget):
         found = scene.nearest(self._frame, pt, self.pick_mode)
         if found is None:
             return
-        self.set_selection(self.pick_mode, found)
-        self.picked.emit(self.pick_mode, found)
+        ident = self._owner(found) if self.pick_mode == "member" else found
+        self.set_selection(self.pick_mode, ident)
+        self.picked.emit(self.pick_mode, ident)
         if self.pick_mode == "member":
-            self.probed.emit(found, pt.copy())
+            self.probed.emit(found, pt.copy())     # 探针按点中的那个分析杆段取值
 
     def _fit(self) -> None:
         """首次显示时摆好相机；之后保持用户转过的视角。
@@ -930,15 +1350,30 @@ class Viewport(QWidget):
                 else (theme.MEMBER, "#4a5764"))
 
     def _add_members(self, frame):
-        """画杆件本体。**形状始终是圆管**——粗细和形态不随截面变，
-        改的只有随底色深浅走的本体色。返回网格，空模型返回 None。"""
+        """画杆件本体。截面渲染打开时，有截面几何的杆件按真实轮廓拉伸，其余画圆管。
+        本体色随底色深浅走。返回杆件网格（可能为空）。"""
         body, _edge = self._member_ink()
-        mesh = scene.member_tubes(frame)
+        drawn: set[int] = set()
+        if self.render_profiles:
+            profiles, drawn = scene.profile_extrusion(frame)
+            if profiles.n_points:
+                # 平直面用平面着色：工字钢翼缘和腹板的棱角要清楚，平滑着色会糊成一团
+                self.plotter.add_mesh(profiles, color=body, smooth_shading=False,
+                                      pbr=True, metallic=0.28, roughness=0.58,
+                                      ambient=0.22, diffuse=0.78, name="_profiles")
+                self.plotter.add_mesh(scene.profile_edges(profiles), color=_edge,
+                                      line_width=1.2, name="_profile_edges")
+        mesh = scene.member_tubes_except(frame, drawn) if drawn else scene.member_tubes(frame)
         if mesh.n_points:
             self.plotter.add_mesh(mesh, color=body, smooth_shading=True,
                                   pbr=True, metallic=0.28, roughness=0.58,
                                   ambient=0.18, diffuse=0.82)
+        if drawn and not mesh.n_points:
+            return profiles
         return mesh
+
+    def set_render_profiles(self, on: bool) -> None:
+        self.render_profiles = bool(on)
 
     def set_contour_palette(self, palette: str) -> bool:
         """切换云图色系。返回是否真的变了，省得上层白刷一次视口。"""
@@ -1003,6 +1438,7 @@ class Viewport(QWidget):
     def show_model(self, frame, case: str | None = None,
                    supports: bool = True, loads: bool = True) -> dict:
         """求解前的模型视图。"""
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1094,6 +1530,7 @@ class Viewport(QWidget):
     @_batched
     def show_deformed(self, frame, solution, case: str, scale: float,
                       overlay: bool = True, supports: bool = True) -> None:
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1132,6 +1569,7 @@ class Viewport(QWidget):
         这张图回答"用了几成、哪根超了"——SAP2000、盈建科最常看的就是它。
         判不了的构件（欧拉不适用的粗短柱）画灰色，不冒充合格。
         """
+        frame = self.visible_frame(frame)
         got = scene.utilization_lines(frame, mapping, payload)
         if not CAN_RENDER:
             self._frame = frame
@@ -1204,6 +1642,7 @@ class Viewport(QWidget):
         看不出大小。这里图形的**高度就是数值**，弯矩画在受拉侧，
         颜色只是辅助：负蓝、零灰、正红，全结构共用一个比例尺。
         """
+        frame = self.visible_frame(frame)
         from units import of as unit_system
         system = unit_system(frame)
         if component in {"T", "My", "Mz", "M"}:
@@ -1284,6 +1723,7 @@ class Viewport(QWidget):
         **分级着色（banded contour）**，级数默认 12，与色标上的分格一一对应。
         连续渐变上读不出"这一段到底是多少"，只读得出"这边比那边红"。
         """
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1418,7 +1858,8 @@ class Viewport(QWidget):
     @_batched
     def show_solid_result(self, grid, caption: str, *, field="Mises_MPa",
                           percentile=99, scale=0.0, show_edges=False,
-                          reset_camera=False) -> dict:
+                          reset_camera=False, averaging=True,
+                          palette="abaqus") -> dict:
         """在主视口绘制真实实体单元结果，保留单元应力与节点位移的关联。"""
         from .solid_result import FIELDS
 
@@ -1429,6 +1870,13 @@ class Viewport(QWidget):
         high = float(np.percentile(values, percentile)) if percentile else peak
         high = max(high, np.finfo(float).eps)
         displayed = grid.copy(deep=True)
+        display_field, display_association = field, association
+        if averaging and association == "cell":
+            display_field = "Display_" + field
+            if display_field not in displayed.point_data:
+                averaged = displayed.cell_data_to_point_data(pass_cell_data=True)
+                displayed.point_data[display_field] = averaged.point_data[field]
+            display_association = "point"
         displayed.points += float(scale) * np.asarray(grid.point_data["Displacement_mm"])
         current_camera = self.plotter.camera_position
         self.clear()
@@ -1437,29 +1885,38 @@ class Viewport(QWidget):
         self._first_render = False
         self._solid_last = dict(field=field, association=association, peak=peak,
                                 clim=(0.0, high), scale=float(scale),
-                                show_edges=bool(show_edges), mesh=displayed)
+                                show_edges=bool(show_edges), mesh=displayed,
+                                averaging=bool(averaging), palette=palette)
         clipped = peak > high
         self.result_overlay.set_content(
             title=f"实体云图 · {label}", peak=f"真实峰值：{peak:.6g} {unit}",
             range_text=f"色标范围：0 ～ {high:.6g} {unit}",
-            status=f"{caption} · {'P99 截色' if clipped else '完整范围'} · 变形 ×{scale:g}",
+            status=f"{caption} · {'节点平均显示' if averaging and association == 'cell' else '原始结果'} · "
+                   f" {'P99 截色' if clipped else '完整范围'} · 变形 ×{scale:g}",
             details=(f"{grid.n_points} 个节点，{grid.n_cells} 个 C3D10 单元。"
-                     "应力按单元保存，不进行跨单元平均；位移按节点保存。"
+                     "应力原始值按单元保存；节点平均仅用于显示，峰值使用原始值。位移按节点保存。"
                      "色标截断仅影响颜色，真实峰值取全部结果。坐标单位为 mm。"),
             light=self._is_light_bg())
         self._place_overlays()
         if not CAN_RENDER:
             return self._solid_last
         self.plotter.remove_actor("_grid_floor", reset_camera=False, render=False)
-        self.plotter.add_mesh(
-            displayed, scalars=field, preference=association,
-            cmap=theme.palette_cmap(self.contour_palette, "M"), clim=(0.0, high),
+        surface = theme.V.solid_surface(displayed)
+        solid_actor = self.plotter.add_mesh(
+            surface, scalars=display_field, preference=display_association,
+            cmap=theme.solid_cmap(palette), clim=(0.0, high),
+            n_colors=12 if palette == "abaqus" else 256,
             show_edges=show_edges, edge_color=theme.VIEWPORT_INK_MUTED,
-            line_width=0.5, show_scalar_bar=False, smooth_shading=False,
-            interpolate_before_map=association == "point", lighting=self.contour_shading,
-            ambient=0.42, diffuse=0.58, name="_solid_result")
+            line_width=0.5, show_scalar_bar=False, smooth_shading=True,
+            split_sharp_edges=True, feature_angle=40,
+            interpolate_before_map=display_association == "point", lighting=True,
+            ambient=0.5, diffuse=0.5, specular=0.04, name="_solid_result")
+        if not show_edges:
+            features = surface.extract_feature_edges(feature_angle=40, manifold_edges=False)
+            self.plotter.add_mesh(features, color=theme.VIEWPORT_INK_MUTED, opacity=0.32,
+                                  line_width=1, name='_solid_feature_edges', pickable=False)
         self.plotter.add_scalar_bar(
-            title="", n_labels=7, vertical=True, fmt="%.3g",
+            mapper=solid_actor.mapper, title="", n_labels=13 if palette == "abaqus" else 7, vertical=True, fmt="%.3g",
             color=theme.VIEWPORT_INK_MUTED, label_font_size=11,
             width=0.040, height=0.58, position_x=0.905, position_y=0.14)
         bar_label = {"Mises_MPa": "Mises [MPa]", "AbsPrincipal_MPa": "|Principal| [MPa]",
@@ -1487,6 +1944,7 @@ class Viewport(QWidget):
     def show_mode(self, frame, shapes: np.ndarray, mode: int,
                   label: str = "") -> None:
         """振型 / 失稳模态。振型无量纲，按模型尺寸定一个好看的放大倍数。"""
+        frame = self.visible_frame(frame)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1511,7 +1969,8 @@ class Viewport(QWidget):
             scene.displaced_node_points(frame, phi, scale),
             color=theme.HIGHLIGHT, point_size=5, render_points_as_spheres=True)
         if label:
-            self.plotter.add_text(label, position="upper_left",
+            # 左上角被视口顶部的工作平面提示条盖住（真窗口验收发现），放右上角
+            self.plotter.add_text(label, position="upper_right",
                                   color=theme.VIEWPORT_INK, font_size=10)
         self._decorate(frame)
         self._fit()

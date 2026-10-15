@@ -15,11 +15,13 @@ from typing import Any
 
 import numpy as np
 
-from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Frame, LoadCase,
+from frame3d import (DEFAULT_CASE, LOCAL_DOF_NAMES, Amplitude, Constraint, Frame, LoadCase,
                      Material, Member, Node, Section, check_model,
                      member_endpoints)
 from span_loads import KINDS as SPAN_KINDS
 from span_loads import SpanLoad
+from features import _REGION as _FEATURE_REGION
+from features import SCHEMA as _FEATURES_SCHEMA
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -63,7 +65,9 @@ _NODAL_LOADS = {
     "items": {
         "type": "object", "required": ["node", "load"], "additionalProperties": False,
         "properties": {"name": {"type": "string", "minLength": 1},
-                       "node": {"type": "integer"}, "load": _LOAD6},
+                       "node": {"type": "integer"}, "load": _LOAD6,
+                       # 派生自哪个荷载对象（features.loads）；直接定义的条目没有
+                       "owner": {"type": "string", "minLength": 1}},
     },
 }
 _MEMBER_SPANS = {
@@ -73,6 +77,7 @@ _MEMBER_SPANS = {
         "additionalProperties": False,
         "properties": {
             "name": {"type": "string", "minLength": 1},
+            "owner": {"type": "string", "minLength": 1},
             "member": {"type": "integer"},
             "kind": {"type": "string", "enum": list(SPAN_KINDS)},
             "w1": _VEC3,
@@ -92,6 +97,8 @@ _SETTLEMENTS = {
     "items": {
         "type": "object", "required": ["node", "d"], "additionalProperties": False,
         "properties": {"name": {"type": "string", "minLength": 1},
+                       # 派生自哪个带给定位移的边界条件对象（features.bcs）
+                       "owner": {"type": "string", "minLength": 1},
                        "node": {"type": "integer"}, "d": _LOAD6},
     },
 }
@@ -118,7 +125,8 @@ _MEMBER_LOADS = {
         "type": "object", "required": ["member", "w"], "additionalProperties": False,
         "properties": {"name": {"type": "string", "minLength": 1},
                        "member": {"type": "integer"}, "w": _VEC3,
-                       "frame": {"type": "string", "enum": ["global"]}},
+                       "frame": {"type": "string", "enum": ["global"]},
+                       "owner": {"type": "string", "minLength": 1}},
     },
 }
 
@@ -149,6 +157,86 @@ MODEL_SCHEMA: dict[str, Any] = {
                     "members": {"type": "array", "items": {"type": "integer"}},
                     "nodes": {"type": "array", "items": {"type": "integer"}},
                     "note": {"type": "string"},
+                },
+            },
+        },
+        # 布种：每根物理杆件剖成几个分析单元。全局默认 + 逐杆覆盖，键是杆件
+        # 编号的字符串（JSON 的对象键只能是字符串）。语义见
+        # model_compiler.member_divisions；不写等于每杆 1 段。
+        "mesh": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "divisions": {"type": "integer", "minimum": 1, "maximum": 200},
+                "members": {
+                    "type": "object", "additionalProperties": False,
+                    "patternProperties": {
+                        "^[1-9][0-9]*$": {"type": "integer", "minimum": 1,
+                                          "maximum": 200}},
+                },
+            },
+        },
+        # 建模对象（截面指派、边界条件、荷载）：Abaqus 式对象施加在区域上，
+        # 上面的逐条目由它派生。见 features.py。
+        "features": _FEATURES_SCHEMA,
+        # 装配（Abaqus 的 Assembly）：独立实例的记录。副本本身是普通节点与杆件，
+        # 这里记它从哪组杆件、按什么变换来，删实例时据此整份撤掉。见 session_assembly。
+        "assembly": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"instances": {"type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["name", "source", "transform", "members", "nodes"],
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "pattern": {"type": "string", "minLength": 1},
+                    "source": _FEATURE_REGION,
+                    "transform": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {
+                            "translate": _VEC3,
+                            "rotate": {"type": "object", "additionalProperties": False,
+                                       "properties": {"axis": _VEC3, "angle_deg": {"type": "number"},
+                                                      "point": _VEC3}}}},
+                    "members": {"type": "array", "items": {"type": "integer"}},
+                    "nodes": {"type": "array", "items": {"type": "integer"}},
+                    "features": {"type": "array", "items": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {"kind": {"type": "string"}, "name": {"type": "string"}}}},
+                }}}},
+        },
+        # 基准点（Abaqus 的 Datum Point）：只用于定位与吸附，不参与计算。
+        "datums": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"points": {"type": "array", "items": {
+                "type": "object", "required": ["name", "xyz"], "additionalProperties": False,
+                "properties": {"name": {"type": "string", "minLength": 1},
+                               "xyz": {"type": "array", "minItems": 3, "maxItems": 3,
+                                       "items": {"type": "number"}}}}}},
+        },
+        # 初始几何缺陷：第 mode 阶屈曲模态缩放到 amplitude（长度，可为负表示
+        # 反向）叠到分析模型上，只在二阶分析（pdelta / step）中生效。case 是
+        # 求缺陷模态用的参考工况或组合，缺省取内力最大者。见 imperfection.py。
+        "imperfection": {
+            "type": "object", "required": ["mode", "amplitude"],
+            "additionalProperties": False,
+            "properties": {
+                "mode": {"type": "integer", "minimum": 1, "maximum": 20},
+                "amplitude": {"type": "number"},
+                "case": {"type": "string", "minLength": 1},
+            },
+        },
+        # 节点集中质量（附加质量、由荷载换算的重力荷载代表值）。只进质量阵，
+        # 不产生荷载。同一节点可以有多条，按名字区分来源；语义见 masses.py。
+        "masses": {
+            "type": "array",
+            "items": {
+                "type": "object", "required": ["node", "mass"],
+                "additionalProperties": False,
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "node": {"type": "integer"},
+                    "mass": {"type": "number", "minimum": 0},
+                    "inertia": {"type": "array", "minItems": 3, "maxItems": 3,
+                                "items": {"type": "number", "minimum": 0}},
                 },
             },
         },
@@ -195,7 +283,23 @@ MODEL_SCHEMA: dict[str, Any] = {
                                # 腹板边缘：折算应力的控制点常在这里
                                "S_flange": {"type": "number", "exclusiveMinimum": 0},
                                "c_web": {"type": "number", "exclusiveMinimum": 0},
-                               "circular": {"type": "boolean"}},
+                               "circular": {"type": "boolean"},
+                               "geometry": {
+                                   "type": "object", "required": ["type"],
+                                   "additionalProperties": False,
+                                   "properties": {
+                                       "type": {"enum": ["rectangle", "box", "circle", "tube", "i",
+                                                         "channel", "angle", "tee", "polygon"]},
+                                       "dimensions": {"type": "object", "additionalProperties":
+                                                      {"type": "number", "exclusiveMinimum": 0}},
+                                       "outer": {"type": "array", "minItems": 3, "items": {
+                                           "type": "array", "minItems": 2, "maxItems": 2,
+                                           "items": {"type": "number"}}},
+                                       "holes": {"type": "array", "items": {"type": "array",
+                                                 "minItems": 3, "items": {"type": "array",
+                                                 "minItems": 2, "maxItems": 2,
+                                                 "items": {"type": "number"}}}},
+                                   }}},
             },
         },
         "nodes": {
@@ -215,6 +319,10 @@ MODEL_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "id": {"type": "integer", "minimum": 1},
                     "i": {"type": "integer"}, "j": {"type": "integer"},
+                    # 截面与材料来自哪个截面指派对象（features.section_assignments）
+                    "assignment": {"type": "string", "minLength": 1},
+                    # 参考向量来自哪个梁方向对象（features.beam_orientations）
+                    "orientation": {"type": "string", "minLength": 1},
                     "section": {"type": "string"}, "material": {"type": "string"},
                     "ref_vector": _VEC3,
                     "offset_i": _VEC3,
@@ -244,6 +352,9 @@ MODEL_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object", "required": ["node", "fix"], "additionalProperties": False,
                 "properties": {"name": {"type": "string", "minLength": 1},
+                               # 派生自哪些边界条件对象（features.bcs）；同一节点的
+                               # 不同自由度可以分属不同对象
+                               "owners": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
                                "node": {"type": "integer"},
                                "fix": {"type": "array", "minItems": 6, "maxItems": 6,
                                        "items": {"type": "integer", "enum": [0, 1]}},
@@ -282,7 +393,8 @@ MODEL_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "name": {"type": "string", "minLength": 1},
                     "analysis": {"type": "string",
-                                 "enum": ["linear", "pdelta"]},
+                                 "enum": ["linear", "pdelta", "frequency", "buckle"]},
+                    "num_modes": {"type": "integer", "minimum": 1, "maximum": 100},
                     "loads": {"type": "object",
                               "additionalProperties": {"type": "string"}},
                     "deactivate_loads": {"type": "array",
@@ -293,6 +405,7 @@ MODEL_SCHEMA: dict[str, Any] = {
                             "type": "object", "additionalProperties": False,
                             "properties": {
                                 "name": {"type": "string", "minLength": 1},
+                                "owners": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
                                 "fix": {"type": "array",
                                         "minItems": 6, "maxItems": 6,
                                         "items": {"type": "integer",
@@ -305,6 +418,9 @@ MODEL_SCHEMA: dict[str, Any] = {
                     },
                     "deactivate_supports": {"type": "array",
                                             "items": {"type": "integer"}},
+                    # 由边界条件对象派生的失活：节点 → 来源对象名（再生成时据此撤掉）
+                    "deactivation_owners": {"type": "object", "additionalProperties": {
+                        "type": "array", "items": {"type": "string", "minLength": 1}}},
                     "increments": {"type": "integer", "minimum": 1},
                 },
             },
@@ -430,7 +546,8 @@ def from_dict(data: dict[str, Any]) -> Frame:
             float(s["Sy"]) if s.get("Sy") is not None else None,
             float(s["by"]) if s.get("by") is not None else None,
             float(s["S_flange"]) if s.get("S_flange") is not None else None,
-            float(s["c_web"]) if s.get("c_web") is not None else None)
+            float(s["c_web"]) if s.get("c_web") is not None else None,
+            geometry=s.get("geometry"))
     for n in data["nodes"]:
         f.nodes[int(n["id"])] = Node(int(n["id"]), float(n["x"]), float(n["y"]), float(n["z"]))
     for m in data["members"]:
@@ -459,6 +576,14 @@ def from_dict(data: dict[str, Any]) -> Frame:
         if s.get("spring"):
             f.springs[int(s["node"])] = tuple(float(v) for v in s["spring"])
 
+    from masses import nodal_mass_table
+    f.masses = {node: tuple(float(v) for v in row)
+                for node, row in nodal_mass_table(data).items()}
+    if (data.get("features") or {}).get("constraints"):
+        import features as _features
+        f.constraints = [Constraint(c["name"], c["master"], c["slaves"], c["dofs"], c["rigid"])
+                         for c in _features.resolved_constraints(data)]
+
     _fill_case(f, f.case(DEFAULT_CASE), data)
     for c in data.get("load_cases", []):
         _fill_case(f, f.case(str(c["name"])), c)
@@ -485,10 +610,16 @@ def from_dict(data: dict[str, Any]) -> Frame:
 
 def validate_payload(data: dict[str, Any]) -> list[str]:
     """两级校验：schema 结构 + 模型语义。返回给大模型的错误清单。"""
+    return _validate(data, MODEL_SCHEMA, allow_incomplete=False)
+
+
+def _validate(data: dict[str, Any], schema: dict[str, Any], *,
+              allow_incomplete: bool) -> list[str]:
+    """正式校验与编辑态校验共用的一套规则；编辑态只放宽「还没做完」的那几项。"""
     errors: list[str] = []
     try:
         import jsonschema
-        v = jsonschema.Draft202012Validator(MODEL_SCHEMA)
+        v = jsonschema.Draft202012Validator(schema)
         for e in sorted(v.iter_errors(data), key=lambda e: list(e.path)):
             loc = "/".join(str(p) for p in e.path) or "(根)"
             errors.append(f"[结构] {loc}: {e.message}")
@@ -536,6 +667,27 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
                 f"[语义] 节点 {s.get('node')} 的方向 {clash} 既写了 fix=1 又给了"
                 "弹簧刚度。刚性约束会让弹簧完全失效，两者只能取一个："
                 "要刚接就把 spring 那一项设为 0，要弹性支承就把 fix 那一项设为 0。")
+    imperfection = data.get("imperfection") or {}
+    if imperfection:
+        if not imperfection.get("amplitude"):
+            errors.append("[语义] imperfection/amplitude 不能为 0：零幅值等于没有缺陷，删掉这一项即可。")
+        ref = imperfection.get("case")
+        names = ({"default"} | {c.get("name") for c in data.get("load_cases") or []}
+                 | {c.get("name") for c in data.get("combos") or []})
+        if ref and ref not in names:
+            errors.append(f"[语义] imperfection/case 指向不存在的工况或组合 {ref!r}。")
+    known_nodes = {int(n["id"]) for n in data.get("nodes") or []}
+    lost = sorted({int(e["node"]) for e in data.get("masses") or []} - known_nodes)
+    if lost:
+        errors.append(f"[语义] masses 指向不存在的节点 {lost}。删掉这几项或改成现有节点。")
+    seeded = {int(k) for k in ((data.get("mesh") or {}).get("members") or {})}
+    stale = sorted(seeded - {int(m["id"]) for m in data.get("members") or []})
+    if stale:
+        # 布种指向不存在的杆件本身算不错什么，但它说明模型被改过而布种没跟上：
+        # 用户以为某根杆分了 8 段，实际那根杆已经换了编号。
+        errors.append(
+            f"[语义] mesh/members 给不存在的杆件 {stale} 设置了布种。"
+            "删掉这几项，或改成现在的杆件编号。")
     unique(data.get("materials") or [], "name", "材料名")
     unique(data.get("sections") or [], "name", "截面名")
     unique(data.get("nodes") or [], "id", "节点编号")
@@ -558,10 +710,61 @@ def validate_payload(data: dict[str, Any]) -> list[str]:
         unique(named_bc, "name", f"{label}的给定位移名称")
     if errors:
         return errors
+    if data.get("features"):
+        import features as _features
+        errors += [f"[语义] {msg}" for msg in _features.check(data)]
+        regenerated = deepcopy(data)
+        _features.regenerate(regenerated)
+        if regenerated != data:
+            # 正常经由工具修改时每一步都会再生成；对不上说明文件被手工改过。
+            errors.append("[语义] 逐节点、逐杆件条目与建模对象的定义不一致（文件可能被手工修改）；"
+                          "请重新打开模型或执行一次对象再生成。")
+        if errors:
+            return errors
     try:
-        errors += [f"[语义] {msg}" for msg in check_model(from_dict(data))]
+        errors += [f"[语义] {msg}" for msg in check_model(
+            from_dict(data), allow_incomplete=allow_incomplete)]
     except Exception as exc:  # noqa: BLE001  装载失败要作为一条校验错误回给调用方，不是抛出去；exc 已写进 errors
         errors.append(f"[语义] 模型装配失败: {exc}")
+    return errors
+
+
+def validate_editing_payload(data: dict[str, Any]) -> list[str]:
+    """编辑阶段允许未指派属性及未施加约束，其余与正式校验同一套规则。
+
+    原先这里另写了一套检查，靠匹配 check_model 的报错文字过滤「尚未指派」，
+    并漏掉了正式校验的部分规则（同一工况同名荷载会被放行）。现在复用
+    :func:`_validate`，只把五个集合的最少条数放宽到 0，并让 check_model 不把
+    空截面名、空材料名和悬空节点算作错误。
+    """
+    from copy import deepcopy
+
+    candidate = deepcopy(data)
+    schema = deepcopy(MODEL_SCHEMA)
+    for key in ("materials", "sections", "nodes", "members", "supports"):
+        candidate.setdefault(key, [])
+        schema["properties"][key]["minItems"] = 0
+    errors = _validate(candidate, schema, allow_incomplete=True)
+    if errors:
+        return errors
+    # 已指派属性的杆件，局部轴与连接冲突在 check_model 装配单元矩阵时已经查过；
+    # 尚未指派的杆件没有单元矩阵可装，这两项在这里单独补查。
+    import numpy as np
+    model = from_dict(candidate)
+    for member in model.members.values():
+        if member.section in model.sections and member.material in model.materials:
+            continue
+        if member.i not in model.nodes or member.j not in model.nodes:
+            continue
+        vector = member.ref_vector
+        if vector is not None:
+            axis = model.nodes[member.j].xyz - model.nodes[member.i].xyz
+            if np.linalg.norm(np.cross(axis, vector)) < 1e-12:
+                errors.append(f"[语义] 杆件 {member.id} 的参考方向与杆轴平行或为零，请更换方向。")
+        for releases, connections in ((member.releases_i, member.springs_i),
+                                       (member.releases_j, member.springs_j)):
+            if set(releases) & set(connections):
+                errors.append(f"[语义] 杆件 {member.id} 同一方向不能同时释放并设置连接弹簧。")
     return errors
 
 

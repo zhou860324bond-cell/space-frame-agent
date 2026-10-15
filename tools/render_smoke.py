@@ -141,16 +141,31 @@ def main(report_path: Path | None = None) -> int:
     window.tree_dock.show()
     window.chat_dock.show()
     window.results_dock.show()
+    check("结果默认独立且不占底部", window.results_dock._floating
+          and not window.bottom_drawer.is_open() and window.drawers.insets()[2] == 0)
+    window.results_dock.dock_panel()    # 继续验证用户主动停靠后的三侧抽屉布局
     settle()
     area = window.drawers.viewport_rect()
-    geometry = {side: d.geometry() for side, d in window.drawers.drawers.items()}
+    geometry = {side: d.geometry() for side, d in window.drawers.drawers.items() if d.is_open()}
     for side, rect in geometry.items():
         check(f"{side} 抽屉在视口内", area.contains(rect),
               f"抽屉 {rect.getRect()} / 视口 {area.getRect()}")
         check(f"{side} 抽屉就在分给它的位置", rect == window.drawers.geometry_for(side))
-    check("底部抽屉不压两侧抽屉",
-          not geometry["bottom"].intersects(geometry["left"])
-          and not geometry["bottom"].intersects(geometry["right"]))
+    # 模型树与AI助手现为布局面板，左抽屉只有打开辅助页时才存在。
+    # 不能假定有left键，否则新版真渲染验收会在完成检查前直接退出。
+    check("底部抽屉不压两侧抽屉", all(
+        not geometry["bottom"].intersects(rect)
+        for side, rect in geometry.items() if side != "bottom"))
+    from PySide6.QtCore import QPoint, QRect
+
+    def workspace_rect(widget):
+        return QRect(widget.mapTo(window, QPoint(0, 0)), widget.size())
+
+    viewport_rect = workspace_rect(window.viewport)
+    check("常驻模型栏不遮挡视口",
+          not workspace_rect(window.model_panel).intersects(viewport_rect))
+    check("并排AI助手不遮挡视口",
+          not workspace_rect(window.chat).intersects(viewport_rect))
     left, right, bottom = window.drawers.insets()
     width = max(1, window.viewport.width())
     height = max(1, window.viewport.height())
@@ -186,6 +201,10 @@ def main(report_path: Path | None = None) -> int:
         check("实体云图：加载已保存网格", window._load_solid_result(path))
         settle()
         check("实体云图：画面有彩色", _colourful_fraction(shot()) > 0.003)
+        actor = plotter.actors["_solid_result"]
+        check("实体云图：平均应力按节点着色", actor.GetMapper().GetScalarMode() == 1)
+        window.solid_panel.averaging.setChecked(False)
+        settle()
         actor = plotter.actors["_solid_result"]
         check("实体云图：应力按单元着色", actor.GetMapper().GetScalarMode() == 2)
         # VTK 图层合成后，Qt 绘制的坐标指示器也必须保留在导出画面中。

@@ -14,7 +14,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QPushButton,
-                               QScrollArea, QSizePolicy, QStatusBar, QToolBar,
+                               QScrollArea, QSizePolicy, QSplitter, QStatusBar, QToolBar,
+                               QToolButton,
                                QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -29,10 +30,9 @@ from .diagram_panel import DiagramPanel             # noqa: E402
 from .panels import ResultPanel, TimelinePanel      # noqa: E402
 from .sketch_panel import SketchPanel                # noqa: E402
 from .section_opt_panel import SectionOptPanel       # noqa: E402
-from .bc_panel import BCPanel                          # noqa: E402
 from .properties import PropertiesPanel             # noqa: E402
 from .drawers import (BOTTOM, LEFT, RIGHT, DrawerHost,  # noqa: E402
-                      PanelWindow, SideRail)
+                      PanelWindow)
 from . import dialog_styles                         # noqa: E402
 from . import result_rows                           # noqa: E402
 from .viewport import Viewport                     # noqa: E402
@@ -42,6 +42,11 @@ from . import glyphs
 from .window_commands import WindowCommandsMixin
 from .window_preferences import WindowPreferencesMixin, _settings
 from .window_results import WindowResultsMixin
+from .window_objects import WindowObjectsMixin
+from .window_jobs import WindowJobsMixin
+from .window_assembly import WindowAssemblyMixin
+from .window_viz import WindowVizMixin
+from .region_prompt import RegionPickController
 
 
 def _format_combo_factors(factors: dict[str, float]) -> str:
@@ -83,7 +88,9 @@ def _parse_combo_expression(expression: str, case_names: set[str]) -> dict[str, 
 MODES = ("模型", "分析网格", "变形", "云图", "实体云图", "内力图", "应力比", "模态")
 
 
-class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
+class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, WindowVizMixin,
+                 WindowCommandsMixin,
+                 WindowPreferencesMixin,
                  WindowResultsMixin, QMainWindow):
     def __init__(self, session: Session | None = None):
         super().__init__()
@@ -100,6 +107,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._solid_info = None
         self._solid_reset_camera = True
         self.analysis_type = "linear"
+        self._modeling_reviews = {}
+        self._analysis_mesh_key = None
         self.analysis_options = {"increments": 10, "max_iter": 40,
                                  "tolerance": 1e-7}
 
@@ -107,18 +116,18 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.resize(1440, 900)
 
         self.viewport = Viewport(self)
-        # 视口居中，两侧各一条**固定宽度**的窄栏放抽屉开关。窄栏是布局里
-        # 的普通控件，所以永远看得见、点得着（上一版画在视口上的 AI 按钮会
-        # 被 VTK 的原生窗口盖掉）；宽度固定，所以开关抽屉时视口一动不动。
-        self.left_rail = SideRail(LEFT, self)
-        self.right_rail = SideRail(RIGHT, self)
+        # 中心区是一行三栏：左模型栏（模型树 + 属性）| 视口 | 右 AI 助手。
+        # 原来两侧各有一条窄栏，七个按钮开七种抽屉页，其中模型树、属性、边界
+        # 三页与功能区、管理器重复；现在模型栏常驻（像 Abaqus 的模型树），
+        # AI 助手由页签行右端的开关收放，两侧不再有窄栏。
         center = QWidget(self)
         row = QHBoxLayout(center)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
-        row.addWidget(self.left_rail)
-        row.addWidget(self.viewport, 1)
-        row.addWidget(self.right_rail)
+        self.agent_splitter = QSplitter(Qt.Orientation.Horizontal, center)
+        self.agent_splitter.setChildrenCollapsible(False)
+        row.addWidget(self.agent_splitter, 1)
+        self.agent_splitter.addWidget(self.viewport)
         self.setCentralWidget(center)
 
         # 求解和大模型调用都得离开界面线程，否则窗口会变"未响应"
@@ -138,10 +147,14 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.chat = ChatPanel(self.session, self.runner, self)
         self.chat.model_changed.connect(self._on_chat_changed)
         self.chat.busy_changed.connect(self._on_busy)
-        # **默认收起。** 它只在"想让 AI 帮忙建模"时才用；没配密钥时开局
-        # 还是一大段配置说明——第一眼看到的不该是一条错误。
-        # 入口是右侧窄栏最上面那颗「AI」按钮，一点召唤，再点收起。
-        self.chat_dock = self.right_drawer.add_page("chat", "AI 助手", self.chat)
+        # 默认使用用户选择的并排布局，右侧 AI 入口可以恢复完整模型视口。
+        from .agent_workspace import PaneHandle, WorkspaceHandle
+        self.chat.setMinimumWidth(320)
+        self.viewport.setMinimumWidth(250)
+        self.agent_splitter.addWidget(self.chat)
+        self.chat_dock = WorkspaceHandle(self.chat, self)
+        self.chat.locate_requested.connect(self._on_picked)
+        self.chat.image_dropped.connect(self._recognize_dropped_image)
 
         # 手绘草图 → 模型：独立窗口，从建模页的「草图识别」打开。它是一次走完
         # 就关的流程、要宽画布，不和常驻参考的面板挤在抽屉里。
@@ -151,7 +164,20 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
         self.tree = ModelTree(self)
         self.tree.activated_item.connect(self._on_tree_action)
-        self.tree_dock = self.left_drawer.add_page("tree", "模型树", self.tree)
+        self.tree.feature_action.connect(self._on_feature_action)
+        self.tree.feature_selected.connect(self._on_feature_selected)
+        # 模型栏：上半模型树、下半选中对象的属性，常驻在视口左侧
+        self.model_panel = QSplitter(Qt.Orientation.Vertical, self)
+        self.model_panel.setObjectName("modelPanel")
+        self.model_panel.setChildrenCollapsible(False)
+        self.model_panel.setMinimumWidth(240)
+        self.model_panel.addWidget(self.tree)
+        self.agent_splitter.insertWidget(0, self.model_panel)
+        self.agent_splitter.setStretchFactor(0, 0)
+        self.agent_splitter.setStretchFactor(1, 1)
+        self.agent_splitter.setStretchFactor(2, 0)
+        self.agent_splitter.setSizes([280, 860, 400])
+        self.tree_dock = WorkspaceHandle(self.model_panel, self, title="模型树", visible=False)
         # 开局视作"自动收起"状态：第一次刷新时若已有模型，就把树展开
         self._tree_auto_hidden = True
         # 用户亲手收起过模型树，就别在下一次刷新时又自作主张地弹出来
@@ -170,7 +196,11 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
         self.properties = PropertiesPanel(self.session, self)
         self.properties.edited.connect(self._on_property_edited)
-        self.props_dock = self.left_drawer.add_page("props", "属性", self.properties)
+        self.model_panel.addWidget(self._scrolled(self.properties))
+        self.model_panel.setStretchFactor(0, 3)
+        self.model_panel.setStretchFactor(1, 2)
+        self.props_dock = PaneHandle(self.model_panel.widget(1), self.tree_dock, self,
+                                     title="属性")
 
         from .solid_result import SolidResultPanel
         self.solid_panel = SolidResultPanel(self)
@@ -180,13 +210,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.solid_panel.model_requested.connect(self.show_model)
         self.solid_dock = self.left_drawer.add_page("solid", "实体结果", self.solid_panel)
 
-        # 边界条件定义的是**模型本身**，和模型树、属性是一类，放在左抽屉；
-        # 原来和 AI 助手挤在右抽屉，只是因为它们以前都停靠在右边。
-        self.bc = BCPanel(self.session, self)
-        self.bc.changed.connect(
-            lambda: self._after_manual_edit("边界条件或荷载已修改"))
-        self.bc_dock = self.left_drawer.add_page(
-            "bc", "边界条件", self._scrolled(self.bc))
+        # 原来这里还有一张「边界条件」表单页（逐个节点填 U1…UR3），与载荷页的
+        # 创建边界条件、边界条件管理器做同一件事而数据不同，已删除；它独有的
+        # 给定位移（支座沉降）移到「创建载荷」的类型里。
 
         self.timeline = TimelinePanel(self)
         self.timeline.goto_step.connect(self.goto_step)
@@ -202,10 +228,13 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._last_probe = None
         self.results.setMinimumHeight(120)
         self.results_dock = self.bottom_drawer.add_page("results", "结果表", self.results)
+        # 明细表默认独立查看，避免打开结果时覆盖模型的下半部。
+        self.results_dock.prefer_floating = True
 
         self.diagram = DiagramPanel(self)
         self.diagram.locate.connect(self.locate)
         self.diagram_dock = self.bottom_drawer.add_page("diagram", "单杆内力图", self.diagram)
+        self.diagram_dock.prefer_floating = True
 
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
         self.section_opt_dock = self.bottom_drawer.add_page(
@@ -219,14 +248,22 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.viewport.node_snapped.connect(self._on_node_snapped)
         self.viewport.escape_pressed.connect(self.cancel_interaction)
         self.viewport.context_requested.connect(self._show_viewport_context_menu)
-
-        self._build_rails()
+        self.viewport.cleared.connect(self._on_selection_cleared)
 
         self._build_actions()
+        for handle in (self.chat_dock, self.tree_dock, self.props_dock):
+            handle.visibilityChanged.connect(lambda _on: self._sync_rails())
+        for drawer in (self.left_drawer, self.bottom_drawer):
+            for key in drawer.keys():
+                drawer.page(key).handle.visibilityChanged.connect(lambda _on: self._sync_rails())
+        self._sync_rails()
         self._build_empty_state()
         self._build_ribbon()
         self._build_menus()
         self._build_statusbar()
+        # Abaqus 式提示区选择：命令要区域时由它接管视口拾取（见 region_prompt.py）
+        self.region_pick = RegionPickController(self)
+        self.actions_by_name["render_profiles"].setChecked(self.viewport.render_profiles)
         self.runner.busy_changed.connect(self._on_busy)
         self.refresh()
         self.actions_by_name["stop_task"].setEnabled(False)
@@ -252,8 +289,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         subtitle.setProperty("emptyState", "subtitle")
         subtitle.setWordWrap(True)
         steps = QLabel(
-            "建好几何之后，按顶部「分析流程」往右走：定义材料截面与荷载 → "
-            "校验 → 求解 → 看变形、内力与校核结论。",
+            "建好几何之后，按页签从左往右：属性 → 载荷 → 作业求解 → 结果。"
+            "右上角「下一步」随时告诉你该做什么；Ctrl+Shift+P 可搜索任意命令。",
             panel)
         steps.setProperty("emptyState", "subtitle")
         steps.setWordWrap(True)
@@ -297,25 +334,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.empty_state.raise_()
 
     # 全部面板把手（PanelHandle），测试与"全部收起"按它逐个检查。
-    PANELS = ("tree_dock", "props_dock", "solid_dock", "timeline_dock", "chat_dock", "bc_dock",
+    PANELS = ("tree_dock", "props_dock", "solid_dock", "timeline_dock", "chat_dock",
               "sketch_dock", "results_dock", "diagram_dock", "section_opt_dock")
-
-    # 两侧窄栏上的抽屉开关：(键, 抽屉属性名, 按钮文字, 提示, 是否主按钮)。
-    # 左栏管"模型是什么"与"算出了什么"：上段开左抽屉，分隔线下开底部抽屉。
-    # 右栏只有 AI 助手一颗——右侧一个按钮召唤、再点收起。
-    LEFT_RAIL = (
-        ("tree", "left_drawer", "模型树", "模型树：材料、截面、约束、荷载与结果", False),
-        ("props", "left_drawer", "属性", "选中对象的属性，可就地修改（Ctrl+P）", False),
-        ("bc", "left_drawer", "边界", "边界条件与荷载：支座、节点力、杆件荷载", False),
-        ("timeline", "left_drawer", "过程", "建模过程：逐步回看、跳回任意一步（Ctrl+H）", False),
-        None,
-        ("results", "bottom_drawer", "结果", "结果表：位移、反力、杆端力与校验清单", False),
-        ("diagram", "bottom_drawer", "单杆", "单杆内力图：沿杆长的 N/V/M 曲线", False),
-        ("section_opt", "bottom_drawer", "优化", "截面优化", False),
-    )
-    RIGHT_RAIL = (
-        ("chat", "right_drawer", "AI\n助手", "AI 助手：一点召唤，再点收起（Ctrl+G）", True),
-    )
 
     @staticmethod
     def _scrolled(widget: QWidget) -> QScrollArea:
@@ -325,37 +345,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         area.setWidget(widget)
         return area
 
-    def _build_rails(self) -> None:
-        self._rail_targets: dict[str, tuple] = {}
-        for rail, spec in ((self.left_rail, self.LEFT_RAIL),
-                           (self.right_rail, self.RIGHT_RAIL)):
-            for item in spec:
-                if item is None:
-                    rail.add_separator()
-                    continue
-                key, drawer_name, text, tip, primary = item
-                button = rail.add_button(key, text, tip, primary=primary)
-                button.clicked.connect(lambda _=False, k=key: self._on_rail(k))
-                self._rail_targets[key] = (getattr(self, drawer_name), button)
-        for drawer in (self.left_drawer, self.right_drawer, self.bottom_drawer):
-            drawer.opened_changed.connect(lambda _on: self._sync_rails())
-            drawer.page_changed.connect(lambda _key: self._sync_rails())
-            for key in drawer.keys():
-                drawer.page(key).handle.visibilityChanged.connect(lambda _on: self._sync_rails())
-        # 保留旧名字：别处（测试、快捷键说明）按 agent_button 找 AI 入口
-        self.agent_button = self.right_rail.buttons["chat"]
-
-    def _on_rail(self, key: str) -> None:
-        drawer, _button = self._rail_targets[key]
-        drawer.toggle_page(key)
-        if key == "tree" and not drawer.is_open():
-            self._tree_dismissed = True
-        self._on_drawer_page_opened(key)
-
     def _on_drawer_page_opened(self, key: str) -> None:
         """面板打开时补一次刷新——关着的面板不跟随模型变化，省掉无用功。"""
         handle = getattr(self, {"tree": "tree_dock", "props": "props_dock",
-                                "bc": "bc_dock",
                                 "timeline": "timeline_dock", "chat": "chat_dock",
                                 "results": "results_dock", "diagram": "diagram_dock",
                                 "section_opt": "section_opt_dock"}.get(key, ""), None)
@@ -366,9 +358,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.properties.refresh()
         elif key == "timeline":
             self.timeline.rebuild(self.session.history)
-        elif key == "bc":
-            self.bc.session = self.session
-            self.bc.refresh()
         elif key == "diagram":
             self.diagram.attach(self.session, self.case)
         elif key == "tree":
@@ -377,16 +366,16 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.set_prompt("AI 助手已展开，可以输入自然语言描述模型需求")
 
     def _sync_rails(self) -> None:
-        """窄栏按钮、功能区开关动作，与抽屉的真实状态保持一致。"""
-        for key, (drawer, button) in self._rail_targets.items():
-            on = drawer.page(key).handle.isVisible()
-            if button.isChecked() != on:
-                button.setChecked(on)
+        """功能区开关动作的勾选状态与面板的真实显隐保持一致。"""
+        if not hasattr(self, "actions_by_name"):
+            return
         for action_name, handle in (("chat", self.chat_dock), ("props", self.props_dock),
+                                    ("tree_panel", self.tree_dock),
                                     ("timeline", self.timeline_dock),
-                                    ("curve", self.diagram_dock)):
-            action = self.actions_by_name.get(action_name) if hasattr(
-                self, "actions_by_name") else None
+                                    ("curve", self.diagram_dock),
+                                    ("results_table", self.results_dock),
+                                    ("section_opt_panel", self.section_opt_dock)):
+            action = self.actions_by_name.get(action_name)
             if action is not None and action.isChecked() != handle.isVisible():
                 action.blockSignals(True)
                 action.setChecked(handle.isVisible())
@@ -401,20 +390,63 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.quickbar.case_changed.connect(self.set_case)
         self.quickbar.scale_changed.connect(self.set_scale)
         self.ribbon.set_collapsed(False)
-        self.workflow_bar = WorkflowBar(self)
+        # 流程状态与「下一步」原来单独占一整行，和模块页签说的是同一件事。
+        # 收成页签行右端的「流程」菜单加一个主按钮；页签本身按状态着色。
+        self.workflow_bar = WorkflowBar(self, compact=True)
         self.workflow_bar.stage_requested.connect(self._on_workflow_stage)
+        self.workflow_bar.state_changed.connect(self._sync_tab_states)
+        self.workflow_bar.next_button.setProperty("role", "primary")
+        self.ribbon.add_corner(self.workflow_bar)
+        self.agent_button = QToolButton(self)
+        self.agent_button.setDefaultAction(self.actions_by_name["chat"])
+        self.agent_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.agent_button.setProperty("ribbonChrome", "agent")
+        self.agent_button.setAutoRaise(True)
+        self.ribbon.add_corner(self.agent_button)
         holder = QWidget(self)
         box = QVBoxLayout(holder)
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(0)
         box.addWidget(self.ribbon)
         box.addWidget(self.quickbar)
-        box.addWidget(self.workflow_bar)
         bar = QToolBar("功能区", self)
         bar.setMovable(False)
         bar.setFloatable(False)
         bar.addWidget(holder)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, bar)
+
+    def next_page(self, status) -> str:
+        """下一步该去的模块页：空模型去建模，草稿去缺项所在页，可求解去作业，已求解去结果。"""
+        from workflow import WorkflowPhase
+        if status.phase is WorkflowPhase.EMPTY:
+            return "建模"
+        if status.phase is WorkflowPhase.DRAFT:
+            return draft_target(status)[1]
+        return "作业" if status.phase is WorkflowPhase.READY else "结果"
+
+    def _sync_tab_states(self, status) -> None:
+        """在下一步所在的模块页签上点一个圆点。
+
+        流程条整行删掉之后，"现在该去哪一页"由页签自己说：只标一个页签，
+        用图标而不改页签文字（文字要参与中英切换，动态拼接会被翻译缓存错认）。
+        """
+        from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+        target = self.next_page(status)
+        if not hasattr(self, "_next_dot"):
+            pixmap = QPixmap(10, 10)
+            pixmap.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setBrush(QColor(theme.ACCENT))
+            painter.setPen(QColor(0, 0, 0, 0))
+            painter.drawEllipse(1, 1, 8, 8)
+            painter.end()
+            self._next_dot = QIcon(pixmap)
+        tip = self.workflow_bar.next_button.toolTip()
+        for title, page in self.ribbon.pages.items():
+            index = self.ribbon.indexOf(page)
+            self.ribbon.setTabIcon(index, self._next_dot if title == target else QIcon())
+            self.ribbon.setTabToolTip(index, f"下一步在这里：{tip}" if title == target else "")
 
     def _on_ribbon_page_changed(self, index: int) -> None:
         """把当前模块的下一步操作写出来，避免用户在功能区里猜流程。"""
@@ -424,8 +456,12 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             "项目": "项目：新建或打开模型；建模过程可随时撤销。",
             "建模": "建模：创建几何后，用“选择节点/杆件”进入对象选择。",
             "属性": "属性：选择杆件，创建或指派材料与截面。",
+            "装配": "装配：核对端点编号与重复几何，建立可复用的命名集合。",
+            "连接": "连接：按局部轴定义杆端刚接、释放或转动弹簧，并复核实际构造。",
+            "网格": "网格：预览物理杆件与分析杆段映射；局部实体网格在整体求解后设置。",
+            "作业": "作业：先检查模型与约束，再提交独立工况或声明分析步，并查看运行状态。",
             "载荷": "载荷：选择节点创建边界条件，或选择杆件/节点施加载荷。",
-            "分析": "分析：先执行模型检查，再求解或进行模态、屈曲分析。",
+            "分析": "分析：选择分析过程，或定义有传播关系的分析步及幅值曲线。",
             "结果": "结果：查看变形与内力，并做强度验算、对称性与存储方案校核。",
             "视图": "视图：切换标准视角、选择视口背景、开关网格地面与编号标注。",
         }
@@ -459,7 +495,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             return
         if stage == "solve":
             if status.phase is WorkflowPhase.READY:
-                self._show_ribbon_page("分析")
+                self._show_ribbon_page("作业")
                 self.solve()
             else:
                 self._on_workflow_stage("model" if status.phase is WorkflowPhase.EMPTY
@@ -482,12 +518,15 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         from PySide6.QtWidgets import QToolButton
 
         menus = (("文件", ("new", "open", "save", None, "report", "learning_trace")),
-                 ("建模", ("sketch", "frame", "portal", None,
+                 ("建模", ("modeling_workflow", "sketch", "frame", "portal", None,
                            "model_node", "model_member", "delete", "brace", None,
                            "tables", "json")),
                  ("属性", ("material", "beam_section", "section", None,
-                           "assign_section", "units")),
-                 ("载荷", ("create_bc", "support", None,
+                           "assign_section", "batch_assignment", "beam_orientation", "units")),
+                 ("装配", ("assembly_check", "model_sets")),
+                 ("连接", ("member_connections", "hinge")),
+                 ("作业", ("model_check", "support_diagnosis", "solve", "solve_steps", "stop_task")),
+                 ("载荷", ("create_bc", "bc_manager", None,
                            "create_load", "gravity", None,
                            "load", "combo")),
                  ("分析", ("solve", None, "modal", "buckling", "solid_joint", None,
@@ -646,18 +685,17 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def _replace_session(self, session: Session) -> None:
         """让所有会修改模型的面板指向同一个新会话。"""
         self.session = session
+        self._modeling_reviews = {}
+        self._analysis_mesh_key = None
         self._selected_kind = self._selected_id = None
         self.viewport.set_selection(None, None)
         self.viewport.set_problem_refs([])
         self._last_probe = None
-        self.chat.session = session
-        self.chat.conversation = None
+        self.chat.reset_session(session)
         self.properties.session = session
         self.properties.clear()
-        self.bc.session = session
         self.sketch.session = session
         self.section_opt.session = session
-        self.bc.set_selection(None, None)
         self.lbl_pick.setText("")
 
     def solve(self) -> None:
@@ -682,8 +720,31 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if not ok:
             self._on_busy(False)
 
+    def solve_declared_steps(self) -> None:
+        """声明分析步使用同一个后台任务及结果生效路径。"""
+        if self.runner.busy:
+            return
+        if not self.session.model.get("steps"):
+            QMessageBox.information(self, "尚无分析步", "请先在分析步管理器创建步骤；独立工况可使用求解。")
+            return
+        self._on_busy(True)
+        self.statusBar().showMessage("分析步求解中…")
+        if not self.runner.submit(self.session.solve_steps, on_done=self._steps_solved,
+                                  on_failed=self._solve_failed):
+            self._on_busy(False)
+
+    def _steps_solved(self, result) -> None:
+        if not result.ok:
+            self._solved(result)
+            return
+        self._solved(self.session.solve_summary)
+        self.statusBar().showMessage(
+            f"已完成 {result.payload['count']} 个分析步；当前查看 {result.payload['inspecting']}。"
+            + result.payload["limitation"], 15000)
+
     def _solved(self, result) -> None:
         self.result = result
+        self.result_frame = None
         self._on_busy(False)
         self.statusBar().clearMessage()
         if result.ok:
@@ -781,6 +842,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         """
         busy = bool(busy or self.runner.busy)
         idle = not busy
+        self.chat.set_task_busy(busy)
         if busy and not self._task_busy:
             self._busy_action_states = {
                 name: action.isEnabled() for name, action in self.actions_by_name.items()
@@ -795,7 +857,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.btn_cancel_task.setVisible(busy)
         self.btn_cancel_task.setEnabled(busy)
         for widget in (self.workflow_bar, self.quickbar, self.tree, self.properties,
-                       self.bc, self.timeline, self.sketch, self.section_opt,
+                       self.timeline, self.sketch, self.section_opt,
                        self.diagram, self.results, self.empty_state, self.solid_panel):
             widget.setEnabled(idle)
         if idle and self._close_pending:
@@ -856,7 +918,30 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     # --- 绘制 ---
 
+    def _sync_datums(self) -> None:
+        self.viewport.datum_points = self.session.datum_points()
+        self.viewport.constraint_links = self.session.constraint_links()
+
     def redraw(self) -> None:
+        # 重画会清掉视口（也就停了动画），开关的勾要跟着取消，免得显示「在播」实际没播
+        self._sync_datums()
+        animate = getattr(self, "actions_by_name", {}).get("animate")
+        if animate is not None:
+            animate.setChecked(False)
+        self._redraw()
+
+    def _sync_element_owner(self, frame) -> None:
+        """视口要画的是求解用的分析模型时，告诉它分析杆段属于哪根物理杆件。
+
+        求解过之后，连「模型」显示画的也是分析模型（preview_frame 直接返回它）；
+        不同步的话，点选、显示组拿到的是杆段号，隐藏一根柱只隐藏了它的一段。
+        """
+        compilation = self.session.compilation
+        self.viewport.element_owner = (
+            {e: compilation.mapping.physical_member_id(e) for e in frame.members}
+            if compilation is not None and frame is self.session.frame else {})
+
+    def _redraw(self) -> None:
         self._sync_result_validity()
         if self.mode == "实体云图" and self._solid_grid is not None:
             self.viewport.show_solid_result(
@@ -880,6 +965,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if not draft and not frame.members:
             self.viewport.clear()
             return
+        self._sync_element_owner(frame)
 
         if self.mode == "分析网格":
             preview = self.session.preview_analysis_mesh()
@@ -894,9 +980,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.viewport.show_model(frame, self.case)
             return
         frame = self.session.frame or frame
+        self._sync_element_owner(frame)
         if self.mode == "变形":
             scale = self.scale or self._auto_scale(frame)
-            self.viewport.show_deformed(frame, self.session.solution,
+            self.viewport.show_deformed(frame, self._frame_solution(),
                                         self.case, scale)
         elif self.mode == "云图":
             options = self.result_display_options
@@ -939,19 +1026,21 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         elif self.mode == "模态":
             # 同一个 Frame 只算一次。原来每次重画（切工况、改放大系数、开关
             # 标注）都把模态分析完整跑**两遍**——校验一遍、画图再一遍。
-            cached = getattr(self, "_modal_view", None)
-            if cached is not None and cached[0] is frame:
-                r = cached[1]
-            else:
+            #
+            # 振型画在 Session 算模态时用的**那个**分析模型上（每杆至少剖成
+            # 4 段），不能拿静力的 Frame 再算一遍：剖分不同，图上的频率就和
+            # 结果表里的对不上。
+            cached = self.session.modal_view
+            if cached is None or cached[0] != self.session._model_key():
                 got = self.session.modal_analysis(num_modes=6)
                 if not got.ok:
                     QMessageBox.information(self, "无法进行模态分析",
-                                            str(got.payload.get("error", ""))[:400])
+                                            str(got.payload.get("error")
+                                                or got.payload.get("errors", ""))[:400])
                     self.set_mode("模型")
                     return
-                from modal import modal
-                r = modal(frame, 6)
-                self._modal_view = (frame, r)
+                cached = self.session.modal_view
+            frame, r = cached[2], cached[3]
             f1 = r.frequencies[0]
             self.viewport.show_mode(frame, r.shapes, 0,
                                     f"第 1 阶　{f1:.3f} Hz　周期 {1 / f1:.4f} s")
@@ -979,9 +1068,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if self.props_dock.isVisible():
             self.properties.session = self.session   # 新建模型换过 Session
             self.properties.refresh()
-        if self.bc_dock.isVisible():
-            self.bc.session = self.session
-            self.bc.refresh()
         if len(self.session.history):
             last = self.session.history[len(self.session.history) - 1]
             self.lbl_last.setText(f"最近：第 {last.index + 1} 步　{last.summary}")
@@ -989,6 +1075,11 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.lbl_last.setText("最近：尚未建模")
         self.act_solve.setEnabled(not self.runner.busy and bool(model.get("nodes")))
         self.workflow_bar.update_state(self.session)
+        # 工具栏改了模型，对话面板的后续建议也要跟着换（例如求解后改为问位移）
+        self.chat.refresh_suggestions()
+        dialog = getattr(self, "_modeling_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.refresh()
         self.redraw()
         has_model = bool(model.get("nodes"))
         self._sync_model_tree(has_model)
@@ -1019,7 +1110,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self._displayed_solution = self.session.solution
             self._last_probe = None
             self._utilization = None
-            self._modal_view = None
             self.diagram.attach(self.session, self.case)
             self.viewport.set_result_marker(None)
         if stale or changed or (self.result is not None and self.result.ok
@@ -1042,7 +1132,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self._tree_auto_hidden = True
         elif self._tree_auto_hidden:
             self._tree_auto_hidden = False
-            if not self._tree_dismissed and not self.left_drawer.is_open():
+            if not self._tree_dismissed:
                 self.tree_dock.show()
 
 
@@ -1097,7 +1187,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         dialog = TableDialog(self.session, self)
         if dialog.exec() != dialog.DialogCode.Accepted or dialog.model is None:
             return
-        result = self.session.set_model(model=dialog.model)
+        result = self.session.replace_editing_model(model=dialog.model)
         if not result.ok:
             QMessageBox.warning(self, "表格模型未写回", self._explain(result.payload))
             return
@@ -1274,6 +1364,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         else:
             self.set_prompt("就绪 | 选择上方功能区模块开始建模")
 
+    def toggle_render_profiles(self) -> None:
+        self.viewport.set_render_profiles(self.actions_by_name["render_profiles"].isChecked())
+        self.redraw()
+
     def toggle_labels(self) -> None:
         on = self.actions_by_name["labels"].isChecked()
         self.viewport.set_labels(on)
@@ -1308,8 +1402,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         drawers = self.drawers.drawers.values()
         i18n.retranslate(
             (self.ribbon, self.quickbar, self.workflow_bar, self.results,
-             self.left_rail, self.right_rail,
-             *(d.tabs for d in drawers)),
+             self.ribbon.corner, *(d.tabs for d in drawers)),
             self.actions_by_name.values())
         # 抽屉标题随当前页变化，不能交给 retranslate（它把第一次见到的文字
         # 当作原文缓存下来）；让抽屉按当前语言重写一次
@@ -1363,6 +1456,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     def cancel_interaction(self) -> None:
         """Esc：退出当前建模/拾取模式，回到浏览状态。"""
         changed = False
+        region = getattr(self, "region_pick", None)
+        if region is not None and region.active:
+            region.cancel()
+            changed = True
         for name in ("model_node", "model_member", "pick_node", "pick_member"):
             act = self.actions_by_name.get(name)
             if act is not None and act.isChecked():
@@ -1522,7 +1619,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self._selected_id = None
             self._sync_selection_actions()
             self.viewport.set_selection(None, None)
-            self.bc.set_selection(None, None)
             self.properties.clear()
             label = "节点" if kind == "node" else "杆件"
             self._after_manual_edit(f"已删除{label} {ident}")
@@ -1580,6 +1676,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self._viewport_context_menu().exec(global_pos)
 
     def _on_picked(self, kind: str, ident: int) -> None:
+        self.chat.set_selection(kind, ident)
         self._selected_kind = kind
         self._selected_id = ident
         if self.viewport.selection != (kind, ident):
@@ -1592,14 +1689,21 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         # 建模时点中就把属性摆出来，这是"拾取"这条路的终点；看结果时点选是
         # 在查数（值写进结果表与状态栏），再弹一个抽屉只会把模型又挤掉一块。
         # 左抽屉本来就开着时照常切到属性页。
-        if self.mode in ("模型", "分析网格") or self.left_drawer.is_open():
+        if self.mode in ("模型", "分析网格") and not self._tree_dismissed:
             self.props_dock.show()
-        # 边界条件面板也更新
-        self.bc.set_selection(kind, ident)
         # 点中一根杆，内力图就切到它——**这是"在哪"和"多大"接起来的一步**
         if kind == "member" and self.diagram_dock.isVisible():
             self.diagram.member.setCurrentText(str(ident))
         self._resume_pending_command(kind)
+
+    def _on_selection_cleared(self) -> None:
+        """视口空白处单击：取消选择，属性区与右键菜单都回到无选择状态。"""
+        self._selected_kind = None
+        self._selected_id = None
+        self.chat.set_selection(None, None)
+        self.properties.clear()
+        self.lbl_pick.setText("")
+        self._sync_selection_actions()
 
     def _describe_selection(self, kind: str, ident: int) -> None:
         """选中之后在状态栏说清楚它是谁、在哪。
@@ -1640,23 +1744,19 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         self.open_parametric(BY_NAME["portal"])
 
     def apply_gravity(self) -> None:
-        """直接按材料密度和截面面积计算自重荷载，施加到所有杆件上。"""
+        """Abaqus 的 Gravity 载荷：走创建载荷流程，类型预选重力，区域默认全部杆件。
+
+        原来这里直接写逐杆的自重条目，和「创建载荷 → 重力」得到的荷载对象是两种
+        东西：一个能在载荷管理器里编辑、抑制，另一个只能去表格里删。
+        """
         if not self.session.model.get("members"):
             self.statusBar().showMessage("当前没有杆件，无法计算自重。", 5000)
             return
-        result = self.session.add_self_weight()
-        if not result.ok:
-            self.statusBar().showMessage(
-                f"施加自重失败：{self._explain(result.payload)}", 8000)
-            return
-        self._after_manual_edit(
-            f"已将自重写入 {result.payload['case']} 工况（{result.payload['members']} 根杆件）")
+        self.create_load(load_type="gravity")
 
     def show_bc_panel(self) -> None:
-        """打开边界条件面板。"""
-        self.bc_dock.setVisible(True)
-        self.bc_dock.raise_()
-        self.bc.refresh()
+        """旧入口名：边界条件统一在边界条件管理器里查看与编辑。"""
+        self.open_bc_manager()
 
     def edit_materials_sections(self) -> None:
         """弹出材料与截面编辑对话框，直接修改模型的材料和截面定义。"""
@@ -1868,6 +1968,82 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     # ------------------------------------------------- Abaqus 式对话框
 
+    def open_modeling_workflow(self) -> None:
+        from .modeling_workflow import ModelingWorkflowDialog
+        if getattr(self, "_modeling_dialog", None) is None:
+            self._modeling_dialog = ModelingWorkflowDialog(self)
+        self._modeling_dialog.refresh()
+        self._modeling_dialog.show()
+        self._modeling_dialog.raise_()
+        self._modeling_dialog.activateWindow()
+
+    def check_manual_model(self) -> None:
+        self._on_workflow_stage("validate")
+
+    def check_assembly(self) -> None:
+        from .modeling_workflow import assembly_issues
+        issues = assembly_issues(self.session)
+        self.results_dock.show()
+        if not self.session.model.get("members"):
+            self.results.show_message("装配尚未定义", "请先创建节点和杆件，再检查装配。")
+        elif issues:
+            self.results.show_rows("装配检查发现问题，请修正后重新检查。",
+                                   ["对象", "编号", "原因与下一步"],
+                                   [["节点" if kind == "node" else "杆件", ident, text]
+                                    for kind, ident, text in issues],
+                                   [(kind, ident) for kind, ident, _ in issues])
+        else:
+            self.results.show_message("装配几何检查完成",
+                                      "未检出重合节点、重复杆件或端点错误。请复核相交杆件是否需要共用节点；本项不证明结构稳定。")
+
+    def open_model_sets(self) -> None:
+        from .assignment_dialog import SetDialog
+        selected = self._selected_id if getattr(self, "_selected_kind", None) == "member" else None
+        dialog = SetDialog(self.session, selected, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            result = self.session.define_set(**dialog.definition())
+            if not result.ok:
+                QMessageBox.warning(self, "集合未创建", self._explain(result.payload))
+                return
+            self._after_manual_edit("命名集合已更新，可用于批量属性与连接设置。")
+
+    def assign_member_group(self) -> None:
+        from .assignment_dialog import BatchAssignmentDialog
+        if not self.session.model.get("materials") or not self.session.model.get("sections"):
+            self.statusBar().showMessage("请先创建材料和截面，再进行批量属性指派。", 5000)
+            self._show_ribbon_page("属性")
+            return
+        selected = self._selected_id if getattr(self, "_selected_kind", None) == "member" else None
+        dialog = BatchAssignmentDialog(self.session, selected, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        section, material = dialog.get_assignment()
+        # 与「截面指派」同一种对象：原来这里写的是逐杆的直接条目，管理器里看不见
+        from .object_dialogs import next_name
+        name = next_name("SA", self._feature_names("section_assignments"))
+        result = self.session.create_section_assignment(name, dialog.target.member_ids(),
+                                                        section, material)
+        if not result.ok:
+            QMessageBox.warning(self, "属性未指派", self._explain(result.payload))
+            return
+        self._after_manual_edit(f"已创建截面指派「{name}」。")
+
+    def _configure_member_group(self, orientation=False) -> None:
+        from .assignment_dialog import MemberSetupDialog
+        selected = self._selected_id if getattr(self, "_selected_kind", None) == "member" else None
+        dialog = MemberSetupDialog(self.session, selected, orientation=orientation, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = self.session.configure_member_group(dialog.target.member_ids(), **dialog.changes())
+        if not result.ok:
+            QMessageBox.warning(self, "杆件设置未提交", self._explain(result.payload))
+            return
+        if not result.payload.get("no_change"):
+            self._after_manual_edit("梁截面方向已更新。" if orientation else "杆端连接已更新，请复核机构与传力路径。")
+
+    def set_member_connections(self) -> None:
+        self._configure_member_group()
+
     def create_material(self) -> None:
         """Abaqus 式：创建/编辑材料。"""
         from .material_dialog import MaterialDialog
@@ -1931,34 +2107,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             f"已创建截面：{sec['name']}（{section_type}, "
             f"A={sec['A']:.3e} {length_unit}²）")
 
-    def assign_section(self) -> None:
-        """Abaqus 式：选中杆件后一次指派材料与截面。"""
-        if getattr(self, "_selected_kind", None) != "member":
-            self.statusBar().showMessage("请先选中一根杆件，然后指派属性。", 5000)
-            return
-        sections = [s["name"] for s in self.session.model.get("sections", [])]
-        materials = [m["name"] for m in self.session.model.get("materials", [])]
-        if not sections or not materials:
-            self.statusBar().showMessage(
-                "属性指派需要材料和截面，请先在 Property 模块补齐定义。", 5000)
-            return
-        mid = self._selected_id
-        member = next(m for m in self.session.model.get("members", [])
-                      if int(m["id"]) == mid)
-        from .assignment_dialog import AssignmentDialog
-        dialog = AssignmentDialog(
-            [mid], sections, materials, member.get("section", ""),
-            member.get("material", ""), parent=self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        section, material = dialog.get_assignment()
-        result = self.session.assign_properties([mid], section, material)
-        if not result.ok:
-            QMessageBox.warning(self, "属性指派失败", self._explain(result.payload))
-            return
-        self._after_manual_edit(
-            f"杆件 {mid} 已指派属性：截面 {section}，材料 {material}")
-
     def create_hinge(self) -> None:
         """给选中杆件创建显式端铰；内核使用杆端自由度释放。"""
         if getattr(self, "_selected_kind", None) != "member":
@@ -2016,13 +2164,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         AreaLoadDialog(self.session, self).exec()
         self.refresh()
 
-    def open_bc_manager(self) -> None:
-        """边界条件管理器。"""
-        from .load_code_dialog import BCManagerDialog
-
-        BCManagerDialog(self.session, self).exec()
-        self.refresh()
-
     def open_step_manager(self) -> None:
         """分析步管理器。内核早就支持跨步传播与失活，界面一直够不到。"""
         from .step_dialog import StepManagerDialog
@@ -2065,40 +2206,9 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                  "material": "双线性轴向塑性；弯曲保持弹性"}[self.analysis_type]
         self.statusBar().showMessage(f"分析步：{choice}（{scope}）", 8000)
 
-    def create_bc(self) -> None:
-        """Abaqus 式：选中节点，创建边界条件（勾选自由度）。"""
-        if not self._require_selection("create_bc", ("node",), "创建边界条件"):
-            return
-        from .bc_dialog import BCDialog
-        nid = self._selected_id
-        current_entry = next((s for s in self.session.model.get("supports", [])
-                              if int(s["node"]) == nid), None)
-        current = current_entry["fix"] if current_entry else None
-        dlg = BCDialog(nid, current,
-                       current_name=(current_entry or {}).get("name"), parent=self,
-                       current_spring=(current_entry or {}).get("spring"))
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        fix = dlg.get_fix()
-        spring = dlg.get_spring()
-        bc_name = dlg.get_name()
-        if (any(fix) or spring) and not bc_name:
-            QMessageBox.warning(self, "边界条件创建失败", "边界条件名称不能为空。")
-            return
-        result = self.session.set_supports(
-            [nid], fix, name=bc_name or f"BC-Node-{nid}", spring=spring)
-        if not result.ok:
-            QMessageBox.warning(self, "边界条件创建失败", self._explain(result.payload))
-            return
-        told = f"{fix}" + (f" + 弹簧 {spring}" if spring else "")
-        self.set_prompt(f"已设置节点 {nid} 边界条件：{told}")
-        self._after_manual_edit(f"节点 {nid} 边界条件已更新：{told}")
-
     # 这些命令必须先在视口里选中对象才有意义。
     # 键是命令名，值是它接受的选择类型。
     _NEEDS_SELECTION = {
-        "create_load": ("node", "member"),
-        "create_bc": ("node",),
         "solid_joint": ("node",),
     }
 
@@ -2147,60 +2257,6 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         # 等这次拾取事件走完再弹对话框，否则 VTK 的鼠标状态会卡在按下
         QTimer.singleShot(0, getattr(self, pending[0]))
 
-    def create_load(self) -> None:
-        """Abaqus 式：选中对象，创建载荷。"""
-        if not self._require_selection("create_load", ("node", "member"), "创建载荷"):
-            return
-        kind = self._selected_kind
-        from .load_dialog import LoadDialog
-        ident = self._selected_id
-        available = [case["name"] for case in self.session.model.get("load_cases", [])]
-        shown_cases = available or ["Load-1"]
-        dlg = LoadDialog(kind, ident, parent=self,
-                         units=self.session.model.get("units", "N-m-Pa"),
-                         cases=shown_cases, current_case=self.case)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        load_type = dlg.get_load_type()
-        load = dlg.get_load()
-        load_name = dlg.get_name()
-        case_name = dlg.get_case()
-        if not load_name:
-            QMessageBox.warning(self, "施加载荷失败", "载荷名称不能为空。")
-            return
-        # 确保有工况
-        if case_name not in available:
-            case_result = self.session.add_load_case(case_name)
-            if not case_result.ok:
-                QMessageBox.warning(self, "创建荷载工况失败", self._explain(case_result.payload))
-                return
-        if load_type == "concentrated":
-            result = self.session.set_nodal_load(ident, load, case_name, load_name)
-            description = f"节点 {ident} 已施加集中力：{load}"
-        elif load_type == "line":
-            result = self.session.set_member_load(ident, load, case_name, load_name)
-            description = f"杆件 {ident} 已施加满跨均布载荷：{load}"
-        elif load_type == "trapezoid":
-            end_load = dlg.get_end_load()
-            result = self.session.set_member_span_load(
-                ident, "trapezoid", load, w2=end_load,
-                case_name=case_name, name=load_name)
-            description = f"杆件 {ident} 已施加梯形载荷：i端 {load} → j端 {end_load}"
-        elif load_type == "member_point":
-            position = dlg.get_position()
-            result = self.session.set_member_span_load(
-                ident, "point", load, a=position,
-                case_name=case_name, name=load_name)
-            description = f"杆件 {ident} 距 i 端 {position:g} 处已施加集中力：{load}"
-        else:
-            QMessageBox.warning(self, "施加载荷失败", "未识别的荷载类型。")
-            return
-        if not result.ok:
-            QMessageBox.warning(self, "施加载荷失败", self._explain(result.payload))
-            return
-        self.set_prompt(description)
-        self._after_manual_edit(description)
-
     def open_sketch(self) -> None:
         """打开 2D 草图对话框，画一榀框架后拉伸成 3D 模型。"""
         materials = [m["name"] for m in self.session.model.get("materials", [])]
@@ -2227,6 +2283,12 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             self.set_prompt("多模态草图识别：选择图片 → 核对覆盖标注 → 标定尺度 → 确认加载")
         else:
             self.set_prompt("就绪 | 选择上方功能区模块开始建模")
+
+    def _recognize_dropped_image(self, path: str) -> None:
+        """对话面板拖入的图纸：打开草图识别面板并载入，后续核对与确认仍由用户完成。"""
+        if not self.sketch_dock.isVisible():
+            self.open_sketch_ai()
+        self.sketch.load_image(path)
 
     def _generate_from_sketch(self, data: dict) -> None:
         """把 2D 草图转换成 3D 模型，支持沿进深方向拉伸。"""
@@ -2520,7 +2582,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def toggle_agent_panel(self) -> None:
         """召唤/收起 AI 助手（右侧窄栏的「AI」按钮与 Ctrl+G 共用）。"""
-        self.right_drawer.toggle_page("chat")
+        self.chat_dock.setVisible(not self.chat_dock.isVisible())
         if self.chat_dock.isVisible():
             self._on_drawer_page_opened("chat")
             self.chat.setFocus()
@@ -2542,8 +2604,32 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         if on:
             self._on_drawer_page_opened("props")
 
+    def toggle_tree(self) -> None:
+        """模型栏（模型树 + 属性）开关。"""
+        on = self.actions_by_name["tree_panel"].isChecked()
+        self._tree_dismissed = not on
+        self.tree_dock.setVisible(on)
+        if on:
+            self._on_drawer_page_opened("tree")
+
+    def show_results_table(self) -> None:
+        on = self.actions_by_name["results_table"].isChecked()
+        self.results_dock.setVisible(on)
+        if on:
+            self.results_dock.raise_()
+
+    def show_section_opt(self) -> None:
+        on = self.actions_by_name["section_opt_panel"].isChecked()
+        self.section_opt_dock.setVisible(on)
+        if on:
+            self.section_opt_dock.raise_()
+
+    def open_command_palette(self) -> None:
+        from .command_palette import CommandPalette
+        CommandPalette(self).exec()
+
     def toggle_chat(self) -> None:
-        """功能区/菜单里的「Agent 对话」开关。"""
+        """页签行右端与菜单里的「AI 助手」开关。"""
         if self.act_chat.isChecked() != self.chat_dock.isVisible():
             self.toggle_agent_panel()
 
@@ -2683,6 +2769,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
                          int(item["i"]), int(item["j"])])
             locations.append(("member", physical))
         p = preview.payload
+        self._analysis_mesh_key = self.session._model_key()
         caption = (f"分析网格：{p['physical_members']} 个物理杆件 → "
                    f"{p['analysis_elements']} 个分析杆段，"
                    f"{p['split_nodes']} 个切分节点。点击一行定位物理杆件。")
@@ -2732,7 +2819,7 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
             return False
         self._solid_grid, self._solid_binding = grid, binding
         self._solid_info = (summary, paths, index, caption)
-        self.solid_panel.bind(paths, index, caption, saved=binding is None)
+        self.solid_panel.bind(paths, index, caption, saved=binding is None, geometry=summary.get("geometry"))
         if summary:
             title, columns, rows, locators = result_rows.to_rows("solid_joint", summary)
             self.results.show_rows(title, columns, rows,
@@ -2744,8 +2831,8 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
 
     def _switch_solid_level(self, path) -> None:
         if not self._load_solid_result(path, self._solid_binding) and self._solid_info:
-            _summary, paths, index, caption = self._solid_info
-            self.solid_panel.bind(paths, index, caption, saved=self._solid_binding is None)
+            summary, paths, index, caption = self._solid_info
+            self.solid_panel.bind(paths, index, caption, saved=self._solid_binding is None, geometry=summary.get("geometry"))
 
     def _redraw_solid_result(self) -> None:
         if self.mode == "实体云图" and self._solid_grid is not None and not self.runner.busy:
@@ -2906,11 +2993,13 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         levels = self._ask_joint_levels(node_id)
         if levels is None:
             return
+        options = getattr(self, "_joint_analysis_options", {})
         title = f"节点 {node_id} 局部实体（{'收敛判断 3 档' if levels > 1 else '快速 1 档'}）"
         self._analyse(
             "solid_joint", title,
             lambda report: self.session.analyze_joint_solid(
                 node_id=node_id, case=case, levels=levels,
+                **options,
                 progress=lambda text: report(text, None, True)),
             with_progress=True)
 
@@ -2921,23 +3010,56 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         单档网格判不了热点应力是否收敛，正式的应力集中系数 Kt 只有多档才给。
         不问一句就开算，用户等了几分钟才发现拿不到想要的那个数。
         """
-        box = QMessageBox(self)
+        from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QFormLayout
+        box = QDialog(self)
         box.setWindowTitle("节点实体")
-        box.setText(f"对节点 {node_id} 做局部实体分析，选择算法：")
-        box.setInformativeText(
-            "快速（1 档）：几分钟，看应力分布与峰值；不给正式 Kt。\n"
-            "收敛判断（3 档）：约 3 倍时间，热点应力收敛时给出正式 Kt。")
-        quick = box.addButton("快速（1 档）", QMessageBox.ButtonRole.AcceptRole)
-        full = box.addButton("收敛判断（3 档）", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(quick)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is quick:
-            return 1
-        if clicked is full:
-            return 3
-        return None
+        box.resize(460, 300)
+        layout = QVBoxLayout(box)
+        note = QLabel(f"节点{node_id}：切面位移与转角驱动。\n过渡区域保留远端截面与孔洞，曲线和圆角尺寸须按实际节点核对。")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        backend = QComboBox()
+        backend.addItem("自研C3D10", "native")
+        backend.addItem("Abaqus细网格", "abaqus")
+        form.addRow("求解后端", backend)
+        geometry = QComboBox()
+        geometry.addItem("一体连续节点（自动）", "transition")
+        geometry.addItem("斜接裁切与圆角", "miter")
+        geometry.addItem("截面包络填充（原方式）", "envelope")
+        geometry.addItem("原始杆件交汇", "intersection")
+        geometry.setToolTip("采用一体连续实体假设。柱顶模板保持柱截面，并在交汇处生成局部曲面过渡；匹配两臂使用G2扫掠，其他节点采用斜接。无焊缝、螺栓或接触界面。")
+        form.addRow("节点几何", geometry)
+        levels = QComboBox()
+        levels.addItem("快速（1 档）", 1)
+        levels.addItem("收敛判断（3 档）", 3)
+        form.addRow("网格档位", levels)
+        size = QDoubleSpinBox()
+        size.setRange(0, 10000)
+        size.setDecimals(2)
+        size.setSuffix(" mm")
+        size.setSpecialValueText("自动（局部细化）")
+        size.setToolTip("指定全局网格尺寸；节点连接附近进一步细化。多档时此值为最细档全局尺寸。")
+        form.addRow("网格尺寸", size)
+        backend.currentIndexChanged.connect(
+            lambda: levels.setCurrentIndex(1) if backend.currentData() == "abaqus" else None)
+        levels.currentIndexChanged.connect(
+            lambda: levels.setCurrentIndex(1) if backend.currentData() == "abaqus" else None)
+        layout.addLayout(form)
+        warning = QLabel("较细网格增加计算时间和内存。自研规模不足时可选择Abaqus；三档结果稳定后再判断应力。")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        buttons = dialog_styles.button_box(box)
+        buttons.accepted.connect(box.accept)
+        buttons.rejected.connect(box.reject)
+        layout.addWidget(buttons)
+        if box.exec() != QDialog.DialogCode.Accepted:
+            return None
+        count = int(levels.currentData())
+        self._joint_analysis_options = dict(
+            backend=backend.currentData(), geometry_mode=geometry.currentData(),
+            mesh_sizes_mm=([size.value()*1.5**k for k in range(count-1, -1, -1)] if size.value() else None))
+        return count
 
     # --- 校核 ---
 
@@ -3101,6 +3223,10 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
         except OSError:
             pass
         self._save_preferences()
+        self.chat.shutdown()
+        # QDialog 不会因父窗口 close() 自动隐藏，退出时同步关闭各独立面板。
+        for name in self.PANELS:
+            getattr(self, name).hide()
         try:
             self.viewport.shutdown()
         except Exception:                       # noqa: BLE001
@@ -3164,32 +3290,60 @@ class MainWindow(WindowCommandsMixin, WindowPreferencesMixin,
     # --- 树的动作 ---
 
     def _on_tree_action(self, action: str, payload) -> None:
+        if action == "feature_branch":
+            self.open_object_manager(str(payload))
+            return
+        if action == "instances":
+            self.open_instance_manager()
+            return
+        if action == "sets":
+            self.open_model_sets()
+            return
+        if action == "steps":
+            self.open_step_manager()
+            return
         if action == "materials":
             self.create_material()
         elif action == "sections":
             self.create_section()
         elif action in {"geometry", "nodes", "members"}:
             self.open_tables()
-        elif action == "supports":
-            self.show_bc_panel()
-        elif action == "support_object" and payload is not None:
-            self.viewport.set_selection("node", int(payload))
-            self._on_picked("node", int(payload))
-            self.show_bc_panel()
+        elif action in ("supports", "support_object"):
+            # 「直接定义」下的支座：管理器看不到它们，先提议转成对象
+            if action == "support_object" and payload is not None:
+                self.viewport.set_selection("node", int(payload))
+                self._on_picked("node", int(payload))
+            if self.direct_supports() and not self.convert_direct_supports():
+                return
+            self.open_bc_manager()
         elif action == "loads":
+            # 点某个工况：切换到它；点「荷载」文件夹本身：打开荷载管理器
             if payload:
                 self.case = str(payload)
                 self.refresh()
-            self.show_bc_panel()
+            else:
+                self.open_load_manager()
         elif action == "load_object" and isinstance(payload, dict):
             self.case = str(payload.get("case") or self.case or "")
             kind, ident = str(payload["kind"]), int(payload["id"])
             self.viewport.set_selection(kind, ident)
             self._on_picked(kind, ident)
-            self.show_bc_panel()
+            self.open_load_manager()
         elif action == "results" and payload:
             self.case = str(payload)
             self.set_mode("变形")
+        elif action == "instance" and payload:
+            record = next((r for r in (self.session.model.get("assembly") or {}).get("instances") or []
+                           if r["name"] == payload), None)
+            if record is not None:
+                self.viewport.highlight_region("member", record["members"])
+                self.statusBar().showMessage(f"实例「{payload}」：{len(record['members'])} 根杆件", 5000)
+        elif action == "result_step":
+            self.show_step_result(str(payload))
+        elif action == "result_frame":
+            self.show_step_result(*payload)
+        elif action == "result_mode":
+            self.show_step_mode(*payload)
         elif action == "history":
             self.timeline_dock.setVisible(True)
             self.timeline_dock.raise_()

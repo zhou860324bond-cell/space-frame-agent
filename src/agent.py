@@ -153,6 +153,9 @@ from session_loads import LoadsMixin
 from session_solving import SolvingMixin
 from session_query import QueryMixin
 from session_checks import ChecksMixin
+from session_features import FeaturesMixin
+from session_assembly import AssemblyMixin
+from session_part import PartMixin
 
 
 # 批量修改闸门看这几类实体：它们有稳定 ID，改了就是改了「用户已经认过的结构」。
@@ -165,12 +168,19 @@ BATCH_EDIT_THRESHOLD = 2
 
 @dataclass
 class Session(ModelingMixin, LoadsMixin, SolvingMixin,
-              QueryMixin, ChecksMixin):
+              QueryMixin, ChecksMixin, FeaturesMixin, PartMixin, AssemblyMixin):
     """一次会话持有的全部确定性状态。模型与结果只在这里，不在提示词里。"""
     model: dict[str, Any] = field(default_factory=dict)
     frame: Any = None
     solution: Any = None
     compilation: Any = None
+    #: (模型指纹, 阶数, 分析模型, ModalResult)：界面画振型用同一份，见 modal_analysis
+    modal_view: Any = field(default=None, repr=False, compare=False)
+    #: (模型指纹, 分析模型, BucklingResult)：界面画失稳模态用，见 buckling_analysis
+    buckling_view: Any = field(default=None, repr=False, compare=False)
+    #: solve_steps 留下的每一步结果（Abaqus 结果树的 Step → Frame），见 inspect_step
+    step_results: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    step_results_key: bytes | None = field(default=None, repr=False, compare=False)
     result_db: Any = None
     result_identity: dict[str, Any] | None = None
     solve_summary: ToolResult | None = field(default=None, repr=False)
@@ -218,6 +228,10 @@ class Session(ModelingMixin, LoadsMixin, SolvingMixin,
 
     def goto_step(self, cursor: int) -> bool:
         """跳到第 cursor 步之后的状态。cursor = -1 表示回到空模型。"""
+        if cursor == self.history.cursor and -1 <= cursor < len(self.history.steps):
+            # 跳到当前所在的这一步：模型不变，不能顺手把结果清掉（真窗口里双击
+            # 时间线当前行，已求解的结果就没了）
+            return True
         model = self.history.goto(cursor)
         if model is None:
             return False
@@ -978,6 +992,14 @@ class DeepSeekProvider:
                 calls.append({"id": c.id, "name": c.function.name, "arguments": args})
             return {"tool_calls": calls}
         return {"content": message.content or ""}
+
+    def complete_stream(self, messages: list[dict], tools: list[dict], on_text) -> dict:
+        """与 ``complete`` 返回相同，只是文字边生成边交给 ``on_text``。"""
+        from llm_stream import openai_stream
+        return openai_stream(self._client, {
+            "model": self._model, "messages": messages, "tools": tools,
+            "temperature": self._temperature,
+            "stream_options": {"include_usage": True}}, on_text, self.usage)
 
 
 # --------------------------------------------------------------------------- 主循环

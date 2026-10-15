@@ -23,6 +23,7 @@
 """
 
 from __future__ import annotations
+from section_geometry import scale_geometry
 
 from dataclasses import dataclass
 
@@ -120,6 +121,10 @@ _TO_MM = {
     # 用同一个系数会让转动弹簧差 10⁶，而且只在换过单位的模型上现形。
     "spring_translation": 1e-3,   # N/m     → N/mm
     "spring_rotation": 1e3,       # N·m/rad → N·mm/rad
+    # 节点质量与密度同一套：kg ↔ t。转动惯量再乘长度²：kg·m² → t·mm²。
+    "mass": 1e-3,                 # kg    → t
+    "mass_inertia": 1e3,          # kg·m² → t·mm²
+    "acceleration": 1e3,          # m/s² → mm/s²（重力荷载对象的 g）
 }
 
 
@@ -131,6 +136,36 @@ def _factors(src: str, dst: str) -> dict[str, float]:
     if src == MM and dst == SI:
         return {k: 1.0 / v for k, v in _TO_MM.items()}
     raise ValueError(f"不支持从 {src} 换到 {dst}")
+
+
+def _convert_features(features: dict, f: dict[str, float]) -> dict:
+    """建模对象里的物理量：荷载的力、力矩、线荷载、重力加速度，边界条件的弹簧。
+
+    派生条目由 convert_model 照常换算，对象若不换，下一次再生成就会把换过的
+    条目又写回原单位的数——两边必须同时换。
+    """
+    factor = {"force": f["force"], "moment": f["moment"], "w": f["line_load"],
+              "g": f["acceleration"]}
+    out = {k: [dict(item) for item in v] for k, v in features.items()}
+    for load in out.get("loads") or []:
+        for key, scale in factor.items():
+            if key in load:
+                load[key] = [v * scale for v in load[key]]
+    def springs(values):
+        return [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])
+                for k, v in enumerate(values)]
+
+    for bc in out.get("bcs") or []:
+        if "spring" in bc:
+            bc["spring"] = springs(bc["spring"])
+        if "displacement" in bc:               # 平动是长度，转动是弧度不换
+            bc["displacement"] = [v * f["length"] if k < 3 else v
+                                  for k, v in enumerate(bc["displacement"])]
+        if bc.get("modifications"):
+            bc["modifications"] = {
+                step: {**mod, **({"spring": springs(mod["spring"])} if "spring" in mod else {})}
+                for step, mod in bc["modifications"].items()}
+    return out
 
 
 def convert_model(model: dict, to: str) -> dict:
@@ -160,6 +195,8 @@ def convert_model(model: dict, to: str) -> dict:
                             if "allow_compression" in m else {})}
                         for m in model.get("materials", [])]
     out["sections"] = [{**s, "A": s["A"] * f["area"],
+                        **({"geometry": scale_geometry(
+                            s["geometry"], f["length"])} if "geometry" in s else {}),
                         "Iy": s["Iy"] * f["inertia"], "Iz": s["Iz"] * f["inertia"],
                         "J": s["J"] * f["inertia"],
                         **({"Ay": s["Ay"] * f["area"]} if "Ay" in s else {}),
@@ -179,6 +216,33 @@ def convert_model(model: dict, to: str) -> dict:
                         **({"c_web": s["c_web"] * f["length"]}
                            if "c_web" in s else {})}
                        for s in model.get("sections", [])]
+    if model.get("datums"):
+        out["datums"] = {**model["datums"], "points": [
+            {**pt, "xyz": [v * f["length"] for v in pt["xyz"]]}
+            for pt in model["datums"].get("points") or []]}
+    if model.get("features"):
+        out["features"] = _convert_features(model["features"], f)
+    if (model.get("assembly") or {}).get("instances"):
+        def placed(record):
+            t = record["transform"]
+            moved = {**t, **({"translate": [v * f["length"] for v in t["translate"]]}
+                             if "translate" in t else {})}
+            if "rotate" in t:
+                moved["rotate"] = {**t["rotate"], **({"point": [v * f["length"]
+                                                                 for v in t["rotate"]["point"]]}
+                                                      if "point" in t["rotate"] else {})}
+            return {**record, "transform": moved}
+        out["assembly"] = {**model["assembly"],
+                           "instances": [placed(r) for r in model["assembly"]["instances"]]}
+    if model.get("imperfection"):
+        out["imperfection"] = {**model["imperfection"],
+                               "amplitude": model["imperfection"]["amplitude"] * f["length"]}
+    if model.get("masses"):
+        out["masses"] = [{**e, "mass": e["mass"] * f["mass"],
+                          **({"inertia": [v * f["mass_inertia"] for v in e["inertia"]]}
+                             if "inertia" in e else {})}
+                         for e in model["masses"]]
+
     def spring(values):
         """六个方向的支承刚度：前三个是力/长度，后三个是力·长度/弧度。"""
         return [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])

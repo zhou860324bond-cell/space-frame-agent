@@ -717,3 +717,40 @@ def test_clipped_caption_degrades_gracefully_without_numbers():
     """拿不到峰值时仍要说「裁过」，只是说不出裁到哪儿——不能整句消失。"""
     cap = scene.contour_caption("Mz", "kN.m", clipped=True, levels=12)
     assert "clipped at p95" in cap
+
+
+def test_beam_profiles_are_rendered_with_the_real_section_and_orientation():
+    """截面渲染（Abaqus 的 Render beam profiles）：工字钢按真实轮廓拉伸，高度沿局部 y。
+
+    原来所有杆件都画成同样粗细的圆管，工字钢、箱形和圆管看不出区别，截面朝向放反了
+    （强弱轴颠倒，挠度差一个数量级）在视口里也看不出来。
+    """
+    from frame3d import Frame, Material, Member, Node, Section
+    from sections import i_section
+    import numpy as np
+    from desktop import scene
+
+    data = i_section("H", 0.4, 0.2, 0.01, 0.016)
+    section = Section(data["name"], data["A"], data["Iy"], data["Iz"], data["J"],
+                      geometry=data["geometry"])
+    f = Frame()
+    f.materials["S"] = Material("S", 2e11, 0.3)
+    f.sections["H"] = section
+    f.sections["P"] = Section("P", 1e-3, 1e-6, 1e-6, 1e-6)       # 没有几何
+    for nid, xyz in {1: (0, 0, 0), 2: (6, 0, 0), 3: (0, 0, 4), 4: (0, 3, 0)}.items():
+        f.nodes[nid] = Node(nid, *xyz)
+    f.members[1] = Member(id=1, i=1, j=2, section="H", material="S")   # 水平梁
+    f.members[2] = Member(id=2, i=1, j=3, section="H", material="S")   # 竖直柱
+    f.members[3] = Member(id=3, i=1, j=4, section="P", material="S")   # 无几何
+
+    mesh, drawn = scene.profile_extrusion(f)
+    assert drawn == {1, 2}
+    beam = mesh.extract_points(np.asarray(mesh["member"]) == 1, adjacent_cells=False)
+    lo, hi = beam.bounds[0::2], beam.bounds[1::2]
+    assert hi[2] - lo[2] == pytest.approx(0.4, rel=1e-9), "水平梁截面高度沿全局 Z（局部 y 朝上）"
+    assert hi[1] - lo[1] == pytest.approx(0.2, rel=1e-9)
+    column = mesh.extract_points(np.asarray(mesh["member"]) == 2, adjacent_cells=False)
+    lo, hi = column.bounds[0::2], column.bounds[1::2]
+    assert hi[0] - lo[0] == pytest.approx(0.4, rel=1e-9), "竖直柱局部 y 取全局 X"
+    rest = scene.member_tubes_except(f, drawn)
+    assert set(np.unique(rest["member"])) == {3}, "没有截面几何的杆件退回圆管"

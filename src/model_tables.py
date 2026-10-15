@@ -217,7 +217,8 @@ def _check_unique(ids: list[int], table: str, what: str) -> None:
 
 
 def from_tables(base: dict[str, Any],
-                tables: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+                tables: dict[str, list[dict[str, Any]]], *,
+                allow_unassigned: bool = False) -> dict[str, Any]:
     """按表格重建模型。材料、截面、单位、组合从 base 原样带过来。
 
     只做"读得成不成"的检查；模型本身合不合理（悬空节点、机构等）
@@ -255,8 +256,10 @@ def from_tables(base: dict[str, Any],
             "id": _int(row, "id", "members", lineno),
             "i": _int(row, "i", "members", lineno),
             "j": _int(row, "j", "members", lineno),
-            "section": _text(row, "section", "members", lineno),
-            "material": _text(row, "material", "members", lineno)}
+            "section": (str(row.get("section") or "").strip() if allow_unassigned
+                        else _text(row, "section", "members", lineno)),
+            "material": (str(row.get("material") or "").strip() if allow_unassigned
+                         else _text(row, "material", "members", lineno))}
         rel_i = _parse_releases(row.get("releases_i"), "members", lineno, "i")
         rel_j = _parse_releases(row.get("releases_j"), "members", lineno, "j")
         if rel_i or rel_j:

@@ -85,6 +85,11 @@ def sequential_cmap(steps: int = 256):
         "viewport_sequential", SEQUENTIAL_ANCHORS, N=steps)
 
 
+def solid_cmap(palette="abaqus", steps=256):
+    """实体色标默认采用Abaqus十二级彩虹谱，另保留柔和与感知均匀配色。"""
+    return V.solid_cmap(palette, steps)
+
+
 def diverging_cmap(steps: int = 256):
     """发散色标：受压蓝 — 中性灰 — 受拉红，**取自 viz_theme**。
 
@@ -170,6 +175,32 @@ def banded(cmap, levels: int = CONTOUR_LEVELS):
     n = int(max(CONTOUR_LEVELS_RANGE[0],
                 min(CONTOUR_LEVELS_RANGE[1], int(levels))))
     return ListedColormap(cmap(np.linspace(0.0, 1.0, n)), name="banded")
+
+def _chevron_file(colour: str, name: str) -> str:
+    """把下拉箭头写成 SVG 缓存文件，返回样式表可用的路径。
+
+    样式表只要给 ``QComboBox::drop-down`` 写了规则，Qt 就不再画原生箭头，
+    下拉框和输入框外观完全一样——用户看不出它能点开。样式表的 image 只认
+    文件路径，打包后的程序目录未必可写，所以写到系统临时目录。写不了时
+    返回空串，退回没有箭头的外观，不影响启动。
+    """
+    import tempfile
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6">'
+           f'<path d="M1 1l4 4 4-4" fill="none" stroke="{colour}" stroke-width="1.6" '
+           f'stroke-linecap="round" stroke-linejoin="round"/></svg>')
+    try:
+        folder = Path(tempfile.gettempdir()) / "framelab-ui"
+        folder.mkdir(exist_ok=True)
+        path = folder / f"{name}.svg"
+        if not path.exists() or path.read_text(encoding="utf-8") != svg:
+            path.write_text(svg, encoding="utf-8")
+        return path.as_posix()
+    except OSError:
+        return ""
+
+
+_CHEVRON = _chevron_file(INK_MUTED, "chevron-down")
+_CHEVRON_DISABLED = _chevron_file(BORDER_LIGHT, "chevron-down-disabled")
 
 # 小圆角只用于区分可交互表面，不做消费产品式大胶囊。
 RADIUS_SM = "4px"
@@ -323,6 +354,26 @@ QComboBox::drop-down {{
     border: none;
     width: 20px;
 }}
+/* 给 drop-down 写了样式后 Qt 不再画原生箭头，下拉框和输入框长得一模一样，
+   用户看不出能点开。用边框拼一个小三角补回来。 */
+QComboBox::down-arrow {{
+    image: url("{_CHEVRON}");
+    width: 10px;
+    height: 6px;
+}}
+QComboBox::down-arrow:disabled {{
+    image: url("{_CHEVRON_DISABLED}");
+}}
+QComboBox:editable {{
+    padding-right: 20px;
+}}
+/* 可编辑下拉框、数字框里还套着一个 QLineEdit，上面的 QLineEdit 规则会再给它
+   一圈内边距和边框，文字就比相邻输入框多缩进几像素，整列左缘对不齐。 */
+QComboBox QLineEdit, QAbstractSpinBox QLineEdit {{
+    padding: 0px;
+    border: none;
+    background: transparent;
+}}
 
 QPushButton {{
     background: {PANEL_RAISED};
@@ -355,6 +406,15 @@ QPushButton[role="primary"]:hover, QToolButton[role="primary"]:hover {{
 }}
 QPushButton:default:hover {{
     background: {ACCENT};
+}}
+QPushButton[role="danger"] {{
+    background: {PANEL_ALT};
+    border-color: #d9a2a2;
+    color: {ERROR};
+}}
+QPushButton[role="danger"]:hover {{
+    background: #f7e3e3;
+    border-color: {ERROR};
 }}
 QPushButton:disabled {{
     color: {INK_DIM};
@@ -557,6 +617,10 @@ QScrollBar::handle:vertical:hover {{
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
+}}
+/* 不写 page 区域时 Qt 用斜纹画轨道，和其余平面风格格格不入 */
+QScrollBar::add-page, QScrollBar::sub-page {{
+    background: none;
 }}
 QScrollBar:horizontal {{
     background: {PANEL};
@@ -803,4 +867,65 @@ QToolButton#drawerFloat, QToolButton#drawerClose {{
     min-width: 22px; min-height: 22px; padding: 2px; border-radius: 2px;
 }}
 QToolButton#drawerFloat:hover {{ background: {PANEL_HOVER}; }}
+
+QLabel#chatTitle {{ font-size: 11pt; font-weight: 600; color: {INK}; padding-right: 6px; }}
+QToolButton[chat="tool"] {{
+    color: {INK_MUTED}; background: transparent; border: 1px solid transparent;
+    border-radius: {RADIUS_SM}; padding: 3px 7px;
+}}
+QToolButton[chat="tool"]:hover {{ color: {ACCENT_DIM}; background: {PANEL_HOVER}; border-color: {BORDER}; }}
+QToolButton[chat="tool"]:disabled {{ color: {INK_DIM}; }}
+QFrame#chatComposer {{
+    background: {PANEL_ALT}; border: 1px solid {BORDER_LIGHT}; border-radius: {RADIUS_MD};
+}}
+QPlainTextEdit#chatEntry {{ background: transparent; border: none; padding: 4px 6px; }}
+QFrame#chatComposer QLabel {{ background: transparent; }}
+QFrame#chatComposer QPushButton {{ padding: 4px 14px; }}
+QScrollArea#assistantConversation {{
+    background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: {RADIUS_MD};
+}}
+QWidget#transcriptInner {{ background: {PANEL_ALT}; }}
+QFrame#chatWelcome, QFrame#chatWelcome QLabel {{ background: transparent; }}
+QLabel[chat="welcomeTitle"] {{ color: {ACCENT_DIM}; font-size: 12pt; font-weight: 600; }}
+QFrame[entry="user"] {{
+    background: {SELECTION}; border: 1px solid #b9d4ea; border-radius: {RADIUS_LG};
+}}
+QFrame[entry="assistant"], QFrame[entry="note"] {{ background: transparent; border: none; }}
+QFrame[entry="change"] {{
+    background: {PANEL_ALT}; border: 1px solid {BORDER}; border-left: 3px solid {ACCENT};
+    border-radius: {RADIUS_SM};
+}}
+QFrame[entry="approval"] {{
+    background: #fbf3e6; border: 1px solid #e3c493; border-left: 3px solid {WARN};
+    border-radius: {RADIUS_SM};
+}}
+QFrame[entry] QLabel {{ background: transparent; }}
+QLabel[chat="user"] {{ color: {INK}; }}
+QLabel[chat="assistant"] {{ color: {INK}; }}
+QLabel[chat="speaker"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
+QLabel[chat="caption"] {{ color: {INK_DIM}; font-size: 8pt; }}
+QLabel[chat="warn"] {{ color: {WARN}; }}
+QLabel[chat="mono"] {{
+    color: {INK_MUTED}; font-family: Consolas, "Cascadia Mono", monospace; font-size: 8pt;
+}}
+QLabel[chat="planDone"] {{ color: {INK_DIM}; }}
+QLabel[chat="planActive"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
+QFrame#planCard {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_SM};
+}}
+QFrame#toolCard {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_SM};
+}}
+QFrame#toolCard[state="failed"] {{ border-color: #d9a2a2; background: #f7e9e9; }}
+QFrame#toolCard[state="running"] {{ border-color: {ACCENT}; }}
+QToolButton#toolCardHeader {{
+    text-align: left; border: none; background: transparent; padding: 4px 6px;
+    color: {INK_MUTED}; font-size: 8.5pt;
+}}
+QToolButton#toolCardHeader:hover {{ color: {ACCENT_DIM}; }}
+QFrame#toolCard[state="failed"] QToolButton#toolCardHeader {{ color: {ERROR}; }}
+QFrame#thinkingCard {{ background: transparent; border: none; border-left: 2px solid {BORDER_LIGHT}; }}
+QLabel[chat="thinking"] {{ color: {INK_DIM}; font-size: 8pt; }}
+QToolButton[chat="primaryLink"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
+QListWidget#chatHistory::item {{ padding: 6px 6px; border-bottom: 1px solid {BORDER}; }}
 """

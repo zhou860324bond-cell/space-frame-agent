@@ -69,7 +69,9 @@ TOOLS: list[dict[str, Any]] = [
                                                                        "算弯曲应力必需"},
                                                  "cz": {"type": "number",
                                                         "description": "局部 z 向极端纤维距离"},
-                                                 "circular": {"type": "boolean",
+                                   "geometry": {"type": "object",
+                                                "description": "真实截面轮廓：type与dimensions，或polygon的outer/holes顶点[y,z]；长度按模型单位"},
+                                   "circular": {"type": "boolean",
                                                               "description": "圆形截面，"
                                                                              "两向弯曲按平方和合成"}}},
                     },
@@ -158,6 +160,478 @@ TOOLS: list[dict[str, Any]] = [
                     "fix": {"type": "array", "items": {"type": "integer",
                                                        "enum": [0, 1]},
                             "description": "六个 0/1；空数组表示取消约束"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_section_assignment",
+            "description":
+                "截面指派（Abaqus 的 Assign Section）：把截面和材料指派给一个区域的杆件，"
+                "作为一个有名字的对象保存。region 写集合名时是**活引用**：之后集合里增减杆件，"
+                "指派自动跟着变。同一根杆不能被两个截面指派同时覆盖。",
+            "parameters": {"type": "object", "required": ["name", "region", "section", "material"],
+                           "properties": {
+                               "name": {"type": "string"},
+                               "region": {"description": "集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "section": {"type": "string"}, "material": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_beam_orientation",
+            "description":
+                "梁方向（Abaqus 的 Assign Beam Orientation）：给一组杆件指定截面局部 y 轴（截面高度方向）"
+                "的近似方向 n1，全局分量、只看方向。非对称截面（工字钢、槽钢、角钢）放错方向会让强弱轴"
+                "颠倒，挠度差一个数量级。region 写集合名是活引用。n1 与杆轴平行会被拒绝。",
+            "parameters": {"type": "object", "required": ["name", "region", "n1"],
+                           "properties": {
+                               "name": {"type": "string"},
+                               "region": {"description": "集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "n1": {"type": "array", "items": {"type": "number"},
+                                      "minItems": 3, "maxItems": 3}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_boundary_condition",
+            "description":
+                "边界条件对象（Abaqus 的 Create Boundary Condition），施加在一个节点区域上。"
+                "preset 取 ENCASTRE 固接 / PINNED 铰接 / XSYMM / YSYMM / ZSYMM，或直接给 fix 六个 0/1。"
+                "region 写集合名是活引用。step 缺省 Initial。同一节点不同自由度可以分属不同边界条件，"
+                "同一自由度被两个约束会报过约束。",
+            "parameters": {"type": "object", "required": ["name", "region"],
+                           "properties": {
+                               "name": {"type": "string"},
+                               "region": {"description": "集合名，或节点编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "preset": {"type": "string",
+                                          "enum": ["ENCASTRE", "PINNED", "XSYMM", "YSYMM", "ZSYMM"]},
+                               "fix": {"type": "array", "items": {"type": "integer"}},
+                               "spring": {"type": "array", "items": {"type": "number"}},
+                               "step": {"type": "string"},
+                               "displacement": {"type": "array", "items": {"type": "number"},
+                                                "description": "给定位移（支座沉降等），六个数，只写在 fix=1 的方向；"
+                                                               "平动为长度、转动为弧度"},
+                               "case": {"type": "string",
+                                        "description": "给定位移随哪个荷载工况施加（给 displacement 时必填）"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_constraint",
+            "description":
+                "约束对象（Abaqus Interaction 模块的 Create Constraint）：从节点区域跟随主节点 control。"
+                "beam=MPC BEAM 刚性连杆（偏心连接、刚臂）；tie=重合节点全部自由度相等；"
+                "pin=重合节点只连平动（铰）；coupling=运动耦合，dofs 六个 0/1 选被约束自由度，"
+                "只选 ux uy rz 即水平刚性楼板。主节点不连杆件时，没被带动的方向要另加边界条件。"
+                "从自由度不能再有支座，同一从自由度不能跟两个主节点。",
+            "parameters": {"type": "object",
+                           "required": ["name", "constraint_type", "control", "region"],
+                           "properties": {
+                               "name": {"type": "string"},
+                               "constraint_type": {"type": "string",
+                                                   "enum": ["beam", "tie", "pin", "coupling"]},
+                               "control": {"type": "integer", "description": "主节点编号"},
+                               "region": {"description": "从节点：集合名，或节点编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "dofs": {"type": "array", "items": {"type": "integer"},
+                                        "description": "仅 coupling：六个 0/1，顺序 ux uy uz rx ry rz"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_instance",
+            "description":
+                "实例（Abaqus Assembly 的 Create Instance + Translate/Rotate，独立实例）：把一组杆件复制一份，"
+                "先绕 rotate_point、方向 rotate_axis 的轴转 rotate_angle 度，再平移 translate。"
+                "与已有节点重合处直接共用；截面指派、梁方向随副本走，荷载与边界条件不复制。",
+            "parameters": {"type": "object", "required": ["name", "region"],
+                           "properties": {
+                               "name": {"type": "string"}, "region": {"description": "部件：集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "translate": {"type": "array", "items": {"type": "number"}}, "rotate_axis": {"type": "array", "items": {"type": "number"}},
+                               "rotate_angle": {"type": "number"}, "rotate_point": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "linear_pattern",
+            "description":
+                "线性阵列（Abaqus Linear Pattern）：沿一个或两个方向等距复制一组杆件，number 含原件。"
+                "例：沿 x 每 6 m 一跨共 4 跨 → direction1=[1,0,0], spacing1=6, number1=4。"
+                "相邻副本重合的节点共用、重合的杆件跳过。",
+            "parameters": {"type": "object",
+                           "required": ["name", "region", "direction1", "spacing1", "number1"],
+                           "properties": {
+                               "name": {"type": "string"}, "region": {"description": "部件：集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "direction1": {"type": "array", "items": {"type": "number"}}, "spacing1": {"type": "number"},
+                               "number1": {"type": "integer"}, "direction2": {"type": "array", "items": {"type": "number"}},
+                               "spacing2": {"type": "number"}, "number2": {"type": "integer"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "radial_pattern",
+            "description":
+                "环形阵列（Abaqus Radial Pattern）：绕过 point、方向 axis 的轴每隔 angle_deg 度复制一份，"
+                "number 含原件。梁方向随副本旋转。",
+            "parameters": {"type": "object", "required": ["name", "region", "number", "angle_deg", "axis"],
+                           "properties": {
+                               "name": {"type": "string"}, "region": {"description": "部件：集合名，或杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "number": {"type": "integer"}, "angle_deg": {"type": "number"},
+                               "axis": {"type": "array", "items": {"type": "number"}}, "point": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_instance",
+            "description": "删除实例或整个阵列（给阵列名）：撤掉它新建的杆件、不再用到的节点和带过去的属性对象。",
+            "parameters": {"type": "object", "required": ["name"],
+                           "properties": {"name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_instances",
+            "description": "列出装配里的实例：来源杆件、变换、副本杆件数。",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_step",
+            "description":
+                "切换会话里供后处理的分析步结果，不重解（solve_steps 之后每一步的结果都留着）。"
+                "画图、验算、查内力都按切换后的那一步。模型改过之后要重新 solve_steps。",
+            "parameters": {"type": "object", "required": ["step"],
+                           "properties": {"step": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "modify_boundary_condition",
+            "description":
+                "在后面某一分析步修改边界条件（Abaqus 管理器的 Modify）：从该步起改用新的 fix/preset/spring，"
+                "直到再被修改或失活；线性摄动步里的修改只在那一步。三者都不给表示撤销该步的修改。"
+                "创建步里的值用 edit_feature 改。",
+            "parameters": {"type": "object", "required": ["name", "step"],
+                           "properties": {
+                               "name": {"type": "string"}, "step": {"type": "string"},
+                               "preset": {"type": "string",
+                                          "enum": ["ENCASTRE", "PINNED", "XSYMM", "YSYMM", "ZSYMM"]},
+                               "fix": {"type": "array", "items": {"type": "integer"}},
+                               "spring": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deactivate_boundary_condition",
+            "description":
+                "从某一分析步起失活边界条件（Abaqus 管理器的 Deactivate），step 给 null 重新激活。"
+                "失活步要在创建步之后。",
+            "parameters": {"type": "object", "required": ["name", "step"],
+                           "properties": {"name": {"type": "string"},
+                                          "step": {"type": ["string", "null"]}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_load",
+            "description":
+                "荷载对象（Abaqus 的 Create Load），属于某个工况、施加在一个区域上，是**一个**对象"
+                "而不是逐杆拆开的若干条。load_type：concentrated_force（节点区域，force 三个全局分量）、"
+                "moment（节点区域，moment）、line_load（杆件区域，w 全局线荷载）、"
+                "gravity（杆件区域，g 加速度，按 ρA 算自重）。数值单位跟模型单位制。",
+            "parameters": {"type": "object", "required": ["name", "case", "load_type", "region"],
+                           "properties": {
+                               "name": {"type": "string"}, "case": {"type": "string"},
+                               "load_type": {"type": "string", "enum": ["concentrated_force", "moment",
+                                                                        "line_load", "gravity"]},
+                               "region": {"description": "集合名，或节点/杆件编号列表",
+                                          "oneOf": [{"type": "string"},
+                                                    {"type": "array", "items": {"type": "integer"}}]},
+                               "force": {"type": "array", "items": {"type": "number"}},
+                               "moment": {"type": "array", "items": {"type": "number"}},
+                               "w": {"type": "array", "items": {"type": "number"}},
+                               "g": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_feature",
+            "description": "编辑一个建模对象（截面指派 / 边界条件 / 荷载）的参数或区域。"
+                           "changes 只写要改的键；值为 null 表示去掉该键。",
+            "parameters": {"type": "object", "required": ["kind", "name", "changes"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
+                               "name": {"type": "string"},
+                               "changes": {"type": "object"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rename_feature",
+            "description": "给建模对象改名。",
+            "parameters": {"type": "object", "required": ["kind", "name", "new_name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
+                               "name": {"type": "string"}, "new_name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "copy_feature",
+            "description": "复制建模对象。边界条件的副本默认抑制，避免与原对象在同一区域过约束。",
+            "parameters": {"type": "object", "required": ["kind", "name", "new_name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
+                               "name": {"type": "string"}, "new_name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suppress_feature",
+            "description": "抑制或恢复建模对象（Abaqus 的 Suppress / Resume）：抑制的对象不参与计算。",
+            "parameters": {"type": "object", "required": ["kind", "name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
+                               "name": {"type": "string"}, "suppressed": {"type": "boolean"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_feature",
+            "description": "删除建模对象，由它派生的约束、荷载或截面指派一并去掉。",
+            "parameters": {"type": "object", "required": ["kind", "name"],
+                           "properties": {
+                               "kind": {"type": "string", "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]},
+                               "name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "convert_direct_supports",
+            "description":
+                "把直接定义的支座（框架生成器、旧工具写的逐节点条目）一次转成边界条件对象，"
+                "按名字与约束分组，约束与弹簧原样保留，结果不变。转换后可在边界条件管理器里编辑、"
+                "按分析步修改或失活。",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_features",
+            "description": "列出建模对象：名字、区域、展开后的编号、是否抑制。不给 kind 列出全部。",
+            "parameters": {"type": "object",
+                           "properties": {"kind": {"type": "string",
+                                                   "enum": ["section_assignment", "beam_orientation", "bc", "load", "constraint"]}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "partition_member",
+            "description": "分割杆件（Abaqus 的 Partition Edge）：在杆件上按比例 ratio（0~1，从 i 端量起）或"
+                           "距离 distance 加一个顶点，返回新节点号，之后可把别的杆件连到该节点。物理杆件仍是一根，"
+                           "杆上荷载、释放、截面指派都不用改。",
+            "parameters": {"type": "object", "required": ["member_id"],
+                           "properties": {"member_id": {"type": "integer"},
+                                          "ratio": {"type": "number"},
+                                          "distance": {"type": "number"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_datum_point",
+            "description": "基准点（Abaqus 的 Datum Point）：只用于定位与吸附、不参与计算。三种给法选一：xyz 坐标；"
+                           "midpoint_of 两个节点的中点；offset_from 节点 + offset 偏移。同名替换。",
+            "parameters": {"type": "object", "required": ["name"],
+                           "properties": {"name": {"type": "string"},
+                                          "xyz": {"type": "array", "items": {"type": "number"}},
+                                          "midpoint_of": {"type": "array", "items": {"type": "integer"}},
+                                          "offset_from": {"type": "integer"},
+                                          "offset": {"type": "array", "items": {"type": "number"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_datum_point",
+            "description": "删除基准点。",
+            "parameters": {"type": "object", "required": ["name"],
+                           "properties": {"name": {"type": "string"}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "measure",
+            "description": "测量（Abaqus 的 Query）：两个节点给距离与 x/y/z 分量；一根杆件给长度；两根杆件给夹角。只读。",
+            "parameters": {"type": "object",
+                           "properties": {"nodes": {"type": "array", "items": {"type": "integer"}},
+                                          "members": {"type": "array", "items": {"type": "integer"}}},
+                           "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "seed_mesh",
+            "description":
+                "布种：设定每根杆件剖成几个分析单元（Abaqus 式），写进模型，存盘后仍在。"
+                "只给 divisions 是全局默认；再给 members（编号列表或集合名）是逐杆覆盖；"
+                "clear=true 清掉布种。**频率、屈曲、反应谱与 P-Δ 已经自动把每杆至少剖成 4 段**，"
+                "用户没提精度要求时不必调用；用户要求「加密网格」「每根杆分 8 段」时才用。"
+                "线性静力的内力在单元内解析恢复，布种不改变它的数值。"
+                "返回里 analysis_elements 是编译后的分析单元总数。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "divisions": {"type": "integer", "minimum": 1, "maximum": 200,
+                                  "description": "每根杆剖成几段"},
+                    "members": {
+                        "description": "只对这些杆件布种：编号列表或集合名；不给则设全局默认",
+                        "oneOf": [
+                            {"type": "array",
+                             "items": {"oneOf": [{"type": "integer"},
+                                                 {"type": "string"}]}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "clear": {"type": "boolean",
+                              "description": "清掉布种（给 members 只清这些杆件）"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_imperfection",
+            "description":
+                "初始几何缺陷（Abaqus 的 *IMPERFECTION）：取完善结构第 mode 阶屈曲模态，"
+                "缩放到给定幅值叠到分析几何上，之后 solve_model(analysis='pdelta') 按有缺陷的"
+                "几何做二阶分析。用户问「考虑初始缺陷」「二阶分析加缺陷」「直接分析法」时用。"
+                "幅值二选一：amplitude 直接给长度（模型单位，负值反向），或 height_ratio×结构总高"
+                "（如 1/250）。**规范取值按用户所用规范确定，不确定就问用户，不要自己编。**"
+                "线性静力和屈曲分析不受影响；clear=true 清除。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "integer", "minimum": 1, "description": "第几阶屈曲模态，默认 1"},
+                    "amplitude": {"type": "number", "description": "缺陷幅值，长度，模型单位"},
+                    "height_ratio": {"type": "number", "description": "幅值 = 该比例 × 结构总高"},
+                    "case": {"type": "string", "description": "求屈曲模态的参考工况或组合；缺省取内力最大者"},
+                    "clear": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_nodal_mass",
+            "description":
+                "节点集中质量：设备、配重、楼面质量。只进模态与反应谱的质量阵，**不产生静力荷载**。"
+                "单位与材料密度同一套：N-m-Pa 下 kg，N-mm-MPa 下 t（吨）；转动惯量是质量·长度²。"
+                "同一节点同名的旧质量会被替换，mass=0 删除。"
+                "要把楼面恒载、活载换成质量，用 masses_from_loads，不要自己算。",
+            "parameters": {
+                "type": "object",
+                "required": ["nodes", "mass"],
+                "properties": {
+                    "nodes": {
+                        "description": "节点编号列表或节点集合名",
+                        "oneOf": [{"type": "array", "items": {"type": "integer"}},
+                                  {"type": "string"}],
+                    },
+                    "mass": {"type": "number", "minimum": 0,
+                             "description": "每个节点的平动质量"},
+                    "inertia": {"type": "array", "items": {"type": "number"},
+                                "minItems": 3, "maxItems": 3,
+                                "description": "可选，[Ixx, Iyy, Izz]，全局轴"},
+                    "name": {"type": "string", "description": "这份质量的来源名，默认「附加质量」"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "masses_from_loads",
+            "description":
+                "按 GB 50011 重力荷载代表值，把若干工况的竖向向下荷载乘组合值系数、除以 g，"
+                "换成节点质量（杆上荷载按简支杠杆关系分到两端节点）。"
+                "做地震相关的模态、反应谱之前用它——不换的话楼面质量不进质量阵，周期偏短。"
+                "组合值系数：恒载 1.0，一般楼面活载 0.5（按规范取，不确定就问用户）。"
+                "带密度材料的自重荷载会自动跳过，避免和一致质量阵重复。同名结果整体替换。",
+            "parameters": {
+                "type": "object",
+                "required": ["cases"],
+                "properties": {
+                    "cases": {"type": "object",
+                              "additionalProperties": {"type": "number"},
+                              "description": "工况名 → 组合值系数，如 {\"DL\": 1.0, \"LL\": 0.5}"},
+                    "name": {"type": "string", "description": "默认「重力荷载代表值」"},
                 },
                 "additionalProperties": False,
             },
@@ -1234,7 +1708,9 @@ TOOLS: list[dict[str, Any]] = [
                 "不是施工过程。用户问施工顺序时要说清楚这个区别。",
             "parameters": {"type": "object", "required": ["name"], "properties": {
                 "name": {"type": "string", "description": "分析步名；Initial 是保留名"},
-                "analysis": {"type": "string", "enum": ["linear", "pdelta"],
+                "num_modes": {"type": "integer", "minimum": 1,
+                                  "description": "频率步、屈曲步求几阶，默认 6"},
+                    "analysis": {"type": "string", "enum": ["linear", "pdelta", "frequency", "buckle"],
                              "description": "材料非线性暂不支持分析步"},
                 "loads": {"type": "object",
                           "additionalProperties": {"type": "string"},
@@ -1394,15 +1870,21 @@ TOOLS: list[dict[str, Any]] = [
             "name": "analyze_joint_solid",
             "description": "【实验性】对某个节点做局部实体子模型，观察杆件相交处的应力集中。"
                            "整体仍用梁模型，只把相连杆件截成短臂拼成 C3D10 实体，"
-                           "切割面传入梁模型的六分量截面力。"
+                           "切割面传入整体梁解的运动或六分量截面力。"
                            "默认由自研 native-solid 有限元内核求解，Gmsh只负责网格；"
                            "也可指定 Abaqus 作为独立商软对标。"
-                           "只支持圆钢/圆管、同一种材料、无刚域偏移的节点，"
-                           "其余情况明确拒绝，不做几何猜测。"
-                           "几何不含焊缝倒圆，相贯线是应力奇异点，因此峰值应力只用于"
+                           "支持真实尺寸定义的矩形、矩形管、圆钢、圆管、I/H、槽钢、角钢、T及"
+                           "自定义polygon外轮廓/孔洞；要求同材料、无刚域偏移。缺轮廓时拒绝猜测。"
+                           "默认transition对匹配两臂使用曲率约束G2扫掠，其余采用半空间斜接与局部圆角；"
+                           "miter可直接选斜接，envelope保留旧凸包方式，intersection保留原始交汇。"
+                           "过渡与圆角是几何假设，未定义真实焊缝，因此峰值应力只用于"
                            "观察分布；应力集中系数一律以 IIW 0.4t/1.0t 线性外推的"
                            "热点应力为分子，外推拿不到就不给系数。"
-                           "dry_run 只建规格、返回杆端力与名义应力，不需要本机装 Abaqus。",
+                           "自动过渡或非圆轮廓未定义焊趾路径，不给正式Kt。"
+                           "默认 displacement：整体梁切面平均平移和转角通过分布耦合驱动实体，"
+                           "保留截面局部变形；force 保留原内力加载供对照。"
+                           "位移驱动暂不支持保留区域内未重建的直接载荷及温度场。"
+                           "dry_run 只建规格、返回切面运动、杆端力与名义应力，不需要本机装 Abaqus。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1411,8 +1893,18 @@ TOOLS: list[dict[str, Any]] = [
                     "case": {"type": "string",
                              "description": "工况或组合名；留空取控制工况"},
                     "anchor_member": {"type": "integer",
-                                      "description": "作为固定端的杆件；"
+                                      "description": "force 模式中作为固定端的杆件；"
                                                      "留空优先取通向支座的那根"},
+                    "loading_method": {"type": "string", "enum": ["displacement", "force"],
+                                       "description": "默认 displacement 分布耦合位移驱动；"
+                                                      "force 为原六分量内力加载"},
+                    "fillet_radius_mm": {"type": "number", "minimum": 0,
+                                         "description": "过渡圆角半径 mm；留空按截面自动取值（结果会标明），"
+                                                        "0 不加圆角。热点应力与 Kt 随它变化，"
+                                                        "用户给了实际焊缝或构造尺寸就填上"},
+                    "geometry_mode": {"type": "string", "enum": ["transition", "miter", "envelope", "intersection"],
+                                      "description": "transition优先G2曲率连续扫掠；miter半空间斜接与局部圆角；"
+                                                     "envelope旧凸包；intersection原始交汇。保留远端截面与孔洞，记录实际算法和圆角状态。"},
                     "mesh_sizes_mm": {
                         "type": "array", "items": {"type": "number"},
                         "minItems": 1,
@@ -1587,9 +2079,10 @@ TOOLS: list[dict[str, Any]] = [
             "description": "自振频率与振型。需要材料有 density。"
                            "用户问「自振周期」「基频」「动力特性」「共振」时用这个。"
                            "结果是结构固有属性，与荷载无关——不要传工况。"
-                           "\n返回里出现 mesh_warning 时**必须转达**：一致质量阵靠形函数"
-                           "装配，网格越粗频率报得越高。实测 8 m 简支梁一跨一个单元时"
-                           "基频偏高 11%，四个单元降到 0.026%。"
+                           "\n一致质量阵靠形函数装配，网格越粗频率报得越高（8 m 简支梁一个单元"
+                           "偏高 11%），所以每根杆件**自动**至少剖成 4 段再算，返回的 mesh "
+                           "写着实际用了几个单元，不需要用户手工加节点。"
+                           "仍出现 mesh_warning（布种被压低时）就必须转达。"
                            "\n\n**参与质量比的分母是 participable_mass，不是 total_mass。**"
                            "压在支座上的质量永远不参与振动，两者的差随网格变粗而变大"
                            "——一根剖成 4 段的悬臂柱，按 total_mass 算把振型取满也只有"
@@ -1614,11 +2107,11 @@ TOOLS: list[dict[str, Any]] = [
                            "用户问「稳定」「屈曲」「临界荷载」「安全储备」时用这个。"
                            "**这是线性特征值屈曲，给的是上限**——真实结构有初始缺陷，"
                            "实际承载力更低，回答时必须说明这一点。"
-                           "\n\n**返回里出现 mesh_warning 时必须转达，它比上面那句更要命。**"
-                           "几何刚度阵靠形函数装配，网格越粗 λ 报得越高。实测单跨门式刚架"
-                           "每构件一个单元时 λ=1.66，收敛值 0.82——偏高 102%：前者在说"
-                           "「还有 66% 余量」，后者意味着它已经失稳。generate_frame 生成的"
-                           "恰好是每构件一个单元，所以这是最容易撞上的情形。"
+                           "\n\n几何刚度阵靠形函数装配，网格越粗 λ 报得越高（单跨门式刚架一杆"
+                           "一单元时 λ=1.66，收敛值 0.82），所以每根杆件**自动**至少剖成 4 段，"
+                           "参考轴力也在同一套单元上重新求得；返回的 mesh 写着实际单元数，"
+                           "most_compressed_member 是物理杆件编号。"
+                           "仍出现 mesh_warning 时必须转达，它比上面那句更要命。"
                            "\n失败时若有 likely_cause，先讲它，不要照搬「检查荷载方向」。",
             "parameters": {
                 "type": "object",

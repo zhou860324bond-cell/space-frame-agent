@@ -37,7 +37,13 @@ INITIAL_STEP = "Initial"
 #: 有好几个工况同时生效，材料非线性不能事后叠加，得有一个"把几个工况合成
 #: 一个再增量求解"的入口——P-Δ 那边是 solve_step，材料那边还没有。放进来
 #: 就只能偷偷按单工况各算各的，那是错的答案而且看不出来。
-STEP_ANALYSES = ("linear", "pdelta")
+STEP_ANALYSES = ("linear", "pdelta", "frequency", "buckle")
+
+#: 线性摄动步（Abaqus 的 Frequency / Buckle）。它们**不改变基态**：本步声明的荷载
+#: 与支座改写只在本步生效，不传播到后面的步；屈曲步的参考荷载只取本步声明的工况，
+#: 频率步不需要荷载。原来分析步只有静力与 P-Δ，模态和屈曲只能在步之外单独算，
+#: 「去掉临时支撑之后的自振频率」这种问题表达不了。
+PERTURBATION = ("frequency", "buckle")
 
 #: 内置幅值曲线，与 frame3d.BUILTIN_AMPLITUDES 对齐。
 _BUILTIN_AMPLITUDES = ("RAMP", "STEP")
@@ -63,6 +69,8 @@ class Step:
     #: 本步失活的支座所在节点号
     deactivate_supports: tuple[int, ...] = ()
     increments: int = 10
+    #: 频率步、屈曲步要求的阶数
+    num_modes: int = 6
 
     def __post_init__(self) -> None:
         if not str(self.name).strip():
@@ -76,6 +84,11 @@ class Step:
                 f"收到 {self.analysis!r}")
         if self.increments < 1:
             raise ValueError(f"分析步 {self.name!r} 的 increments 必须为正整数")
+        if self.num_modes < 1:
+            raise ValueError(f"分析步 {self.name!r} 的 num_modes 必须为正整数")
+        if self.analysis in PERTURBATION and self.deactivate_loads:
+            raise ValueError(f"分析步 {self.name!r} 是线性摄动步，不传播也就无从失活荷载；"
+                             "只在本步声明需要的荷载即可")
         clash = set(self.loads) & set(self.deactivate_loads)
         if clash:
             raise ValueError(
@@ -96,6 +109,7 @@ class EffectiveStep:
     loads: dict[str, str]
     supports: dict[int, dict[str, Any]]
     increments: int
+    num_modes: int
     #: 相对上一步的变化，给用户看的。传播是隐式的，不把变化摆出来，
     #: "这一步到底和上一步差在哪"就只能靠人对着两份全量自己比。
     changes: tuple[str, ...]
@@ -135,6 +149,9 @@ def resolve(steps: list[Step], payload: dict[str, Any]) -> list[EffectiveStep]:
             raise ValueError(f"分析步名字重复：{step.name!r}")
         seen.add(step.name)
         changes: list[str] = []
+        if step.analysis in PERTURBATION:
+            out.append(_perturbation(step, active_supports, cases, amplitudes))
+            continue
 
         for case in step.deactivate_loads:
             if case not in active_loads:
@@ -185,8 +202,42 @@ def resolve(steps: list[Step], payload: dict[str, Any]) -> list[EffectiveStep]:
             loads=dict(active_loads),
             supports={k: dict(v) for k, v in active_supports.items()},
             increments=step.increments,
+            num_modes=step.num_modes,
             changes=tuple(changes) or ("与上一步相同（全部沿用）",)))
     return out
+
+
+def _perturbation(step: Step, base_supports: dict[int, dict[str, Any]],
+                  cases: set[str], amplitudes: set[str]) -> EffectiveStep:
+    """线性摄动步：在当前基态的支座上叠加本步的改写，荷载只取本步声明的。"""
+    supports = {k: dict(v) for k, v in base_supports.items()}
+    changes: list[str] = ["线性摄动步：不改变基态，本步的荷载与支座改写不传播"]
+    for node in step.deactivate_supports:
+        if node not in supports:
+            raise ValueError(f"分析步 {step.name!r} 要失活节点 {node} 的支座，但它在这一步"
+                             f"本来就没生效；当前有支座的是 {sorted(supports)}")
+        del supports[node]
+        changes.append(f"本步失活支座 节点{node}")
+    for node, entry in step.supports.items():
+        supports[node] = dict(entry)
+        changes.append(f"本步支座 节点{node}")
+    if not supports:
+        raise ValueError(f"分析步 {step.name!r} 一个支座都没有，结构成了机构")
+    loads: dict[str, str] = {}
+    if step.analysis == "buckle":
+        for case, amp in step.loads.items():
+            if case not in cases:
+                raise ValueError(f"分析步 {step.name!r} 引用了未定义的荷载工况 {case!r}；"
+                                 f"已定义的是 {sorted(cases)}")
+            if amp not in amplitudes:
+                raise ValueError(f"分析步 {step.name!r} 给工况 {case!r} 指定了未定义的幅值曲线 {amp!r}")
+            loads[case] = amp
+        if not loads:
+            raise ValueError(f"屈曲步 {step.name!r} 要在本步声明参考荷载（loads）：线性摄动步"
+                             "不继承前面步的荷载，临界因子是本步参考荷载的放大倍数")
+    return EffectiveStep(name=step.name, analysis=step.analysis, loads=loads,
+                         supports=supports, increments=step.increments,
+                         num_modes=step.num_modes, changes=tuple(changes))
 
 
 def payload_for(effective: EffectiveStep,
@@ -199,6 +250,64 @@ def payload_for(effective: EffectiveStep,
     out = deepcopy(payload)
     out["supports"] = [{"node": node, **entry}
                        for node, entry in sorted(effective.supports.items())]
+    features = out.get("features") or {}
+    if features.get("bcs"):
+        # 这一步的支座已经结算好了：边界条件对象在这份快照里冻结成直接条目，
+        # 否则校验时按对象再生成一遍，得到的是 Initial 步的支座，与快照对不上
+        del features["bcs"]
+        if not features:
+            out.pop("features", None)
+        for entry in out["supports"]:
+            entry.pop("owners", None)
+        for step in out.get("steps") or []:
+            for entry in (step.get("supports") or {}).values():
+                entry.pop("owners", None)
+            step.pop("deactivation_owners", None)
+        # 边界条件在这一步被修改或失活后不再固定的方向，它带的给定位移也不再施加
+        # （Abaqus 失活位移边界条件即释放该自由度）。用户直接写的给定位移不动。
+        blocks = [out] + list(out.get("load_cases") or [])
+        for block in blocks:
+            kept = []
+            for entry in block.get("settlements") or []:
+                if entry.pop("owner", None) is not None:
+                    fix = effective.supports.get(int(entry["node"]), {}).get("fix") or [0] * 6
+                    entry["d"] = [d if f else 0.0 for d, f in zip(entry["d"], fix, strict=True)]
+                    if not any(entry["d"]):
+                        continue
+                kept.append(entry)
+            if kept:
+                block["settlements"] = kept
+            else:
+                block.pop("settlements", None)
+    return out
+
+
+_CASE_ACTIONS = ("nodal_loads", "member_loads", "member_spans", "settlements", "member_strains")
+
+
+def active_cases_only(payload: dict[str, Any], active: set[str]) -> dict[str, Any]:
+    """分析步快照只留本步生效工况的作用；没生效的工况保留名字、清空内容。
+
+    求解时每个工况都会算一遍并过静默失败检测。没生效的工况不属于这一步，却会
+    触发这一步的检测——例如后面才拆支座的节点上挂着的荷载，在支座还在的步里
+    全由反力承担，被判成「内力全零、结果不可用」，整步失败。
+
+    荷载对象一并冻结成直接条目（与 payload_for 冻结边界条件同理）。
+    """
+    out = deepcopy(payload)
+    features = out.get("features") or {}
+    if features.get("loads"):
+        del features["loads"]
+        if not features:
+            out.pop("features", None)
+    blocks = [("default", out)] + [(str(c.get("name")), c) for c in out.get("load_cases") or []]
+    for name, block in blocks:
+        for key in _CASE_ACTIONS:
+            if name not in active:
+                block.pop(key, None)
+            else:
+                for entry in block.get(key) or []:
+                    entry.pop("owner", None)
     return out
 
 
@@ -214,7 +323,8 @@ def from_payload(payload: dict[str, Any]) -> list[Step]:
                        for k, v in (item.get("supports") or {}).items()},
              deactivate_supports=tuple(
                  int(n) for n in (item.get("deactivate_supports") or ())),
-             increments=int(item.get("increments", 10)))
+             increments=int(item.get("increments", 10)),
+             num_modes=int(item.get("num_modes", 6)))
         for item in payload.get("steps") or []
     ]
 
@@ -225,6 +335,8 @@ def to_payload(steps: list[Step]) -> list[dict[str, Any]]:
     for s in steps:
         item: dict[str, Any] = {"name": s.name, "analysis": s.analysis,
                                 "increments": s.increments}
+        if s.analysis in PERTURBATION:
+            item["num_modes"] = s.num_modes
         if s.loads:
             item["loads"] = dict(s.loads)
         if s.deactivate_loads:
@@ -237,5 +349,5 @@ def to_payload(steps: list[Step]) -> list[dict[str, Any]]:
     return out
 
 
-__all__ = ["INITIAL_STEP", "STEP_ANALYSES", "EffectiveStep", "Step",
-           "from_payload", "payload_for", "resolve", "to_payload"]
+__all__ = ["INITIAL_STEP", "PERTURBATION", "STEP_ANALYSES", "EffectiveStep", "Step",
+           "active_cases_only", "from_payload", "payload_for", "resolve", "to_payload"]

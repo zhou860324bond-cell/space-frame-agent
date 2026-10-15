@@ -379,6 +379,10 @@ class SketchPanel(QWidget):
             "图片文件 (*.png *.jpg *.jpeg *.webp)")
         if not path:
             return
+        self.load_image(path)
+
+    def load_image(self, path: str) -> None:
+        """载入一张草图图片进入预处理；对话面板拖入图纸也走这里。"""
         self._source_image_path = path
         try:
             self.preprocess_widget.set_source(path)

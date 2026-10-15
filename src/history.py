@@ -40,6 +40,22 @@ MUTATING = frozenset({
     # 属性面板的就地修改。**必须登记**——不登记的话用户改完按 Ctrl+Z
     # 什么也不会发生，而他完全预期能撤销
     "edit_member", "edit_node", "assign_properties", "set_supports", "define_set",
+    "configure_member_group",
+    "replace_editing_model",
+    "add_step", "delete_step", "define_amplitude",
+    # 布种改的是分析网格，不改几何；但它改了模型（存盘后仍在），撤销要能退回
+    "seed_mesh",
+    # 节点质量只进质量阵，但同样是模型的一部分
+    "set_nodal_mass", "masses_from_loads", "set_imperfection",
+    # 建模对象（Abaqus 式截面指派、边界条件、荷载）的创建与管理器操作
+    "create_section_assignment", "create_beam_orientation", "create_boundary_condition",
+    "create_load", "create_constraint",
+    "modify_boundary_condition", "deactivate_boundary_condition", "convert_direct_supports",
+    "edit_feature", "rename_feature", "copy_feature", "suppress_feature", "delete_feature",
+    # Part 模块：分割杆件加顶点、基准点
+    "partition_member", "create_datum_point", "delete_datum_point",
+    # Assembly 模块：实例与阵列
+    "create_instance", "linear_pattern", "radial_pattern", "delete_instance",
     # 手工画图的提交。一次可能画了很多根杆，但**在时间轴上是一步**——
     # 画的过程中的每一次点击不该各占一格，那样撤销一次只退回一根杆
     "apply_draft",
@@ -156,6 +172,16 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
     if tool == "retaper":
         return (f"{len(payload.get('changed_members') or [])} 根杆件换成截面 "
                 f"{args.get('section')}")
+    if tool == "configure_member_group":
+        return f"设置 {len(payload.get('members') or [])} 根杆件的局部轴与杆端连接"
+    if tool == "replace_editing_model":
+        return "提交人工模型表格（允许尚未完成的定义）"
+    if tool == "add_step":
+        return f"定义分析步 {args.get('name')}"
+    if tool == "delete_step":
+        return f"删除分析步 {args.get('name')}"
+    if tool == "define_amplitude":
+        return f"定义幅值曲线 {args.get('name')}"
     if tool == "edit_member":
         bits = "、".join(f"{k}→{v['now']}" for k, v in
                         (payload.get("changed") or {}).items())
@@ -173,6 +199,53 @@ def _describe(tool: str, args: dict[str, Any], payload: dict[str, Any],
     if tool == "define_set":
         n = len(payload.get("members") or payload.get("nodes") or [])
         return f"定义集合「{args.get('name')}」，{n} 个对象"
+    if tool in ("create_section_assignment", "create_beam_orientation",
+                "create_boundary_condition", "create_load", "create_constraint"):
+        label = {"create_section_assignment": "截面指派", "create_beam_orientation": "梁方向",
+                 "create_boundary_condition": "边界条件", "create_load": "荷载",
+                 "create_constraint": "约束"}[tool]
+        return f"创建{label}「{args.get('name')}」"
+    if tool in ("edit_feature", "rename_feature", "copy_feature", "suppress_feature",
+                "delete_feature"):
+        verb = {"edit_feature": "编辑", "rename_feature": "改名", "copy_feature": "复制",
+                "suppress_feature": "抑制" if args.get("suppressed", True) else "恢复",
+                "delete_feature": "删除"}[tool]
+        return f"{verb}「{args.get('name')}」"
+    if tool == "convert_direct_supports":
+        return f"直接定义的支座转成 {payload.get('bcs', 0)} 个边界条件"
+    if tool == "modify_boundary_condition":
+        return f"在「{args.get('step')}」修改边界条件「{args.get('name')}」"
+    if tool == "deactivate_boundary_condition":
+        step = args.get("step")
+        return (f"在「{step}」失活边界条件「{args.get('name')}」" if step
+                else f"重新激活边界条件「{args.get('name')}」")
+    if tool in ("create_instance", "linear_pattern", "radial_pattern"):
+        verb = {"create_instance": "实例", "linear_pattern": "线性阵列",
+                "radial_pattern": "环形阵列"}[tool]
+        return f"{verb}「{args.get('name')}」：{len(payload.get('members') or [])} 根杆件"
+    if tool == "delete_instance":
+        return f"删除实例「{args.get('name')}」"
+    if tool == "partition_member":
+        return f"分割杆件 {args.get('member_id')}：顶点为节点 {payload.get('node')}"
+    if tool == "create_datum_point":
+        return f"基准点「{args.get('name')}」"
+    if tool == "delete_datum_point":
+        return f"删除基准点「{args.get('name')}」"
+    if tool == "seed_mesh":
+        if args.get("clear"):
+            return "清除布种"
+        target = args.get("members")
+        where = f"杆件 {target}" if target is not None else "全部杆件"
+        return f"布种：{where}每杆 {args.get('divisions')} 段"
+    if tool == "set_imperfection":
+        spec = payload.get("imperfection")
+        return ("清除初始缺陷" if not spec else
+                f"初始缺陷：第 {spec['mode']} 阶屈曲模态，幅值 {payload.get('amplitude_mm')} mm")
+    if tool == "set_nodal_mass":
+        return f"节点质量「{payload.get('name')}」：{len(payload.get('nodes') or [])} 个节点"
+    if tool == "masses_from_loads":
+        return (f"荷载换算质量 {args.get('cases')}："
+                f"{payload.get('nodes')} 个节点，共 {payload.get('total_mass_kg')} kg")
     if tool == "apply_draft":
         s = payload.get("summary") or {}
         return (f"手工修改：{s.get('nodes', 0)} 个节点、{s.get('members', 0)} 根杆件"

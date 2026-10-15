@@ -34,7 +34,7 @@ def test_an_oversized_default_mesh_is_coarsened_until_it_fits(monkeypatch):
     size, hotspot, mesh, _cuts, note = native_joint._fit_default_mesh(
         None, 20.0, 8.0, max_elements=80000, max_dof=180000)
     assert len(mesh.elements) <= 80000 and 3 * len(mesh.nodes) <= 180000
-    assert size > 20.0 and hotspot == pytest.approx(max(8.0, 0.4 * size))
+    assert size > 20.0 and hotspot == pytest.approx(max(6.0, 0.15 * size))
     assert len(calls) <= 3, "按规律一次算准，不该一档一档地试"
     # 第一次是原样的默认网格；放粗后的那次边中节点取直线
     assert calls[0][2] == {}
@@ -50,7 +50,7 @@ def test_a_default_mesh_that_fits_is_left_exactly_as_it_was(monkeypatch):
     size, _hotspot, _mesh, _cuts, note = native_joint._fit_default_mesh(
         None, 20.0, 8.0, max_elements=80000, max_dof=180000)
     assert size == 20.0 and note is None
-    assert calls == [(20.0, 8.0, {})]
+    assert calls == [(20.0, 6.0, {})]
 
 
 def test_a_joint_too_big_even_after_coarsening_points_to_abaqus(monkeypatch):
@@ -89,5 +89,5 @@ def test_one_level_is_the_quick_default(monkeypatch):
                         _fake_mesher(calls, elements_at_reference=20000))
     plan, options, note = native_joint._default_plan(
         None, 8.0, 1, max_elements=80000, max_dof=180000)
-    assert [size for size, _p in plan] == [20.0]
+    assert [size for size, _p in plan] == [16.0]
     assert options is None and note is None

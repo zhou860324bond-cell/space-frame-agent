@@ -375,17 +375,17 @@ def check_near_singular_stiffness(model: Frame, sol: Solution) -> dict[str, Any]
 
     取自由自由度的子矩阵，口径和 frame3d.solve 里那一步完全一致。
     """
-    from frame3d import constrained_dofs
+    from frame3d import dof_basis
 
     full = sol.K
-    fixed = constrained_dofs(model)
-    free = np.setdiff1d(np.arange(full.shape[0]), fixed)
+    basis = dof_basis(model)
+    free = basis.free
     if free.size == 0:
         return _finding(
             "near_singular_stiffness", "刚度矩阵接近奇异", SEVERITY_WARNING,
             STATUS_WARN, "所有自由度都被约束，没有可解的方程",
             suggestion="检查是否把整个结构都固定住了。")
-    K = full[free][:, free]
+    K = basis.reduce(full)
     n = K.shape[0]
 
     # **先做对称 Jacobi 缩放，再算条件数。**

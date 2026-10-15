@@ -119,15 +119,29 @@ def test_member_probe_populates_result_table_and_extreme_can_be_located(qt_app):
     assert "绝对极值" in window.results.caption.text()
 
 
-def test_bc_edit_invalidates_backend_and_desktop_result_together(qt_app):
+class _AcceptLoad:
+    """替身荷载编辑框：直接确定，返回 -40 kN 竖向集中力。"""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def exec(self):
+        from PySide6.QtWidgets import QDialog
+        return QDialog.DialogCode.Accepted
+
+    def vector(self):
+        return [0.0, 0.0, -40e3]
+
+
+def test_bc_edit_invalidates_backend_and_desktop_result_together(qt_app, monkeypatch):
+    """改荷载要同时作废后端结果与界面上的结果（原来经旧边界表单，现在经「创建载荷」）。"""
     session = solved()
     window = MainWindow(session)
     from agent import ToolResult
     window.result = ToolResult(True, {"cases": ["P"]})
     window.case = "P"
-    window.bc.set_selection("node", 2)
-    window.bc.spn_fz.setValue(-40e3)
-    window.bc._apply_nodal_load()
+    monkeypatch.setattr("desktop.window_objects.EditLoadDialog", _AcceptLoad)
+    window._finish_load("Tip-2", "P", "concentrated_force", {"nodes": [2]})
     assert session.solution is None and session.result_db is None
     assert window.result is None and window.case is None
     assert window.mode == "模型"
@@ -136,21 +150,23 @@ def test_bc_edit_invalidates_backend_and_desktop_result_together(qt_app):
 
 
 def test_load_can_be_copied_and_support_has_an_explicit_delete(qt_app, monkeypatch):
-    from PySide6.QtWidgets import QInputDialog
+    """旧边界表单的「复制荷载」「删除支座」由对象管理器的复制、删除承担。"""
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
 
     session = solved()
     window = MainWindow(session)
-    window.bc.set_selection("node", 2)
+    assert session.create_load("Tip-2", "P", "concentrated_force", {"nodes": [2]},
+                               force=[0.0, 0.0, -1e3]).ok
+    assert session.create_boundary_condition("BC-Base", {"nodes": [2]}, fix=[0, 0, 0, 1, 0, 0]).ok
     monkeypatch.setattr(QInputDialog, "getText",
                         lambda *args, **kwargs: ("Tip-Copy", True))
-    window.bc._copy_nodal_load()
-    case = session.model["load_cases"][0]
-    assert {entry["name"] for entry in case["nodal_loads"]} == {
-        "Tip", "Tip-Copy"}
-
-    window.bc.set_selection("node", 1)
-    window.bc._clear_support()
-    assert all(int(item["node"]) != 1 for item in session.model["supports"])
+    window.manage_object("loads", "copy", "Tip-2")
+    names = {f["name"] for f in session.model["features"]["loads"]}
+    assert {"Tip-2", "Tip-Copy"} <= names
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    window.manage_object("bcs", "delete", "BC-Base")
+    assert "BC-Base" not in {f["name"] for f in session.model["features"].get("bcs", [])}
 
 
 def test_the_stress_field_is_the_worse_extreme_fibre_and_keeps_its_sign(qt_app):

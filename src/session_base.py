@@ -81,6 +81,12 @@ def _records(fn: Callable) -> Callable:
         # 的建模操作之后都写成当前版本，历史快照和保存文件便不再是无版本数据。
         if result.ok and self.model:
             self.model.setdefault("schema_version", CURRENT_SCHEMA_VERSION)
+            # 任何建模操作之后都按对象再生成派生条目：改了集合、删了杆件、
+            # 换了截面，引用它们的边界条件、荷载与截面指派随之更新。
+            # 冲突不在这里报，由校验报出（features.check）。
+            if self.model.get("features"):
+                import features
+                features.regenerate(self.model)
             _name_unnamed_supports(self.model)
         bound = signature.bind(self, *args, **kwargs)
         bound.apply_defaults()

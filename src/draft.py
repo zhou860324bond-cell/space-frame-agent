@@ -227,21 +227,38 @@ class FrameDraft:
     # --- 清理 ---
 
     def coincident_nodes(self, tol: float = 1e-6) -> list[list[int]]:
-        """位置重合的节点分组。**导入或多次生成后最常见的隐患。**"""
+        """位置重合的节点分组。**导入或多次生成后最常见的隐患。**
+
+        按边长 tol 的网格分桶，只比相邻 27 个桶：重合判据仍是逐对距离 ≤ tol，
+        分组规则与原来的两两比较完全相同。原写法是 O(n²) 的 Python 双循环，
+        1331 节点的框架一次要 2 秒，而建模流程窗口会反复调用它。
+        """
+        points = [(int(n["id"]), (float(n["x"]), float(n["y"]), float(n["z"])))
+                  for n in self.nodes]
+        if tol <= 0:
+            cell_of = {ident: xyz for ident, xyz in points}
+            neighbours = None
+        else:
+            cell_of = {ident: tuple(math.floor(c / tol) for c in xyz) for ident, xyz in points}
+            neighbours = [(dx, dy, dz) for dx in (-1, 0, 1)
+                          for dy in (-1, 0, 1) for dz in (-1, 0, 1)]
+        buckets: dict[tuple, list[tuple[int, int]]] = {}
+        for order, (ident, _xyz) in enumerate(points):
+            buckets.setdefault(cell_of[ident], []).append((order, ident))
+        where = dict(points)
+
         groups: list[list[int]] = []
         taken: set[int] = set()
-        for a in self.nodes:
-            ida = int(a["id"])
+        for ida, xyz_a in points:
             if ida in taken:
                 continue
-            same = [ida]
-            for b in self.nodes:
-                idb = int(b["id"])
-                if idb == ida or idb in taken:
-                    continue
-                if math.dist((a["x"], a["y"], a["z"]),
-                             (b["x"], b["y"], b["z"])) <= tol:
-                    same.append(idb)
+            cell = cell_of[ida]
+            nearby = (buckets.get(cell, []) if neighbours is None else
+                      [entry for d in neighbours for entry in buckets.get(
+                          (cell[0] + d[0], cell[1] + d[1], cell[2] + d[2]), [])])
+            same = [ida] + [idb for _order, idb in sorted(nearby)
+                            if idb != ida and idb not in taken
+                            and math.dist(xyz_a, where[idb]) <= tol]
             if len(same) > 1:
                 groups.append(sorted(same))
                 taken.update(same)

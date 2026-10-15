@@ -57,6 +57,7 @@ def rectangle(name: str, width: float, height: float) -> dict[str, Any]:
     short, long_ = min(b, h), max(b, h)
     return {
         "name": name,
+        "geometry": {"type": "rectangle", "dimensions": {"b": b, "h": h}},
         "A": b * h,
         "Iy": h * b ** 3 / 12.0,                 # 弱轴：绕局部 y
         "Iz": b * h ** 3 / 12.0,                 # 强轴：绕局部 z
@@ -89,6 +90,7 @@ def i_section(name: str, height: float, flange_width: float,
     hw = h - 2.0 * tf                              # 腹板净高
     return {
         "name": name,
+        "geometry": {"type": "i", "dimensions": {"b": b, "h": h, "tw": tw, "tf": tf}},
         "A": 2.0 * b * tf + hw * tw,
         # 弱轴：两翼缘绕自身中轴 + 腹板
         "Iy": (2.0 * tf * b ** 3 + hw * tw ** 3) / 12.0,
@@ -125,7 +127,8 @@ def circular_tube(name: str, outer_diameter: float, thickness: float) -> dict[st
     inertia = math.pi * (d ** 4 - di ** 4) / 64.0
     # 半圆环静矩 S = (d³ − di³)/12；中性轴处被两侧壁切过，宽度 2t。
     first = (d ** 3 - di ** 3) / 12.0
-    return {"name": name, "A": math.pi * (d ** 2 - di ** 2) / 4.0,
+    return {"name": name, "geometry": {"type": "tube", "dimensions": {"d": d, "t": t}},
+            "A": math.pi * (d ** 2 - di ** 2) / 4.0,
             "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia,
             "cy": d / 2.0, "cz": d / 2.0,
             "Sz": first, "bz": 2.0 * t, "Sy": first, "by": 2.0 * t,
@@ -137,7 +140,8 @@ def solid_circle(name: str, diameter: float) -> dict[str, Any]:
     inertia = math.pi * d ** 4 / 64.0
     # 半圆静矩 S = d³/12；中性轴处宽度就是直径。代回 τ=VS/(Ib) 得
     # τmax = 4V/(3A)，与闭合解一致。
-    return {"name": name, "A": math.pi * d ** 2 / 4.0,
+    return {"name": name, "geometry": {"type": "circle", "dimensions": {"d": d}},
+            "A": math.pi * d ** 2 / 4.0,
             "Iy": inertia, "Iz": inertia, "J": 2.0 * inertia,
             "cy": d / 2.0, "cz": d / 2.0,
             "Sz": d ** 3 / 12.0, "bz": d, "Sy": d ** 3 / 12.0, "by": d,

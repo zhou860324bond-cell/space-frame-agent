@@ -28,7 +28,9 @@ from .dialog_styles import (DialogHeader, DialogSection, FormRow, HintLabel,
 
 #: 分析类型的显示名 ↔ 内核名。材料非线性不在其中，理由见 src/steps.py：
 #: 一个分析步里常有几个工况同时生效，而材料非线性不能事后叠加。
-ANALYSES = [("线性静力", "linear"), ("P-Delta 二阶弹性", "pdelta")]
+ANALYSES = [("线性静力", "linear"), ("P-Delta 二阶弹性", "pdelta"),
+            # 线性摄动步（Abaqus 的 Frequency / Buckle）：不改变基态，本步的荷载不传播
+            ("频率（线性摄动）", "frequency"), ("屈曲（线性摄动）", "buckle")]
 
 #: 内核名 → 显示名。表格里显示 "linear" 是把实现细节漏给用户看。
 ANALYSES_BY_KERNEL = [(kernel, label) for label, kernel in ANALYSES]
@@ -224,6 +226,12 @@ class StepManagerDialog(QDialog):
         self.increments.setValue(10)
         editor.addLayout(FormRow("载荷增量数", self.increments))
 
+        self.num_modes = QSpinBox()
+        self.num_modes.setRange(1, 100)
+        self.num_modes.setValue(6)
+        self.num_modes.setToolTip("频率步、屈曲步求几阶；屈曲步的参考荷载取本步施加的工况")
+        editor.addLayout(FormRow("阶数（频率/屈曲）", self.num_modes))
+
         activate = QHBoxLayout()
         self.case_box = QComboBox()
         self.amp_box = QComboBox()
@@ -329,13 +337,18 @@ class StepManagerDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, "格式不对", "拆除支座那栏只能填节点号")
             return
+        analysis = ANALYSES[self.analysis_box.currentIndex()][1]
+        # 频率步不需要荷载；其余步按所选工况与幅值施加
+        loads = ({} if analysis == "frequency"
+                 else {self.case_box.currentText(): self.amp_box.currentText()})
         result = self.session.add_step(
             self.name_edit.text(),
-            analysis=ANALYSES[self.analysis_box.currentIndex()][1],
-            loads={self.case_box.currentText(): self.amp_box.currentText()},
+            analysis=analysis,
+            loads=loads,
             deactivate_loads=split(self.deactivate_cases.text()),
             deactivate_supports=nodes,
-            increments=self.increments.value())
+            increments=self.increments.value(),
+            num_modes=self.num_modes.value())
         if not result.ok:
             QMessageBox.warning(self, "没能新建", str(
                 result.payload.get("error") or result.payload.get("errors")))
@@ -360,6 +373,10 @@ class StepManagerDialog(QDialog):
         self._reload()
 
     def _solve(self) -> None:
+        if callable(getattr(self.parent(), "solve_declared_steps", None)):
+            self.accept()
+            self.parent().solve_declared_steps()
+            return
         result = self.session.solve_steps()
         if not result.ok:
             QMessageBox.warning(self, "求解失败", str(

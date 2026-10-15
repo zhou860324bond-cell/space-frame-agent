@@ -34,10 +34,19 @@ COMMANDS: tuple[Command, ...] = (
     Command("units", "单位制", "units",
             "在 N-m-Pa 与 N-mm-MPa 之间转换整份模型的数值",
             "edit_units", ""),
-    Command("chat", "Agent 对话", "chat", "显示或隐藏右侧的对话面板",
+    Command("chat", "AI 助手", "chat", "显示或隐藏右侧的 AI 助手（工程对话）",
             "toggle_chat", "Ctrl+G", True),
     Command("props", "属性", "table",
             "显示选中节点或杆件的属性并就地修改", "toggle_props", "Ctrl+P", True),
+    Command("tree_panel", "模型树", "geometry",
+            "显示或隐藏左侧的模型树与属性栏", "toggle_tree", "Ctrl+B", True),
+    Command("command_palette", "命令面板", "labels",
+            "按名称搜索并执行任意命令；没有匹配的命令时，把这句话交给 AI 助手",
+            "open_command_palette", "Ctrl+Shift+P"),
+    Command("results_table", "结果表", "table",
+            "位移、反力、杆端力与校验清单（独立窗口）", "show_results_table", "", True),
+    Command("section_opt_panel", "截面优化", "sweep",
+            "在给定截面库中按应力比与挠度筛选截面", "show_section_opt", "", True),
 
     # --- 编辑 ---
     #
@@ -55,6 +64,52 @@ COMMANDS: tuple[Command, ...] = (
             "export_learning_trace"),
 
     # --- 建模 ---
+    Command("modeling_workflow", "刚架建模全流程", "timeline",
+            "按九个CAE阶段查看当前定义、遗漏项和真实操作入口", "open_modeling_workflow"),
+    Command("assembly_check", "装配检查", "geometry",
+            "检查重合节点、重复杆件和端点引用，报告问题位置", "check_assembly"),
+    Command("model_sets", "命名集合", "table",
+            "为节点或杆件组建立可保存、可复用的名字", "open_model_sets"),
+    Command("create_instance", "创建实例", "portal",
+            "Abaqus 式 Create Instance：在视口选部件杆件（Shift 加选、Ctrl 减选、拖框，或使用集合）"
+            "→ 平移、绕轴旋转放一份副本；重合节点直接共用，截面指派随副本走", "create_instance_ui"),
+    Command("linear_pattern", "线性阵列", "frame",
+            "Abaqus 式 Linear Pattern：选部件杆件 → 沿一个或两个方向等距复制（数量含原件），"
+            "相邻副本重合的杆件只留一根", "linear_pattern_ui"),
+    Command("radial_pattern", "环形阵列", "sweep",
+            "Abaqus 式 Radial Pattern：选部件杆件 → 绕轴每隔一个角度复制一份，梁方向随副本旋转",
+            "radial_pattern_ui"),
+    Command("instance_manager", "实例管理器", "table",
+            "列出装配里的实例与阵列：变换、杆件数；删除实例会撤掉它新建的杆件与节点",
+            "open_instance_manager"),
+    Command("batch_assignment", "批量属性指派", "assign_section",
+            "按编号、方向或集合挑出多根杆件，建一个截面指派对象（与截面指派同一种对象，"
+            "在截面指派管理器里管理）", "assign_member_group"),
+    Command("beam_orientation", "梁截面方向", "iso",
+            "Abaqus 式 Assign Beam Orientation：先在视口选杆件区域（Shift 加选、Ctrl 减选、拖框，"
+            "或使用集合），再给截面高度方向 n1；方向是一个对象，区域是集合时随集合更新",
+            "assign_beam_orientation"),
+    Command("member_connections", "杆端连接", "hinge",
+            "逐个局部转动方向设置刚接、释放或有依据的弹簧刚度", "set_member_connections"),
+    Command("model_check", "完整性校验", "geometry",
+            "提交前执行确定性完整性校验，并显示原因和问题编号", "check_manual_model"),
+    Command("support_diagnosis", "机构诊断", "support",
+            "用约束后的刚度阵定位零刚度运动，报告节点及自由度", "run_diagnose"),
+    Command("seed_part", "全局布种", "mesh",
+            "Abaqus 式 Seed Part：给全部杆件设默认段数（每根杆件剖成几个分析杆段）；"
+            "频率、屈曲、P-Δ 本来就会每杆至少 4 段", "seed_part"),
+    Command("seed_edges", "杆件布种", "mesh",
+            "Abaqus 式 Seed Edges：先在视口选杆件（Shift 加选、Ctrl 减选、拖框，或使用集合），"
+            "再给段数，覆盖全局布种", "seed_edges"),
+    Command("clear_seeds", "清除布种", "remove",
+            "清掉全部布种，回到每杆 1 段（分析时按类型自动加密）", "clear_seeds"),
+    Command("mesh_preview", "预览梁网格", "mesh",
+            "查看自动剖分后的分析杆段、节点及物理杆件编号映射", "show_analysis_mesh"),
+    Command("job_manager", "作业管理器", "solve",
+            "Abaqus 式 Job Manager：创建作业，数据检查、写 inp、后台提交、监控消息、"
+            "查看结果、终止；结果与提交时的模型版本对应", "open_job_manager"),
+    Command("solve_steps", "提交分析步", "solve",
+            "在后台按声明顺序求解分析步，保留最后一步的有效结果", "solve_declared_steps"),
     # 参数化建模使用直接操作的对话框。
     Command("sketch", "草图建模", "sketch",
             "2D 画一榀框架草图，然后沿进深拉伸成 3D 空间刚架（Abaqus 式）",
@@ -65,6 +120,14 @@ COMMANDS: tuple[Command, ...] = (
     Command("frame", "规则框架", "frame",
             "弹出参数对话框，直接生成规则空间刚架（不经过 AI）",
             "open_parametric", "Ctrl+F"),
+    Command("partition_member", "分割杆件", "member",
+            "Abaqus 式 Partition Edge：选一根杆件，按比例加一个顶点，之后可把别的杆件连到这里；"
+            "物理杆件仍是一根，荷载、释放、截面指派不用改", "partition_member_ui"),
+    Command("datum_point", "基准点", "create_node",
+            "Abaqus 式 Datum Point：输入坐标，或选两个节点取中点；只用于定位与建节点吸附，不参与计算",
+            "datum_point_ui"),
+    Command("measure", "测量", "fit",
+            "Abaqus 式 Query：选两个节点测距离与分量，或选一两根杆件测长度、夹角", "measure_ui"),
     Command("tables", "模型表格", "table",
             "七张表直接编辑节点、杆件、约束与荷载，支持 CSV 导入导出",
             "open_tables", "Ctrl+T"),
@@ -80,21 +143,35 @@ COMMANDS: tuple[Command, ...] = (
             "Abaqus 式：选择梁截面类型（I/管/矩形等），输入尺寸，自动计算 A/I/J",
             "create_section"),
     Command("assign_section", "属性指派", "assign_section",
-            "选中杆件后一次指派材料与截面（Abaqus Property 模块核心操作）", "assign_section"),
+            "Abaqus 式截面指派：先在视口选杆件区域（Shift 加选、Ctrl 减选、拖框，或使用集合），"
+            "再选截面与材料；指派是一个对象，区域是集合时随集合更新", "assign_section"),
+    Command("assignment_manager", "截面指派管理器", "assign_section",
+            "列出全部截面指派对象：创建、编辑、编辑区域、复制、改名、删除、抑制、恢复",
+            "open_assignment_manager"),
     Command("hinge", "创建铰接", "hinge",
             "选中杆件后在 i端/j端/两端创建转动释放", "create_hinge"),
     Command("brace", "加支撑", "member",
             "在选中杆件所在节间加 X 型支撑。钢框架最有效的抗侧手段", "add_brace"),
 
     # --- 边界条件 ---
-    Command("load", "载荷管理器", "load", "打开边界条件面板，管理工况与荷载", "show_bc_panel"),
+    Command("load", "载荷管理器", "load",
+            "列出全部荷载对象：创建、编辑、编辑区域、复制、改名、删除、抑制、恢复", "open_load_manager"),
     Command("combo", "荷载组合", "combo", "弹出对话框编辑荷载组合（按分项系数组合）", "edit_load_combos"),
-    Command("gravity", "重力", "gravity", "按密度和截面面积自动计算自重荷载", "apply_gravity"),
-    Command("support", "支座管理器", "support", "打开边界条件面板，设置支座约束", "show_bc_panel"),
+    Command("gravity", "重力", "gravity",
+            "Abaqus 式 Gravity 载荷：创建载荷，类型预选重力，区域默认全部杆件；"
+            "按材料密度与截面面积计算，结果是一个可编辑、可抑制的荷载对象", "apply_gravity"),
+    Command("create_constraint", "创建约束", "hinge",
+            "Abaqus 式 Create Constraint：名称、类型（MPC BEAM / TIE / PIN、运动耦合）→ 选主节点 → "
+            "选从节点区域（Shift 加选、Ctrl 减选、拖框，或使用集合）→ 运动耦合勾选自由度", "create_constraint_ui"),
+    Command("constraint_manager", "约束管理器", "hinge",
+            "列出全部约束：创建、编辑、编辑区域、复制、改名、删除、抑制、恢复", "open_constraint_manager"),
     Command("create_bc", "创建边界条件", "support",
-            "Abaqus 式：选中节点，勾选 U1/U2/U3/UR1/UR2/UR3 自由度", "create_bc"),
+            "Abaqus 式：名称、分析步、类型 → 在视口选节点区域（Shift 加选、Ctrl 减选、拖框，"
+            "或使用集合）→ 勾选 U1~UR3 或填弹性支承刚度", "create_bc"),
     Command("create_load", "创建载荷", "load",
-            "Abaqus 式：集中力/线载荷/重力，选中对象后输入分量", "create_load"),
+            "Abaqus 式：名称、工况、类型（集中力/力矩/线荷载/重力）→ 在视口选区域"
+            "（节点或杆件；点选、Shift 加选、Ctrl 减选、拖框，或使用集合）→ 填全局分量",
+            "create_load"),
 
     # --- 分析 ---
     Command("pick_node", "选择节点", "pick_node",
@@ -111,6 +188,9 @@ COMMANDS: tuple[Command, ...] = (
             "set_model_member", "Ctrl+M", True),
     Command("delete", "删除选中", "remove",
             "删除当前选中的节点或杆件（Delete 键）", "delete_selected", "Delete"),
+    Command("render_profiles", "截面渲染", "section",
+            "按真实截面形状（工字、箱形、圆管、角钢等）显示杆件，看得出截面朝向与强弱轴；"
+            "没有截面几何的杆件仍画成圆管", "toggle_render_profiles", "", True),
     Command("labels", "编号标注", "labels",
             "在视口中显示节点与杆件编号。定位报错和结果时必需",
             "toggle_labels", "L", True),
@@ -191,6 +271,17 @@ COMMANDS: tuple[Command, ...] = (
             "show_utilization", "Ctrl+6", True),
     Command("diagram", "内力分量", "diagram",
             "选择云图与内力图显示哪个内力分量", "pick_component"),
+    Command("display_only", "仅显示所选", "geometry",
+            "Abaqus 式显示组：在视口选杆件（Shift 加选、Ctrl 减选、拖框，或使用集合）后只显示它们；"
+            "隐藏的杆件也不参与拾取", "display_only"),
+    Command("display_hide", "隐藏所选", "remove",
+            "在视口选杆件后把它们隐藏，看被遮住的部分", "display_hide"),
+    Command("display_all", "全部显示", "fit", "取消显示组，显示全部杆件", "display_all"),
+    Command("animate", "动画", "modal",
+            "变形图与振型按比例系数来回播放；再点一次停止", "toggle_animation", "", True),
+    Command("path_plot", "路径曲线", "diagram",
+            "选一串首尾相连的杆件，画内力沿路径的分布（Abaqus 的 XY Data from path）",
+            "path_plot"),
     Command("clear_results", "清除结果", "remove",
             "清除当前计算结果，保留模型、材料、约束与荷载", "clear_results"),
     Command("curve", "单杆内力图", "diagram",

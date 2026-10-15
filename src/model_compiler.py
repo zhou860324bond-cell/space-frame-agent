@@ -22,6 +22,20 @@ from span_loads import (KINDS, MOMENT, PARTIAL, POINT, RAMP, TRAPEZOID,
 _SPLIT_REL_TOL = 1e-9
 _SPLIT_ABS_TOL = 1e-9
 
+#: 频率、屈曲与 P-Δ 分析默认的最少分段数。
+#:
+#: 一致质量阵与几何刚度阵靠形函数装配，网格越粗报得越高——偏不安全那一侧。
+#: 实测单跨门式刚架每构件 1 个单元时屈曲因子 λ=1.66，收敛值 0.82（偏高 102%）；
+#: 8 m 简支梁 1 个单元时屈曲 +21.6%、基频 +11.0%。每根杆 4 段后这三项都在 1%
+#: 以内（见 tests/test_mesh_seeding.py 的闭合解对照）。这不是对某个案例调出来的
+#: 常数：它对应三次 Hermite 形函数在一个正弦半波上的收敛速度，与单位制、截面无关。
+ANALYSIS_MIN_DIVISIONS = 4
+
+#: 布种点与已有切分点（集中荷载、内节点）的最小间距，取**目标单元长度**的比例。
+#: 太近会造出极短的单元：数值上无害但没有意义，还会让云图和标注挤成一团。
+#: 按目标长度取比例而不是取绝对长度，所以与单位制和杆长都无关。
+_SEED_MERGE_FRACTION = 0.1
+
 
 class CompilationError(ValueError):
     """Domain IR 无法编译，并保留可直接展示给用户的诊断。"""
@@ -56,12 +70,30 @@ class CompiledModel:
     diagnostics: tuple[str, ...] = ()
 
 
+def member_divisions(payload: dict[str, Any], member_id: int,
+                     min_divisions: int = 1) -> int:
+    """一根物理杆件的布种段数：逐杆设置 > 全局设置 > 1，再与下限取大。
+
+    布种写在模型顶层的 ``mesh`` 里（``{"divisions": n, "members": {"12": m}}``），
+    是模型的一部分而不是某次分析的参数——和 Abaqus 的布种一样，存盘后再打开
+    还在。``min_divisions`` 是分析类型要求的下限（频率、屈曲、P-Δ 取
+    :data:`ANALYSIS_MIN_DIVISIONS`），线性静力不需要：内力在单元内解析恢复，
+    一段就是精确解。
+    """
+    mesh = payload.get("mesh") or {}
+    seeded = (mesh.get("members") or {}).get(str(int(member_id)))
+    count = int(seeded if seeded is not None else mesh.get("divisions") or 1)
+    return max(count, int(min_divisions), 1)
+
+
 def compile_model(payload: dict[str, Any], *,
-                  validated: bool = False) -> CompiledModel:
-    """校验并编译 Domain IR，集中力位置和显式内节点成为分析切分点。
+                  validated: bool = False,
+                  min_divisions: int = 1) -> CompiledModel:
+    """校验并编译 Domain IR，集中力位置、显式内节点和布种点成为分析切分点。
 
     ``validated=True`` 表示调用方刚校验过同一份 payload（Session 按内容
-    指纹缓存了结果），这里不再重复一遍 jsonschema。
+    指纹缓存了结果），这里不再重复一遍 jsonschema。``min_divisions`` 见
+    :func:`member_divisions`。
     """
     errors = [] if validated else validate_payload(payload)
     if errors:
@@ -128,6 +160,22 @@ def compile_model(payload: dict[str, Any], *,
                        for existing, _ in split_points):
                 split_points.append((position, None))
         split_points.sort()
+
+        # 布种：在 k·L/n 处切分，与已有切分点合并。离已有点太近的布种点不再
+        # 单独切，避免极短单元（见 _SEED_MERGE_FRACTION）。布种点上没有荷载，
+        # 所以和刚域偏移可以同时使用——偏移只留在整根杆的两个外端。
+        divisions = member_divisions(source, physical_id, min_divisions)
+        seeded = False
+        if divisions > 1:
+            spacing = length / divisions
+            near = max(tolerance, _SEED_MERGE_FRACTION * spacing)
+            for k in range(1, divisions):
+                position = k * spacing
+                if not any(abs(position - existing) <= near
+                           for existing, _ in split_points):
+                    split_points.append((position, None))
+                    seeded = True
+            split_points.sort()
 
         if point_positions and (any(member.offset_i) or any(member.offset_j)):
             raise CompilationError([
@@ -293,6 +341,8 @@ def compile_model(payload: dict[str, Any], *,
             if any(tolerance < position < length - tolerance
                    for position in point_positions):
                 reasons.append("集中荷载")
+            if seeded:
+                reasons.append(f"布种 {divisions} 段")
             diagnostics.append(
                 f"物理构件 {physical_id} 因{'和'.join(reasons)}编译为 "
                 f"{len(element_ids)} 个分析单元")

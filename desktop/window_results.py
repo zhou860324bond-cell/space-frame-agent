@@ -45,13 +45,28 @@ class WindowResultsMixin:
             rows.append(["截面正应力", "不可用", "", data["stress_error"]])
         self.results_dock.setVisible(True)
         self.results_dock.raise_()
+        # 对外报物理杆件编号；点中的分析杆段只作补充（用户在模型里找不到杆段号）
+        physical = self.viewport._owner(member_id)
+        x, length = data["x"], data["length"]
+        segment = ""
+        if physical != member_id or len(self.viewport._elements([physical])) > 1:
+            # 剖分过的杆件：位置按整根物理杆件量，不按点中的那一段
+            import numpy as np
+            nodes = {int(n["id"]): n for n in self.session.model.get("nodes") or []}
+            m = next((m for m in self.session.model.get("members") or []
+                      if int(m["id"]) == physical), None)
+            if m is not None:
+                pi, pj = (np.array([nodes[int(m[e])][k] for k in "xyz"], float) for e in ("i", "j"))
+                length = float(np.linalg.norm(pj - pi))
+                x = float(np.dot(np.asarray(data["point"], float) - pi, pj - pi) / length)
+            segment = f"（分析杆段 {member_id}）"
         self.results.show_rows(
-            f"结果探针：杆件 {member_id}，工况 {data['case']}，"
-            f"距 i 端 x={data['x']:.4g}/{data['length']:.4g}",
+            f"结果探针：杆件 {physical}{segment}，工况 {data['case']}，"
+            f"距 i 端 x={x:.4g}/{length:.4g}",
             ["结果量", "值", "单位", "约定"], rows,
-            [("member", member_id)] * len(rows))
+            [("member", physical)] * len(rows))
         self.viewport.set_result_marker(
-            data["point"], f"PROBE M{member_id} x={data['x']:.3g}")
+            data["point"], f"PROBE M{physical} x={data['x']:.3g}")
 
     def locate_current_extreme(self) -> None:
         """定位当前梁内力分量的全结构绝对极值。"""
@@ -61,6 +76,7 @@ class WindowResultsMixin:
                                  self.component, self.case)
         if extreme["member"] is None:
             return
+        extreme = {**extreme, "member": self.viewport._owner(extreme["member"])}
         self.locate("member", extreme["member"])
         self.viewport.set_result_marker(
             extreme["point"],
@@ -77,16 +93,19 @@ class WindowResultsMixin:
             return
         data = self._last_probe
         selected = getattr(self, "_selected_id", None)
-        if data is None or (selected is not None and data["member"] != selected):
+        if data is None or (selected is not None
+                            and self.viewport._owner(data["member"]) != selected):
             if getattr(self, "_selected_kind", None) != "member":
                 QMessageBox.information(
                     self, "请选择杆件", "先在视口中选择或探测一根杆件。")
                 return
-            member = self.session.frame.members[selected]
+            segments = self.viewport._elements([selected]) or [selected]
+            element = segments[len(segments) // 2]          # 取物理杆件中段的杆段
+            member = self.session.frame.members[element]
             midpoint = 0.5 * (self.session.frame.nodes[member.i].xyz
                               + self.session.frame.nodes[member.j].xyz)
             data = probe_member(self.session.frame, self.session.solution,
-                                selected, midpoint, self.case)
+                                element, midpoint, self.case)
             self._last_probe = data
         if data["stress"] is None:
             QMessageBox.information(self, "截面正应力不可用", data["stress_error"])

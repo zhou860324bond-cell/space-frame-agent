@@ -6,6 +6,12 @@ Abaqus/CAE 的左侧树是它信息架构的骨干：模型有什么、算出了
 
 树只**显示**，不改模型。双击某一项发出信号，由主窗口决定打开哪个对话框——
 树不该知道对话框长什么样。
+
+分支顺序与 Abaqus/CAE 的模型树一致：材料、截面、截面指派、集合、几何、分析步、
+边界条件、荷载、组合、结果。截面指派、边界条件、荷载下面是**对象**（见
+src/features.py）：单击在视口里高亮它的区域，右键是管理器的同一组操作——
+编辑、编辑区域、复制、改名、抑制或恢复、删除；在分支上右键可以创建或打开管理器。
+旧模型里没有对象来源的条目归在「直接定义」下，照原样显示。
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem
 
 from . import theme
 
@@ -33,6 +39,11 @@ class ModelTree(QTreeWidget):
     """模型 + 结果的树。"""
 
     activated_item = Signal(str, object)          # (action, payload)
+    #: 对象操作：(类别, 动作, 对象名或 None)。动作同管理器：create / manager / edit /
+    #: region / copy / rename / suppress / resume / delete
+    feature_action = Signal(str, str, object)
+    #: 单击一个对象：(类别, 对象名)，主窗口据此高亮区域
+    feature_selected = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -62,11 +73,60 @@ class ModelTree(QTreeWidget):
             }}
         """)
         self.itemDoubleClicked.connect(self._on_double_click)
+        self.itemClicked.connect(self._on_click)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
 
     def _on_double_click(self, item: QTreeWidgetItem, _column: int) -> None:
         action = item.data(0, ACTION)
-        if action:
+        if action == "feature":
+            kind, name, _suppressed = item.data(0, PAYLOAD)
+            self.feature_action.emit(kind, "edit", name)
+        elif action:
             self.activated_item.emit(action, item.data(0, PAYLOAD))
+
+    #: 单击即生效的项：只切换显示、不弹对话框。结果树里逐帧、逐阶地点着看，
+    #: 每次都要双击太费劲（真窗口验收时单击没反应，像是坏了）。
+    _SINGLE_CLICK = ("result_step", "result_frame", "result_mode", "instance")
+
+    def _on_click(self, item: QTreeWidgetItem, _column: int) -> None:
+        action = item.data(0, ACTION)
+        if action == "feature":
+            kind, name, _suppressed = item.data(0, PAYLOAD)
+            self.feature_selected.emit(kind, name)
+        elif action in self._SINGLE_CLICK:
+            self.activated_item.emit(action, item.data(0, PAYLOAD))
+
+    def context_actions(self, item: QTreeWidgetItem) -> list[tuple[str, str]]:
+        """某一项的右键菜单：(动作, 文字)。单独成函数，便于无头测试。"""
+        action = item.data(0, ACTION)
+        if action == "feature_branch":
+            return [("create", "创建…"), ("manager", "管理器…")]
+        if action == "feature":
+            _kind, _name, suppressed = item.data(0, PAYLOAD)
+            return [("edit", "编辑…"), ("region", "编辑区域…"), ("copy", "复制…"),
+                    ("rename", "改名…"),
+                    ("resume", "恢复") if suppressed else ("suppress", "抑制"),
+                    ("delete", "删除")]
+        return []
+
+    def _on_context_menu(self, pos) -> None:
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        actions = self.context_actions(item)
+        if not actions:
+            return
+        payload = item.data(0, PAYLOAD)
+        if item.data(0, ACTION) == "feature_branch":
+            kind, name = payload, None
+        else:
+            kind, name = payload[0], payload[1]
+        menu = QMenu(self)
+        for action, text in actions:
+            menu.addAction(text).triggered.connect(
+                lambda _=False, a=action: self.feature_action.emit(kind, a, name))
+        menu.exec(self.viewport().mapToGlobal(pos))
 
     # --- 构树 ---
 
@@ -81,6 +141,63 @@ class ModelTree(QTreeWidget):
             node.setData(0, ACTION, action)
             node.setData(0, PAYLOAD, payload)
         return node
+
+    def _feature_branch(self, label: str, kind: str, features: dict):
+        items = features.get(kind) or []
+        branch = self._child(self, f"{label}（{len(items)}）", "feature_branch", kind,
+                             tip=f"{label}：右键创建或打开管理器；单击对象高亮区域")
+        for feature in items:
+            self._feature_item(branch, kind, feature)
+        return branch
+
+    def _feature_item(self, parent, kind: str, feature: dict) -> QTreeWidgetItem:
+        region = feature["region"]
+        if "set" in region:
+            where = f"集合「{region['set']}」"
+        else:
+            noun = "节点" if "nodes" in region else "杆件"
+            where = f"{len(region.get('nodes') or region.get('members') or [])} 个{noun}"
+        if kind == "section_assignments":
+            what = f"{feature['section']}/{feature['material']}"
+        elif kind == "beam_orientations":
+            what = "n1=(" + ",".join(f"{v:g}" for v in feature["n1"]) + ")"
+        elif kind == "bcs":
+            what = "".join(str(v) for v in feature["fix"])
+        elif kind == "constraints":
+            what = f"{feature['type'].upper()}→节点 {feature['control']}"
+        else:
+            what = feature["type"]
+        suppressed = bool(feature.get("suppressed"))
+        text = f"{feature['name']}　{what}　{where}" + ("　（已抑制）" if suppressed else "")
+        node = self._child(parent, text, "feature", (kind, feature["name"], suppressed))
+        if suppressed:
+            node.setForeground(0, QColor(theme.INK_MUTED))
+        return node
+
+    _ANALYSIS_LABEL = {"linear": "线性静力", "pdelta": "P-Δ", "frequency": "频率",
+                       "buckle": "屈曲"}
+
+    def _result_step(self, parent, name: str, entry: dict) -> None:
+        analysis = entry["analysis"]
+        node = self._child(parent, f"{name}　{self._ANALYSIS_LABEL.get(analysis, analysis)}",
+                           "result_step", name)
+        node.setExpanded(True)          # 帧与振型默认摊开，点哪一帧看哪一帧
+        if analysis == "frequency":
+            r = entry["view"][3]
+            for k, f in enumerate(r.frequencies):
+                self._child(node, f"模态 {k + 1}　{f:.4g} Hz", "result_mode", (name, k))
+        elif analysis == "buckle":
+            r = entry["view"][2]
+            for k, lam in enumerate(r.factors):
+                self._child(node, f"屈曲模态 {k + 1}　λ = {lam:.4g}", "result_mode", (name, k))
+        else:
+            solution, case = entry["snapshot"][0], entry["case"]
+            frames = (solution[case].frames
+                      if case in solution.all_results() else [])
+            if not frames:
+                self._child(node, "帧 1　t = 1.0（最终）", "result_frame", (name, None))
+            for k, (t, _u) in enumerate(frames):
+                self._child(node, f"增量 {k + 1}　荷载因子 {t:.3g}", "result_frame", (name, k))
 
     def rebuild(self, session, result=None) -> None:
         """整棵重建。刚架模型小，重建比增量维护简单可靠得多。
@@ -123,6 +240,25 @@ class ModelTree(QTreeWidget):
             self._child(secs, f"{s['name']}　A={s['A']:.4g}　Iz={s['Iz']:.4g}",
                         tip=f"{s['name']}　{detail}")
 
+        features = model.get("features") or {}
+        self._feature_branch("截面指派", "section_assignments", features)
+        self._feature_branch("梁方向", "beam_orientations", features)
+
+        sets = model.get("sets") or {}
+        set_node = self._child(self, f"集合（{len(sets)}）", "sets")
+        for name, entry in sets.items():
+            bits = [f"{len(entry[key])} {label}" for key, label in
+                    (("nodes", "节点"), ("members", "杆件")) if entry.get(key)]
+            self._child(set_node, f"{name}　" + "，".join(bits), "sets", name)
+
+        instances = (model.get("assembly") or {}).get("instances") or []
+        if instances:
+            asm = self._child(self, f"装配（{len(instances)} 个实例）", "instances")
+            for record in instances:
+                pattern = f"　阵列 {record['pattern']}" if record.get("pattern") else ""
+                self._child(asm, f"{record['name']}　{len(record['members'])} 根杆件{pattern}",
+                            "instance", record["name"])
+
         geo = self._child(self, "几何", "geometry")
         self._child(geo, f"节点　{len(model.get('nodes') or [])}", "nodes")
         released = [m for m in model.get("members") or [] if m.get("releases")]
@@ -130,10 +266,22 @@ class ModelTree(QTreeWidget):
                          + (f"（{len(released)} 根带端部释放）" if released else ""),
                     "members")
 
-        sup = self._child(self, f"约束（{len(model.get('supports') or [])}）",
-                          "supports")
+        steps = model.get("steps") or []
+        step_node = self._child(self, f"分析步（{len(steps) + 1}）", "steps")
+        self._child(step_node, "Initial", "steps")
+        for step in steps:
+            self._child(step_node, f"{step['name']}　{step.get('analysis', 'linear')}",
+                        "steps", step["name"])
+
+        # Abaqus 模型树里约束（Constraints）排在分析步之后、荷载与边界条件之前
+        self._feature_branch("约束", "constraints", features)
+
+        sup = self._feature_branch("边界条件", "bcs", features)
+        direct = [s for s in model.get("supports") or [] if not s.get("owners")]
+        if direct:
+            sup = self._child(sup, f"直接定义（{len(direct)}）", "supports")
         kinds: dict[str, list[int]] = {}
-        for entry in model.get("supports") or []:
+        for entry in direct:
             from viz_symbols import classify_support
             # 用 get 而不是 []：一条缺 fix 的支座（例如识别草稿只给了 kind）
             # 不该让整棵模型树重建失败，那会连带整个界面刷新一起崩。
@@ -149,7 +297,7 @@ class ModelTree(QTreeWidget):
                 self._child(group, f"节点 {node_id}", "support_object", node_id)
 
         cases = model.get("load_cases") or []
-        loads = self._child(self, f"荷载工况（{len(cases)}）", "loads")
+        loads = self._child(self, f"荷载（{len(cases)} 工况）", "feature_branch", "loads")
         for c in cases:
             bits = []
             for key, label in (("nodal_loads", "节点"), ("member_loads", "均布"),
@@ -160,18 +308,27 @@ class ModelTree(QTreeWidget):
             case_node = self._child(
                 loads, f"{c['name']}　" + ("·".join(bits) or "（空）"),
                 "loads", c["name"])
+            for feature in features.get("loads") or []:
+                if feature["case"] == c["name"]:
+                    self._feature_item(case_node, "loads", feature)
             for entry in c.get("nodal_loads") or []:
+                if entry.get("owner"):
+                    continue
                 name = entry.get("name") or "未命名节点力"
                 self._child(case_node, f"{name} · 节点 {entry['node']}",
                             "load_object", {"case": c["name"], "kind": "node",
                                             "id": int(entry["node"])})
             for entry in c.get("member_loads") or []:
+                if entry.get("owner"):
+                    continue
                 name = entry.get("name") or "未命名均布力"
                 self._child(case_node, f"{name} · 杆件 {entry['member']} · 均布",
                             "load_object", {"case": c["name"], "kind": "member",
                                             "id": int(entry["member"])})
             span_labels = {"uniform": "均布", "trapezoid": "梯形", "point": "集中"}
             for entry in c.get("member_spans") or []:
+                if entry.get("owner"):
+                    continue
                 name = entry.get("name") or "未命名杆间力"
                 shape = span_labels.get(entry.get("kind"), str(entry.get("kind")))
                 self._child(case_node,
@@ -193,8 +350,16 @@ class ModelTree(QTreeWidget):
 
         if result is not None and result.ok:
             res = self._child(self, "结果", "results")
-            for name in result.payload["cases"]:
-                self._child(res, name, "results", name)
+            done = (session.step_results
+                    if session.step_results and session.step_results_key == session._model_key()
+                    else {})
+            if done:
+                # Abaqus 结果树：Step → Frame。点步或帧切换会话里的结果，点模态画振型
+                for name, entry in done.items():
+                    self._result_step(res, name, entry)
+            else:
+                for name in result.payload["cases"]:
+                    self._child(res, name, "results", name)
 
         steps = len(session.history)
         if steps:

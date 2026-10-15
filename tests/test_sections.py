@@ -85,7 +85,7 @@ def test_every_preset_builds_a_usable_section(kind):
     # 腹板边缘那一对只有明确区分腹板与翼缘的截面才有；
     # 矩形和圆没有腹板，留空是对的，不能硬凑一个数出来。
     web = {"S_flange", "c_web"}
-    assert set(s) in (base | shear, base | shear | web), sorted(set(s))
+    assert set(s) in (base | shear | {"geometry"}, base | shear | web | {"geometry"}), sorted(set(s))
     assert all(s[k] > 0 for k in (base | shear | web) & set(s) - {"name",
                                                                   "circular"})
     assert isinstance(s["circular"], bool)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,11 @@ from task_control import checkpoint
 from solid_joint import (JointSpec, SolidJointError, diagnose_peak_convergence,
                          hot_spot_stress_linear, mesh_reference_length,
                          prepare_joint_spec)
+
+
+@dataclass(frozen=True)
+class JointMesh(solid3d.SolidMesh):
+    geometry_record: dict[str, Any] | None = None
 
 
 def _gmsh_module():
@@ -54,7 +60,7 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
                         hotspot_size_mm: float | None = None,
                         gmsh_options: dict[str, float] | None = None
                         ) -> tuple[solid3d.SolidMesh, dict[int, np.ndarray]]:
-    """用 Gmsh OpenCASCADE 建圆钢/圆管布尔并集并输出二次四面体。"""
+    """用 Gmsh OpenCASCADE 建真实截面连接实体并输出二次四面体。"""
     gmsh = _gmsh_module()
     size = float(mesh_size_mm)
     if not math.isfinite(size) or size <= 0.0:
@@ -67,31 +73,16 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.model.add(f"native_joint_{spec.node_id}")
-        occ = gmsh.model.occ
-        volumes: list[tuple[int, int]] = []
-        for arm in spec.arms:
-            d = arm.direction
-            outer = occ.addCylinder(0.0, 0.0, 0.0,
-                                    d[0] * arm.length_mm,
-                                    d[1] * arm.length_mm,
-                                    d[2] * arm.length_mm,
-                                    0.5 * arm.outer_diameter_mm)
-            current = [(3, outer)]
-            if arm.inner_diameter_mm > 1e-9:
-                # 内孔向节点内外各伸一点，避免布尔运算在共面端部留下薄片。
-                eps = max(1e-5 * arm.length_mm, 1e-5)
-                inner = occ.addCylinder(-d[0] * eps, -d[1] * eps, -d[2] * eps,
-                                        d[0] * (arm.length_mm + 2.0 * eps),
-                                        d[1] * (arm.length_mm + 2.0 * eps),
-                                        d[2] * (arm.length_mm + 2.0 * eps),
-                                        0.5 * arm.inner_diameter_mm)
-                current, _ = occ.cut(current, [(3, inner)],
-                                     removeObject=True, removeTool=True)
-            volumes.extend(current)
-        if len(volumes) > 1:
-            volumes, _ = occ.fuse([volumes[0]], volumes[1:],
-                                  removeObject=True, removeTool=True)
-        occ.synchronize()
+        from joint_geometry import build_occ_joint
+        try:
+            geometry_record = build_occ_joint(gmsh, spec)
+        except Exception as exc:  # noqa: BLE001  Gmsh以通用Exception报告CAD错误，保留原因并转为工具错误。
+            raise SolidJointError(f"节点曲面几何生成失败：{exc}。请核对截面朝向与短臂范围，或切换节点几何方式。") from exc
+        fillet_radius = geometry_record.get("applied_fillet_radius_mm", 0.)
+        if fillet_radius:
+            local_size = min(local_size, .5*fillet_radius)
+        if spec.geometry_mode in ("transition", "miter"):
+            gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
         gmsh.option.setNumber("Mesh.MeshSizeMin", local_size)
         gmsh.option.setNumber("Mesh.MeshSizeMax", size)
         if local_size < size:
@@ -136,14 +127,23 @@ def generate_joint_mesh(spec: JointSpec, mesh_size_mm: float,
                 rows.append(_canonical_tet10(raw, xyz))
         if not rows:
             raise SolidJointError("Gmsh 没有生成 10 节点四面体单元")
-        mesh = solid3d.SolidMesh(xyz, np.asarray(rows, dtype=np.int64))
+        connectivity = np.asarray(rows, dtype=np.int64)
+        # 布尔运算的辅助面可能留下未用于实体单元的节点，不能带入刚度与切面约束。
+        used = np.unique(connectivity)
+        remap = np.full(len(xyz), -1, dtype=np.int64)
+        remap[used] = np.arange(len(used))
+        xyz = xyz[used]
+        mesh = JointMesh(xyz, remap[connectivity], geometry_record)
 
         cut_faces: dict[int, np.ndarray] = {}
-        tolerance = max(size * 0.08, 1e-5)
         for arm in spec.arms:
             direction = np.asarray(arm.direction)
             axial = xyz @ direction
-            indices = np.flatnonzero(np.abs(axial - arm.length_mm) <= tolerance)
+            tolerance = max(arm.length_mm * 1e-7, 1e-6)
+            radial = np.linalg.norm(xyz - axial[:, None] * direction, axis=1)
+            indices = np.flatnonzero(
+                (np.abs(axial - arm.length_mm) <= tolerance)
+                & (radial <= 0.5 * arm.outer_diameter_mm + tolerance))
             if len(indices) < 3:
                 raise SolidJointError(
                     f"Gmsh 未识别出杆件 {arm.member_id} 的切割面节点")
@@ -163,15 +163,28 @@ def _write_vtu_and_png(mesh: solid3d.SolidMesh, result: solid3d.SolidResult,
         grid.cell_data["Mises_MPa"] = result.element_mises
         grid.cell_data["AbsPrincipal_MPa"] = result.element_abs_principal
         grid.point_data["Displacement_mm"] = result.displacement
+        nodal_mises, nodal_principal = solid3d.nodal_display_stress(mesh, result.gauss_stress)
+        grid.point_data["Display_Mises_MPa"] = nodal_mises
+        grid.point_data["Display_AbsPrincipal_MPa"] = nodal_principal
         vtu = str(stem.with_suffix(".vtu"))
         grid.save(vtu)
         png = str(stem.with_suffix(".png"))
         plotter = pv.Plotter(off_screen=True, window_size=(1400, 900))
+        import viz_theme
+        plotter.set_background(viz_theme.VIEWPORT_BG)
         upper = float(np.percentile(result.element_mises, 99.0))
-        plotter.add_mesh(grid, scalars="Mises_MPa", clim=(0.0, upper),
-                         cmap="turbo", show_edges=False,
-                         scalar_bar_args={"title": "Mises stress (MPa) - P99 clipped"})
-        plotter.add_axes()
+        surface = viz_theme.solid_surface(grid)
+        plotter.add_mesh(surface, scalars="Display_Mises_MPa", clim=(0.0, upper),
+                         cmap=viz_theme.solid_cmap(), n_colors=12, show_edges=False, lighting=True,
+                         smooth_shading=True, split_sharp_edges=True, feature_angle=40,
+                         ambient=.5, diffuse=.5, specular=.04,
+                         scalar_bar_args={"title": "Mises [MPa] - P99", "n_labels": 13, "color": viz_theme.VIEWPORT_INK,
+                                          "position_x": .15, "width": .7})
+        features = surface.extract_feature_edges(feature_angle=40, manifold_edges=False)
+        plotter.add_mesh(features, color=viz_theme.VIEWPORT_INK_MUTED, opacity=.32, line_width=1)
+        plotter.add_text(f"Raw peak: {result.element_mises.max():.6g} MPa", position='upper_left',
+                         color=viz_theme.VIEWPORT_INK, font_size=12)
+        plotter.add_axes(color=viz_theme.VIEWPORT_INK)
         plotter.view_isometric()
         plotter.show(screenshot=png, auto_close=True)
         return vtu, png
@@ -183,6 +196,9 @@ def surface_samples(spec: JointSpec, mesh: solid3d.SolidMesh,
                     result: solid3d.SolidResult,
                     mesh_size_mm: float) -> dict[str, list[list[float]]]:
     """按 Abaqus 后端同一几何规则提取各管臂焊趾外表面应力路径。"""
+    if spec.geometry_mode != "intersection" or any(
+            a.profile_mm and a.profile_mm["type"] not in ("circle", "tube") for a in spec.arms):
+        return {}
     stress = solid3d.nodal_abs_principal_envelope(mesh, result.gauss_stress)
     boundary = solid3d.boundary_nodes(mesh)
     xyz = mesh.nodes
@@ -190,6 +206,8 @@ def surface_samples(spec: JointSpec, mesh: solid3d.SolidMesh,
     arms = list(spec.arms)
     output: dict[str, list[list[float]]] = {}
     for arm in arms:
+        if arm.profile_mm and arm.profile_mm["type"] not in ("circle", "tube"):
+            continue
         thickness = arm.wall_thickness_mm
         if not thickness:
             continue
@@ -286,7 +304,7 @@ def _fit_default_mesh(spec, size: float, reference: float,
     first = size
     for _attempt in range(_DEFAULT_MESH_RETRIES + 1):
         checkpoint()
-        hotspot = max(reference, 0.4 * size)
+        hotspot = max(0.75 * reference, 0.15 * size)
         # 放粗之后网格比壁厚粗好几倍，二次单元的边中节点若贴到弯曲管壁上，
         # 薄壁处的单元会被拧翻（实测 detJ = -1.8，求解器直接拒算；Gmsh 的
         # HighOrderOptimize 也修不回来）。放粗档改为边中节点取直线：单元
@@ -322,7 +340,7 @@ def _default_plan(spec, reference: float, levels: int,
     各放粗 1.5 倍、2.25 倍——比最细档粗，必然也在上限以内，不用再试。
     放粗过的档边中节点一律取直线（理由见 ``_fit_default_mesh``）。
     """
-    first = 2.5 * reference
+    first = 2.0 * reference
     size, hotspot, mesh, cut_faces, note = _fit_default_mesh(
         spec, first, reference, max_elements, max_dof)
     options = {"Mesh.SecondOrderLinear": 1} if size > first else None
@@ -331,13 +349,27 @@ def _default_plan(spec, reference: float, levels: int,
     return coarser + [(size, (size, hotspot, mesh, cut_faces))], options, note
 
 
+def _auto_fillet_warning(record: dict[str, Any] | None) -> str | None:
+    """自动取值的圆角半径会改变热点应力和 Kt，结果里必须点名它的来源。"""
+    record = record or {}
+    if record.get("fillet_status") != "rounded" or record.get("fillet_radius_source") != "auto":
+        return None
+    return (f"过渡圆角半径 {float(record.get('applied_fillet_radius_mm', 0.)):.1f} mm 为自动取值"
+            f"（{record.get('fillet_radius_rule', '按截面特征尺寸')}），不是实际焊缝或构造尺寸；"
+            "热点应力与 Kt 随该半径变化。按实际构造复核时请用 fillet_radius_mm 指定半径，"
+            "0 表示不加圆角。")
+
+
 def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               anchor_member: int | None = None,
                               mesh_sizes_mm: list[float] | None = None,
                               output_dir: Path | str = "results/native_solid_joint",
                               *, max_elements: int = 80000,
                               max_dof: int = 180000, levels: int = 1,
-                              progress=None) -> dict[str, Any]:
+                              progress=None,
+                              loading_method: str = "displacement",
+                              geometry_mode: str = "transition",
+                              fillet_radius_mm: float | None = None) -> dict[str, Any]:
     """使用自研 C3D10 求解器运行一档或多档节点实体网格。
 
     没有显式给 ``mesh_sizes_mm`` 时，默认那一档若超过求解规模上限，会按
@@ -355,7 +387,9 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             progress(text)
         checkpoint()
 
-    spec = prepare_joint_spec(session, node_id, case, anchor_member)
+    spec = prepare_joint_spec(session, node_id, case, anchor_member,
+                              loading_method=loading_method, geometry_mode=geometry_mode,
+                              fillet_radius_mm=fillet_radius_mm)
     reference = mesh_reference_length(spec)
     # native-v1 默认先给一档可交互的工程网格。Python 稀疏直接解比 Abaqus
     # 慢，默认就上 h=t 会让桌面一次作业跨进几十万自由度；用户需要收敛判断时
@@ -381,7 +415,7 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         else:
             # 三档远场网格 40/30/20 mm 对应焊趾 16/12/8 mm；C3D10 的
             # 边中点使最细档表面取样间距约为 0.5t，同时守住直接解规模。
-            hotspot_size = max(reference, 0.4 * size)
+            hotspot_size = max(0.75 * reference, 0.15 * size)
             say(f"{tag}：划分网格（全局 {size:.1f} mm）…")
             try:
                 mesh, cut_faces = generate_joint_mesh(
@@ -399,16 +433,33 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                 f"{3 * len(mesh.nodes)}。请增大网格尺寸，或使用 Abaqus 后端跑细网格。")
         say(f"{tag}：求解 {3 * len(mesh.nodes)} 个自由度（{len(mesh.elements)} 个 C3D10）…")
         loads = np.zeros_like(mesh.nodes)
-        for arm in spec.arms:
-            if arm.member_id == spec.anchor_member:
-                continue
-            ids = cut_faces[arm.member_id]
-            loads[ids] += solid3d.equivalent_nodal_wrench(
-                mesh.nodes[ids], arm.force_n, arm.moment_nmm, (0.0, 0.0, 0.0))
+        local_load_regions = []
+        if spec.loading_method == 'displacement' and spec.local_loads:
+            from joint_loading import regional_load_forces
+            try:
+                local, local_load_regions = regional_load_forces(
+                    mesh.nodes.tolist(), mesh.elements.tolist(),
+                    [a.__dict__ for a in spec.arms], spec.local_loads)
+            except ValueError as exc:
+                raise SolidJointError(f'实体加载区生成失败：{exc}。请细化网格或核对施力位置。') from exc
+            loads += np.asarray(local)
+        if spec.loading_method == "force":
+            for arm in spec.arms:
+                if arm.member_id == spec.anchor_member:
+                    continue
+                ids = cut_faces[arm.member_id]
+                loads[ids] += solid3d.equivalent_nodal_wrench(
+                    mesh.nodes[ids], arm.force_n, arm.moment_nmm, (0.0, 0.0, 0.0))
         try:
+            options_solve = {}
+            fixed = cut_faces[spec.anchor_member]
+            if spec.loading_method == "displacement":
+                from joint_transfer import joint_constraints
+                fixed = []
+                options_solve["linear_constraints"] = joint_constraints(spec, mesh, cut_faces)
             result = solid3d.solve(
                 mesh, spec.elastic_modulus_mpa, spec.poisson,
-                cut_faces[spec.anchor_member], loads)
+                fixed, loads, **options_solve)
         except solid3d.Solid3DError as exc:
             raise SolidJointError(f"自研 C3D10 求解失败：{exc}") from exc
         checkpoint()
@@ -434,14 +485,31 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             "force_balance_n": [float(v) for v in equilibrium.sum(axis=0)],
             "moment_balance_nmm": [float(v) for v in
                                      np.cross(mesh.nodes, equilibrium).sum(axis=0)],
+            "local_applied_force_n": loads.sum(axis=0).tolist() if spec.loading_method == 'displacement' else None,
+            "local_applied_moment_nmm": np.cross(mesh.nodes, loads).sum(axis=0).tolist() if spec.loading_method == 'displacement' else None,
+            "local_load_regions": local_load_regions,
             "vtu": vtu,
             "contour_png": png,
         }
+        if spec.loading_method == "displacement":
+            C, prescribed = options_solve["linear_constraints"]
+            row["cut_motion_error_mm"] = float(
+                np.max(np.abs(C @ result.displacement.ravel() - prescribed)))
+            row["cut_resultants"] = {
+                str(arm.member_id): {
+                    "force_n": result.reaction[cut_faces[arm.member_id]].sum(axis=0).tolist(),
+                    "moment_at_cut_nmm": np.cross(
+                        mesh.nodes[cut_faces[arm.member_id]]
+                        - np.asarray(arm.direction) * arm.length_mm,
+                        result.reaction[cut_faces[arm.member_id]]).sum(axis=0).tolist(),
+                } for arm in spec.arms}
+            from joint_transfer import evaluate_cut_transfer
+            row["cut_transfer_check"] = evaluate_cut_transfer(spec, row)
         samples = surface_samples(spec, mesh, result, hotspot_size)
         row["surface_samples"] = samples
         row_hotspots: dict[str, Any] = {}
         for arm in spec.arms:
-            if arm.member_id == spec.anchor_member:
+            if spec.loading_method == "force" and arm.member_id == spec.anchor_member:
                 continue
             arm_samples = samples.get(str(arm.member_id))
             if not arm_samples:
@@ -460,13 +528,13 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
             displacement=result.displacement, reaction=result.reaction,
             element_mises=result.element_mises,
             element_abs_principal=result.element_abs_principal,
-            gauss_stress=result.gauss_stress)
+            gauss_stress=result.gauss_stress, applied_load_n=loads)
         levels_out.append(row)
 
     hot_spots = levels_out[-1]["hot_spot_extrapolation"]
     hotspot_convergence: dict[str, Any] = {}
     for arm in spec.arms:
-        if arm.member_id == spec.anchor_member:
+        if spec.loading_method == "force" and arm.member_id == spec.anchor_member:
             continue
         mid = str(arm.member_id)
         values = []
@@ -497,6 +565,11 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
     summary = {
         "schema": "solid-joint-analysis/native-v1",
         "backend": "native-c3d10+gmsh",
+        "loading_method": spec.loading_method,
+        "geometry_mode": spec.geometry_mode,
+        "geometry": getattr(mesh, "geometry_record", None),
+        "boundary_spec": spec.to_dict(),
+        "source_result_identity": session.result_identity,
         "node_id": spec.node_id,
         "case": spec.case,
         "anchor_member": spec.anchor_member,
@@ -509,7 +582,15 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
         "stress_concentration_basis": kt_basis,
         "stress_concentration_refused": kt_refused,
         "meshes": levels_out,
-        "warnings": list(spec.warnings) + ([auto_note] if auto_note else []),
+        "warnings": list(spec.warnings) + ([auto_note] if auto_note else []) + (
+            ["实体切面反力与整体梁内力差异超过5%；请检查剪切变形、平均刚度及短臂长度，"
+             "并与force内力加载对照后再解释局部应力。"]
+            if spec.loading_method == "displacement"
+            and not levels_out[-1]["cut_transfer_check"]["within_tolerance"] else []) + (
+            ["当前CAD未形成有效圆角，结果使用斜接实体；请核对实际连接细节，或对匹配两臂选择曲率连续过渡。"]
+            if (getattr(mesh, "geometry_record", None) or {}).get("fillet_status") == "kernel_unavailable" else []) + (
+            [_auto_fillet_warning(mesh.geometry_record)]
+            if _auto_fillet_warning(getattr(mesh, "geometry_record", None)) else []),
         "files": {
             "directory": str(target),
             "contour_png": levels_out[-1]["contour_png"],

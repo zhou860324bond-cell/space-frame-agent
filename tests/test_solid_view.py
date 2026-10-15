@@ -177,3 +177,104 @@ def test_window_cleanup_releases_native_objects_on_the_main_thread(app):
     assert not shiboken6.isValid(window)
     assert not shiboken6.isValid(standalone)
     assert destroyed_on == [get_ident()] * 2
+
+
+def test_solid_display_controls_keep_raw_results_and_expose_average_and_palette(app, files):
+    """防止默认色谱偏离Abaqus十二级Rainbow，或换配色与平均显示改写原应力。"""
+    from desktop.solid_result import SolidResultPanel
+    directory, _ = files
+    grid, *_ = read_result(directory/"summary.json")
+    raw = grid.cell_data["Mises_MPa"].copy()
+    panel = SolidResultPanel()
+    assert panel.options()["palette"] == "abaqus"
+    from desktop.theme import solid_cmap
+    from matplotlib.colors import to_rgba
+    expected = ["#0000FF", "#005CFF", "#00B9FF", "#00FFE7", "#00FF8B", "#00FF2E",
+                "#2EFF00", "#8BFF00", "#E7FF00", "#FFB900", "#FF5C00", "#FF0000"]
+    cmap = solid_cmap()
+    assert cmap.N == 12
+    np.testing.assert_allclose(cmap(np.arange(12)), [to_rgba(color) for color in expected])
+    assert panel.palette.findData("engineering") >= 0
+    assert panel.options()["averaging"] is True
+    panel.averaging.setChecked(False)
+    panel.palette.setCurrentIndex(panel.palette.findData("viridis"))
+    assert panel.options()["palette"] == "viridis"
+    assert panel.options()["averaging"] is False
+    assert grid.cell_data["Mises_MPa"] == pytest.approx(raw)
+    assert grid.cell_data["Mises_MPa"][1] == 2000
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'g2-bezier-sweep','minimum_centerline_radius_mm':140.5})
+    assert 'G2曲率连续' in panel.source.text() and '140.5 mm' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'halfspace-miter+rolling-ball','applied_fillet_radius_mm':0.,'fillet_status':'kernel_unavailable'})
+    assert '未形成圆角' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={'algorithm':'g2-bezier-sweep'})
+    assert '几何记录无效' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'column-host-butt-joint','host_member_id':1,'head_extension_mm':100.})
+    assert '柱截面保持' in panel.source.text() and '梁端贴合' in panel.source.text()
+    panel.bind([directory/'summary.json'],0,'示例',geometry={
+        'algorithm':'column-host+constrained-rolling-ball','applied_fillet_radius_mm':4.5})
+    assert '一体连续实体' in panel.source.text() and '4.5 mm' in panel.source.text()
+    panel.close()
+
+
+def test_solid_analysis_dialog_exposes_geometry_mesh_and_backend(app, monkeypatch):
+    """防止用户只能接受自动粗网格，或所选连接几何和后端未进入分析参数。"""
+    from PySide6.QtWidgets import QComboBox, QDialog, QDoubleSpinBox, QWidget
+    host = QWidget()
+    def choose(box):
+        for combo in box.findChildren(QComboBox):
+            if combo.findData("abaqus") >= 0:
+                combo.setCurrentIndex(combo.findData("abaqus"))
+            if combo.findData("intersection") >= 0:
+                combo.setCurrentIndex(combo.findData("intersection"))
+        box.findChild(QDoubleSpinBox).setValue(5)
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(QDialog,"exec",choose)
+    assert MainWindow._ask_joint_levels(host,2) == 3
+    assert host._joint_analysis_options == {
+        "backend":"abaqus", "geometry_mode":"intersection", "mesh_sizes_mm":[11.25,7.5,5.]}
+    host.close()
+
+
+def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatch):
+    """防止截面轮廓成为最后一个图层后，MPa色标错误绑定轮廓数组或默认色谱。"""
+    import pyvista as pv
+    from desktop import viewport
+    view=viewport.Viewport()
+    class LegendPlotter(viewport._NullPlotter):
+        def __init__(self):
+            super().__init__()
+            self.actors={}
+            self.last_mapper=None
+            self.legend_range=None
+            self.solid_options=None
+            self.legend_options=None
+        def add_mesh(self,dataset,**options):
+            if options.get('name') == '_solid_result':
+                self.solid_options=options
+            mapper=pv.DataSetMapper(dataset=dataset)
+            mapper.scalar_range=options.get('clim',(-1.,1.))
+            actor=pv.Actor(mapper=mapper)
+            self.actors[options.get('name')]=actor
+            self.last_mapper=mapper
+            return actor
+        def add_scalar_bar(self,**options):
+            self.legend_options=options
+            self.legend_range=options.get('mapper',self.last_mapper).scalar_range
+    plotter=LegendPlotter()
+    view.plotter=plotter
+    monkeypatch.setattr(viewport,'CAN_RENDER',True)
+    monkeypatch.setattr(view,'_apply_view',lambda *args:None)
+    monkeypatch.setattr(view,'_inset_camera',lambda:None)
+    grid,*_=read_result(files[0]/'native_joint_1.npz')
+    result=view.show_solid_result(grid,'节点65',show_edges=False)
+    assert plotter.solid_options['cmap'].N == 12
+    assert plotter.solid_options['n_colors'] == 12
+    assert plotter.legend_options['n_labels'] == 13
+    assert '_solid_feature_edges' in plotter.actors
+    assert plotter.last_mapper.scalar_range == (-1.,1.)
+    assert plotter.legend_range == pytest.approx(result['clim'])
+    assert plotter.legend_range[1]>1000
+    view.close()

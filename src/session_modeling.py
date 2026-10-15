@@ -78,9 +78,53 @@ def _next_bc_name(existing: list[dict]) -> str:
     return f"BC-{index}"
 
 
+def _checked_ref_vector(model: dict, member: dict, ref_vector) -> tuple[list[float] | None,
+                                                                   dict | None]:
+    """校验一根杆件的局部 y 参考向量，返回 (规范化后的向量或 None, 错误或 None)。
+
+    单根编辑与批量设置共用这一处：原来批量设置靠浅复制整个 Session 去调
+    edit_member 的未装饰版本，复制品与真实会话共享历史与缓存，一旦
+    edit_member 写到它们就会悄悄改到真实会话。
+    """
+    if ref_vector is None or ref_vector == []:
+        return None, None
+    try:
+        vector = [float(v) for v in ref_vector]
+    except (TypeError, ValueError):
+        return None, {"error": "梁方向参考向量必须是三个数字，例如 [0, 0, 1]"}
+    if len(vector) != 3 or not all(np.isfinite(vector)):
+        return None, {"error": "梁方向参考向量必须是三个有限数字，例如 [0, 0, 1]"}
+    if float(np.linalg.norm(vector)) < 1e-12:
+        return None, {"error": "梁方向参考向量不能是零向量"}
+    nodes = {int(n["id"]): n for n in model.get("nodes") or []}
+    ni, nj = nodes.get(int(member["i"])), nodes.get(int(member["j"]))
+    if ni is None or nj is None:
+        return None, {"error": "杆件端点不存在，无法设置梁方向"}
+    axis = np.array([float(nj[k]) - float(ni[k]) for k in ("x", "y", "z")])
+    if float(np.linalg.norm(np.cross(axis, vector))) < 1e-12:
+        return None, {"error": "梁方向参考向量不能与杆件轴线平行",
+                      "hint": "请换一个垂直于杆件轴线的方向，例如 [0, 0, 1]。"}
+    return vector, None
+
+
 class ModelingMixin:
     """建模：几何生成与图元增删改。见模块 docstring。"""
     # --- 工具实现 ---
+    @_records
+    def replace_editing_model(self, model: dict) -> ToolResult:
+        """人工表格提交合法半成品；不能绕过已有数据的结构与语义检查。"""
+        from copy import deepcopy
+        from model_io import validate_editing_payload
+        errors = validate_editing_payload(model)
+        if errors:
+            return ToolResult(False, {"errors": errors, "hint": "改动未写入，请修正表格后提交。"})
+        if model == self.model:
+            return ToolResult(True, {"no_change": True})
+        self.model = deepcopy(model)
+        self._invalidate()
+        return ToolResult(True, {"summary": describe(self.model),
+                                 "analysis_ready": not self.validation_errors()})
+
     @_records
     def define_materials_and_sections(self, materials, sections) -> ToolResult:
         # 单位制是项目设置，不是“定义属性”的副作用。用户若先选了毫米制，
@@ -251,6 +295,79 @@ class ModelingMixin:
             "name": name, **entry, "replaced": replaced,
             "sets": sorted(sets),
             "note": "之后凡是要杆件编号的地方，都可以直接写这个名字。",
+        })
+
+    @_records
+    def seed_mesh(self, divisions: int | None = None, members=None,
+                  clear: bool = False) -> ToolResult:
+        """布种：每根物理杆件剖成几个分析单元。
+
+        · 只给 ``divisions``：设全局默认段数；
+        · 给 ``members``（编号列表或集合名）+ ``divisions``：逐杆覆盖；
+        · ``clear=True``：清掉 ``members`` 的逐杆布种，不给 ``members`` 则全部清掉。
+
+        频率、屈曲与 P-Δ 分析本来就会把每杆至少剖成
+        ``model_compiler.ANALYSIS_MIN_DIVISIONS`` 段；布种用于要求更细，或让
+        线性静力的结果图在杆内也有节点。
+        """
+        from model_compiler import ANALYSIS_MIN_DIVISIONS, CompilationError, compile_model
+        if not self.model.get("members"):
+            return ToolResult(False, {"error": "当前没有杆件，先建模再布种"})
+        mesh = dict(self.model.get("mesh") or {})
+        per_member = dict(mesh.get("members") or {})
+        try:
+            ids = self._expand_members(members) if members is not None else None
+        except ValueError as exc:
+            return ToolResult(False, {"error": str(exc)})
+        known = {int(m["id"]) for m in self.model["members"]}
+        if ids is not None:
+            bad = sorted(set(ids) - known)
+            if bad:
+                return ToolResult(False, {"error": f"杆件 {bad} 不存在"})
+
+        if clear:
+            if ids is None:
+                mesh = {}
+                per_member = {}
+            else:
+                for k in ids:
+                    per_member.pop(str(k), None)
+        else:
+            if divisions is None:
+                return ToolResult(False, {
+                    "error": "要给 divisions（每根杆剖成几段，1~200 的整数）",
+                    "example": {"divisions": 4, "members": "柱"}})
+            n = int(divisions)
+            if not 1 <= n <= 200:
+                return ToolResult(False, {"error": f"divisions 要在 1~200 之间，收到 {n}"})
+            if ids is None:
+                mesh["divisions"] = n
+            else:
+                for k in ids:
+                    per_member[str(k)] = n
+        if per_member:
+            mesh["members"] = per_member
+        else:
+            mesh.pop("members", None)
+        candidate = dict(self.model)
+        if mesh:
+            candidate["mesh"] = mesh
+        else:
+            candidate.pop("mesh", None)
+        try:
+            compiled = compile_model(candidate)
+        except CompilationError as exc:
+            return ToolResult(False, {"errors": list(exc.diagnostics)})
+        self.model = candidate
+        return ToolResult(True, {
+            "global_divisions": int(mesh.get("divisions") or 1),
+            "member_divisions": {int(k): v for k, v in sorted(
+                per_member.items(), key=lambda item: int(item[0]))},
+            "physical_members": len(known),
+            "analysis_elements": len(compiled.analysis_model.members),
+            "note": (f"频率、屈曲与 P-Δ 分析会把每杆至少剖成 {ANALYSIS_MIN_DIVISIONS} 段，"
+                     "布种只能要求更细。线性静力的内力在单元内解析恢复，"
+                     "布种不改变它的数值，只增加杆内的结果节点。"),
         })
 
     def list_sets(self) -> ToolResult:
@@ -609,28 +726,9 @@ class ModelingMixin:
 
         if ref_vector is not _UNSET:
             before = target.get("ref_vector")
-            if ref_vector is None or ref_vector == []:
-                vector = None
-            else:
-                try:
-                    vector = [float(v) for v in ref_vector]
-                except (TypeError, ValueError):
-                    return ToolResult(False, {
-                        "error": "梁方向参考向量必须是三个数字，例如 [0, 0, 1]"})
-                if len(vector) != 3 or not all(np.isfinite(vector)):
-                    return ToolResult(False, {
-                        "error": "梁方向参考向量必须是三个有限数字，例如 [0, 0, 1]"})
-                if float(np.linalg.norm(vector)) < 1e-12:
-                    return ToolResult(False, {"error": "梁方向参考向量不能是零向量"})
-                nodes = {int(n["id"]): n for n in candidate.get("nodes") or []}
-                ni, nj = nodes.get(int(target["i"])), nodes.get(int(target["j"]))
-                if ni is None or nj is None:
-                    return ToolResult(False, {"error": "杆件端点不存在，无法设置梁方向"})
-                axis = np.array([float(nj[k]) - float(ni[k]) for k in ("x", "y", "z")])
-                if float(np.linalg.norm(np.cross(axis, vector))) < 1e-12:
-                    return ToolResult(False, {
-                        "error": "梁方向参考向量不能与杆件轴线平行",
-                        "hint": "请换一个垂直于杆件轴线的方向，例如 [0, 0, 1]。"})
+            vector, problem = _checked_ref_vector(candidate, target, ref_vector)
+            if problem is not None:
+                return ToolResult(False, problem)
             if before != vector:
                 changed["ref_vector"] = (before, vector)
                 if vector is None:
@@ -879,13 +977,85 @@ class ModelingMixin:
                                  "warnings": errors})
 
     @_records
+    def configure_member_group(self, member_ids, *, end: str = "both",
+                               rotations: dict | None = None,
+                               ref_vector: list[float] | None | object = _UNSET) -> ToolResult:
+        """人工批量设置局部轴与连接；全部检查通过才形成一个撤销步骤。"""
+        from copy import deepcopy
+
+        try:
+            ids = self._expand_members(member_ids)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(False, {"error": str(exc)})
+        known = {int(m["id"]) for m in self.model.get("members") or []}
+        if not ids or set(ids) - known:
+            return ToolResult(False, {"error": "目标杆件为空或包含不存在的编号，请重新选择。"})
+        if end not in ("i", "j", "both"):
+            return ToolResult(False, {"error": "连接位置只能选择 i 端、j 端或两端。"})
+        rotations = rotations or {}
+        for dof, setting in rotations.items():
+            if dof not in ("rx", "ry", "rz") or not isinstance(setting, dict):
+                return ToolResult(False, {"error": "连接设置必须对应局部 rx、ry、rz 转动。"})
+            mode = setting.get("mode")
+            if mode not in ("rigid", "release", "spring"):
+                return ToolResult(False, {"error": "连接方式必须是刚接、释放或转动弹簧。"})
+            if mode == "spring":
+                try:
+                    value = float(setting["stiffness"])
+                except (KeyError, TypeError, ValueError):
+                    return ToolResult(False, {"error": "请填写转动弹簧的正数刚度。"})
+                if not np.isfinite(value) or value <= 0:
+                    return ToolResult(False, {"error": "转动刚度必须是有限正数；理想铰请选释放。"})
+
+        # 候选状态只是模型字典的深拷贝：全部检查通过才替换，形成一个撤销步骤。
+        candidate = deepcopy(self.model)
+        ends = ("i", "j") if end == "both" else (end,)
+        for mid in ids:
+            entry = next(m for m in candidate["members"] if int(m["id"]) == mid)
+            if ref_vector is not _UNSET:
+                vector, problem = _checked_ref_vector(candidate, entry, ref_vector)
+                if problem is not None:
+                    return ToolResult(False, {**problem, "member": mid,
+                                              "hint": "整组改动未写入，请修正参考方向后重新提交。"})
+                if vector is None:
+                    entry.pop("ref_vector", None)
+                else:
+                    entry["ref_vector"] = vector
+            for side in ends:
+                releases = list((entry.get("releases") or {}).get(side) or [])
+                springs = dict((entry.get("connections") or {}).get(side) or {})
+                for dof, setting in rotations.items():
+                    releases = [key for key in releases if key != dof]
+                    springs.pop(dof, None)
+                    if setting["mode"] == "release":
+                        releases.append(dof)
+                    elif setting["mode"] == "spring":
+                        springs[dof] = float(setting["stiffness"])
+                for key, value in (("releases", releases), ("connections", springs)):
+                    table = entry.setdefault(key, {})
+                    if value:
+                        table[side] = value
+                    else:
+                        table.pop(side, None)
+                    if not table:
+                        entry.pop(key, None)
+        if candidate == self.model:
+            return ToolResult(True, {"members": ids, "no_change": True})
+        self.model = candidate
+        self._invalidate()
+        return ToolResult(True, {"members": ids, "end": end,
+                                 "analysis_ready": not self.validation_errors(),
+                                 "note": "连接按局部轴定义，螺栓和焊缝构造不能由刚度设置代替。"})
+
+    @_records
     def add_step(self, name: str, analysis: str = "linear",
                  loads: dict | None = None,
                  deactivate_loads: list | None = None,
                  supports: dict | None = None,
                  deactivate_supports: list | None = None,
                  increments: int = 10,
-                 after: str | None = None) -> ToolResult:
+                 after: str | None = None,
+                 num_modes: int = 6) -> ToolResult:
         """新增一个分析步（Abaqus 的 Step），追加到末尾或插在某一步之后。
 
         **荷载与边界条件在步之间传播。** 这一步只写新建或改写的东西，上一步
@@ -896,7 +1066,9 @@ class ModelingMixin:
         ``supports`` 是 节点号 -> {"fix": [...], "spring": [...]}，用来在这一步
         改写某个支座（比如把固接换成铰接）。
 
-        analysis 目前支持 linear 与 pdelta。材料非线性没放进来是因为一个分析步
+        analysis 支持 linear、pdelta，以及线性摄动步 frequency（频率，``num_modes``
+        阶）与 buckle（屈曲，参考荷载只取本步 ``loads``）。摄动步不改变基态：本步的
+        荷载与支座改写不传播到后面的步。材料非线性没放进来是因为一个分析步
         里常有几个工况同时生效，而材料非线性不能事后叠加，缺一个合成工况的
         增量入口；硬放进来只能偷偷按单工况各算各的，那是错的答案。
         """
@@ -910,7 +1082,7 @@ class ModelingMixin:
                 supports={int(k): dict(v) for k, v in (supports or {}).items()},
                 deactivate_supports=tuple(int(n) for n in
                                           (deactivate_supports or ())),
-                increments=int(increments))
+                increments=int(increments), num_modes=int(num_modes))
         except (ValueError, TypeError) as exc:
             return ToolResult(False, {"error": str(exc)})
 

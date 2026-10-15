@@ -153,3 +153,20 @@ def test_export_learning_trace_contains_final_model_and_verification(tmp_path,
     assert document["format"] == "space-frame-agent-trace/v1"
     assert document["steps"][0]["tool"] == "add_nodes"
     assert document["final_model"]["nodes"]
+
+
+def test_goto_the_current_step_keeps_results():
+    """双击时间线上当前所在的那一行：模型没变，已求解的结果不能被清掉。"""
+    from agent import Session
+    s = Session()
+    assert s.add_nodes([[0, 0, 0], [4, 0, 0]]).ok
+    assert s.define_materials_and_sections(
+        [{"name": "S", "E": 2e11, "nu": 0.3}],
+        [{"name": "R", "A": 1e-2, "Iy": 2e-5, "Iz": 8e-5, "J": 1e-5}]).ok
+    assert s.add_members([[1, 2]], "R", "S").ok
+    assert s.set_supports([1], fix=[1] * 6).ok
+    assert s.set_nodal_load(2, [0, 0, -1e3, 0, 0, 0]).ok
+    assert s.solve_model().ok
+    assert s.goto_step(s.history.cursor)
+    assert s.solution is not None
+    assert s.goto_step(s.history.cursor - 1) and s.solution is None

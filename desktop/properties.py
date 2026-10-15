@@ -160,7 +160,9 @@ class PropertiesPanel(QWidget):
         try:
             frame = self.session.frame or self.session.preview_frame()
         except ValueError:
-            self.clear()
+            # 只有几何、还没定义材料截面时算不出杆件刚度，表单编辑不了；
+            # 原来直接显示「未选中对象」，像是点选没生效。改为说清楚它是谁、缺什么。
+            self._show_draft_object(kind, ident)
             return
         if (kind, ident) != (self.kind, self.ident):
             self.advanced_button.setChecked(False)
@@ -174,6 +176,26 @@ class PropertiesPanel(QWidget):
             self._fill_member(frame, ident)
         else:
             self._fill_node(frame, ident)
+
+    def _show_draft_object(self, kind: str, ident: int) -> None:
+        key = "members" if kind == "member" else "nodes"
+        entry = next((e for e in self.session.model.get(key) or [] if int(e["id"]) == ident), None)
+        if entry is None:
+            self.clear()
+            return
+        self.clear()
+        self.kind, self.ident = kind, ident
+        if kind == "member":
+            self.title.setText(f"杆件 {ident}　节点 {entry['i']} → {entry['j']}")
+            missing = [label for field, label in (("section", "截面"), ("material", "材料"))
+                       if not entry.get(field)]
+            detail = ("截面 " + entry["section"] + "，材料 " + entry["material"]
+                      if not missing else "尚未指派" + "、".join(missing))
+            self.hint.setText(f"{detail}。模型还缺材料或截面定义，暂不能就地编辑；"
+                              "到「属性」页创建材料与截面后再指派（右键本杆件可直接指派）。")
+        else:
+            self.title.setText(f"节点 {ident}　({entry['x']}, {entry['y']}, {entry['z']})")
+            self.hint.setText("模型还缺材料或截面定义，暂不能就地编辑；右键本节点可施加边界条件或载荷。")
 
     def refresh(self) -> None:
         """模型变了之后重新读一遍。选中的对象可能已经不存在了。"""

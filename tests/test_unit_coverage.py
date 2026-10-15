@@ -40,6 +40,9 @@ DIMENSIONS = {
     "materials.allow_tension": "modulus",
     "materials.allow_compression": "modulus",
     "sections.name": None,
+    "sections.geometry.type": None,  # 截面轮廓类型无量纲。
+    "sections.geometry.dimensions": "length",
+    "sections.geometry.outer": "length", "sections.geometry.holes": "length",
     "sections.A": "area",
     "sections.Iy": "inertia", "sections.Iz": "inertia", "sections.J": "inertia",
     "sections.Ay": "area", "sections.Az": "area",
@@ -58,6 +61,56 @@ DIMENSIONS = {
     "supports.name": None, "supports.node": None, "supports.fix": None,
     "supports.spring": "support_spring",
     "sets": None,
+    "mesh.divisions": None,               # 段数，纯计数
+    "datums.points.name": None, "datums.points.xyz": "length",
+    "features.section_assignments.region.set": None,
+    "features.section_assignments.region.nodes": None,
+    "features.section_assignments.region.members": None,
+    "features.section_assignments.name": None,
+    "features.section_assignments.suppressed": None,
+    "features.bcs.region.set": None,
+    "features.bcs.region.nodes": None,
+    "features.bcs.region.members": None,
+    "features.bcs.name": None,
+    "features.bcs.suppressed": None,
+    "features.loads.region.set": None,
+    "features.loads.region.nodes": None,
+    "features.loads.region.members": None,
+    "features.loads.name": None,
+    "features.loads.suppressed": None,
+    "features.section_assignments.section": None,
+    "features.section_assignments.material": None,
+    "features.bcs.step": None, "features.bcs.fix": None,
+    "features.bcs.spring": "support_spring",
+    # 后续步的修改：与 bcs 本身同一批字段（fix 无量纲、spring 是支承刚度），见 test_bc_modification_springs_convert
+    "features.bcs.modifications": "support_entry", "features.bcs.deactivated": None,
+    "features.bcs.displacement": "settlement", "features.bcs.case": None,
+    "settlements.owner": None,
+    "features.loads.case": None, "features.loads.type": None,
+    "features.loads.force": "force", "features.loads.moment": "moment",
+    "features.loads.w": "line_load", "features.loads.g": "acceleration",
+    # 约束只有拓扑（主节点、从节点区域、自由度选择）；刚臂长度取自节点坐标，随坐标换算
+    "features.constraints.name": None, "features.constraints.type": None,
+    "features.constraints.control": None, "features.constraints.dofs": None,
+    "features.constraints.suppressed": None,
+    "features.constraints.region.set": None, "features.constraints.region.nodes": None,
+    "features.constraints.region.members": None,
+    # 派生条目的来源标记，都是对象名
+    "members.assignment": None, "members.orientation": None, "supports.owners": None,
+    "features.beam_orientations.name": None, "features.beam_orientations.suppressed": None,
+    "features.beam_orientations.region.set": None,
+    "features.beam_orientations.region.nodes": None,
+    "features.beam_orientations.region.members": None,
+    "features.beam_orientations.n1": None,      # 方向，只看比例
+    "nodal_loads.owner": None, "member_loads.owner": None, "member_spans.owner": None,
+    "imperfection.mode": None,
+    "imperfection.case": None,              # 工况名
+    "imperfection.amplitude": "length",
+    "masses.name": None,
+    "masses.node": None,
+    "masses.mass": "mass",
+    "masses.inertia": "mass_inertia",
+    "mesh.members": None,                 # 杆件编号 → 段数，纯计数
     "nodal_loads.name": None, "nodal_loads.node": None,
     "nodal_loads.load": "force_and_moment",
     "member_loads.name": None, "member_loads.member": None,
@@ -77,8 +130,19 @@ DIMENSIONS = {
     "combos.name": None, "combos.factors": None,
     "amplitudes": None,                   # (伪时间, 系数) 都无量纲
     "steps.name": None, "steps.analysis": None, "steps.increments": None,
+    "steps.num_modes": None,
     "steps.loads": None, "steps.deactivate_loads": None,
-    "steps.deactivate_supports": None,
+    "steps.deactivate_supports": None, "steps.deactivation_owners": None,
+    # 装配实例记录：平移与旋转中心是长度，轴方向与角度无量纲，其余是名字与编号
+    "assembly.instances.transform.translate": "length",
+    "assembly.instances.transform.rotate.point": "length",
+    "assembly.instances.transform.rotate.axis": None,
+    "assembly.instances.transform.rotate.angle_deg": None,
+    "assembly.instances.name": None, "assembly.instances.pattern": None,
+    "assembly.instances.source.set": None, "assembly.instances.source.nodes": None,
+    "assembly.instances.source.members": None,
+    "assembly.instances.members": None, "assembly.instances.nodes": None,
+    "assembly.instances.features.kind": None, "assembly.instances.features.name": None,
     # 分析步里改写的支座：与顶层 supports 同一批字段，同一批量纲。
     "steps.supports": "support_entry",
 }
@@ -144,7 +208,18 @@ def test_no_stale_entries_in_the_table():
 # --- 数值层：真的换了，而且换对了 -----------------------------------------
 
 def kitchen_sink():
-    """**用上每一个会换算的字段**的模型。漏用一个，下面的测试就测不到它。"""
+    """**用上每一个会换算的字段**的模型。漏用一个，下面的测试就测不到它。
+
+    建模对象层的物理量（荷载对象的力、力矩、线荷载、重力加速度，边界条件
+    对象的弹簧）也在这里；派生条目由 features.regenerate 生成，模型才合法。
+    """
+    import features
+    model = _kitchen_sink_body()
+    features.regenerate(model)
+    return model
+
+
+def _kitchen_sink_body():
     return {
         "schema_version": 1, "units": "N-m-Pa",
         "nodes": [{"id": 1, "x": 0.0, "y": 0.0, "z": 0.0},
@@ -156,14 +231,27 @@ def kitchen_sink():
                       "J": 1e-5, "Ay": 0.012, "Az": 0.008,
                       "cy": 0.2, "cz": 0.1, "Sy": 1e-4, "Sz": 2e-4,
                       "by": 0.01, "bz": 0.008,
-                      "S_flange": 1.5e-4, "c_web": 0.18}],
+                      "S_flange": 1.5e-4, "c_web": 0.18,
+                      "geometry": {"type": "polygon", "dimensions": {"feature_size": .01},
+                                   "outer": [[0,0],[.2,0],[.2,.15],[0,.15]],
+                                   "holes": [[[.05,.02],[.15,.02],[.15,.12],[.05,.12]]]}}],
         "members": [{"id": 1, "i": 1, "j": 2, "section": "S", "material": "M",
                      "offset_i": [0.1, 0.0, 0.0], "offset_j": [0.0, 0.0, 0.05],
                      "connections": {"i": {"rz": 1e8, "ux": 5e7},
                                      "j": {"ry": 2e8}}}],
+        "assembly": {"instances": [{"name": "I-1", "source": {"members": [1]},
+                                    "transform": {"translate": [0.0, 0.0, 3.0],
+                                                  "rotate": {"axis": [0.0, 0.0, 1.0],
+                                                             "angle_deg": 90.0,
+                                                             "point": [1.0, 2.0, 0.0]}},
+                                    "members": [1], "nodes": [2]}]},
         # 平动刚接、转动弹性支承：fix 与 spring 不能撞在同一个自由度上，
         # 撞了会被语义校验挡住（刚性约束会让弹簧完全失效）。
         # rx 刚接（沉降要给在被约束的方向上），ry/rz 弹性支承。
+        "imperfection": {"mode": 1, "amplitude": 0.024},
+        "datums": {"points": [{"name": "D1", "xyz": [1.5, 0.2, 0.3]}]},
+        "masses": [{"name": "设备", "node": 2, "mass": 1200.0,
+                    "inertia": [30.0, 40.0, 50.0]}],
         "supports": [{"node": 1, "fix": [1, 1, 1, 1, 0, 0],
                       "spring": [0.0, 0.0, 0.0, 0.0, 5e7, 6e7]}],
         "nodal_loads": [{"node": 2, "load": [1e3, 2e3, 3e3, 4e3, 5e3, 6e3]}],
@@ -181,8 +269,26 @@ def kitchen_sink():
         "steps": [{"name": "S1", "loads": {"default": "RAMP"},
                    "supports": {"2": {"fix": [0, 0, 1, 0, 0, 0],
                                       "spring": [0.0, 0.0, 5e6,
-                                                 0.0, 0.0, 7e7]}}}],
+                                                 0.0, 0.0, 7e7]}}},
+                  {"name": "S2"}],
         "amplitudes": {"c": [[0.0, 0.0], [1.0, 1.0]]},
+        "features": {
+            "bcs": [{"name": "BC-端部", "region": {"nodes": [2]}, "fix": [0, 1, 0, 0, 0, 0],
+                     "spring": [0.0, 0.0, 0.0, 3e7, 0.0, 0.0],
+                     "displacement": [0.0, 0.004, 0.0, 0.0, 0.0, 0.0], "case": "default",
+                     "modifications": {"S2": {"fix": [0, 1, 0, 0, 0, 0],
+                                              "spring": [0.0, 0.0, 0.0, 6e7, 0.0, 0.0]}}}],
+            "loads": [
+                {"name": "F-端部", "region": {"nodes": [2]}, "case": "default",
+                 "type": "concentrated_force", "force": [0.0, 0.0, -2e3]},
+                {"name": "M-端部", "region": {"nodes": [2]}, "case": "default",
+                 "type": "moment", "moment": [0.0, 1e3, 0.0]},
+                {"name": "q-全跨", "region": {"members": [1]}, "case": "default",
+                 "type": "line_load", "w": [0.0, 0.0, -1e3]},
+                {"name": "自重", "region": {"members": [1]}, "case": "default",
+                 "type": "gravity", "g": [0.0, 0.0, -9.80665]},
+            ],
+        },
     }
 
 
@@ -306,3 +412,16 @@ def test_the_kitchen_sink_uses_every_field_that_gets_converted():
     assert not missing, (
         f"这些会换算的字段没被 kitchen_sink 用到：{missing}。"
         "加进去，否则来回换算那条测不出它们。")
+
+
+def test_bc_modification_springs_convert():
+    """边界条件在后续步的修改里也有弹簧刚度：换单位时要和对象本身的 spring 一起换。"""
+    factors = _factors("N-m-Pa", "N-mm-MPa")
+    model = {"units": "N-m-Pa", "nodes": [], "members": [], "materials": [], "sections": [],
+             "supports": [],
+             "features": {"bcs": [{"name": "BC", "region": {"nodes": [1]}, "fix": [1] * 6,
+                                   "modifications": {"S2": {"fix": [0] * 6,
+                                                            "spring": [1e6] * 3 + [2e5] * 3}}}]}}
+    after = convert_model(model, "N-mm-MPa")["features"]["bcs"][0]["modifications"]["S2"]["spring"]
+    for index, value in enumerate([1e6] * 3 + [2e5] * 3):
+        assert after[index] == pytest.approx(value * _expected("support_spring", index, factors))

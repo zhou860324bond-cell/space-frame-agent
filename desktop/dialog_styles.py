@@ -213,3 +213,20 @@ def close_box(parent=None, ok: str = "关闭") -> QDialogButtonBox:
     box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, parent=parent)
     box.button(QDialogButtonBox.StandardButton.Ok).setText(ok)
     return box
+
+
+def set_primary(primary, *others) -> None:
+    """指定窗口里唯一的主按钮。
+
+    QDialog 里的 QPushButton 默认都是 autoDefault，样式表的 ``:default``
+    会把**排在最前面的那个**画成蓝色主按钮——于是「删除连接」「新建任务」
+    这类次要甚至破坏性的按钮成了全窗最显眼的一个。这里把其余按钮的
+    autoDefault 关掉，主按钮显式设为默认。
+    """
+    for button in others:
+        button.setAutoDefault(False)
+        button.setDefault(False)
+    if primary is not None:
+        primary.setProperty("role", "primary")
+        primary.setAutoDefault(True)
+        primary.setDefault(True)

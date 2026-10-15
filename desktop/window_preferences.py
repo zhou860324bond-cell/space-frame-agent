@@ -29,6 +29,13 @@ class WindowPreferencesMixin:
         geometry = settings.value("window/geometry")
         if geometry:
             self.restoreGeometry(geometry)
+        sizes = settings.value("agent/sizes")
+        try:
+            if sizes and len(sizes) == 2:
+                self.agent_splitter.setSizes([max(250, int(value)) for value in sizes])
+        except (TypeError, ValueError):
+            pass
+        self.chat_dock.setVisible(str(settings.value("agent/visible", "true")).lower() == "true")
         for side, drawer in self.drawers.drawers.items():
             extent = settings.value(f"drawers/{side}")
             try:
@@ -52,6 +59,9 @@ class WindowPreferencesMixin:
             return
         settings = _settings()
         settings.setValue("window/geometry", self.saveGeometry())
+        if self.chat_dock.isVisible():
+            settings.setValue("agent/sizes", self.agent_splitter.sizes())
+        settings.setValue("agent/visible", self.chat_dock.isVisible())
         for side, drawer in self.drawers.drawers.items():
             settings.setValue(f"drawers/{side}", int(drawer.extent))
         settings.setValue("results/display",
