@@ -258,16 +258,48 @@ def _deformed(g: QPainter) -> None:
     _pin(g, 5, 12); _pin(g, 27, 12)
 
 
+# 与视口默认的平滑彩虹同一走向：蓝(低) → 青 → 绿 → 黄 → 红(高)。
+# 原来的蓝—浅灰—红在 20px 下中段几乎是白的，看不出是着色。
+_BANDS = ("#2f6db5", "#2fa3c4", "#5cae4f", "#e0a92c", "#d0452b")
+
+
 def _contour(g: QPainter) -> None:
-    """发散色带——和视口里的云图同一套约定。"""
-    cols = ("#3b76bd", "#7fa9d6", "#d9d9d9", "#e39b7b", "#c0392b")
+    """梁内力云图：刚架的每根杆沿长度分段着色。
+
+    原来画的是一块红蓝色带，和实体云图用同一枚，排在显示模式里两块色块
+    分不出谁是谁，也看不出"着色的是杆件"。
+    """
+    def bands(x0, y0, x1, y1, colours):
+        n = len(colours)
+        for i, c in enumerate(colours):
+            g.setPen(_pen(QColor(c), 3.8, Qt.PenCapStyle.FlatCap))
+            g.drawLine(QPointF(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n),
+                       QPointF(x0 + (x1 - x0) * (i + 1) / n, y0 + (y1 - y0) * (i + 1) / n))
+    bands(7, 27, 7, 8, _BANDS[:3])
+    bands(7, 8, 25, 8, (_BANDS[2], _BANDS[3], _BANDS[4], _BANDS[3], _BANDS[2]))
+    bands(25, 27, 25, 8, _BANDS[:3])
+    _pin(g, 7, 27, 3.0); _pin(g, 25, 27, 3.0)
+
+
+def _solid_contour(g: QPainter) -> None:
+    """节点实体云图：两根圆管相贯的节点体，体内按应力分带着色。
+
+    与梁内力云图区分开：这里着色的是实体，不是杆件中心线。
+    """
+    shape = QPainterPath()
+    shape.addRoundedRect(QRectF(3, 12, 26, 9), 4.5, 4.5)
+    shape.addRoundedRect(QRectF(11.5, 3, 9, 26), 4.5, 4.5)
+    shape = shape.simplified()
+    g.save()
+    g.setClipPath(shape)
     g.setPen(Qt.PenStyle.NoPen)
-    for i, c in enumerate(cols):
+    for i, c in enumerate(_BANDS):
         g.setBrush(QBrush(QColor(c)))
-        g.drawRect(QRectF(5, 8 + i * 3.4, 22, 3.4))
+        g.drawRect(QRectF(2 + i * 5.6, 2, 5.7, 28))
+    g.restore()
     g.setPen(_pen(_LINE, 1.4))
     g.setBrush(Qt.BrushStyle.NoBrush)
-    g.drawRect(QRectF(5, 8, 22, 17))
+    g.drawPath(shape)
 
 
 def _diagram(g: QPainter) -> None:
@@ -706,7 +738,8 @@ DRAWERS: dict[str, Callable[[QPainter], None]] = {
     "load": _load, "combo": _combo, "gravity": _gravity,
     "geometry": _geometry, "solve": _solve, "modal": _modal, "buckling": _buckling,
     "sweep": _sweep, "compare": _compare,
-    "deformed": _deformed, "contour": _contour, "diagram": _diagram,
+    "deformed": _deformed, "contour": _contour, "solid_contour": _solid_contour,
+    "diagram": _diagram,
     "envelope": _envelope, "report": _report,
     "undo": _undo, "redo": _redo, "timeline": _timeline,
     "pick_node": _pick_node, "pick_member": _pick_member,

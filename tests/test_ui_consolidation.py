@@ -72,11 +72,24 @@ def test_single_navigation_spine(qt_app):
 
 
 def test_next_step_marked_on_one_tab(qt_app):
-    """页签自己说明下一步在哪一页：空模型标建模，只标一个。"""
+    """页签自己说明下一步在哪一页：空模型标建模，只标一个。
+
+    当前页不再另加记号：原来下一步圆点与当前页下划线同为蓝色，当前页同时
+    带两种记号，求解后未选中的「结果」页也带圆点，用户把圆点读成"当前页"。
+    """
     w = MainWindow()
-    marked = [t for t, p in w.ribbon.pages.items()
-              if not w.ribbon.tabIcon(w.ribbon.indexOf(p)).isNull()]
-    assert marked == ["建模"]
+
+    def marked():
+        return [t for t, p in w.ribbon.pages.items()
+                if not w.ribbon.tabIcon(w.ribbon.indexOf(p)).isNull()]
+
+    w._show_ribbon_page("建模")
+    assert marked() == [], "已经在下一步所在页，不该再叠一个记号"
+    assert "下一步" in w.ribbon.tabToolTip(w.ribbon.indexOf(w.ribbon.pages["建模"]))
+    w._show_ribbon_page("视图")
+    assert marked() == ["建模"]
+    w._show_ribbon_page("建模")
+    assert marked() == []
 
 
 def test_old_bc_form_removed_and_settlement_is_a_boundary_condition(qt_app, monkeypatch):
@@ -216,3 +229,130 @@ def test_clicking_a_member_before_materials_still_identifies_it(qt_app):
     w._on_picked("member", member)
     assert w.properties.title.text().startswith(f"杆件 {member}")
     assert "材料" in w.properties.hint.text()
+
+
+# ---- 窗口外框与侧边面板（2026-10-15 界面美化） ----
+
+def test_ribbon_group_captions_share_one_baseline(qt_app):
+    """功能区各组组名在同一条线上。
+
+    改前组名吃掉组内剩余高度并垂直居中：只有两行小按钮的「编辑」「查看」，
+    组名比带大按钮的「创建」高出一截（实测 1440×900 下差 27px）。
+    """
+    from PySide6.QtWidgets import QLabel
+
+    from desktop import theme
+    from desktop.ribbon import RibbonGroup
+    previous = qt_app.styleSheet()
+    qt_app.setStyleSheet(theme.STYLESHEET)
+    w = MainWindow()
+    try:
+        w.resize(1440, 900)
+        w.show()
+        qt_app.processEvents()
+        for title in ("建模", "结果"):
+            w._show_ribbon_page(title)
+            qt_app.processEvents()
+            bottoms = set()
+            for group in w.ribbon.pages[title].findChildren(RibbonGroup):
+                caption = next(label for label in group.findChildren(QLabel)
+                               if label.property("ribbon") == "caption")
+                bottoms.add(caption.mapTo(w.ribbon, caption.rect().bottomLeft()).y())
+            assert len(bottoms) == 1, f"{title} 页组名不齐：{sorted(bottoms)}"
+    finally:
+        w.close()
+        qt_app.setStyleSheet(previous)
+
+
+def test_empty_tree_branches_are_dimmed_and_every_branch_has_an_icon(qt_app):
+    """空分类淡化，各类带图标，分类有展开箭头。
+
+    改前十几个「（0）」分类与有内容的分类一样加粗黑字，又没有图标和展开
+    箭头（给 branch 写了背景，Qt 就不画原生箭头），有内容的几项被淹没。
+    """
+    from desktop import theme
+    from desktop.model_tree import BRANCH_ICONS, _branch_key, is_empty_branch
+    from tools.render_smoke import build_session
+    w = MainWindow(build_session())
+    tree = w.tree
+    seen_empty = seen_full = 0
+    for k in range(tree.topLevelItemCount()):
+        item = tree.topLevelItem(k)
+        assert _branch_key(item.text(0)) in BRANCH_ICONS, item.text(0)
+        assert not item.icon(0).isNull(), item.text(0)
+        if is_empty_branch(item):
+            seen_empty += 1
+            assert not item.font(0).bold(), item.text(0)
+            assert item.foreground(0).color().name() == theme.INK_DIM
+            assert "尚未定义" in item.toolTip(0)
+        else:
+            seen_full += 1
+            assert item.font(0).bold(), item.text(0)
+    assert seen_empty and seen_full
+    assert "branch:has-children:closed" in tree.styleSheet()
+    assert theme.TREE_CLOSED and theme.TREE_CLOSED in tree.styleSheet()
+    assert theme.TREE_OPEN in tree.styleSheet()
+
+
+def test_reference_controls_look_like_buttons_and_status_like_a_caption(qt_app):
+    """「引用对象」「加入所选」是带图标与描边的按钮，「未引用对象」是说明小字。
+
+    改前三段都是扁平灰字并排，用户分不出哪段能点。
+    """
+    w = MainWindow()
+    chat = w.chat
+    for button in (chat.btn_objects, chat.btn_attach):
+        assert button.property("chat") == "chip"
+        assert not button.icon().isNull()
+    assert chat.lbl_context.property("chat") == "caption"
+    assert chat.lbl_context.text() == "未引用对象"
+    from desktop import theme
+    assert 'QToolButton[chat="chip"]' in theme.STYLESHEET
+
+
+def test_offline_status_is_one_short_line_with_details_on_hover(qt_app, monkeypatch):
+    """对话面板顶部的连接说明只占一行，配置入口写在悬停提示里。
+
+    改前离线说明是两行正文，比模型下拉还高，挤占对话区。
+    """
+    import credentials
+    monkeypatch.setattr(credentials, "load_api_key", lambda *a, **k: None)
+    w = MainWindow()
+    w.chat._refresh_status()
+    assert w.chat._offline
+    assert len(w.chat.lbl_status.text()) <= 26
+    assert "连接设置" in w.chat.lbl_status.toolTip()
+
+
+def test_the_two_contour_modes_have_different_icons_and_say_so_on_hover(qt_app):
+    """梁内力云图与实体云图不再共用一块红蓝色块，悬停先说明是哪种显示模式。
+
+    改前两枚图标完全一样，窄屏下只剩图标时只能点一下才知道是哪种云图。
+    """
+    from PySide6.QtCore import QSize
+    w = MainWindow()
+    beam = w.quickbar.mode_buttons["云图"].defaultAction()
+    solid = w.quickbar.mode_buttons["实体云图"].defaultAction()
+    a = beam.icon().pixmap(QSize(32, 32)).toImage()
+    b = solid.icon().pixmap(QSize(32, 32)).toImage()
+    assert a != b
+    for label, button in w.quickbar.mode_buttons.items():
+        assert button.defaultAction().toolTip().startswith(f"显示模式：{label}"), label
+
+
+def test_replaced_suggestion_buttons_do_not_linger_under_the_new_ones(qt_app):
+    """换一组后续建议时，旧按钮立刻消失。
+
+    改前旧按钮只 deleteLater：移出布局后在真正删除前仍留在原位，1366×768
+    结果截图里被新一组「最大位移」压住，只露出半个字。
+    """
+    from PySide6.QtWidgets import QPushButton
+    from tools.render_smoke import build_session
+    w = MainWindow(build_session())
+    chat = w.chat
+    chat.refresh_suggestions()
+    before = list(chat.followups)
+    chat.followups = []            # 强制按新的一组重建
+    chat.refresh_suggestions()
+    visible = [b for b in chat.suggestions.findChildren(QPushButton) if not b.isHidden()]
+    assert before and len(visible) == len(chat.followups)

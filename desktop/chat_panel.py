@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QCompleter, QFrame,
                                QSizePolicy, QStackedWidget, QToolButton,
                                QVBoxLayout, QWidget)
 
-from . import glyphs
+from . import glyphs, icons
 from .chat_widgets import TranscriptView, diff_lines, entry_text, tool_label
 
 # 离线时用的脚本。**不是假装在跟大模型说话**——它照样把真工具跑一遍，
@@ -303,9 +303,11 @@ class ChatPanel(QWidget):
         self.chat_selector.currentIndexChanged.connect(self._switch_chat)
         self.chat_selector.hide()
 
+        # 连接说明只留一行小字，完整说明放在悬停提示里：原来两行正文压在
+        # 模型下拉下面，比下拉本身还高，挤占了对话区。
         self.lbl_status = QLabel()
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setProperty("panel", "hint")
+        self.lbl_status.setProperty("chat", "caption")
         layout.addWidget(self.lbl_status)
 
         self.view = TranscriptView(self)
@@ -343,14 +345,20 @@ class ChatPanel(QWidget):
         card.addWidget(self.entry)
         bar = QHBoxLayout()
         bar.setContentsMargins(6, 2, 6, 6)
-        bar.setSpacing(2)
-        self.btn_objects = _tool_button("引用对象", "从模型中选择节点或杆件，随本轮请求发送；也可以在输入框里键入 @")
+        bar.setSpacing(4)
+        # 引用入口是按钮：带图标和描边。原来与右侧"未引用对象"同为扁平灰字，
+        # 三段并排看不出哪段能点；状态改成小号说明字，和按钮区分开。
+        self.btn_objects = _tool_button("引用对象", "从模型中选择节点或杆件，随本轮请求发送；也可以在输入框里键入 @",
+                                        "pick_member")
         self.btn_objects.clicked.connect(self.pick_objects)
-        self.btn_attach = _tool_button("加入所选", "把视口中当前选中的节点或杆件加入引用")
+        self.btn_attach = _tool_button("加入所选", "把视口中当前选中的节点或杆件加入引用",
+                                       "pick_node")
         self.btn_attach.setEnabled(False)
         self.btn_attach.clicked.connect(self.attach_selection)
+        for button in (self.btn_objects, self.btn_attach):
+            button.setProperty("chat", "chip")
         self.lbl_context = QLabel()
-        self.lbl_context.setProperty("panel", "hint")
+        self.lbl_context.setProperty("chat", "caption")
         self.lbl_context.setMinimumWidth(0)
         self.lbl_context.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.btn_clear = _tool_button("清除", "清除本轮引用的对象")
@@ -395,20 +403,42 @@ class ChatPanel(QWidget):
     # --- 欢迎与状态 ---
 
     def _welcome(self) -> QWidget:
+        """空对话时的说明卡片：三种用法各一行，图标在左，底下一行说明数值来源。
+
+        原来是标题加两段长句，没有边界，铺在整块空白对话区顶端，读起来像
+        散落的说明文字。收成一张有边框的卡片，一眼看完就能开始输入。
+        """
+        from PySide6.QtWidgets import QGridLayout
         box = QFrame()
         box.setObjectName("chatWelcome")
         column = QVBoxLayout(box)
-        column.setContentsMargins(8, 12, 8, 12)
+        column.setContentsMargins(12, 8, 12, 8)
+        column.setSpacing(6)
         title = QLabel("结构建模助手")
         title.setProperty("chat", "welcomeTitle")
         column.addWidget(title)
-        for text in ("描述结构几何、材料、约束和荷载。每次工具调用都会列出参数与结果，"
-                     "计算结果始终来自确定性求解器。",
-                     "键入 @ 引用杆件或节点，键入 / 查看命令；把图纸图片拖进来可交给草图识别。"):
+        rows = QGridLayout()
+        rows.setContentsMargins(0, 0, 0, 0)
+        rows.setHorizontalSpacing(8)
+        rows.setVerticalSpacing(4)
+        for row, (name, text) in enumerate((
+                ("chat", "描述结构几何、材料、约束和荷载，助手调用建模工具完成"),
+                ("pick_member", "键入 @ 引用杆件或节点，键入 / 查看命令"),
+                ("sketch_ai", "把图纸图片拖进来，交给草图识别"))):
+            mark = QLabel()
+            mark.setPixmap(icons.icon(name).pixmap(
+                QSize(16, 16), QApplication.instance().devicePixelRatio()))
+            mark.setAlignment(Qt.AlignmentFlag.AlignTop)
+            rows.addWidget(mark, row, 0)
             label = QLabel(text)
             label.setWordWrap(True)
-            label.setProperty("panel", "hint")
-            column.addWidget(label)
+            rows.addWidget(label, row, 1)
+        rows.setColumnStretch(1, 1)
+        column.addLayout(rows)
+        note = QLabel("每次工具调用都会列出参数与结果，数值全部来自确定性求解器。")
+        note.setWordWrap(True)
+        note.setProperty("chat", "caption")
+        column.addWidget(note)
         return box
 
     def _show_welcome(self) -> None:
@@ -448,10 +478,11 @@ class ChatPanel(QWidget):
             key = profile.api_key if profile else ""
             description = f"{profile.label} · {profile.protocol}" if profile else "配置不存在"
         else:
-            description = "离线演示：意图为预设脚本，工具调用与求解真实执行。自由对话请在「连接设置」中配置模型。"
+            description = "离线演示：意图为预设脚本，工具调用与求解真实执行"
         self._offline = selected == "offline"
         suffix = f" · 密钥指纹 {credentials.fingerprint(key)}" if key else ""
         self.lbl_status.setText(redact(description + suffix, self._secrets()))
+        self.lbl_status.setToolTip("自由对话请在「连接设置」中配置模型。" if self._offline else "")
         if self._config_error:
             self.lbl_status.setText(self._config_error)
 
@@ -852,6 +883,9 @@ class ChatPanel(QWidget):
             while self.suggestion_row.count():
                 item = self.suggestion_row.takeAt(0)
                 if item.widget():
+                    # 先藏起来再延迟删除：移出布局的旧按钮在真正删除前仍留在原位，
+                    # 实拍里被新一组按钮压住，只露出半个字。
+                    item.widget().hide()
                     item.widget().deleteLater()
             for followup in items:
                 button = QPushButton(followup.label, self.suggestions)
@@ -1272,11 +1306,16 @@ class ChatPanel(QWidget):
         self._add_entry({"type": "note", "level": level, "text": text})
 
 
-def _tool_button(text: str, tip: str) -> QToolButton:
-    """面板内的低频操作：扁平文字按钮，悬停才显出边框。"""
+def _tool_button(text: str, tip: str, icon: str = "") -> QToolButton:
+    """面板内的低频操作：扁平文字按钮，悬停才显出边框；给了图标就图文并排。"""
     button = QToolButton()
     button.setText(text)
     button.setToolTip(tip)
     button.setProperty("chat", "tool")
-    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    if icon:
+        button.setIcon(icons.icon(icon))
+        button.setIconSize(QSize(16, 16))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    else:
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     return button

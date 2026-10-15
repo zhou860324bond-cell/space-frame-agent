@@ -16,13 +16,14 @@ src/features.py）：单击在视口里高亮它的区域，右键是管理器�
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem
 
-from . import theme
+from . import icons, theme
 
 # 双击某类节点要打开什么，由主窗口接住这个动作名再决定开哪个对话框
 ACTION = Qt.ItemDataRole.UserRole + 1
@@ -33,6 +34,22 @@ def _branch_key(text: str) -> str:
     """顶层分支的身份。标题里带着计数（"材料（2）"），数量一变就成了另一个
     名字，展开状态会莫名其妙地丢——所以按括号前的部分认。"""
     return text.split("（")[0].strip()
+
+
+#: 各分支的图标，与功能区里创建这类对象的命令同一枚，扫一眼就能对上号。
+BRANCH_ICONS = {
+    "材料": "material", "截面": "section", "截面指派": "assign_section",
+    "梁方向": "iso", "集合": "table", "装配": "portal", "几何": "geometry",
+    "分析步": "timeline", "约束": "hinge", "边界条件": "support", "荷载": "load",
+    "荷载组合": "combo", "结果": "contour", "建模过程": "undo",
+}
+CHILD_ICONS = {"nodes": "node", "members": "member"}
+_EMPTY_COUNT = re.compile(r"（0[^）]*）$")
+
+
+def is_empty_branch(item: QTreeWidgetItem) -> bool:
+    """计数为零、下面也没有条目的分类。"""
+    return item.childCount() == 0 and bool(_EMPTY_COUNT.search(item.text(0)))
 
 
 class ModelTree(QTreeWidget):
@@ -52,6 +69,7 @@ class ModelTree(QTreeWidget):
         self.setAlternatingRowColors(False)
         self.setRootIsDecorated(True)
         self.setUniformRowHeights(True)
+        self.setIconSize(QSize(16, 16))
         self.setStyleSheet(f"""
             QTreeWidget {{
                 background: {theme.PANEL_ALT};
@@ -70,6 +88,14 @@ class ModelTree(QTreeWidget):
             }}
             QTreeWidget::branch {{
                 background: {theme.PANEL_ALT};
+            }}
+            /* 给 branch 写了背景，Qt 就不再画原生展开箭头：分类能不能点开
+               全靠猜。用与下拉框同样笔画的箭头补回来。 */
+            QTreeWidget::branch:has-children:closed {{
+                image: url("{theme.TREE_CLOSED}");
+            }}
+            QTreeWidget::branch:has-children:open {{
+                image: url("{theme.TREE_OPEN}");
             }}
         """)
         self.itemDoubleClicked.connect(self._on_double_click)
@@ -365,10 +391,35 @@ class ModelTree(QTreeWidget):
         if steps:
             self._child(self, f"建模过程（{steps} 步）", "history")
 
+        # 空分类淡化、不加粗：原来十几个"（0）"与有内容的分类同样醒目，
+        # 真正有东西的几项被淹没。空分类仍保留在原位，右键照样能创建。
         for k in range(self.topLevelItemCount()):
             item = self.topLevelItem(k)
+            key = _branch_key(item.text(0))
+            empty = is_empty_branch(item)
             font = item.font(0)
-            font.setBold(True)
+            font.setBold(not empty)
             item.setFont(0, font)
-            item.setForeground(0, QColor(theme.INK))
-            item.setExpanded(_branch_key(item.text(0)) not in collapsed)
+            item.setForeground(0, QColor(theme.INK_DIM if empty else theme.INK))
+            self._set_icon(item, BRANCH_ICONS.get(key), dim=empty)
+            if empty:
+                tip = item.toolTip(0)
+                how = tip.split("：", 1)[-1] if tip != item.text(0) else "在功能区对应页创建"
+                item.setToolTip(0, f"{key}：尚未定义；{how}")
+            for c in range(item.childCount()):
+                child = item.child(c)
+                self._set_icon(child, CHILD_ICONS.get(child.data(0, ACTION)))
+            item.setExpanded(key not in collapsed)
+
+    @staticmethod
+    def _set_icon(item: QTreeWidgetItem, name: str | None, dim: bool = False) -> None:
+        if not name:
+            return
+        icon = icons.icon(name)
+        if dim:
+            # 只取灰色那一套像素当作常规态，空分类的图标也一起淡下去
+            grey = QIcon()
+            for scale in (1.0, 1.25, 1.5, 2.0, 3.0):
+                grey.addPixmap(icon.pixmap(QSize(16, 16), scale, QIcon.Mode.Disabled))
+            icon = grey
+        item.setIcon(0, icon)

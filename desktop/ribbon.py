@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QGridLayout,
 from . import icons
 
 LARGE = QSize(30, 30)
-SMALL = QSize(20, 20)
+SMALL = QSize(18, 18)
 
 
 def _button(action, large: bool) -> QToolButton:
@@ -62,11 +62,15 @@ class RibbonGroup(QWidget):
         self.body.setContentsMargins(0, 0, 0, 0)
         self.body.setHorizontalSpacing(2)
         self.body.setVerticalSpacing(1)
-        outer.addLayout(self.body, 1)
+        outer.addLayout(self.body)
+        # 按钮区靠上、组名贴底。原来组名吃掉剩余高度并垂直居中：只有两行小按钮
+        # 的组，组名比带大按钮的「创建」高出一截，一排组名参差不齐。
+        outer.addStretch(1)
 
         caption = QLabel(title)
         caption.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         caption.setProperty("ribbon", "caption")
+        caption.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         outer.addWidget(caption)
 
         self._col = 0
@@ -133,6 +137,8 @@ class Ribbon(QTabWidget):
         self.setMaximumHeight(self.EXPANDED_HEIGHT)
         self.pages: dict[str, RibbonPage] = {}
         self._collapsed = False
+        # 页签上的"下一步"箭头不能比文字高：否则箭头出现、消失时整条功能区跟着跳几像素
+        self.tabBar().setIconSize(QSize(12, 12))
         self.currentChanged.connect(self._sync_pages)
 
         # 顶部原来是四层：页签 + 功能区 + 快捷栏 + 流程条，一共吃掉约 260px，

@@ -66,8 +66,13 @@ class WindowCommandsMixin:
                              "模态": self.actions_by_name["modal"]}
         group = QActionGroup(self)
         group.setExclusive(True)
-        for act in self.mode_actions.values():
+        for label, act in self.mode_actions.items():
             group.addAction(act)
+            # 窄屏下未选中的模式只剩图标，提示第一行要说清"这是显示模式、叫什么"，
+            # 否则两枚着色图标只能靠点一下才知道是哪种云图。
+            cmd = commands.BY_NAME[act.objectName()]
+            shortcut = f"（{cmd.shortcut}）" if cmd.shortcut else ""
+            act.setToolTip(f"显示模式：{label}{shortcut}\n{cmd.tip}")
         self.mode_actions[self.mode].setChecked(True)
 
         self.pick_actions = {"node": self.actions_by_name["pick_node"],

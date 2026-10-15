@@ -219,7 +219,7 @@ def banded(cmap, levels: int = CONTOUR_LEVELS):
                 min(CONTOUR_LEVELS_RANGE[1], int(levels))))
     return ListedColormap(cmap(np.linspace(0.0, 1.0, n)), name="banded")
 
-def _chevron_file(colour: str, name: str) -> str:
+def _chevron_file(colour: str, name: str, direction: str = "down") -> str:
     """把下拉箭头写成 SVG 缓存文件，返回样式表可用的路径。
 
     样式表只要给 ``QComboBox::drop-down`` 写了规则，Qt 就不再画原生箭头，
@@ -228,8 +228,16 @@ def _chevron_file(colour: str, name: str) -> str:
     返回空串，退回没有箭头的外观，不影响启动。
     """
     import tempfile
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6">'
-           f'<path d="M1 1l4 4 4-4" fill="none" stroke="{colour}" stroke-width="1.6" '
+    # 模型树的两枚画在方形画布上：Qt 会把分支图片放大到整格高度，
+    # 窄长的画布会被拉成一枚粗大的箭头。
+    width, height, stroke = {
+        "down": ("10", "6", "M1 1l4 4 4-4"),
+        "tree-closed": ("12", "12", "M4.5 2.5l3.5 3.5-3.5 3.5"),
+        "tree-open": ("12", "12", "M2.5 4.5l3.5 3.5 3.5-3.5"),
+    }[direction]
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+           f'viewBox="0 0 {width} {height}">'
+           f'<path d="{stroke}" fill="none" stroke="{colour}" stroke-width="1.6" '
            f'stroke-linecap="round" stroke-linejoin="round"/></svg>')
     try:
         folder = Path(tempfile.gettempdir()) / "framelab-ui"
@@ -244,6 +252,8 @@ def _chevron_file(colour: str, name: str) -> str:
 
 _CHEVRON = _chevron_file(INK_MUTED, "chevron-down")
 _CHEVRON_DISABLED = _chevron_file(BORDER_LIGHT, "chevron-down-disabled")
+TREE_CLOSED = _chevron_file(INK_MUTED, "tree-closed", "tree-closed")
+TREE_OPEN = _chevron_file(INK_MUTED, "tree-open", "tree-open")
 
 # 小圆角只用于区分可交互表面，不做消费产品式大胶囊。
 RADIUS_SM = "4px"
@@ -784,7 +794,7 @@ QLabel[ribbon="caption"] {{
     color: {INK_DIM};
     font-size: {FONT_CAPTION};
     font-weight: 600;
-    padding-top: 4px;
+    padding-top: 0px;
 }}
 QFrame[ribbon="sep"] {{
     color: {BORDER};
@@ -918,6 +928,12 @@ QToolButton[chat="tool"] {{
 }}
 QToolButton[chat="tool"]:hover {{ color: {ACCENT_DIM}; background: {PANEL_HOVER}; border-color: {BORDER}; }}
 QToolButton[chat="tool"]:disabled {{ color: {INK_DIM}; }}
+QToolButton[chat="chip"] {{
+    color: {INK}; background: {PANEL}; border: 1px solid {BORDER};
+    border-radius: {RADIUS_SM}; padding: 2px 6px;
+}}
+QToolButton[chat="chip"]:hover {{ color: {ACCENT_DIM}; background: {SELECTION}; border-color: {ACCENT}; }}
+QToolButton[chat="chip"]:disabled {{ color: {INK_DIM}; background: transparent; border-color: {BORDER}; }}
 QFrame#chatComposer {{
     background: {PANEL_ALT}; border: 1px solid {BORDER_LIGHT}; border-radius: {RADIUS_MD};
 }}
@@ -928,7 +944,10 @@ QScrollArea#assistantConversation {{
     background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: {RADIUS_MD};
 }}
 QWidget#transcriptInner {{ background: {PANEL_ALT}; }}
-QFrame#chatWelcome, QFrame#chatWelcome QLabel {{ background: transparent; }}
+QFrame#chatWelcome {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_MD};
+}}
+QFrame#chatWelcome QLabel {{ background: transparent; border: none; }}
 QLabel[chat="welcomeTitle"] {{ color: {ACCENT_DIM}; font-size: {FONT_TITLE}; font-weight: 600; }}
 QFrame[entry="user"] {{
     background: {SELECTION}; border: 1px solid {SELECTION_BORDER}; border-radius: {RADIUS_LG};
