@@ -84,6 +84,8 @@ DIMENSIONS = {
     "features.bcs.spring": "support_spring",
     # 后续步的修改：与 bcs 本身同一批字段（fix 无量纲、spring 是支承刚度），见 test_bc_modification_springs_convert
     "features.bcs.modifications": "support_entry", "features.bcs.deactivated": None,
+    "features.bcs.displacement": "settlement", "features.bcs.case": None,
+    "settlements.owner": None,
     "features.loads.case": None, "features.loads.type": None,
     "features.loads.force": "force", "features.loads.moment": "moment",
     "features.loads.w": "line_load", "features.loads.g": "acceleration",
@@ -273,6 +275,7 @@ def _kitchen_sink_body():
         "features": {
             "bcs": [{"name": "BC-端部", "region": {"nodes": [2]}, "fix": [0, 1, 0, 0, 0, 0],
                      "spring": [0.0, 0.0, 0.0, 3e7, 0.0, 0.0],
+                     "displacement": [0.0, 0.004, 0.0, 0.0, 0.0, 0.0], "case": "default",
                      "modifications": {"S2": {"fix": [0, 1, 0, 0, 0, 0],
                                               "spring": [0.0, 0.0, 0.0, 6e7, 0.0, 0.0]}}}],
             "loads": [

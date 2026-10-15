@@ -221,7 +221,12 @@ TOOLS: list[dict[str, Any]] = [
                                           "enum": ["ENCASTRE", "PINNED", "XSYMM", "YSYMM", "ZSYMM"]},
                                "fix": {"type": "array", "items": {"type": "integer"}},
                                "spring": {"type": "array", "items": {"type": "number"}},
-                               "step": {"type": "string"}},
+                               "step": {"type": "string"},
+                               "displacement": {"type": "array", "items": {"type": "number"},
+                                                "description": "给定位移（支座沉降等），六个数，只写在 fix=1 的方向；"
+                                                               "平动为长度、转动为弧度"},
+                               "case": {"type": "string",
+                                        "description": "给定位移随哪个荷载工况施加（给 displacement 时必填）"}},
                            "additionalProperties": False},
         },
     },

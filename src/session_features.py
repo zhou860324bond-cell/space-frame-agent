@@ -124,7 +124,9 @@ class FeaturesMixin:
     def create_boundary_condition(self, name: str, region, fix: list[int] | None = None,
                                   preset: str | None = None,
                                   spring: list[float] | None = None,
-                                  step: str = _features.INITIAL) -> ToolResult:
+                                  step: str = _features.INITIAL,
+                                  displacement: list[float] | None = None,
+                                  case: str | None = None) -> ToolResult:
         """边界条件（Load 模块 Create Boundary Condition）。
 
         ``preset`` 是 Abaqus 的 ENCASTRE / PINNED / XSYMM / YSYMM / ZSYMM；
@@ -155,6 +157,17 @@ class FeaturesMixin:
                 return ToolResult(False, {"error": "spring 必须是六个非负有限数"})
             if any(values):
                 feature["spring"] = values
+        if displacement is not None:
+            values = [float(v) for v in displacement]
+            if len(values) != 6 or not all(np.isfinite(v) for v in values):
+                return ToolResult(False, {"error": "displacement 必须是六个有限数（平动为长度，转动为弧度）"})
+            if any(values):
+                cases = [c["name"] for c in self.model.get("load_cases") or []] or ["default"]
+                if case is None:
+                    return ToolResult(False, {"error": "给定位移要指明随哪个荷载工况施加（case）",
+                                              "cases": cases})
+                feature["displacement"] = values
+                feature["case"] = str(case)
         return self._create_feature("bcs", feature)
 
     @_records

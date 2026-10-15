@@ -112,6 +112,8 @@ class SolvingMixin:
             for eff in effective:
                 checkpoint()
                 self.model = step_module.payload_for(eff, original)
+                if eff.loads:
+                    self.model = step_module.active_cases_only(self.model, set(eff.loads))
                 if eff.analysis in step_module.PERTURBATION:
                     summary.append(self._perturbation_step(eff, original))
                     if summary[-1].get("error"):

@@ -158,6 +158,9 @@ def _convert_features(features: dict, f: dict[str, float]) -> dict:
     for bc in out.get("bcs") or []:
         if "spring" in bc:
             bc["spring"] = springs(bc["spring"])
+        if "displacement" in bc:               # 平动是长度，转动是弧度不换
+            bc["displacement"] = [v * f["length"] if k < 3 else v
+                                  for k, v in enumerate(bc["displacement"])]
         if bc.get("modifications"):
             bc["modifications"] = {
                 step: {**mod, **({"spring": springs(mod["spring"])} if "spring" in mod else {})}

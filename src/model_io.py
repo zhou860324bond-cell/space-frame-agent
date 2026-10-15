@@ -97,6 +97,8 @@ _SETTLEMENTS = {
     "items": {
         "type": "object", "required": ["node", "d"], "additionalProperties": False,
         "properties": {"name": {"type": "string", "minLength": 1},
+                       # 派生自哪个带给定位移的边界条件对象（features.bcs）
+                       "owner": {"type": "string", "minLength": 1},
                        "node": {"type": "integer"}, "d": _LOAD6},
     },
 }

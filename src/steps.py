@@ -263,6 +263,51 @@ def payload_for(effective: EffectiveStep,
             for entry in (step.get("supports") or {}).values():
                 entry.pop("owners", None)
             step.pop("deactivation_owners", None)
+        # 边界条件在这一步被修改或失活后不再固定的方向，它带的给定位移也不再施加
+        # （Abaqus 失活位移边界条件即释放该自由度）。用户直接写的给定位移不动。
+        blocks = [out] + list(out.get("load_cases") or [])
+        for block in blocks:
+            kept = []
+            for entry in block.get("settlements") or []:
+                if entry.pop("owner", None) is not None:
+                    fix = effective.supports.get(int(entry["node"]), {}).get("fix") or [0] * 6
+                    entry["d"] = [d if f else 0.0 for d, f in zip(entry["d"], fix, strict=True)]
+                    if not any(entry["d"]):
+                        continue
+                kept.append(entry)
+            if kept:
+                block["settlements"] = kept
+            else:
+                block.pop("settlements", None)
+    return out
+
+
+_CASE_ACTIONS = ("nodal_loads", "member_loads", "member_spans", "settlements", "member_strains")
+
+
+def active_cases_only(payload: dict[str, Any], active: set[str]) -> dict[str, Any]:
+    """分析步快照只留本步生效工况的作用；没生效的工况保留名字、清空内容。
+
+    求解时每个工况都会算一遍并过静默失败检测。没生效的工况不属于这一步，却会
+    触发这一步的检测——例如后面才拆支座的节点上挂着的荷载，在支座还在的步里
+    全由反力承担，被判成「内力全零、结果不可用」，整步失败。
+
+    荷载对象一并冻结成直接条目（与 payload_for 冻结边界条件同理）。
+    """
+    out = deepcopy(payload)
+    features = out.get("features") or {}
+    if features.get("loads"):
+        del features["loads"]
+        if not features:
+            out.pop("features", None)
+    blocks = [("default", out)] + [(str(c.get("name")), c) for c in out.get("load_cases") or []]
+    for name, block in blocks:
+        for key in _CASE_ACTIONS:
+            if name not in active:
+                block.pop(key, None)
+            else:
+                for entry in block.get(key) or []:
+                    entry.pop("owner", None)
     return out
 
 
@@ -305,4 +350,4 @@ def to_payload(steps: list[Step]) -> list[dict[str, Any]]:
 
 
 __all__ = ["INITIAL_STEP", "PERTURBATION", "STEP_ANALYSES", "EffectiveStep", "Step",
-           "from_payload", "payload_for", "resolve", "to_payload"]
+           "active_cases_only", "from_payload", "payload_for", "resolve", "to_payload"]

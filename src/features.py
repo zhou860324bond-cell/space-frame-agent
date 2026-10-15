@@ -80,6 +80,12 @@ SCHEMA = {
                         "items": {"type": "integer", "enum": [0, 1]}},
                 "spring": {"type": "array", "minItems": 6, "maxItems": 6,
                            "items": {"type": "number", "minimum": 0}},
+                # 给定位移（Abaqus 的 Displacement/Rotation 边界条件给非零值，如支座沉降）：
+                # 只写在 fix=1 的方向上；平动是长度，转动是弧度。内核的给定位移挂在
+                # 荷载工况上，由分析步按工况与幅值激活，所以要指明随哪个工况施加。
+                "displacement": {"type": "array", "minItems": 6, "maxItems": 6,
+                                 "items": {"type": "number"}},
+                "case": {"type": "string", "minLength": 1},
                 # Abaqus 管理器里在后面某一步 Modify：步名 → 那一步起的约束与弹簧
                 "modifications": {"type": "object", "additionalProperties": {
                     "type": "object", "additionalProperties": False, "required": ["fix"],
@@ -453,12 +459,32 @@ def _case_blocks(payload) -> dict[str, dict[str, Any]]:
     return blocks
 
 
+def _regenerate_settlements(payload, problems):
+    """带给定位移的边界条件 → 所在工况的 settlements 条目（带 owner）。"""
+    for feature in _active("bcs", payload):
+        if not any(feature.get("displacement") or []):
+            continue
+        block = _case_blocks(payload).get(feature.get("case") or "")
+        if block is None:
+            problems.append(f"边界条件「{feature['name']}」的给定位移所在工况「{feature.get('case')}」不存在")
+            continue
+        ids, problem = region_ids(payload, feature["region"], "nodes")
+        if problem:
+            continue                                   # _regenerate_bcs 已报
+        block.setdefault("settlements", []).extend(
+            {"node": nid, "d": [float(v) for v in feature["displacement"]],
+             "name": feature["name"], "owner": feature["name"]} for nid in ids)
+
+
 def _regenerate_loads(payload, problems):
     blocks = _case_blocks(payload)
     for block in blocks.values():
-        for key in ("nodal_loads", "member_loads", "member_spans"):
+        for key in ("nodal_loads", "member_loads", "member_spans", "settlements"):
             if block.get(key):
                 block[key] = [e for e in block[key] if not e.get("owner")]
+                if not block[key] and key == "settlements":
+                    del block[key]
+    _regenerate_settlements(payload, problems)
     members = {int(m["id"]): m for m in payload.get("members") or []}
     sections = {s["name"]: s for s in payload.get("sections") or []}
     density = {m["name"]: float(m.get("density") or 0.0)
@@ -516,6 +542,17 @@ def check(payload: dict[str, Any]) -> list[str]:
                                                   strict=True)) if f and s]
         if clash:
             errors.append(f"边界条件「{feature['name']}」的方向 {clash} 既固定又给了弹簧，只能取一个")
+        if any(feature.get("displacement") or []):
+            loose = [k for k, (f, d) in enumerate(zip(feature["fix"], feature["displacement"],
+                                                      strict=True)) if d and not f]
+            if loose:
+                errors.append(f"边界条件「{feature['name']}」在没有固定的方向 {loose} 上给了位移；"
+                              "给定位移只能写在 fix=1 的方向上")
+            if not feature.get("case"):
+                errors.append(f"边界条件「{feature['name']}」给了位移，要指明随哪个荷载工况施加（case）")
+            if (feature.get("step") or INITIAL) != INITIAL:
+                errors.append(f"边界条件「{feature['name']}」带给定位移，要在 Initial 创建；"
+                              "何时施加由它所在工况在哪个分析步激活决定")
     direct_names = {case: {e.get("name") for key in ("nodal_loads", "member_loads", "member_spans")
                            for e in block.get(key) or [] if e.get("name")}
                     for case, block in _case_blocks(payload).items()}

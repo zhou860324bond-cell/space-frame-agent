@@ -476,3 +476,69 @@ def test_every_step_result_is_kept_and_inspect_step_switches_without_resolving()
     assert s.create_load("追加", "DL", "concentrated_force", [4], force=[0, 0, -1e3]).ok
     stale = s.inspect_step("静力")
     assert not stale.ok and "作废" in stale.payload["error"]
+
+
+def _settled_beam() -> Session:
+    """两端固接梁 L=6，右端是带给定位移的边界条件：随工况「沉降」下沉 δ。"""
+    s = Session()
+    assert s.add_nodes([[0, 0, 0], [3, 0, 0], [6, 0, 0]]).ok
+    assert s.define_materials_and_sections(
+        [{"name": "S", "E": 2e11, "nu": 0.3}],
+        [{"name": "R", "A": 1e-2, "Iy": 2e-5, "Iz": 8e-5, "J": 1e-5}]).ok
+    assert s.add_members([[1, 2], [2, 3]]).ok
+    assert s.create_section_assignment("SA", [1, 2], "R", "S").ok
+    assert s.create_boundary_condition("BC-左", [1], preset="ENCASTRE").ok
+    assert s.set_load_cases([{"name": "沉降"}]).ok
+    got = s.create_boundary_condition("BC-右", [3], preset="ENCASTRE",
+                                      displacement=[0, 0, -0.01, 0, 0, 0], case="沉降")
+    assert got.ok, got.payload
+    return s
+
+
+def test_prescribed_displacement_bc_matches_the_settlement_closed_form():
+    """支座沉降作为边界条件对象（Abaqus 的 Displacement 给非零值）：固端弯矩 6EIδ/L²。
+
+    原来沉降只能逐节点写直接条目，删了旧边界表单后界面只能临时挂在「创建载荷」下；
+    语义上它是边界条件，随分析步与工况施加。
+    """
+    s = _settled_beam()
+    entry = s.model["load_cases"][0]["settlements"][0]
+    assert entry["owner"] == "BC-右" and entry["node"] == 3
+    assert s.solve_model().ok
+    u = s.solution.cases["沉降"].U
+    k3 = s.frame.index_of()[3]
+    assert u[6 * k3 + 2] == pytest.approx(-0.01, abs=1e-15)
+    E, Iz, L, d = 2e11, 8e-5, 6.0, 0.01
+    k1 = s.frame.index_of()[1]
+    r = s.solution.cases["沉降"].R
+    assert abs(r[6 * k1 + 2]) == pytest.approx(12 * E * Iz * d / L**3, rel=1e-9)
+    assert abs(r[6 * k1 + 4]) == pytest.approx(6 * E * Iz * d / L**2, rel=1e-9)
+    bad = s.create_boundary_condition("错", [2], fix=[0, 0, 1, 0, 0, 0],
+                                      displacement=[0.01, 0, 0, 0, 0, 0], case="沉降")
+    assert not bad.ok, "给定位移只能写在固定的方向上"
+
+
+def test_deactivating_a_settled_bc_releases_its_displacement_in_that_step():
+    """后一步失活带给定位移的边界条件：那一步该节点自由，给定位移也随之不施加。
+
+    同时防一个分析步的真实问题：S1 里「端部」工况没生效，它的力却挂在 S1 仍有支座的
+    节点 3 上——以前每步都把全部工况算一遍并过静默检测，这个没生效的工况被判成
+    「内力全零」，整步 S1 失败。
+    """
+    s = _settled_beam()
+    assert s.add_load_case("端部").ok
+    P = -1e3
+    assert s.create_load("P", "端部", "concentrated_force", [3], force=[0, 0, P]).ok
+    assert s.add_step("S1", loads={"沉降": "RAMP"}).ok
+    assert s.add_step("S2", loads={"端部": "RAMP"}).ok
+    assert s.deactivate_boundary_condition("BC-右", "S2").ok
+    got = s.solve_steps(inspect="S1")
+    assert got.ok, got.payload
+    k3 = s.frame.index_of()[3]
+    assert s.solution["S1"].U[6 * k3 + 2] == pytest.approx(-0.01, abs=1e-15)
+    assert s.inspect_step("S2").ok
+    E, Iz, L = 2e11, 8e-5, 6.0
+    assert s.solution["S2"].U[6 * k3 + 2] == pytest.approx(P * L**3 / (3 * E * Iz), rel=1e-9),         "右端失活后是悬臂，沉降不再施加"
+    mm = Session(model=convert_model(deepcopy(s.model), "N-mm-MPa"))
+    bc = next(f for f in mm.model["features"]["bcs"] if f["name"] == "BC-右")
+    assert bc["displacement"][2] == pytest.approx(-10.0)
