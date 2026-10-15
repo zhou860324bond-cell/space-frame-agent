@@ -66,7 +66,7 @@ class WindowResultsMixin:
             ["结果量", "值", "单位", "约定"], rows,
             [("member", physical)] * len(rows))
         self.viewport.set_result_marker(
-            data["point"], f"PROBE M{physical} x={data['x']:.3g}")
+            data["point"], f"探针 · 杆件 {physical} · x = {data['x']:.3g}")
 
     def locate_current_extreme(self) -> None:
         """定位当前梁内力分量的全结构绝对极值。"""
@@ -78,9 +78,11 @@ class WindowResultsMixin:
             return
         extreme = {**extreme, "member": self.viewport._owner(extreme["member"])}
         self.locate("member", extreme["member"])
+        from .viewport import peak_tag
         self.viewport.set_result_marker(
             extreme["point"],
-            f"MAX |{self.component}|={extreme['value']:+.3g} {extreme['unit']}")
+            peak_tag(f"|{self.component}|max = ", extreme["value"], extreme["unit"],
+                     extreme["member"], extreme["x"]))
         self.results.show_rows(
             f"{self.component} 全结构绝对极值，工况 {extreme['case']}",
             ["杆件", "距 i 端 x", "值", "单位"],

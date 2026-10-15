@@ -37,6 +37,34 @@ SELECTION_HOVER = "#c9e1f4"
 WARN = "#a76512"
 SUCCESS = "#237a4b"
 ERROR = "#b53a3a"
+# 状态色的浅底与描边：提示框、结果卡片、失败的工具卡片共用，不再各写一套近似色。
+ON_ACCENT = "#ffffff"
+SELECTION_BORDER = "#b9d4ea"
+ERROR_SOFT = "#f7e3e3"
+ERROR_SOFT_HOVER = "#f0d5d5"
+ERROR_BORDER = "#d9a2a2"
+WARN_SOFT = "#fbf3e6"
+WARN_BORDER = "#e3c493"
+SUCCESS_SOFT = "#dfeee6"
+SUCCESS_SOFT_HOVER = "#d0e6da"
+SUCCESS_BORDER = "#a9cfba"
+
+# 字号阶梯（磅）。全界面只用这五档：档数一多，相邻两档差半磅，用户看到的是
+# "这里怎么比那里小一点"，而不是层级。tests/test_desktop_style.py 守住这条。
+FONT_CAPTION = "8pt"     # 单位、说明、次要提示
+FONT_BODY = "9pt"        # 正文、表格、输入框
+FONT_STRONG = "10pt"     # 分组标题、对话框标题、结果数值
+FONT_TITLE = "12pt"      # 面板标题
+FONT_DISPLAY = "15pt"    # 空模型引导这类整屏只出现一次的大标题
+FONT_SCALE = (8, 9, 10, 12, 15)
+
+# 间距阶梯（像素）。边距、留白和内边距只取这几档；1px 只用于细线对齐。
+SPACE_XS = 2
+SPACE_SM = 4
+SPACE_MD = 8
+SPACE_LG = 12
+SPACE_XL = 16
+SPACE_SCALE = (0, 1, 2, 4, 6, 8, 12, 16, 20, 24)
 
 VIEWPORT_BG = V.VIEWPORT_BG
 # 低饱和钢灰蓝用于未求解模型；高饱和蓝只留给变形和结果强调。
@@ -50,6 +78,21 @@ REFERENCE = V.VIEWPORT_REFERENCE
 # 消失的。视口和面板是两套底色，前景色必须各用各的。
 VIEWPORT_INK = V.VIEWPORT_INK
 VIEWPORT_INK_MUTED = V.VIEWPORT_INK_MUTED
+
+
+def viewport_card(light: bool) -> dict:
+    """视口浮层（结果摘要、色标、图例、坐标指示器）的底色与文字色。
+
+    三类浮层原来各写一套近似色，浅色背景下只有结果摘要跟着换了，色标
+    还是深底白字。集中到这里，切背景时所有浮层一起换。
+    """
+    if light:
+        return {"surface": (248, 250, 253, 236), "ink": "#253444",
+                "muted": "#526b83", "edge": (182, 196, 210, 255)}
+    return {"surface": (27, 37, 49, 228), "ink": "#edf3fa",
+            "muted": "#b7c6d6", "edge": (63, 78, 96, 255)}
+
+
 SUPPORT = V.VIEWPORT_INK_MUTED
 # 荷载分两族上色：力（橙）与 力矩/给定位移（青）。
 # 四类各给一色跑不过 validate_palette.js 的 all-pairs 档——文档写明超过三槽
@@ -212,7 +255,7 @@ STYLESHEET = f"""
 QMainWindow, QWidget {{
     background: {PANEL};
     color: {INK};
-    font-size: 9pt;
+    font-size: {FONT_BODY};
     font-family: "Microsoft YaHei UI", "DengXian", "Source Han Sans SC", sans-serif;
 }}
 QMenuBar {{
@@ -221,7 +264,7 @@ QMenuBar {{
     padding: 2px 8px;
 }}
 QMenuBar::item {{
-    padding: 5px 12px;
+    padding: 6px 12px;
     background: transparent;
 }}
 QMenuBar::item:selected {{
@@ -234,7 +277,7 @@ QMenu {{
     padding: 2px;
 }}
 QMenu::item {{
-    padding: 5px 24px 5px 18px;
+    padding: 6px 24px 6px 16px;
 }}
 QMenu::item:selected {{
     background: {SELECTION};
@@ -242,7 +285,7 @@ QMenu::item:selected {{
 QMenu::separator {{
     height: 1px;
     background: {BORDER};
-    margin: 3px 6px;
+    margin: 4px 6px;
 }}
 
 QToolBar {{
@@ -254,7 +297,7 @@ QToolBar {{
 }}
 QToolButton {{
     color: {INK};
-    padding: 3px 8px;
+    padding: 4px 8px;
     border: 1px solid transparent;
     border-radius: {RADIUS_SM};
 }}
@@ -272,7 +315,7 @@ QToolButton:disabled {{
 QToolButton#mainMenuButton {{
     min-width: 72px;
     margin: 2px 6px 2px 4px;
-    padding: 4px 9px;
+    padding: 4px 8px;
     background: {PANEL_RAISED};
     border-color: {BORDER};
     font-weight: 600;
@@ -289,9 +332,9 @@ QDockWidget {{
 }}
 QDockWidget::title {{
     background: {PANEL_RAISED};
-    padding: 7px 10px;
+    padding: 8px 12px;
     border-bottom: 1px solid {BORDER};
-    font-size: 9.5pt;
+    font-size: {FONT_STRONG};
     color: {INK};
 }}
 QDockWidget::close-button, QDockWidget::float-button {{
@@ -312,7 +355,7 @@ QTreeWidget, QTableView, QListWidget, QPlainTextEdit, QTextEdit {{
     outline: none;
 }}
 QTreeWidget::item, QTableView::item {{
-    padding: 4px 5px;
+    padding: 4px 6px;
 }}
 QTreeWidget::item:hover, QTableView::item:hover {{
     background: {PANEL_HOVER};
@@ -327,14 +370,14 @@ QHeaderView::section {{
     border-right: 1px solid {BORDER};
     border-bottom: 1px solid {BORDER};
     padding: 4px 6px;
-    font-size: 9pt;
+    font-size: {FONT_BODY};
 }}
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background: {PANEL_ALT};
     border: 1px solid {BORDER};
     border-radius: {RADIUS_SM};
-    padding: 4px 7px;
+    padding: 4px 8px;
     color: {INK};
     selection-background-color: {SELECTION};
 }}
@@ -379,7 +422,7 @@ QPushButton {{
     background: {PANEL_RAISED};
     border: 1px solid {BORDER_LIGHT};
     border-radius: {RADIUS_SM};
-    padding: 6px 14px;
+    padding: 6px 12px;
     color: {INK};
 }}
 QPushButton:hover {{
@@ -393,12 +436,12 @@ QPushButton:pressed {{
 QPushButton:default {{
     background: {ACCENT_DIM};
     border-color: {ACCENT};
-    color: #ffffff;
+    color: {ON_ACCENT};
 }}
 QPushButton[role="primary"], QToolButton[role="primary"] {{
     background: {ACCENT_DIM};
     border-color: {ACCENT};
-    color: #ffffff;
+    color: {ON_ACCENT};
     font-weight: 600;
 }}
 QPushButton[role="primary"]:hover, QToolButton[role="primary"]:hover {{
@@ -409,11 +452,11 @@ QPushButton:default:hover {{
 }}
 QPushButton[role="danger"] {{
     background: {PANEL_ALT};
-    border-color: #d9a2a2;
+    border-color: {ERROR_BORDER};
     color: {ERROR};
 }}
 QPushButton[role="danger"]:hover {{
-    background: #f7e3e3;
+    background: {ERROR_SOFT};
     border-color: {ERROR};
 }}
 QPushButton:disabled {{
@@ -429,7 +472,7 @@ QTabWidget::pane {{
 QTabBar::tab {{
     background: {PANEL};
     color: {INK_MUTED};
-    padding: 5px 12px;
+    padding: 6px 12px;
     border: 1px solid transparent;
     border-bottom: none;
     margin-right: 1px;
@@ -448,7 +491,7 @@ QStatusBar {{
     background: {PANEL};
     border-top: 1px solid {BORDER};
     color: {INK_MUTED};
-    font-size: 9pt;
+    font-size: {FONT_BODY};
     padding: 2px 6px;
 }}
 QStatusBar::item {{
@@ -474,20 +517,20 @@ QWidget#workflowBar {{
 }}
 QLabel[workflow="caption"] {{
     color: {INK_MUTED};
-    font-size: 9pt;
+    font-size: {FONT_BODY};
     font-weight: 600;
     padding-right: 6px;
 }}
 QLabel[workflow="guidance"] {{
     color: {INK_MUTED};
-    padding-left: 10px;
+    padding-left: 12px;
 }}
 /* 流程条不是五个并排的按钮，是一条**有方向的路**：
    已完成→绿、当前→实心蓝（全条唯一的实心块，一眼定位）、被阻断→红、
    未开始→灰。中间由 workflow_bar 插入 › 连接符，读起来才是流程不是工具栏。 */
 QPushButton[workflowStage] {{
     min-width: 66px;
-    padding: 4px 10px;
+    padding: 4px 12px;
     background: transparent;
     border: 1px solid transparent;
     border-radius: {RADIUS_SM};
@@ -499,16 +542,16 @@ QPushButton[workflowStage]:hover {{
 }}
 QPushButton[workflowState="done"] {{
     color: {SUCCESS};
-    background: #dfeee6;
-    border-color: #a9cfba;
+    background: {SUCCESS_SOFT};
+    border-color: {SUCCESS_BORDER};
 }}
 QPushButton[workflowState="done"]:hover {{
-    background: #d0e6da;
+    background: {SUCCESS_SOFT_HOVER};
 }}
 /* 当前步是全条唯一的实心块。反白文字 + 深蓝底，"现在该干这一步"
    不需要用户去找。 */
 QPushButton[workflowState="active"] {{
-    color: #ffffff;
+    color: {ON_ACCENT};
     background: {ACCENT};
     border-color: {ACCENT_DIM};
     font-weight: 600;
@@ -518,12 +561,12 @@ QPushButton[workflowState="active"]:hover {{
 }}
 QPushButton[workflowState="blocked"] {{
     color: {ERROR};
-    background: #f7e3e3;
-    border-color: #d9a2a2;
+    background: {ERROR_SOFT};
+    border-color: {ERROR_BORDER};
     font-weight: 600;
 }}
 QPushButton[workflowState="blocked"]:hover {{
-    background: #f0d5d5;
+    background: {ERROR_SOFT_HOVER};
 }}
 /* 未开始：灰、无底色，但 hover 仍给反馈——它是可以点的（允许跳读流程），
    只是不推荐现在点。 */
@@ -532,7 +575,7 @@ QPushButton[workflowState="pending"] {{
 }}
 QLabel[workflow="arrow"] {{
     color: {BORDER_LIGHT};
-    font-size: 11pt;
+    font-size: {FONT_TITLE};
     padding: 0px 1px;
 }}
 QFrame#emptyState {{
@@ -544,14 +587,14 @@ QLabel[emptyState="title"] {{
     background: transparent;
     border: none;
     color: {INK};
-    font-size: 15pt;
+    font-size: {FONT_DISPLAY};
     font-weight: 600;
 }}
 QLabel[emptyState="subtitle"] {{
     background: transparent;
     border: none;
     color: {INK_MUTED};
-    font-size: 9pt;
+    font-size: {FONT_BODY};
 }}
 QFrame[panel="config"] {{
     background: {PANEL_ALT};
@@ -580,9 +623,9 @@ QWidget[ribbonGroup="true"] {{
 }}
 QLabel[toolbar="section"] {{
     color: {INK_DIM};
-    font-size: 9pt;
+    font-size: {FONT_BODY};
     font-weight: 600;
-    padding: 0 3px;
+    padding: 0 4px;
 }}
 QLabel[status="active"] {{
     color: {ACCENT_HOVER};
@@ -643,15 +686,15 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 QGroupBox {{
     border: 1px solid {BORDER};
     border-radius: {RADIUS_SM};
-    margin-top: 10px;
-    padding-top: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     left: 10px;
-    padding: 0 5px;
+    padding: 0 6px;
     color: {INK_MUTED};
-    font-size: 9pt;
+    font-size: {FONT_BODY};
     background: {PANEL};
 }}
 QProgressBar {{
@@ -670,8 +713,8 @@ QToolTip {{
     background: {PANEL_ALT};
     color: {INK};
     border: 1px solid {BORDER_LIGHT};
-    padding: 3px 7px;
-    font-size: 9pt;
+    padding: 4px 8px;
+    font-size: {FONT_BODY};
 }}
 
 QCheckBox, QRadioButton {{
@@ -695,7 +738,7 @@ QTabWidget[ribbon="bar"]::pane {{
 QTabWidget[ribbon="bar"] > QTabBar::tab {{
     background: transparent;
     color: {INK_MUTED};
-    padding: 7px 18px;
+    padding: 8px 16px;
     margin-right: 1px;
     border: 0px;
     border-bottom: 2px solid transparent;
@@ -715,14 +758,14 @@ QToolButton[ribbon="large"], QToolButton[ribbon="small"] {{
     border: 1px solid transparent;
     border-radius: {RADIUS_SM};
     color: {INK};
-    padding: 4px 7px;
+    padding: 4px 8px;
 }}
 QToolButton[ribbon="large"] {{
-    padding: 6px 7px 4px 7px;
+    padding: 6px 8px 4px 8px;
 }}
 QToolButton[ribbon="small"] {{
     min-height: 16px;
-    padding: 1px 5px;
+    padding: 1px 6px;
 }}
 QToolButton[ribbon="large"]:hover, QToolButton[ribbon="small"]:hover {{
     background: {PANEL_HOVER};
@@ -739,9 +782,9 @@ QToolButton[ribbon="large"]:disabled, QToolButton[ribbon="small"]:disabled {{
 
 QLabel[ribbon="caption"] {{
     color: {INK_DIM};
-    font-size: 8pt;
+    font-size: {FONT_CAPTION};
     font-weight: 600;
-    padding-top: 3px;
+    padding-top: 4px;
 }}
 QFrame[ribbon="sep"] {{
     color: {BORDER};
@@ -749,13 +792,13 @@ QFrame[ribbon="sep"] {{
 }}
 QFrame[toolbar="sep"] {{
     color: {BORDER};
-    margin: 2px 7px;
+    margin: 2px 8px;
 }}
 QToolButton[ribbon="large"][role="primary"],
 QToolButton[ribbon="small"][role="primary"] {{
     background: {ACCENT_DIM};
     border: 1px solid {ACCENT};
-    color: #ffffff;
+    color: {ON_ACCENT};
 }}
 QToolButton[ribbon="large"][role="primary"]:hover,
 QToolButton[ribbon="small"][role="primary"]:hover {{
@@ -780,7 +823,7 @@ QToolButton#railButton {{
     background: transparent;
     border: 1px solid transparent;
     border-radius: {RADIUS_MD};
-    font-size: 9pt;
+    font-size: {FONT_BODY};
     padding: 2px 0px;
 }}
 QToolButton#railButton:hover {{
@@ -802,7 +845,7 @@ QToolButton#railButton[primary="true"]:hover {{ background: {PANEL_HOVER}; }}
 QToolButton#railButton[primary="true"]:checked {{
     background: {ACCENT_DIM};
     border-color: {ACCENT_DIM};
-    color: #ffffff;
+    color: {ON_ACCENT};
 }}
 QFrame#drawer {{
     background: {PANEL_ALT};
@@ -810,7 +853,7 @@ QFrame#drawer {{
 }}
 QLabel#drawerTitle {{ color: {INK}; font-weight: 600; padding: 4px 0px; }}
 QTabBar#drawerTabs::tab {{
-    padding: 5px 12px;
+    padding: 6px 12px;
     margin-right: 2px;
     color: {INK_MUTED};
     background: transparent;
@@ -825,7 +868,7 @@ QTabBar#drawerTabs::tab:selected {{
 QTabBar#drawerTabs::tab:hover {{ color: {INK}; }}
 QToolButton#drawerClose {{
     color: {INK_MUTED};
-    font-size: 12pt;
+    font-size: {FONT_TITLE};
     min-width: 26px;
     min-height: 26px;
     border-radius: {RADIUS_SM};
@@ -840,23 +883,23 @@ QToolBar#workspaceTools {{
     background: {PANEL}; border: none; border-bottom: 1px solid {BORDER};
     padding: 2px 4px; spacing: 2px;
 }}
-QToolBar#workspaceTools QToolButton {{ padding: 3px 4px; }}
-QLabel[result="title"] {{ font-weight: 600; font-size: 9pt; }}
+QToolBar#workspaceTools QToolButton {{ padding: 4px 4px; }}
+QLabel[result="title"] {{ font-weight: 600; font-size: {FONT_BODY}; }}
 QWidget#resultSummary {{ background: transparent; }}
 QFrame[resultCard] {{ background: transparent; border: none; border-bottom: 1px solid {BORDER}; }}
 QFrame[resultCard="fail"] QLabel[result="value"] {{ color: {ERROR}; }}
 QFrame[resultCard="unclear"] QLabel[result="value"] {{ color: {WARN}; }}
 QWidget#resultSummary QLabel {{ background: transparent; border: none; }}
-QLabel[result="label"] {{ color: {INK_MUTED}; font-size: 9pt; }}
-QLabel[result="value"] {{ color: {INK}; font-size: 11pt; font-weight: 600; }}
-QToolButton[result="detail"] {{ background: transparent; color: {ACCENT_DIM}; padding: 0px; font-size: 9pt; }}
+QLabel[result="label"] {{ color: {INK_MUTED}; font-size: {FONT_BODY}; }}
+QLabel[result="value"] {{ color: {INK}; font-size: {FONT_TITLE}; font-weight: 600; }}
+QToolButton[result="detail"] {{ background: transparent; color: {ACCENT_DIM}; padding: 0px; font-size: {FONT_BODY}; }}
 QToolButton[result="detail"]:hover {{ color: {ACCENT}; text-decoration: underline; }}
 QToolButton[result="detail"]:disabled {{ color: {INK_DIM}; }}
 QLineEdit[invalid="true"], QComboBox[invalid="true"], QDoubleSpinBox[invalid="true"] {{
     border: 1px solid {ERROR};
 }}
 QLabel[fieldError="true"] {{
-    color: {ERROR}; background: transparent; font-size: 9pt;
+    color: {ERROR}; background: transparent; font-size: {FONT_BODY};
 }}
 QToolButton[ribbon][role="primary"] {{
     background: {SELECTION}; color: {INK}; border: 1px solid {BORDER_LIGHT};
@@ -868,10 +911,10 @@ QToolButton#drawerFloat, QToolButton#drawerClose {{
 }}
 QToolButton#drawerFloat:hover {{ background: {PANEL_HOVER}; }}
 
-QLabel#chatTitle {{ font-size: 11pt; font-weight: 600; color: {INK}; padding-right: 6px; }}
+QLabel#chatTitle {{ font-size: {FONT_TITLE}; font-weight: 600; color: {INK}; padding-right: 6px; }}
 QToolButton[chat="tool"] {{
     color: {INK_MUTED}; background: transparent; border: 1px solid transparent;
-    border-radius: {RADIUS_SM}; padding: 3px 7px;
+    border-radius: {RADIUS_SM}; padding: 4px 8px;
 }}
 QToolButton[chat="tool"]:hover {{ color: {ACCENT_DIM}; background: {PANEL_HOVER}; border-color: {BORDER}; }}
 QToolButton[chat="tool"]:disabled {{ color: {INK_DIM}; }}
@@ -880,15 +923,15 @@ QFrame#chatComposer {{
 }}
 QPlainTextEdit#chatEntry {{ background: transparent; border: none; padding: 4px 6px; }}
 QFrame#chatComposer QLabel {{ background: transparent; }}
-QFrame#chatComposer QPushButton {{ padding: 4px 14px; }}
+QFrame#chatComposer QPushButton {{ padding: 4px 12px; }}
 QScrollArea#assistantConversation {{
     background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: {RADIUS_MD};
 }}
 QWidget#transcriptInner {{ background: {PANEL_ALT}; }}
 QFrame#chatWelcome, QFrame#chatWelcome QLabel {{ background: transparent; }}
-QLabel[chat="welcomeTitle"] {{ color: {ACCENT_DIM}; font-size: 12pt; font-weight: 600; }}
+QLabel[chat="welcomeTitle"] {{ color: {ACCENT_DIM}; font-size: {FONT_TITLE}; font-weight: 600; }}
 QFrame[entry="user"] {{
-    background: {SELECTION}; border: 1px solid #b9d4ea; border-radius: {RADIUS_LG};
+    background: {SELECTION}; border: 1px solid {SELECTION_BORDER}; border-radius: {RADIUS_LG};
 }}
 QFrame[entry="assistant"], QFrame[entry="note"] {{ background: transparent; border: none; }}
 QFrame[entry="change"] {{
@@ -896,17 +939,17 @@ QFrame[entry="change"] {{
     border-radius: {RADIUS_SM};
 }}
 QFrame[entry="approval"] {{
-    background: #fbf3e6; border: 1px solid #e3c493; border-left: 3px solid {WARN};
+    background: {WARN_SOFT}; border: 1px solid {WARN_BORDER}; border-left: 3px solid {WARN};
     border-radius: {RADIUS_SM};
 }}
 QFrame[entry] QLabel {{ background: transparent; }}
 QLabel[chat="user"] {{ color: {INK}; }}
 QLabel[chat="assistant"] {{ color: {INK}; }}
 QLabel[chat="speaker"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
-QLabel[chat="caption"] {{ color: {INK_DIM}; font-size: 8pt; }}
+QLabel[chat="caption"] {{ color: {INK_DIM}; font-size: {FONT_CAPTION}; }}
 QLabel[chat="warn"] {{ color: {WARN}; }}
 QLabel[chat="mono"] {{
-    color: {INK_MUTED}; font-family: Consolas, "Cascadia Mono", monospace; font-size: 8pt;
+    color: {INK_MUTED}; font-family: Consolas, "Cascadia Mono", monospace; font-size: {FONT_CAPTION};
 }}
 QLabel[chat="planDone"] {{ color: {INK_DIM}; }}
 QLabel[chat="planActive"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
@@ -916,16 +959,16 @@ QFrame#planCard {{
 QFrame#toolCard {{
     background: {PANEL}; border: 1px solid {BORDER}; border-radius: {RADIUS_SM};
 }}
-QFrame#toolCard[state="failed"] {{ border-color: #d9a2a2; background: #f7e9e9; }}
+QFrame#toolCard[state="failed"] {{ border-color: {ERROR_BORDER}; background: {ERROR_SOFT}; }}
 QFrame#toolCard[state="running"] {{ border-color: {ACCENT}; }}
 QToolButton#toolCardHeader {{
     text-align: left; border: none; background: transparent; padding: 4px 6px;
-    color: {INK_MUTED}; font-size: 8.5pt;
+    color: {INK_MUTED}; font-size: {FONT_BODY};
 }}
 QToolButton#toolCardHeader:hover {{ color: {ACCENT_DIM}; }}
 QFrame#toolCard[state="failed"] QToolButton#toolCardHeader {{ color: {ERROR}; }}
 QFrame#thinkingCard {{ background: transparent; border: none; border-left: 2px solid {BORDER_LIGHT}; }}
-QLabel[chat="thinking"] {{ color: {INK_DIM}; font-size: 8pt; }}
+QLabel[chat="thinking"] {{ color: {INK_DIM}; font-size: {FONT_CAPTION}; }}
 QToolButton[chat="primaryLink"] {{ color: {ACCENT_DIM}; font-weight: 600; }}
 QListWidget#chatHistory::item {{ padding: 6px 6px; border-bottom: 1px solid {BORDER}; }}
 """

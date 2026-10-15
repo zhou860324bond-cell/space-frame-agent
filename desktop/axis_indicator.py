@@ -1,71 +1,92 @@
 """视口左下角的坐标系指示器。
 
-用 QPainter 画 XYZ 三轴，颜色遵循工程惯例：X红、Y绿、Z蓝。
-固定在视口左下角，不随相机旋转——它是"世界坐标朝哪"的路标，
-不是当前视角的指南针。
+用 QPainter 画 XYZ 三轴，颜色与杆件局部轴一致：X 红、Y 绿、Z 蓝。
+
+**它跟着相机转。** 原来这里画的是一个固定朝向的三轴，旁边还有 VTK 自带的
+会转的小三轴：两个指示器同时出现、方向还不一致，用户不知道该信哪个。
+现在只留这一个，由视口在每次渲染前把相机朝向传进来。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPoint, QRectF
+import numpy as np
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
+from . import theme
+
+#: 等轴测默认朝向下三根轴在屏幕上的方向（右、上、朝向观察者），相机信息
+#: 还没传进来时先用它画，不出现一个空圈。
+_ISOMETRIC = np.array([[0.7071, -0.7071, 0.0],
+                       [-0.4082, -0.4082, 0.8165],
+                       [0.5774, 0.5774, 0.5774]])
+AXIS_LENGTH = 26
+
 
 class AxisIndicator(QWidget):
-    """左下角 XYZ 三轴指示器。"""
+    """左下角 XYZ 三轴指示器，随相机旋转。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(80, 80)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._rotation = _ISOMETRIC.copy()
+        self._light = False
+
+    def set_rotation(self, rotation) -> bool:
+        """传入相机视图矩阵左上 3×3（行：屏幕右、屏幕上、朝向观察者）。
+
+        返回是否真的变了——视口每次渲染都会调，只有变了才重画。
+        """
+        rotation = np.asarray(rotation, dtype=float).reshape(3, 3)
+        if np.allclose(rotation, self._rotation, atol=1e-4):
+            return False
+        self._rotation = rotation
+        self.update()
+        return True
+
+    def set_light(self, light: bool) -> None:
+        self._light = bool(light)
+        self.update()
+
+    def axis_tip(self, axis: str) -> QPointF:
+        """某根轴末端在本控件里的像素位置（导出截图的检查用）。"""
+        k = "xyz".index(axis)
+        centre = QPointF(self.width() / 2, self.height() / 2)
+        return centre + QPointF(self._rotation[0, k], -self._rotation[1, k]) * AXIS_LENGTH
 
     def paintEvent(self, event):
         p = QPainter(self)
         try:
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            colours = theme.viewport_card(self._light)
+            centre = QPointF(self.width() / 2, self.height() / 2)
+            p.setBrush(QColor(*colours["surface"][:3], 150))
+            p.setPen(QPen(QColor(*colours["edge"]), 1))
+            p.drawEllipse(centre, 34, 34)
 
-            cx = self.width() // 2
-            cy = self.height() // 2
-            axis_len = 25
-
-            # 背景圆：极淡的深色底，细边框
-            p.setBrush(QColor(27, 32, 39, 150))
-            p.setPen(QPen(QColor(61, 66, 72), 1))
-            p.drawEllipse(QPoint(cx, cy), 32, 32)
-
-            font = QFont("Segoe UI", 7, QFont.Weight.Bold)
+            font = QFont()
+            font.setPointSizeF(float(theme.FONT_CAPTION.rstrip("pt")))
+            font.setBold(True)
             p.setFont(font)
+            # 远的先画、近的后画，朝向观察者的轴压在上面
+            for k in sorted(range(3), key=lambda k: self._rotation[2, k]):
+                axis = "xyz"[k]
+                colour = QColor(theme.LOCAL_AXES[axis])
+                direction = QPointF(self._rotation[0, k], -self._rotation[1, k])
+                tip = centre + direction * AXIS_LENGTH
+                pen = QPen(colour, 2)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                p.setPen(pen)
+                p.drawLine(centre, tip)
+                label = centre + direction * (AXIS_LENGTH + 8)
+                p.drawText(QRectF(label.x() - 8, label.y() - 8, 16, 16),
+                           Qt.AlignmentFlag.AlignCenter, axis.upper())
 
-            # X 轴（工程红，向右下）
-            x_end = QPoint(cx + axis_len, cy + axis_len // 3)
-            p.setPen(QPen(QColor("#d15b5b"), 2))
-            p.drawLine(cx, cy, x_end.x(), x_end.y())
-            p.setPen(QColor("#d15b5b"))
-            p.drawText(QRectF(x_end.x() - 8, x_end.y() - 8, 16, 16),
-                       Qt.AlignmentFlag.AlignCenter, "X")
-
-            # Y 轴（沉稳绿，向左下）
-            y_end = QPoint(cx - axis_len // 2, cy + axis_len)
-            p.setPen(QPen(QColor("#62a86a"), 2))
-            p.drawLine(cx, cy, y_end.x(), y_end.y())
-            p.setPen(QColor("#62a86a"))
-            p.drawText(QRectF(y_end.x() - 8, y_end.y() - 4, 16, 16),
-                       Qt.AlignmentFlag.AlignCenter, "Y")
-
-            # Z 轴（钢蓝，向上）
-            z_end = QPoint(cx, cy - axis_len)
-            p.setPen(QPen(QColor("#4f8fcf"), 2))
-            p.drawLine(cx, cy, z_end.x(), z_end.y())
-            p.setPen(QColor("#4f8fcf"))
-            p.drawText(QRectF(z_end.x() - 8, z_end.y() - 12, 16, 16),
-                       Qt.AlignmentFlag.AlignCenter, "Z")
-
-            # 原点
-            p.setBrush(QColor("#c8ccd2"))
+            p.setBrush(QColor(colours["muted"]))
             p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(QPoint(cx, cy), 2, 2)
-
+            p.drawEllipse(centre, 2, 2)
         finally:
             p.end()

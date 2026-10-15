@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFrame, 
                                QTableWidgetItem, QTextBrowser, QToolButton,
                                QVBoxLayout, QWidget, QWidgetAction)
 
-from . import glyphs
+from . import glyphs, theme
 from .qt_style import ElidedLabel
 
 STEP_INDEX = Qt.ItemDataRole.UserRole + 1
@@ -326,7 +326,7 @@ class ResultPanel(QWidget):
         self.filter_count.setText(f"显示 {visible}/{self.table.rowCount()} 行")
 
     # 超限用红色；无法判定用琥珀色，避免把缺参数误读为不合格。
-    _MARK_TINT = {"fail": "#f7dede", "unclear": "#fbf0da"}
+    _MARK_TINT = {"fail": theme.ERROR_SOFT, "unclear": theme.WARN_SOFT}
 
     def _show_columns(self, *_args) -> None:
         for column in range(self.table.columnCount()):
@@ -344,7 +344,7 @@ class ResultPanel(QWidget):
             card = QFrame(self.summary)
             card.setProperty("resultCard", data.get("state", "metric"))
             layout = QVBoxLayout(card)
-            layout.setContentsMargins(6, 3, 6, 3)
+            layout.setContentsMargins(6, 4, 6, 4)
             layout.setSpacing(1)
             label = ElidedLabel(str(data["label"]), card)
             label.setProperty("result", "label")

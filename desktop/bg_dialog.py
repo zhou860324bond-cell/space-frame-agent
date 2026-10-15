@@ -141,7 +141,7 @@ class SwatchCell(QWidget):
 
         box = QVBoxLayout(self)
         box.setContentsMargins(2, 2, 2, 2)
-        box.setSpacing(3)
+        box.setSpacing(4)
         box.addWidget(self.btn)
         box.addWidget(lbl)
 
@@ -169,7 +169,7 @@ class BackgroundDialog(QDialog):
             "选择背景配色与渐变方式，点击色板实时预览，确定后保留"))
 
         body = QVBoxLayout()
-        body.setContentsMargins(14, 10, 14, 0)
+        body.setContentsMargins(12, 12, 12, 0)
         body.setSpacing(8)
 
         palettes = getattr(viewport, "BG_THEMES", {})
@@ -222,7 +222,7 @@ class BackgroundDialog(QDialog):
         row2.addWidget(self.btn_solid)
         self.lbl_custom = QLabel("")
         self.lbl_custom.setStyleSheet(
-            f"color:{theme.INK_DIM}; font-size:8.5pt; background:transparent;")
+            f"color:{theme.INK_DIM}; font-size:9pt; background:transparent;")
         row2.addWidget(self.lbl_custom, 1)
         custom_sec.addLayout(row2)
         body.addWidget(custom_sec)
@@ -240,7 +240,7 @@ class BackgroundDialog(QDialog):
         root.addLayout(body, 1)
 
         btn_box = QVBoxLayout()
-        btn_box.setContentsMargins(14, 8, 14, 0)
+        btn_box.setContentsMargins(12, 8, 12, 0)
         btns = dialog_styles.button_box(self)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self._reject)
@@ -253,7 +253,7 @@ class BackgroundDialog(QDialog):
     def _mini_label(text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setStyleSheet(
-            f"color:{theme.INK_MUTED}; font-size:8.5pt; background:transparent;")
+            f"color:{theme.INK_MUTED}; font-size:9pt; background:transparent;")
         return lbl
 
     # --- 选择逻辑 ---

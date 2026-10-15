@@ -59,7 +59,7 @@ class ModelTree(QTreeWidget):
                 outline: none;
             }}
             QTreeWidget::item {{
-                padding: 3px 4px;
+                padding: 4px 4px;
             }}
             QTreeWidget::item:hover {{
                 background: {theme.PANEL_HOVER};

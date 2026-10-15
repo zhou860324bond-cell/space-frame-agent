@@ -271,7 +271,7 @@ class QuickBar(QWidget):
         self._window = window
         a = window.actions_by_name
         row = QHBoxLayout(self)
-        row.setContentsMargins(8, 3, 8, 3)
+        row.setContentsMargins(8, 4, 8, 4)
         row.setSpacing(2)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 

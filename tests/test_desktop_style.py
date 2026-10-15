@@ -248,3 +248,63 @@ def test_installing_the_style_takes_effect(app):
     installed = qt_style.install(app)
     assert app.style() is installed
     assert isinstance(installed, qt_style.FrameStyle)
+
+
+DESKTOP = __import__("pathlib").Path(__file__).resolve().parent.parent / "desktop"
+
+
+def _desktop_sources():
+    return {path.name: path.read_text(encoding="utf-8") for path in sorted(DESKTOP.glob("*.py"))}
+
+
+def test_every_font_size_comes_from_the_type_scale():
+    """字号只用 theme.FONT_SCALE 里的五档。
+
+    改前全界面散着 8 / 8.5 / 9 / 9.5 / 10 / 11 / 12 / 15 八种字号，相邻两档
+    差半磅：用户看到的是"这里怎么比那里小一点"，读不出层级。
+    """
+    import re
+
+    from desktop import theme
+
+    allowed = {float(size) for size in theme.FONT_SCALE}
+    stray = [f"{name}: {size}pt"
+             for name, text in _desktop_sources().items()
+             for size in re.findall(r"font-size:\s*([0-9.]+)pt", text)
+             if float(size) not in allowed]
+    assert not stray, f"字号不在阶梯里：{stray}"
+
+
+def test_every_margin_and_padding_comes_from_the_spacing_scale():
+    """边距、留白和内边距只取 theme.SPACE_SCALE 里的值。
+
+    改前同一类对话框正文边距有 10 / 14 两套、行距有 3 / 10 两套，并排打开
+    两个对话框就能看出左缘不齐。
+    """
+    import re
+
+    from desktop import theme
+
+    allowed = set(theme.SPACE_SCALE)
+    stray = []
+    for name, text in _desktop_sources().items():
+        for call in re.findall(r"\b(?:setContentsMargins|setSpacing)\(\s*([0-9, ]+)\)", text):
+            stray += [f"{name}: {call}" for value in call.split(",") if int(value) not in allowed]
+        for css in re.findall(r"(?:padding|margin)(?:-(?:top|bottom|left|right))?:\s*([0-9px ]+)", text):
+            stray += [f"{name}: {css.strip()}" for value in re.findall(r"(\d+)px", css)
+                      if int(value) not in allowed]
+    assert not stray, f"间距不在阶梯里：{stray}"
+
+
+def test_the_stylesheet_uses_named_colours_only():
+    """主样式表里的颜色全部来自 theme 的命名令牌。
+
+    改前失败卡片、危险按钮、超限行各写了一个"差不多的浅红"（#f7e3e3、
+    #f7e9e9、#f7dede），同一种状态在三处是三个颜色。
+    """
+    import re
+
+    source = (DESKTOP / "theme.py").read_text(encoding="utf-8")
+    sheet = source.partition('STYLESHEET = f"""')[2]
+    literal = re.findall(r"#[0-9a-fA-F]{6}\b", sheet)
+    assert not literal, f"样式表里写死的颜色：{literal}"

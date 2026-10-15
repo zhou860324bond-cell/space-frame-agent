@@ -262,7 +262,7 @@ class ChatPanel(QWidget):
         chat_page = QWidget()
         self.pages.addWidget(chat_page)
         layout = QVBoxLayout(chat_page)
-        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setContentsMargins(12, 8, 12, 12)
         layout.setSpacing(6)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
 
@@ -398,7 +398,7 @@ class ChatPanel(QWidget):
         box = QFrame()
         box.setObjectName("chatWelcome")
         column = QVBoxLayout(box)
-        column.setContentsMargins(8, 10, 8, 10)
+        column.setContentsMargins(8, 12, 8, 12)
         title = QLabel("结构建模助手")
         title.setProperty("chat", "welcomeTitle")
         column.addWidget(title)
@@ -567,7 +567,7 @@ class ChatPanel(QWidget):
     def _build_history_page(self) -> QWidget:
         page = QWidget()
         column = QVBoxLayout(page)
-        column.setContentsMargins(10, 8, 10, 10)
+        column.setContentsMargins(12, 8, 12, 12)
         column.setSpacing(6)
         top = QHBoxLayout()
         back = _tool_button("‹ 返回对话", "回到当前对话")

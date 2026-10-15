@@ -88,8 +88,8 @@ class CombinationDialog(QDialog):
             "每个可变荷载轮流当控制荷载。漏一个组合完全看不出来"))
 
         body = QVBoxLayout()
-        body.setContentsMargins(14, 10, 14, 0)
-        body.setSpacing(10)
+        body.setContentsMargins(12, 12, 12, 0)
+        body.setSpacing(12)
 
         picker = DialogSection("把工况归到荷载类别")
         cases = _case_names(session)
@@ -166,8 +166,8 @@ class LivePatternDialog(QDialog):
             "只算满布会把跨中弯矩算小 43%"))
 
         body = QVBoxLayout()
-        body.setContentsMargins(14, 10, 14, 0)
-        body.setSpacing(10)
+        body.setContentsMargins(12, 12, 12, 0)
+        body.setSpacing(12)
 
         form = DialogSection("参数")
         self.members = QLineEdit()
@@ -242,8 +242,8 @@ class AreaLoadDialog(QDialog):
             "面荷载导荷", "kN/m² 按板的传力方式导成梁上的线荷载"))
 
         body = QVBoxLayout()
-        body.setContentsMargins(14, 10, 14, 0)
-        body.setSpacing(10)
+        body.setContentsMargins(12, 12, 12, 0)
+        body.setSpacing(12)
 
         form = DialogSection("参数")
         self.members = QLineEdit()
@@ -333,8 +333,8 @@ class BCManagerDialog(QDialog):
             "边界条件改错了不会报错，结构照样算——整张表摆出来才核对得了"))
 
         body = QVBoxLayout()
-        body.setContentsMargins(14, 10, 14, 0)
-        body.setSpacing(10)
+        body.setContentsMargins(12, 12, 12, 0)
+        body.setSpacing(12)
 
         listing = DialogSection("全部边界条件")
         self.table = _table(["名称", "节点", "类型", "约束 U1 U2 U3 UR1 UR2 UR3",
