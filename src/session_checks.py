@@ -280,9 +280,10 @@ class ChecksMixin:
                 "GB 50011 要求不小于 90%。加大 num_modes 再算。")
         return ToolResult(True, payload)
 
-    def _warping_constants(self) -> dict[str, float]:
+    def _warping_constants(self, frame) -> dict[str, float]:
         """弯扭屈曲用的翘曲常数：由截面真实轮廓求解，并确认剪心与形心重合。
 
+        按编译后的分析模型取截面，变截面杆件的各分段截面（插值轮廓）也在内。
         没有轮廓的非圆截面、剪心偏离形心的截面（槽钢、T 型钢、角钢等）明确拒绝：
         前者翘曲常数无从得知，后者需要剪心偏置项，当前单元没有，不能拿近似冒充。
         """
@@ -291,16 +292,14 @@ class ChecksMixin:
         import section_solver
         from section_geometry import profile
 
-        used = {m["section"] for m in self.model.get("members") or []}
+        used = {m.section for m in frame.members.values()}
         cache = getattr(self, "_section_solver_cache", {})
         out: dict[str, float] = {}
-        for sec in self.model.get("sections") or []:
-            name = sec["name"]
-            if name not in used:
-                continue
-            geometry = sec.get("geometry")
+        for name in sorted(used):
+            sec = frame.sections[name]
+            geometry = sec.geometry
             if geometry is None:
-                if sec.get("circular"):
+                if sec.circular:
                     out[name] = 0.0              # 圆截面不翘曲，剪心即形心
                     continue
                 raise ValueError(f"截面 {name!r} 没有真实轮廓，无法确定翘曲常数与剪心。"
@@ -349,8 +348,13 @@ class ChecksMixin:
             refined = compiled.analysis_model
             options: dict[str, Any] = {}
             if lateral_torsional:
+                from buckling import continuous_warping_groups
                 options = {
-                    "warping_constants": self._warping_constants(),
+                    "warping_constants": self._warping_constants(refined),
+                    # 同一物理杆件内翘曲连续，变截面杆件的各分段截面名不同也不断开
+                    "warping_groups": continuous_warping_groups(
+                        refined, same_member={eid: compiled.mapping.physical_member_id(eid)
+                                              for eid in refined.members}),
                     "warping_restrained": [int(v) for v in warping_restrained_nodes or ()],
                 }
             r = buckling(refined, name, int(num_modes), solution=solve(refined), **options)
@@ -379,7 +383,8 @@ class ChecksMixin:
         extra: dict[str, Any] = {}
         if lateral_torsional:
             extra["lateral_torsional"] = {
-                "warping_constants": {k: v for k, v in options["warping_constants"].items()},
+                "warping_constants": {k: v for k, v in options["warping_constants"].items()
+                                      if "@" not in k},
                 "warping_restrained_nodes": options["warping_restrained"],
                 "assumptions": "Vlasov 薄壁梁：荷载作用在剪心；共线、同截面、翼缘对齐且无释放的"
                                "相邻杆段翘曲连续，转角与变截面处翘曲自由（叉支座），列出的节点约束翘曲。"

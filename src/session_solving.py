@@ -629,6 +629,12 @@ class SolvingMixin:
         if errors:
             return ToolResult(False, {"errors": errors,
                                       "hint": "模型都不合法，换求解器也没用"})
+        import taper
+        if tapered := sorted(taper.tapered_members(self.model)):
+            # inp 按物理杆件逐根写截面，变截面杆件会被当成 i 端等截面，静默算错
+            return ToolResult(False, {"error": f"变截面杆件 {tapered} 尚不能导出到 Abaqus："
+                                               "导出按整根杆件写一个截面，会被当成等截面。",
+                                      "hint": "自研求解器 solve_model 已按阶梯段计算变截面"})
         try:
             import abaqus_backend
         except ImportError as exc:

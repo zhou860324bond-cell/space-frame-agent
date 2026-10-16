@@ -818,13 +818,18 @@ TOOLS: list[dict[str, Any]] = [
             "name": "retaper",
             "description":
                 "给一批杆件换截面：变截面、局部加强都用它。"
-                "杆件编号请先用 select_members 挑出来。",
+                "杆件编号请先用 select_members 挑出来。"
+                "给 end_section 时杆件从 section（i 端）沿杆线性变到 end_section（j 端），"
+                "如门式刚架楔形梁柱；两端截面须为同类型、有真实尺寸。求解时自动剖成阶梯段，"
+                "逐杆强度验算暂不覆盖变截面杆件。",
             "parameters": {
                 "type": "object",
                 "required": ["member_ids", "section"],
                 "properties": {
                     "member_ids": {"type": "array", "items": {"type": "integer"}},
                     "section": {"type": "string"},
+                    "end_section": {"type": "string",
+                                    "description": "j 端截面；留空为等截面（并清除原有变截面）"},
                 },
                 "additionalProperties": False,
             },

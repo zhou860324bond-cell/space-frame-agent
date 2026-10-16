@@ -53,6 +53,7 @@ DIMENSIONS = {
     "sections.S_flange": "first_moment", "sections.c_web": "length",
     "members.id": None, "members.i": None, "members.j": None,
     "members.section": None, "members.material": None,
+    "members.section_j": None,            # 变截面 j 端截面名，无量纲
     "members.ref_vector": None,           # 方向，只看比例
     "members.releases.i": None, "members.releases.j": None,
     "members.connections.i": "connection", "members.connections.j": "connection",

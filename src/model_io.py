@@ -324,6 +324,8 @@ MODEL_SCHEMA: dict[str, Any] = {
                     # 参考向量来自哪个梁方向对象（features.beam_orientations）
                     "orientation": {"type": "string", "minLength": 1},
                     "section": {"type": "string"}, "material": {"type": "string"},
+                    # 变截面：给出时杆件从 section（i 端）按几何尺寸线性变到 section_j
+                    "section_j": {"type": "string", "minLength": 1},
                     "ref_vector": _VEC3,
                     "offset_i": _VEC3,
                     "offset_j": _VEC3,
@@ -522,6 +524,18 @@ def _fill_case(frame: Frame, case: LoadCase, data: dict[str, Any]) -> LoadCase:
     return case
 
 
+def section_from_dict(s: dict[str, Any]) -> Section:
+    """模型中的一条截面记录 → 求解器 Section（变截面分段也经由这里生成）。"""
+    def opt(key: str) -> float | None:
+        return float(s[key]) if s.get(key) is not None else None
+
+    return Section(
+        s["name"], float(s["A"]), float(s["Iy"]), float(s["Iz"]), float(s["J"]),
+        opt("Ay"), opt("Az"), opt("cy"), opt("cz"), bool(s.get("circular", False)),
+        opt("Sz"), opt("bz"), opt("Sy"), opt("by"), opt("S_flange"), opt("c_web"),
+        geometry=s.get("geometry"))
+
+
 def from_dict(data: dict[str, Any]) -> Frame:
     """把 JSON 模型装成 Frame。不做 schema 校验——先用 jsonschema 校验再调用。"""
     f = Frame(units=str(data.get("units", "N-m-Pa")))
@@ -534,20 +548,7 @@ def from_dict(data: dict[str, Any]) -> Frame:
             float(m["allow_tension"]) if m.get("allow_tension") is not None else None,
             float(m["allow_compression"]) if m.get("allow_compression") is not None else None)
     for s in data["sections"]:
-        f.sections[s["name"]] = Section(
-            s["name"], float(s["A"]), float(s["Iy"]), float(s["Iz"]), float(s["J"]),
-            float(s["Ay"]) if s.get("Ay") is not None else None,
-            float(s["Az"]) if s.get("Az") is not None else None,
-            float(s["cy"]) if s.get("cy") is not None else None,
-            float(s["cz"]) if s.get("cz") is not None else None,
-            bool(s.get("circular", False)),
-            float(s["Sz"]) if s.get("Sz") is not None else None,
-            float(s["bz"]) if s.get("bz") is not None else None,
-            float(s["Sy"]) if s.get("Sy") is not None else None,
-            float(s["by"]) if s.get("by") is not None else None,
-            float(s["S_flange"]) if s.get("S_flange") is not None else None,
-            float(s["c_web"]) if s.get("c_web") is not None else None,
-            geometry=s.get("geometry"))
+        f.sections[s["name"]] = section_from_dict(s)
     for n in data["nodes"]:
         f.nodes[int(n["id"])] = Node(int(n["id"]), float(n["x"]), float(n["y"]), float(n["z"]))
     for m in data["members"]:
@@ -708,6 +709,8 @@ def _validate(data: dict[str, Any], schema: dict[str, Any], *,
         unique(named_loads, "name", f"{label}的载荷名称")
         named_bc = [item for item in block.get("settlements") or [] if item.get("name")]
         unique(named_bc, "name", f"{label}的给定位移名称")
+    import taper as _taper
+    errors += [f"[语义] {msg}" for msg in _taper.check(data)]
     if errors:
         return errors
     if data.get("features"):

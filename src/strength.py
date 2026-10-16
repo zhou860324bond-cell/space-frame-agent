@@ -539,6 +539,12 @@ def check_strength(frame: Frame, solution, *, mapping=None,
         targets = (sorted(mapping.physical_to_elements)
                    if members is None else sorted(members))
 
+    # 变截面杆件沿杆截面不同，逐杆验算按一个代表截面算会错；先剔除并写明，不冒充通过
+    tapered = [] if mapping is None else [
+        mid for mid in targets
+        if len({frame.members[e].section for e in mapping.element_ids(mid)}) > 1]
+    targets = [mid for mid in targets if mid not in tapered]
+
     rows = [check_member(frame, solution, mid, mapping=mapping, cases=cases,
                          stations=stations,
                          slenderness_limit=slenderness_limit,
@@ -558,6 +564,9 @@ def check_strength(frame: Frame, solution, *, mapping=None,
             "稳定校核用的是分段长度，Pcr 偏大、结果偏不安全。")
     if not compressed:
         notes.append("没有受压杆件，稳定校核未执行。")
+    if tapered:
+        notes.append(f"变截面杆件 {tapered} 未做逐杆强度与稳定验算：沿杆截面变化，"
+                     "需要逐截面验算与变截面的计算长度，当前尚未支持；内力与应力云图可照常查看。")
 
     return {
         "members": rows,

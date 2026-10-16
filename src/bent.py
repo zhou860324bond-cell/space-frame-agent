@@ -506,18 +506,25 @@ def raise_nodes(model: dict[str, Any], *, dz: float,
     return {**model, "nodes": nodes}, {"moved_nodes": moved, "dz": dz}
 
 
-def retaper(model: dict[str, Any], member_ids: Sequence[int], section: str
-            ) -> tuple[dict, dict]:
-    """给一批杆件换截面。变截面、局部加强都用它。"""
+def retaper(model: dict[str, Any], member_ids: Sequence[int], section: str,
+            end_section: str | None = None) -> tuple[dict, dict]:
+    """给一批杆件换截面。给出 ``end_section`` 时杆件从 section（i 端）线性变到
+    end_section（j 端），即真正的变截面；不给则为等截面，并清除原有的变截面设置。"""
     ids = set(member_ids)
     members, changed = [], []
     for m in model.get("members") or []:
         if m["id"] in ids:
-            members.append({**m, "section": section})
+            updated = {**m, "section": section}
+            updated.pop("section_j", None)
+            if end_section and end_section != section:
+                updated["section_j"] = end_section
+            members.append(updated)
             changed.append(m["id"])
         else:
             members.append(dict(m))
     if not changed:
         raise GeneratorError(f"没有找到要改的杆件 {sorted(ids)}")
-    return {**model, "members": members}, {"changed_members": changed,
-                                           "section": section}
+    info = {"changed_members": changed, "section": section}
+    if end_section and end_section != section:
+        info["end_section"] = end_section
+    return {**model, "members": members}, info

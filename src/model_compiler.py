@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from frame3d import Frame, LoadCase, Member, Node, member_endpoints
-from model_io import from_dict, migrate_payload, validate_payload
+from model_io import from_dict, migrate_payload, section_from_dict, validate_payload
 from span_loads import (KINDS, MOMENT, PARTIAL, POINT, RAMP, TRAPEZOID,
                         UNIFORM,
                         SpanLoad)
@@ -110,6 +110,10 @@ def compile_model(payload: dict[str, Any], *,
         for name, case in physical.load_cases.items()
     }
 
+    import taper
+    tapers = taper.tapered_members(source)
+    section_records = {s["name"]: s for s in source.get("sections") or []}
+
     next_node_id = max(physical.nodes, default=0) + 1
     next_element_id = max(physical.members, default=0) + 1
     physical_to_elements: dict[int, tuple[int, ...]] = {}
@@ -165,6 +169,9 @@ def compile_model(payload: dict[str, Any], *,
         # 单独切，避免极短单元（见 _SEED_MERGE_FRACTION）。布种点上没有荷载，
         # 所以和刚域偏移可以同时使用——偏移只留在整根杆的两个外端。
         divisions = member_divisions(source, physical_id, min_divisions)
+        if physical_id in tapers:
+            # 变截面靠阶梯近似，段数决定精度，不能一段了事（见 taper.py）
+            divisions = max(divisions, taper.TAPER_MIN_DIVISIONS)
         seeded = False
         if divisions > 1:
             spacing = length / divisions
@@ -208,14 +215,23 @@ def compile_model(payload: dict[str, Any], *,
         for element_id in element_ids:
             element_to_physical[element_id] = physical_id
 
+        boundaries = [0.0, *interior, length]
         for index, element_id in enumerate(element_ids):
             last = index == len(element_ids) - 1
+            section_name = member.section
+            if physical_id in tapers:
+                # 段中点处插值的轮廓 → 精确截面特性；名字带杆件与段号，便于追溯
+                name_i, name_j = tapers[physical_id]
+                ratio = 0.5 * (boundaries[index] + boundaries[index + 1]) / length
+                section_name = f"{name_i}→{name_j}@{physical_id}.{index + 1}"
+                frame.sections[section_name] = section_from_dict(taper.section_at(
+                    section_records[name_i], section_records[name_j], ratio, section_name))
             # **一律用关键字传。** Member 的字段是会加的，位置传参下新增一个
             # 字段就会把后面的实参整体挪位——offset 被当成连接刚度之类，
             # 模型照样编译得出来，只是算的不是那个结构。
             frame.members[element_id] = Member(
                 id=element_id, i=node_ids[index], j=node_ids[index + 1],
-                section=member.section, material=member.material,
+                section=section_name, material=member.material,
                 ref_vector=member.ref_vector,
                 releases_i=member.releases_i if index == 0 else (),
                 releases_j=member.releases_j if last else (),
@@ -230,7 +246,6 @@ def compile_model(payload: dict[str, Any], *,
                 mu_y=member.mu_y, mu_z=member.mu_z,
             )
 
-        boundaries = [0.0, *interior, length]
         for case_name, physical_case in physical.load_cases.items():
             analysis_case = frame.load_cases[case_name]
             if physical_id in physical_case.member_loads:
