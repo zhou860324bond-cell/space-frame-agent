@@ -197,6 +197,8 @@ class Viewport(QWidget):
     context_requested = Signal(object)
     # 在空白处单击：取消当前选择
     cleared = Signal()
+    #: 实体查询点中的单元：原结果文件中的零基单元序号（不是表面面号）
+    solid_picked = Signal(int)
     #: 区域拾取（Abaqus 提示区选择）的当前选择集变了：(类型, 编号列表)
     region_changed = Signal(str, list)
 
@@ -283,6 +285,9 @@ class Viewport(QWidget):
         # 强弱轴放反了。
         self.render_profiles = True
         self._frame = None                     # 最近一次画的 frame，拾取要用
+        # 实体结果查询：当前高亮的 ("cell" | "point", 零基序号)，以及是否开着点选
+        self._solid_selection: tuple[str, int] | None = None
+        self._solid_query_enabled = False
 
         # 人工建模状态
         self.model_mode: str | None = None     # None / "node" / "member"
@@ -865,6 +870,14 @@ class Viewport(QWidget):
 
     def clear(self) -> None:
         self.stop_animation()
+        self._solid_selection = None
+        if self._solid_query_enabled:
+            try:
+                self.plotter.disable_picking()
+            except Exception:                  # noqa: BLE001  无头环境没开过拾取，不是错误
+                pass
+            self.mode_badge.hide()
+        self._solid_query_enabled = False
         self._annotation_context = None
         if getattr(self, "_solid_active", False):
             self._first_render = True
@@ -1304,6 +1317,14 @@ class Viewport(QWidget):
 
     def _update_mode_badge(self) -> None:
         """左上角模式徽章：当前模式 + 工作平面 + 捕捉，给明确的操作反馈。"""
+        if self._solid_query_enabled:
+            self.mode_badge.setText("点选实体单元　｜　左键查询　｜　Esc 退出")
+            self.mode_badge.adjustSize()
+            self.mode_badge.move(12 + self._insets[0], 12)
+            self.mode_badge.setVisible(True)
+            self.mode_badge.raise_()
+            self._place_overlays()
+            return
         if self.model_mode:
             name = {"node": "建节点", "member": "建杆件"}.get(self.model_mode, "")
         elif self.pick_mode:
@@ -1351,6 +1372,67 @@ class Viewport(QWidget):
             # 画图和求解不该被它拖累
             pass
         self._update_mode_badge()
+
+    def set_solid_query(self, enabled: bool) -> None:
+        """实体查询用表面单元拾取，避免按最近中心误选背后的单元。"""
+        if not getattr(self, "_solid_active", False):
+            return
+        self._solid_query_enabled = bool(enabled)
+        try:
+            self.plotter.disable_picking()
+            if CAN_RENDER and self._solid_query_enabled:
+                self.plotter.enable_surface_point_picking(
+                    callback=self._on_solid_pick, picker="cell", use_picker=True,
+                    show_message=False, show_point=False, left_clicking=True)
+        except Exception:                      # noqa: BLE001  无头环境没有交互器，查询照样可从结果表定位
+            pass
+        self._update_mode_badge()
+
+    def _on_solid_pick(self, _point, picker) -> None:
+        if not self._solid_query_enabled or not getattr(self, "_solid_active", False):
+            return
+        actor = self.plotter.actors.get("_solid_result")
+        if actor is None or picker.GetActor() != actor:
+            return
+        index = int(picker.GetCellId())
+        dataset = picker.GetDataSet()
+        if dataset is None or index < 0 or index >= dataset.GetNumberOfCells():
+            return
+        # 表面提取产生的面编号要映回体单元；原体网格自带的来源标签不当作序号用
+        original = (dataset.GetCellData().GetArray("vtkOriginalCellIds")
+                    if dataset.IsA("vtkPolyData") else None)
+        if original is not None:
+            index = int(original.GetTuple1(index))
+        if 0 <= index < self._solid_last["mesh"].n_cells:
+            self.solid_picked.emit(index)
+
+    @_batched
+    def select_solid(self, association, index, *, focus: bool = False) -> None:
+        """在显示几何上高亮原单元或节点；聚焦时平移相机，保持视角和缩放。"""
+        self._solid_selection = None if index is None else (association, int(index))
+        if not CAN_RENDER or not getattr(self, "_solid_active", False):
+            return
+        self.plotter.remove_actor("_solid_selection", reset_camera=False, render=False)
+        if index is None:
+            return
+        mesh = self._solid_last["mesh"]
+        if association == "cell":
+            selected = mesh.extract_cells([index])
+            point = selected.center
+            self.plotter.add_mesh(selected, style="wireframe", color=theme.HIGHLIGHT,
+                                  line_width=3, name="_solid_selection", pickable=False,
+                                  show_scalar_bar=False, reset_camera=False)
+        else:
+            point = mesh.points[index]
+            self.plotter.add_points(np.asarray([point]), color=theme.HIGHLIGHT, point_size=16,
+                                    render_points_as_spheres=True, name="_solid_selection",
+                                    pickable=False, reset_camera=False)
+        if focus:
+            camera = self.plotter.camera
+            delta = np.asarray(point) - np.asarray(camera.focal_point)
+            camera.position = tuple(np.asarray(camera.position) + delta)
+            camera.focal_point = tuple(point)
+            self.plotter.reset_camera_clipping_range()
 
     def set_model_mode(self, mode: str | None) -> None:
         """设定人工建模模式。None 关闭，"node" 点击创建节点，"member" 点击两节点创建杆件。"""
@@ -1950,7 +2032,7 @@ class Viewport(QWidget):
     def show_solid_result(self, grid, caption: str, *, field="Mises_MPa",
                           percentile=99, scale=0.0, show_edges=False,
                           reset_camera=False, averaging=True,
-                          palette="abaqus") -> dict:
+                          palette="abaqus", query=False) -> dict:
         """在主视口绘制真实实体单元结果，保留单元应力与节点位移的关联。"""
         from .solid_result import FIELDS
 
@@ -1970,6 +2052,8 @@ class Viewport(QWidget):
             display_association = "point"
         displayed.points += float(scale) * np.asarray(grid.point_data["Displacement_mm"])
         current_camera = self.plotter.camera_position
+        # 换结果量、变形倍数只是重画，已选单元和点选状态要保留
+        selected = self._solid_selection
         self.clear()
         self._frame = None
         self._solid_active = True
@@ -1990,6 +2074,8 @@ class Viewport(QWidget):
             light=self._is_light_bg())
         self._place_overlays()
         if not CAN_RENDER:
+            self._solid_selection = selected
+            self.set_solid_query(query)
             return self._solid_last
         self.plotter.remove_actor("_grid_floor", reset_camera=False, render=False)
         surface = theme.V.solid_surface(displayed)
@@ -2022,6 +2108,9 @@ class Viewport(QWidget):
         self._contour_actors = True
         self._place_contour_overlays()
         self._inset_camera()
+        if selected is not None:
+            self.select_solid(*selected)
+        self.set_solid_query(query)
         return self._solid_last
 
     @_batched

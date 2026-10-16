@@ -1,5 +1,10 @@
 # 工作进度
 
+## 主工作区与公开仓库合并：实体结果点查询（2026-10-16）
+
+- 第三批移植（主工作区 d8c8cc6 的实体查询部分）。按 master 结构补：solid_result.query_cell / result_extreme 与面板的点选、极值、清除控件；视口 solid_picked 信号、表面单元拾取（vtkOriginalCellIds 映回体单元，原体网格的来源标签不当序号）、select_solid 高亮与相机平移、模式徽章；show_solid_result 新增 query 参数，重画时保留选择；主窗口 locate 支持 solid_cell / solid_point 定位，换档/失效/清除结果时 clear_solid_query，Esc 先退出点选。
+- 主工作区 test_solid_view.py 中五个测试函数（七项）迁入，在 master 上先红后绿；实体视图、主窗口、界面文字等桌面测试通过。手册补点选与极值说明。只跑增量与文档闸，全量收集 2855 项（rebase 到含 #45、#46、#49 的 master 后）。
+
 ## 主工作区与公开仓库合并：基准脚本与文件拆解文档（2026-10-16）
 
 - 第五批移植：tools/benchmark_interaction.py、docs/benchmarks/interaction-20261009.json、docs/核心与Agent文件拆解.md。脚本依赖模型树搜索（#46），分支堆叠在 #46 上；原脚本在 master 上于第一个场景结束后崩溃（deleteLater 后抽屉 eventFilter 仍回调已删除的 MainWindow），改为只 close 并保留引用。无头 repeat=2 实跑通过。文件拆解文档加注为 10-12 主工作区快照。无新增测试，全量收集 2842 项。
