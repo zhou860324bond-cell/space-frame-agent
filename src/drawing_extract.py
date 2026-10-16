@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from drawing_assemble import CONFLICT, assemble
+from drawing_assemble import assemble
 from drawing_evidence import EVIDENCE_FORMAT, validate_evidence
 from multimodal_contract import file_digest
 
@@ -85,13 +85,15 @@ source.confidence 填你对这条读数的把握（0~1）。
 其中 S 形如 {{"region": 1, "bbox": [0.1, 0.2, 0.15, 0.25], "confidence": 0.9}}。
 
 硬性规则：
-1. **text 一律照抄图上原文**，包括千分位、±号；不要换算单位、不要补零、不要四舍五入。
+1. **text 一律照抄图上原文**，包括千分位、±号、英尺英寸符号；不要换算单位、不要补零、
+   不要四舍五入。看起来无法换算或前后对不上时也照抄，不要改写成别的形式。
 2. **绝不估算**：图上没写的间距、标高、规格、单位、柱脚做法，就不写这条（或写 null），
    并在 notes 里说明缺什么。不要按比例尺或像素长度推算任何尺寸。
 3. x 组是数字轴号（竖向轴线，从左到右排列），y 组是字母轴号（横向轴线）。
    axes 按图上顺序列出（x 从左到右，y 从下到上）；pos 是轴线在区域图里的位置
    （x 组写横坐标、y 组写纵坐标），只用于核对。
-4. spacings 写相邻两轴之间标注的间距；若还有跨多轴的总尺寸，写进 total。
+4. spacings 写相邻两轴之间标注的间距；从第一根轴线量到最后一根轴线的总尺寸写进 total。
+   量到建筑外边缘、柱外皮的总尺寸不是轴线总尺寸，不要写进 total，写进 notes。
 5. levels 的 name 用图上的层名（如 2F、二层）；没有层名就用标高原文作 name。
    梁的 levels、柱的 from_level/to_level 引用这些 name。平面图标明适用于哪些楼层时，
    梁的 levels 列出所有这些楼层。
@@ -343,16 +345,15 @@ class DrawingExtractor:
                 evidence = None
                 if not problems:
                     evidence = self._finalize(raw, result.regions, images)
-                    problems = [f"{row.item}：{row.message}" for row in
-                                assemble(evidence).rows
-                                if row.status == CONFLICT and row.category in ("轴网", "杆件")]
+                    problems = [row.reread for row in assemble(evidence).rows if row.reread]
                 if evidence is not None:
                     result.evidence = evidence
                 if not problems:
                     break
                 result.errors.append(f"第 {attempt + 1} 次读取需要复核：" + "；".join(problems[:6]))
-                correction = ("上次输出有以下问题，请对照区域图重新读取相关文字后输出完整 JSON；"
-                              "图上确实没有的保持缺失，不要编造：\n" + "\n".join(problems[:12]))
+                correction = ("上次输出中以下读数彼此对不上。请对照区域图逐字重读相关文字后输出完整 JSON。"
+                              "如果原图本来就是这样写的，保持原文不变，不要为了让数字一致或能被换算"
+                              "而改写；图上确实没有的保持缺失，不要编造：\n" + "\n".join(problems[:12]))
         except Exception as exc:  # noqa: BLE001  提供商与网络边界：原样报给用户
             result.errors.append(f"调用识别模型失败：{type(exc).__name__}: {exc}")
         result.duration_ms = (time.monotonic() - start) * 1000

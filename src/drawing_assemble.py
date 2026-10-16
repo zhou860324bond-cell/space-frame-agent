@@ -61,6 +61,10 @@ class CheckRow:
     edit: str = "none"            # none / text / choice
     options: tuple[str, ...] = ()
     current: str = ""
+    #: 给识别模型重读用的中性描述，只说哪些读数彼此对不上；为空表示不回喂。
+    #: 与 message 分开：message 是让**用户**改值的，原样回喂会诱导模型改写原文
+    #: （真实验收中 `25'-0"` 被改抄成 `25`）。读不懂的写法从不回喂。
+    reread: str = ""
 
     @property
     def blocking(self) -> bool:
@@ -172,14 +176,14 @@ class _Builder:
     def add(self, row_id: str, category: str, item_name: str, value: str,
             item: Mapping[str, Any] | None, status: str, message: str = "", *,
             edit: str = "none", options: tuple[str, ...] = (),
-            current: str = "") -> CheckRow:
+            current: str = "", reread: str = "") -> CheckRow:
         source = item.get("source") if item else None
         image = bbox = None
         if isinstance(source, Mapping) and not source.get("user"):
             image = str(source.get("image")) if source.get("image") is not None else None
             bbox = source.get("bbox") if isinstance(source.get("bbox"), list) else None
         row = CheckRow(row_id, category, item_name, value, self.source_text(item), status,
-                       message, image, bbox, edit, options, current)
+                       message, image, bbox, edit, options, current, reread)
         self.rows.append(row)
         return row
 
@@ -262,7 +266,8 @@ class _Builder:
                 if a not in order or b not in order:
                     self.add(row_id, "轴网", f"轴 {a}→{b} 尺寸", str(item.get("text")), item,
                              CONFLICT, "引用了不存在的轴号；请改正或删除这条尺寸。",
-                             edit="text", current=str(item.get("text") or ""))
+                             edit="text", current=str(item.get("text") or ""),
+                             reread=f"尺寸 {a}→{b} 引用的轴号不在轴号列表里")
                     continue
                 self._check_chain(row_id, f"轴 {a}→{b} 尺寸", item, value,
                                   abs(coords[b] - coords[a]))
@@ -283,7 +288,8 @@ class _Builder:
             self.add(row_id, "轴网", item_name, _fmt(value), item, CONFLICT,
                      f"分段间距之和为 {_fmt(expected)}，与标注 {_fmt(value)} 不符；"
                      "请对照原图改正读错的那一段或这条尺寸。",
-                     edit="text", current=str(item.get("text")))
+                     edit="text", current=str(item.get("text")),
+                     reread=f"{item_name}原文「{item.get('text')}」与各段间距原文之和对不上")
         else:
             status, message = _base_status(item)
             self.add(row_id, "轴网", item_name, _fmt(value), item, status,
@@ -423,7 +429,7 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
                                     levels, levels_ev, level_order)
         except ValueError as exc:
             b.add(row_id, "杆件", label, _describe_member(item), item, CONFLICT, str(exc),
-                  edit="choice", options=(DELETE_CHOICE,))
+                  edit="choice", options=(DELETE_CHOICE,), reread=f"杆件 {label}：{exc}")
             continue
         overlap = None
         for key, piece in pieces:
@@ -434,7 +440,8 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
         if overlap:
             b.add(row_id, "杆件", label, _describe_member(item), item, CONFLICT,
                   f"与 {overlap} 位置重叠；请删除读错的那一条。",
-                  edit="choice", options=(DELETE_CHOICE,))
+                  edit="choice", options=(DELETE_CHOICE,),
+                  reread=f"杆件 {label} 与 {overlap} 落在同一位置")
             continue
         for key, piece in pieces:
             segments.setdefault(key, {"label": label, "kind": kind, "ends": piece})

@@ -123,7 +123,8 @@ def test_dimension_chain_conflict_is_sent_back_for_rereading(tmp_path):
     result = _extractor(tmp_path, client).extract([image], max_repairs=1)
     assert result.calls == 3
     correction = client.chat.requests[2]["messages"][1]["content"][-2]["text"]
-    assert "14000" in correction and "不要编造" in correction
+    assert "12000" in correction and "保持原文不变" in correction
+    assert "改为纯数字" not in correction
     assert result.evidence["grids"]["x"]["spacings"][1]["text"] == "6000"
     assert any("需要复核" in e for e in result.errors)
 
@@ -177,3 +178,33 @@ def test_image_records_hash_and_size(tmp_path):
     record = image_records([image])[0]
     assert (record["id"], record["width"], record["height"]) == ("P1", 640, 480)
     assert len(record["sha256"]) == 64
+
+
+def test_unparseable_notation_is_never_sent_back_for_rewriting(tmp_path):
+    """真实验收（FEMA 451 图 5.2-1）：英尺英寸间距 `25'-0"` 读不懂时，旧代码把给用户的
+    「请改为纯数字」回喂模型，模型就把原文改抄成 `25`。读不懂的写法只交给用户，不回喂。"""
+    image = _drawing(tmp_path)
+    raw = _raw()
+    for spacing in raw["grids"]["x"]["spacings"]:
+        spacing["text"] = "25'-0\""
+    raw["grids"]["x"]["total"] = {"text": "50'-0\"", "source": _src(1)}
+    client = FakeOpenAI([LAYOUT, json.dumps(raw)])
+    result = _extractor(tmp_path, client).extract([image], max_repairs=1)
+    assert result.calls == 2
+    texts = [s["text"] for s in result.evidence["grids"]["x"]["spacings"]]
+    assert texts == ["25'-0\"", "25'-0\""]
+
+
+def test_reread_feedback_is_separate_from_user_instructions():
+    """核对表里给用户的话（改值）与给模型的话（哪些读数对不上）分开写。"""
+    from drawing_assemble import assemble
+    from test_drawing_assemble import _evidence
+    evidence = _evidence()
+    evidence["grids"]["x"]["spacings"][0]["text"] = "20'-0\""
+    evidence["grids"]["y"]["spacings"][0]["text"] = "7000"
+    evidence["grids"]["y"]["total"] = {"text": "7200"}
+    rows = {row.id: row for row in assemble(evidence).rows}
+    assert rows["grids.x.spacings.0"].status == "conflict"
+    assert rows["grids.x.spacings.0"].reread == ""
+    assert "对不上" in rows["grids.y.total"].reread
+    assert "改正" not in rows["grids.y.total"].reread
