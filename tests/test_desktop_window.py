@@ -1494,3 +1494,57 @@ def test_hiding_a_member_in_model_view_after_solving_hides_all_its_segments(qt_a
     w.viewport.set_hidden_members({member})
     view = w.viewport.visible_frame(s.frame)
     assert not set(w.viewport._elements([member])) & set(view.members)
+
+
+def _section_dialog_returning(section: dict):
+    from PySide6.QtWidgets import QDialog
+
+    class _Dialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def get_section(self):
+            return dict(section)
+    return _Dialog
+
+
+def test_created_section_keeps_its_real_geometry(qt_app, monkeypatch):
+    """防止「创建截面」写回模型时丢掉 geometry。
+
+    真实问题：白名单只放行 A/I/J/cy/cz 等数值，对话框建的工字钢、矩形管存进模型
+    就没有轮廓，节点实体报“缺少真实轮廓尺寸”，只有圆管、圆钢能从 A/I 反推。
+    """
+    from desktop import section_dialog
+
+    raw = section_dialog.calc_section("I 型钢", {"h": .4, "b": .2, "tw": .008, "tf": .013, "r": .016})
+    raw.update(name="HN400", type="I 型钢", params={})
+    monkeypatch.setattr(section_dialog, "SectionDialog", _section_dialog_returning(raw))
+    w = MainWindow(built())
+    w.create_section()
+    stored = next(s for s in w.session.model["sections"] if s["name"] == "HN400")
+    assert stored["geometry"] == {"type": "i", "dimensions": {
+        "h": .4, "b": .2, "tw": .008, "tf": .013, "r": .016}}
+    assert "type" not in stored and "params" not in stored
+
+
+def test_editing_a_section_replaces_every_derived_field(qt_app, monkeypatch):
+    """防止同名截面重建时旧字段残留：原先用 dict.update，旧 geometry、cy/cz、
+    Ay/Az 会留在新尺寸上，节点实体随即报面积不一致、强度验算用错纤维距离。"""
+    from desktop import section_dialog
+
+    s = built()
+    old = next(sec for sec in s.model["sections"] if sec["name"] == "COLUMN")
+    old.update(geometry={"type": "i", "dimensions": {"h": .7, "b": .25, "tw": .01, "tf": .016}},
+               cy=.35, cz=.125, Ay=1e-3, Az=1e-3)
+    raw = section_dialog.calc_section("槽钢", {"h": .25, "b": .09, "tw": .008, "tf": .012})
+    raw.update(name="COLUMN", type="槽钢", params={})
+    monkeypatch.setattr(section_dialog, "SectionDialog", _section_dialog_returning(raw))
+    w = MainWindow(s)
+    w.create_section()
+    stored = next(sec for sec in w.session.model["sections"] if sec["name"] == "COLUMN")
+    assert stored["geometry"]["type"] == "channel"
+    assert not {"cy", "cz", "Ay", "Az"} & set(stored)
+    assert stored["A"] == pytest.approx(raw["A"], rel=1e-12)

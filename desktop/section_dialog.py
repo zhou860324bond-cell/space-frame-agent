@@ -17,26 +17,33 @@ from . import dialog_styles, theme
 
 # 截面类型定义：(显示名, 参数字典)
 SECTION_TYPES = {
-    "I 型钢": {"h": "高度 h", "b": "翼缘宽 b", "tw": "腹板厚 tw", "tf": "翼缘厚 tf"},
+    "I 型钢": {"h": "高度 h", "b": "翼缘宽 b", "tw": "腹板厚 tw", "tf": "翼缘厚 tf",
+              "r": "根部圆角 r"},
     "矩形管": {"b": "宽 b", "h": "高 h", "t": "壁厚 t"},
     "圆管": {"d": "外径 d", "t": "壁厚 t"},
     "矩形": {"b": "宽 b", "h": "高 h"},
     "圆钢": {"d": "直径 d"},
-    "槽钢": {"h": "高度 h", "b": "腿宽 b", "tw": "腹板厚 tw", "tf": "腿厚 tf"},
-    "等边角钢": {"b": "边宽 b", "t": "边厚 t"},
-    "T 型钢": {"h": "高度 h", "b": "翼缘宽 b", "tw": "腹板厚 tw", "tf": "翼缘厚 tf"},
+    "槽钢": {"h": "高度 h", "b": "腿宽 b", "tw": "腹板厚 tw", "tf": "腿厚 tf",
+             "r": "根部圆角 r"},
+    "等边角钢": {"b": "边宽 b", "t": "边厚 t", "r": "根部圆角 r"},
+    "T 型钢": {"h": "高度 h", "b": "翼缘宽 b", "tw": "腹板厚 tw", "tf": "翼缘厚 tf",
+              "r": "根部圆角 r"},
 }
+
+# 热轧型钢腹板与翼缘（或两肢）交接处的根部圆角。0 表示直角轮廓；按型钢表
+# 填面积、惯性矩时必须填表中的 r，否则 A 比表值小 2%~4%。
+ROOT_RADIUS_KEY = "r"
 
 # 可直接作为起点修改的合理尺寸（米）；切到毫米制时只换显示数值。
 DEFAULT_DIMENSIONS = {
-    "I 型钢": {"h": 0.30, "b": 0.15, "tw": 0.008, "tf": 0.012},
+    "I 型钢": {"h": 0.30, "b": 0.15, "tw": 0.008, "tf": 0.012, "r": 0.0},
     "矩形管": {"b": 0.20, "h": 0.30, "t": 0.008},
     "圆管": {"d": 0.168, "t": 0.008},
     "矩形": {"b": 0.20, "h": 0.30},
     "圆钢": {"d": 0.05},
-    "槽钢": {"h": 0.25, "b": 0.09, "tw": 0.008, "tf": 0.012},
-    "等边角钢": {"b": 0.075, "t": 0.008},
-    "T 型钢": {"h": 0.20, "b": 0.15, "tw": 0.008, "tf": 0.012},
+    "槽钢": {"h": 0.25, "b": 0.09, "tw": 0.008, "tf": 0.012, "r": 0.0},
+    "等边角钢": {"b": 0.075, "t": 0.008, "r": 0.0},
+    "T 型钢": {"h": 0.20, "b": 0.15, "tw": 0.008, "tf": 0.012, "r": 0.0},
 }
 
 
@@ -68,6 +75,8 @@ def calc_section(section_type: str, params: dict) -> dict:
     在对话框里建的截面**做不了强度验算**——这是从界面走一遍才发现的：
     工具链全通，一到校核就被拒绝。
     """
+    params = dict(params)
+    radius = float(params.pop(ROOT_RADIUS_KEY, 0.0) or 0.0)
     if section_type == "I 型钢":
         h, b, tw, tf = params["h"], params["b"], params["tw"], params["tf"]
         A = b * tf * 2 + (h - 2 * tf) * tw
@@ -142,11 +151,21 @@ def calc_section(section_type: str, params: dict) -> dict:
 
     # 不在模型层舍入。小截面的 m⁴ 数值本来就可能低于 1e-8，四舍五入
     # 会直接变成零，到求解阶段才报“截面惯性矩必须大于 0”。
-    out = {"A": float(A), "Iy": float(Iy), "Iz": float(Iz), "J": float(J)}
     kinds = {"I 型钢": "i", "矩形管": "box", "圆管": "tube", "矩形": "rectangle",
              "圆钢": "circle", "槽钢": "channel", "等边角钢": "angle", "T 型钢": "tee"}
+    geometry = None
     if section_type in kinds:
-        out["geometry"] = {"type": kinds[section_type], "dimensions": dict(params)}
+        geometry = {"type": kinds[section_type], "dimensions": dict(params)}
+    if radius > 0.0 and geometry is not None:
+        # 带根部圆角时 A、Iy、Iz 按真实轮廓精确计算（与节点实体用的是同一轮廓），
+        # 上面的直角公式只在 r=0 时成立。J 仍按薄壁公式，未计圆角。
+        from section_geometry import section_properties
+        geometry["dimensions"][ROOT_RADIUS_KEY] = radius
+        exact = section_properties(geometry)
+        A, Iy, Iz = exact["A"], exact["Iy"], exact["Iz"]
+    out = {"A": float(A), "Iy": float(Iy), "Iz": float(Iz), "J": float(J)}
+    if geometry is not None:
+        out["geometry"] = geometry
     fibres = _SYMMETRIC_FIBRES.get(section_type)
     if fibres is not None:
         cy, cz, circular = fibres(params)
@@ -195,6 +214,11 @@ class SectionDialog(QDialog):
             for key, label in params.items():
                 sp = QDoubleSpinBox()
                 sp.setRange(0.001 * size_scale, 10 * size_scale)
+                if key == ROOT_RADIUS_KEY:
+                    sp.setRange(0.0, 1 * size_scale)
+                    sp.setSpecialValueText("0（直角）")
+                    sp.setToolTip("热轧型钢腹板与翼缘交接处的圆角半径，取型钢表中的 r；"
+                                  "按型钢表填截面时必须填，否则面积比表值小，节点实体会拒绝。")
                 sp.setValue(DEFAULT_DIMENSIONS[stype][key] * size_scale)
                 sp.setDecimals(3)
                 sp.setSuffix(f" {self.length_unit}")
@@ -251,7 +275,12 @@ class SectionDialog(QDialog):
         stype = self.cmb_type.currentText()
         spins = self.param_spins[stype]
         params = {k: sp.value() for k, sp in spins.items()}
-        props = calc_section(stype, params)
+        try:
+            props = calc_section(stype, params)
+        except ValueError as exc:
+            # 输入过程中尺寸暂时不成立（如 r 大于翼缘外伸）是常态，预览说明原因即可。
+            self.lbl_preview.setText(f"当前尺寸无法构成截面：{exc}")
+            return
         shear = (f"\n  Ay = Az ≈ {5 * props['A'] / 6:.6e} {self.length_unit}²"
                  if self.chk_shear.isChecked() else "\n  剪切变形：关闭")
         # 极端纤维距离决定这个截面能不能做强度验算。有就报出来，
@@ -267,6 +296,8 @@ class SectionDialog(QDialog):
                      "该截面的 I 本身是近似值，配一个精确的 c 算出来的应力"
                      "照样不对。\n  强度验算会明确拒绝，而不是给一个"
                      "来路不明的应力。")
+        if params.get(ROOT_RADIUS_KEY):
+            fibre += "\n  根部圆角已计入 A、Iy、Iz；J 按薄壁公式，未计圆角。"
         self.lbl_preview.setText(
             f"截面属性（自动计算）：\n"
             f"  A  = {props['A']:.6e} {self.length_unit}²\n"
@@ -292,11 +323,17 @@ class SectionDialog(QDialog):
             error = "等边角钢需满足 t < b"
         elif stype == "T 型钢" and (p["tf"] >= p["h"] or p["tw"] >= p["b"]):
             error = "T 型钢需满足 tf < h 且 tw < b"
-        props = calc_section(stype, p)
-        numbers = [v for k, v in props.items() if k != "circular"]
-        if error is None and (not all(math.isfinite(v) and v > 0
-                                      for v in numbers)):
-            error = "当前尺寸算出的截面属性无效，请检查各项尺寸"
+        if error is None:
+            try:
+                props = calc_section(stype, p)
+            except ValueError as exc:
+                error = f"{exc}"
+        if error is None:
+            # 只检查数值特性：结果里还有 geometry（dict）与 circular（bool），
+            # 曾把 geometry 也送进 isfinite，点“确定”直接抛 TypeError、对话框关不掉。
+            numbers = [props[k] for k in ("A", "Iy", "Iz", "J", "cy", "cz") if k in props]
+            if not all(math.isfinite(v) and v > 0 for v in numbers):
+                error = "当前尺寸算出的截面属性无效，请检查各项尺寸"
         if error:
             QMessageBox.warning(self, "截面尺寸不合理", error)
             return

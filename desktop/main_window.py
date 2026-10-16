@@ -2102,18 +2102,21 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         #
         # 反过来，这份白名单**漏掉一个键就是静默丢数据**：cy/cz/circular
         # 一丢，界面上建的截面就永远做不了强度验算，而且不报错——
-        # 只在点「强度验算」时被拒绝，看着像校核功能坏了。
+        # 只在点「强度验算」时被拒绝，看着像校核功能坏了。geometry 同理：
+        # 漏掉它，非圆截面就没有真实轮廓，节点实体只能拒绝、视口也画不出截面。
         section_type = raw_section["type"]
         sec = {key: raw_section[key] for key in
-               ("name", "A", "Iy", "Iz", "J", "Ay", "Az", "cy", "cz", "circular")
+               ("name", "A", "Iy", "Iz", "J", "Ay", "Az", "cy", "cz", "circular", "geometry")
                if key in raw_section}
         from copy import deepcopy
 
         new_sections = deepcopy(self.session.model.get("sections", []))
-        existing = next((s for s in new_sections
-                         if s["name"] == sec["name"]), None)
-        if existing:
-            existing.update(sec)
+        index = next((i for i, s in enumerate(new_sections)
+                      if s["name"] == sec["name"]), None)
+        # 同名截面整条替换而不是 update：截面的每个字段都由尺寸推出，旧的
+        # geometry、cy/cz、Ay/Az 或剪应力静矩若残留，会与新尺寸对不上。
+        if index is not None:
+            new_sections[index] = sec
         else:
             new_sections.append(sec)
         result = self.session.define_materials_and_sections(
