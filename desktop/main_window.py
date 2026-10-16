@@ -3034,7 +3034,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         box.setWindowTitle("节点实体")
         box.resize(460, 300)
         layout = QVBoxLayout(box)
-        note = QLabel(f"节点{node_id}：切面位移与转角驱动。\n过渡区域保留远端截面与孔洞，曲线和圆角尺寸须按实际节点核对。")
+        note = QLabel(f"节点{node_id}：默认由整体梁切面位移与转角驱动。\n过渡区域保留远端截面与孔洞，曲线和圆角尺寸须按实际节点核对。")
         note.setWordWrap(True)
         layout.addWidget(note)
         form = QFormLayout()
@@ -3049,6 +3049,12 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         geometry.addItem("原始杆件交汇", "intersection")
         geometry.setToolTip("采用一体连续实体假设。柱顶模板保持柱截面，并在交汇处生成局部曲面过渡；匹配两臂使用G2扫掠，其他节点采用斜接。无焊缝、螺栓或接触界面。")
         form.addRow("节点几何", geometry)
+        loading = QComboBox()
+        loading.addItem("切面位移驱动", "displacement")
+        loading.addItem("杆端内力加载", "force")
+        loading.setToolTip("切面位移驱动：保留区内不能有整体支座。杆端内力加载：锚固一根杆件，"
+                           "其余杆端施加整体梁内力；保留区内的支座反力改由锚固杆件承担，结果中会写明。")
+        form.addRow("加载方式", loading)
         levels = QComboBox()
         levels.addItem("快速（1 档）", 1)
         levels.addItem("收敛判断（3 档）", 3)
@@ -3077,6 +3083,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         count = int(levels.currentData())
         self._joint_analysis_options = dict(
             backend=backend.currentData(), geometry_mode=geometry.currentData(),
+            loading_method=loading.currentData(),
             mesh_sizes_mm=([size.value()*1.5**k for k in range(count-1, -1, -1)] if size.value() else None))
         return count
 
