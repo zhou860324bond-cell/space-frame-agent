@@ -1,5 +1,9 @@
 # 工作进度
 
+## 主工作区与公开仓库合并：基准脚本与文件拆解文档（2026-10-16）
+
+- 第五批移植：tools/benchmark_interaction.py、docs/benchmarks/interaction-20261009.json、docs/核心与Agent文件拆解.md。脚本依赖模型树搜索（#46），分支堆叠在 #46 上；原脚本在 master 上于第一个场景结束后崩溃（deleteLater 后抽屉 eventFilter 仍回调已删除的 MainWindow），改为只 close 并保留引用。无头 repeat=2 实跑通过。文件拆解文档加注为 10-12 主工作区快照。无新增测试，全量收集 2842 项。
+
 ## 主工作区与公开仓库合并：模型树搜索与定位（2026-10-16）
 
 - 第二批移植（主工作区 d8c8cc6、38bd78f 的模型树部分）。master 的模型树（#34 重做）只有“节点 N / 杆件 M”汇总项，按 master 现有结构补逐个节点、杆件条目（locate_object，单击即定位）、ModelTreePanel 搜索框、rebuilt 信号与选中恢复、跨间荷载真实类型命名；主窗口模型栏改放 ModelTreePanel，视口拾取同步选中树条目。
