@@ -109,23 +109,31 @@ def shape_tet10(barycentric: Iterable[float]) -> tuple[np.ndarray, np.ndarray]:
     return N, dN
 
 
-def _b_matrix(coords: np.ndarray, barycentric: np.ndarray) -> tuple[np.ndarray, float]:
-    _N, dN_nat = shape_tet10(barycentric)
+# 积分点固定，自然坐标导数与单元几何无关；组装和应力恢复共用，避免逐单元重算。
+_GAUSS_DERIVATIVES = tuple(shape_tet10(bary)[1] for bary in GAUSS_BARYCENTRIC)
+for _derivatives in _GAUSS_DERIVATIVES:
+    _derivatives.setflags(write=False)
+
+
+def _b_from_derivatives(coords: np.ndarray, dN_nat: np.ndarray) -> tuple[np.ndarray, float]:
     jacobian = coords.T @ dN_nat
     det_j = float(np.linalg.det(jacobian))
     if not math.isfinite(det_j) or det_j <= 1e-12:
         raise Solid3DError(f"C3D10 Jacobian 非正或退化：detJ={det_j:.6g}")
     dN = dN_nat @ np.linalg.inv(jacobian)
     B = np.zeros((6, 30), dtype=float)
-    for i, (dx, dy, dz) in enumerate(dN):
-        c = 3 * i
-        B[0, c] = dx
-        B[1, c + 1] = dy
-        B[2, c + 2] = dz
-        B[3, c:c + 2] = (dy, dx)
-        B[4, c + 1:c + 3] = (dz, dy)
-        B[5, (c, c + 2)] = (dz, dx)
+    dx, dy, dz = dN.T
+    B[0, 0::3] = dx
+    B[1, 1::3] = dy
+    B[2, 2::3] = dz
+    B[3, 0::3], B[3, 1::3] = dy, dx
+    B[4, 1::3], B[4, 2::3] = dz, dy
+    B[5, 0::3], B[5, 2::3] = dz, dx
     return B, det_j
+
+
+def _b_matrix(coords: np.ndarray, barycentric: np.ndarray) -> tuple[np.ndarray, float]:
+    return _b_from_derivatives(coords, shape_tet10(barycentric)[1])
 
 
 def element_stiffness(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
@@ -135,8 +143,8 @@ def element_stiffness(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
         raise Solid3DError("单元坐标必须是 10×3")
     D = elasticity_matrix(E, nu)
     Ke = np.zeros((30, 30), dtype=float)
-    for bary in GAUSS_BARYCENTRIC:
-        B, det_j = _b_matrix(xyz, bary)
+    for derivatives in _GAUSS_DERIVATIVES:
+        B, det_j = _b_from_derivatives(xyz, derivatives)
         Ke += (B.T @ D @ B) * det_j * GAUSS_WEIGHT
     return 0.5 * (Ke + Ke.T)
 
@@ -340,8 +348,8 @@ def solve(mesh: SolidMesh, E: float, nu: float,
     for e, conn in enumerate(mesh.elements):
         ue = u[np.column_stack((3 * conn, 3 * conn + 1, 3 * conn + 2)).ravel()]
         em, ep = [], []
-        for q, bary in enumerate(GAUSS_BARYCENTRIC):
-            B, _det = _b_matrix(mesh.nodes[conn], bary)
+        for q, derivatives in enumerate(_GAUSS_DERIVATIVES):
+            B, _det = _b_from_derivatives(mesh.nodes[conn], derivatives)
             stresses[e, q] = D @ (B @ ue)
             vm, pr = _stress_measures(stresses[e, q])
             em.append(vm); ep.append(pr)
