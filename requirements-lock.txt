@@ -31,6 +31,9 @@ plotly==7.0.0
 # 节点局部实体子模型的网格生成
 gmsh==4.15.2
 
+# 结构图纸 DXF 入口（2026-10-16 Windows 增量验证）
+ezdxf==1.4.4
+
 # MCP Server
 mcp==2.1.1
 

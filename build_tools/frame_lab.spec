@@ -48,6 +48,12 @@ except Exception as exc:
         print(f"[spec] gmsh 完全收不进来（{exc2}）——"
               "打出来的程序将没有节点实体子模型功能")
 
+# ezdxf 只在图纸识别读 DXF 时延迟 import，静态分析抓不到；没装就跳过（入口会提示安装）。
+try:
+    hiddenimports += collect_submodules("ezdxf")
+except Exception as exc:  # noqa: BLE001
+    print(f"[spec] ezdxf 未收入（{exc}），DXF 入口将提示安装")
+
 hiddenimports += collect_submodules("scipy.sparse.linalg")
 hiddenimports += ["matplotlib.backends.backend_qtagg",
                   "matplotlib.backends.backend_agg"]

@@ -15,15 +15,16 @@
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from dataclasses import dataclass, field
 from statistics import median
 from typing import Any, Mapping
 
 import sections as section_builders
-from drawing_evidence import (EVIDENCE_FORMAT, LENGTH_UNITS, LOW_CONFIDENCE,
-                              length_factor, parse_designation, parse_material,
-                              parse_number)
+from drawing_evidence import (EVIDENCE_FORMAT, LAYER_ROLES, LENGTH_UNITS,
+                              LOW_CONFIDENCE, length_factor, parse_designation,
+                              parse_material, parse_number)
 from generator import _COLUMN_REF
 from model_io import CURRENT_SCHEMA_VERSION, validate_payload
 
@@ -37,6 +38,7 @@ PIXEL_SCALE_ALARM = 0.20
 SUPPORT_FIX = {"fixed": [1, 1, 1, 1, 1, 1], "pinned": [1, 1, 1, 0, 0, 0]}
 SUPPORT_CHOICES = {"固接": "fixed", "铰接": "pinned"}
 SUPPORT_NAMES = {value: key for key, value in SUPPORT_CHOICES.items()}
+LAYER_CHOICES = {name: key for key, name in LAYER_ROLES.items()}
 DELETE_CHOICE = "删除此条"
 UNIT_CHOICES = ("mm", "m")
 
@@ -132,7 +134,28 @@ def _base_status(item: Mapping[str, Any]) -> tuple[str, str]:
     confidence = _confidence(item.get("source"))
     if confidence is not None and confidence < LOW_CONFIDENCE:
         return CONFIRM, f"识别置信度 {confidence:.0%}，请对照原图确认。"
+    if str(item.get("check") or "").strip():
+        return CONFIRM, str(item["check"]).strip()
     return OK, ""
+
+
+def _read_number(item: Mapping[str, Any]) -> tuple[float | None, str]:
+    """条目的数值：矢量入口从实体直接取得的 ``value`` 优先，``text`` 是原文。
+
+    两者不符（如 DIMENSION 文字被改写成与实测不同的数）时返回冲突说明；
+    用户改写过的条目以用户文字为准。"""
+    text_value = parse_number(item.get("text"))
+    value = item.get("value")
+    source = item.get("source")
+    by_user = isinstance(source, Mapping) and bool(source.get("user"))
+    if by_user or isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(float(value)):
+        return text_value, ""
+    value = float(value)
+    if text_value is not None and abs(text_value - value) > 1e-6 * max(1.0, abs(value)):
+        return value, (f"标注文字「{item.get('text')}」与实体实测值 {_fmt(value)} 不符；"
+                       "请照图纸意图填写正确的数。")
+    return value, ""
 
 
 def _to_m(value: float, factor: float) -> float:
@@ -156,6 +179,8 @@ class _Builder:
         self.images = {str(item.get("id")): (index, item) for index, item in
                        enumerate(evidence.get("images") or [], 1)
                        if isinstance(item, Mapping)}
+        self.files = {str(item.get("id")): item for item in evidence.get("files") or []
+                      if isinstance(item, Mapping)}
 
     # ---- 行与来源 ----
     def source_text(self, item: Mapping[str, Any] | None) -> str:
@@ -169,6 +194,15 @@ class _Builder:
         if isinstance(source, Mapping) and str(source.get("image")) in self.images:
             index, image = self.images[str(source.get("image"))]
             parts.append(f"图 {index}「{image.get('name', '')}」")
+        if isinstance(source, Mapping) and str(source.get("file")) in self.files:
+            parts.append(f"DXF「{self.files[str(source.get('file'))].get('name', '')}」")
+            if source.get("header"):
+                parts.append(f"文件头 {source['header']}")
+            if source.get("handles"):
+                parts.append("实体 " + "、".join(f"#{h}" for h in source["handles"][:4])
+                             + ("…" if len(source["handles"]) > 4 else ""))
+            if source.get("layer"):
+                parts.append(f"图层「{source['layer']}」")
         if isinstance(raw, str) and raw.strip():
             parts.append(f"原文「{raw.strip()}」")
         return " ".join(parts) or "图上未读到原文"
@@ -186,6 +220,27 @@ class _Builder:
                        message, image, bbox, edit, options, current, reread)
         self.rows.append(row)
         return row
+
+    # ---- 图层用途（矢量入口） ----
+    def layers(self) -> None:
+        for index, item in enumerate(self.ev.get("layers") or []):
+            if not isinstance(item, Mapping):
+                continue
+            role = item.get("role")
+            summary = str(item.get("summary") or "")
+            if role not in LAYER_ROLES:
+                status, message = CONFIRM, ("尚未判断用途，暂不读取。如果这个图层上有轴线、"
+                                            "梁柱、标注或说明，请选择用途；否则确认即按不使用处理。")
+                value = "未判断"
+            elif _settled(item):
+                status, message, value = OK, "", LAYER_ROLES[role]
+            else:
+                status, value = CONFIRM, LAYER_ROLES[role]
+                message = str(item.get("check") or "") or "图层用途须经确认。"
+            self.add(f"layers.{index}", "图层", f"图层「{item.get('name')}」",
+                     f"{value}（{summary}）" if summary else value, item, status, message,
+                     edit="choice", options=tuple(LAYER_CHOICES),
+                     current=LAYER_ROLES.get(role, ""))
 
     # ---- 单位 ----
     def unit(self, key: str, label: str) -> float | None:
@@ -238,11 +293,12 @@ class _Builder:
                 continue
             index, item = found
             consecutive.add(index)
-            value = parse_number(item.get("text"))
+            value, mismatch = _read_number(item)
             row_id = f"grids.{family}.spacings.{index}"
-            if value is None or value <= 0:
-                self.add(row_id, "轴网", item_name, "—", item, CONFLICT,
-                         f"读不懂间距「{item.get('text')}」；请改为纯数字。",
+            if value is None or value <= 0 or mismatch:
+                self.add(row_id, "轴网", item_name, "—" if value is None else _fmt(value),
+                         item, CONFLICT,
+                         mismatch or f"读不懂间距「{item.get('text')}」；请改为纯数字。",
                          edit="text", current=str(item.get("text") or ""))
                 complete = False
                 continue
@@ -262,7 +318,11 @@ class _Builder:
                     continue
                 a, b = str(item.get("from")).strip(), str(item.get("to")).strip()
                 row_id = f"grids.{family}.spacings.{index}"
-                value = parse_number(item.get("text"))
+                value, mismatch = _read_number(item)
+                if mismatch:
+                    self.add(row_id, "轴网", f"轴 {a}→{b} 尺寸", _fmt(value), item, CONFLICT,
+                             mismatch, edit="text", current=str(item.get("text") or ""))
+                    continue
                 if a not in order or b not in order:
                     self.add(row_id, "轴网", f"轴 {a}→{b} 尺寸", str(item.get("text")), item,
                              CONFLICT, "引用了不存在的轴号；请改正或删除这条尺寸。",
@@ -274,7 +334,7 @@ class _Builder:
             total = grid.get("total")
             if isinstance(total, Mapping) and str(total.get("text") or "").strip():
                 self._check_chain(f"grids.{family}.total", f"{name}总尺寸", total,
-                                  parse_number(total.get("text")),
+                                  _read_number(total)[0],
                                   coords[labels[-1]] - coords[labels[0]])
         return labels, coords
 
@@ -397,6 +457,7 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     active = [(index, item) for index, item in enumerate(evidence.get("members") or [])
               if isinstance(item, Mapping) and not item.get("deleted")]
 
+    b.layers()
     f_len = b.unit("length", "尺寸单位")
     uses_y = any(item.get("kind") == "beam" and item.get("along")
                  or item.get("kind") == "column" and len(item.get("at") or []) == 2
@@ -742,6 +803,9 @@ def resolve(evidence: Mapping[str, Any], row_id: str, value: str | None = None) 
         if fields:
             if item.get("source") is not None and not item.get("source", {}).get("user"):
                 item.setdefault("source_before", item["source"])
+            if "value" in item:     # 用户改写后以文字为准，实测值留作追溯
+                item.setdefault("value_before", item.pop("value"))
+            item.pop("check", None)
             item.update(fields)
             item["source"] = dict(user)
         item["confirmed"] = True
@@ -811,6 +875,17 @@ def resolve(evidence: Mapping[str, Any], row_id: str, value: str | None = None) 
         raise ValueError(f"核对项 {row_id} 已不存在，请重新识别。") from exc
     if not isinstance(item, dict):
         raise ValueError(f"核对项 {row_id} 无法修改。")
+    if parts[0] == "layers":
+        if text is None:
+            item.setdefault("role", None)
+            if item["role"] is None:
+                item["role"] = "ignore"
+            settle(item)
+        elif text in LAYER_CHOICES:
+            settle(item, role=LAYER_CHOICES[text])
+        else:
+            raise ValueError(f"图层用途只能选 {'、'.join(LAYER_CHOICES)}。")
+        return ev
     if parts[0] == "members":
         if text == DELETE_CHOICE:
             item["deleted"] = True
