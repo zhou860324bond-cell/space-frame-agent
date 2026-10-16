@@ -1,5 +1,12 @@
 # 工作进度
 
+## 主工作区与公开仓库合并：第一批小修复（2026-10-16）
+
+- 用户决定以公开 master 为主线合并两份代码：主工作区（agent开发，codex/joint-displacement-submodel，自 #25 分叉后 101 个独有提交）中 master 缺少的代码功能分批开 PR 移植；多模态草图审核改进让位给 #42 图纸识别；汇报 PPT、演示视频等私人材料只留本地。
+- 判定方法：按测试函数名对比两边，主工作区独有 256 个，约 200 个属多模态草图；其余逐个在 master 上运行。被 master 有意替代的不移植：等待拾取（#32 区域拾取）、属性指派与英文抽屉（#32/#34 重做）、粗网格提示（改为自动加密）、批量支座模板（#33 重画支座符号）。
+- 本批移植：DeepSeekProvider 超时 90 秒、max_retries=0（主工作区 bf17a77）；viz_symbols.distributed_load_samples 修正区间荷载符号（38bd78f），桌面与网页视口共用。三个测试函数原样迁入 test_model_router、test_desktop_scene、test_viz_symbols_lazy，在 master 上先红后绿。只跑增量与文档闸，全量收集 2842 项（rebase 到含 #41 的 master 后）。
+- 后续批次：实体结果点查询与模型树搜索定位、坐标荷载/坐标查询/完整 CSV、交互基准脚本与文件拆解文档；最后把私人材料归档到本地分支、主工作区切回 master。
+
 ## 变截面杆件（2026-10-16）
 
 - 第 3 步（专精梁单元计划收尾）。分支 claude/tapered-members 基于 claude/lateral-torsional-buckling（PR #40），#39、#40 合并后依次 rebase。

@@ -20,7 +20,7 @@ import numpy as np
 
 import viz_theme as T
 from frame3d import span_loads_of
-from span_loads import POINT
+from span_loads import PARTIAL, POINT, RAMP
 
 # 只有约束住这么多个平动方向的节点才画支座符号
 _MIN_FIXED_TRANSLATIONS = 2
@@ -156,6 +156,28 @@ def _cone_trace(points, vectors, name, color, ref):
         name=name, showlegend=True, hoverinfo="skip")
 
 
+def distributed_load_samples(load, pi, pj, count: int) -> tuple[np.ndarray, np.ndarray]:
+    """分布荷载符号的作用点与强度，两种视口共用。
+
+    区间均布（PARTIAL）与区间梯形（RAMP）只作用在 [a, b] 上：箭头必须画在这段
+    范围内，区间均布两端强度相同。原先一律在杆长 15%~85% 处按 w1→w2 插值，区间
+    荷载被画到区间外，区间均布还被插值成从 w1 降到默认的零。
+    """
+    v1, v2 = load.ends()
+    if load.kind in {PARTIAL, RAMP}:
+        t = np.linspace(0.0, 1.0, count)
+        length = float(np.linalg.norm(pj - pi))
+        distances = load.a + t * (load.b - load.a)
+        positions = pi + (distances / length)[:, None] * (pj - pi)
+        if load.kind == PARTIAL:
+            v2 = v1
+    else:
+        t = np.linspace(0.15, 0.85, count)
+        positions = pi + t[:, None] * (pj - pi)
+    vectors = (1 - t[:, None]) * v1 + t[:, None] * v2
+    return positions, vectors
+
+
 def load_traces(frame, case: str, size: float | None = None,
                 arrows_per_member: int = 3) -> tuple[list, dict]:
     """荷载符号：节点力用一支箭头，杆间均布用一排箭头，集中力单独一支。
@@ -185,10 +207,9 @@ def load_traces(frame, case: str, size: float | None = None,
                 spans_pts.append(pi + t * (pj - pi))
                 spans_vec.append(np.asarray(item.w1, dtype=float))
                 continue
-            v1, v2 = item.ends()
-            for t in np.linspace(0.15, 0.85, arrows_per_member):
-                spans_pts.append(pi + t * (pj - pi))
-                spans_vec.append((1 - t) * v1 + t * v2)
+            points, vectors = distributed_load_samples(item, pi, pj, arrows_per_member)
+            spans_pts.extend(points)
+            spans_vec.extend(vectors)
 
     traces = []
     for pts, vec, name, color in (

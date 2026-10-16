@@ -210,3 +210,39 @@ def test_model_config_resolved_key_none():
 def test_empty_configs_raises():
     with pytest.raises(ValueError, match="至少需要一个模型配置"):
         ModelRouter([])
+
+
+@pytest.mark.parametrize("provider_kind", ["direct", "router"])
+def test_text_provider_timeout_has_no_hidden_retry(provider_kind, monkeypatch):
+    """防止桌面文字 AI 失联后沿用 SDK 十分钟超时和两次隐式重试。"""
+    import openai
+    if "httpx2" in str(openai.OpenAI.__init__.__annotations__.get("http_client")):
+        import httpx2 as httpx
+    else:
+        import httpx
+    from agent import DeepSeekProvider
+    from model_router import _OpenAICompatibleProvider
+
+    requests = []
+    sdk_client = openai.OpenAI
+
+    def unavailable(request):
+        requests.append(request)
+        raise httpx.ReadTimeout("验收模拟网络超时", request=request)
+
+    def client(**kwargs):
+        return sdk_client(**kwargs, http_client=httpx.Client(
+            transport=httpx.MockTransport(unavailable)))
+
+    monkeypatch.setattr(openai, "OpenAI", client)
+    provider = (DeepSeekProvider("test-key") if provider_kind == "direct" else
+                _OpenAICompatibleProvider(ModelConfig(
+                    name="test", base_url="https://example.invalid/v1", api_key="test-key")))
+    try:
+        with pytest.raises(openai.APITimeoutError):
+            provider.complete([{"role": "user", "content": "建模"}], [])
+        assert len(requests) == 1
+        assert requests[0].extensions["timeout"] == {
+            "connect": 90.0, "read": 90.0, "write": 90.0, "pool": 90.0}
+    finally:
+        provider._client.close()

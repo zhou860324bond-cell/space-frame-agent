@@ -30,7 +30,8 @@ from internal_forces import (exceeds, max_centerline_displacement, peak_index,
 from frame3d import (Frame, Node, Member, local_axes,
                      member_endpoints)                             # noqa: E402
 from modal import member_mode_displacement                        # noqa: E402
-from viz_symbols import classify_support, model_size            # noqa: E402
+from viz_symbols import (classify_support, distributed_load_samples,
+                         model_size)                            # noqa: E402
 
 # 分析梁只表达中心线与连续实体感，不冒充真实截面。细长比例接近 CAE 梁单元，
 # 避免高饱和粗圆管产生“塑料玩具”观感；云图仍有足够表面积显示颜色。
@@ -1046,11 +1047,10 @@ def load_arrows(frame, case: str, size: float | None = None,
                 span_groups.append(None)
                 continue
             group += 1
-            v1, v2 = item.ends()
-            for t in np.linspace(0.15, 0.85, per_member):
-                span_p.append(pi + t * (pj - pi))
-                span_v.append((1 - t) * v1 + t * v2)
-                span_groups.append(group)
+            points, vectors = distributed_load_samples(item, pi, pj, per_member)
+            span_p.extend(points)
+            span_v.extend(vectors)
+            span_groups.extend([group] * len(points))
 
     out = {}
     for label, pts, vec in (("节点荷载", nodal_p, nodal_v),

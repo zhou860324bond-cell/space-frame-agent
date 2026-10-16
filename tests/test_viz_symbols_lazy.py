@@ -66,3 +66,42 @@ def test_plotly_is_not_imported_at_module_level():
             names.append(node.module)
     assert not any(n.startswith("plotly") for n in names), \
         "plotly 又回到顶层了：桌面端会因此依赖一个它一行都不用的绘图后端"
+
+
+def test_partial_load_traces_keep_uniform_intensity_range_and_separate_point_force():
+    """防止网页把区间均布沿全杆衰减到零，并保留图IV-5杆中集中力的独立作用点。"""
+    import numpy as np
+
+    from agent import Session
+    from model_io import from_dict
+    import viz_symbols
+
+    session = Session()
+    assert session.set_model(model={
+        "nodes": [{"id": 1, "x": 0, "y": 0, "z": 0},
+                  {"id": 2, "x": 8, "y": 0, "z": 0}],
+        "members": [{"id": 1, "i": 1, "j": 2, "section": "S", "material": "M"}],
+        "materials": [{"name": "M", "E": 210e9, "nu": 0.3}],
+        "sections": [{"name": "S", "A": 0.01, "Iy": 1e-5, "Iz": 1e-5, "J": 2e-5}],
+        "supports": [{"node": 1, "fix": [1]*6}],
+    }).ok
+    for kind, a, w2 in (("partial", 0.0, None), ("partial", 1.0, None),
+                        ("partial_trapezoid", 1.0, [0, 0, -1600])):
+        entry = {"member": 1, "kind": kind, "w1": [0, 0, -800], "a": a, "b": 3.0}
+        if w2 is not None:
+            entry["w2"] = w2
+        point = {"member": 1, "kind": "point", "w1": [4000, 0, 0], "a": 3.0}
+        assert session.set_load_cases(cases=[{
+            "name": "D", "member_spans": [entry, point]}]).ok
+        traces, meta = viz_symbols.load_traces(from_dict(session.model), "D", size=1.0)
+        trace = next(t for t in traces if t.name == "杆间荷载")
+        np.testing.assert_allclose(trace.x, [a, (a + 3.0)/2, 3.0, 3.0])
+        np.testing.assert_allclose(trace.y, 0)
+        np.testing.assert_allclose(trace.z, 0)
+        assert meta["member"] == 4 and trace.u[-1] > 0 and trace.w[-1] == 0
+        intensities = np.asarray(trace.w[:3])
+        assert np.all(intensities < 0)
+        if kind == "partial":
+            np.testing.assert_allclose(intensities, intensities[0])
+        else:
+            assert intensities[0] > intensities[1] > intensities[2]
