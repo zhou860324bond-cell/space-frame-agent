@@ -263,3 +263,56 @@ def material_probe(p):
             if contains(loop, point) and not any(contains(h, point) for h in p["holes"]):
                 return point.tolist()
     raise ValueError("无法找到截面材料内部取样点，请检查轮廓与孔洞。")
+
+
+def _polygon_moments(loop):
+    """多边形对原点的 A、∫y dA、∫z dA、∫y² dA、∫z² dA（格林公式，逆时针为正）。"""
+    p = np.asarray(loop, dtype=float)
+    q = np.roll(p, -1, axis=0)
+    cross = p[:, 0]*q[:, 1] - q[:, 0]*p[:, 1]
+    sign = 1.0 if cross.sum() > 0 else -1.0
+    y0, z0, y1, z1 = p[:, 0], p[:, 1], q[:, 0], q[:, 1]
+    return sign * np.array([cross.sum() / 2,
+                            (cross * (y0 + y1)).sum() / 6,
+                            (cross * (z0 + z1)).sum() / 6,
+                            (cross * (y0**2 + y0*y1 + y1**2)).sum() / 12,
+                            (cross * (z0**2 + z0*z1 + z1**2)).sum() / 12])
+
+
+def section_properties(geometry):
+    """按真实轮廓精确计算 A 与对形心的 ``Iy = ∫z²dA``、``Iz = ∫y²dA``。
+
+    y 为轮廓第一坐标（沿截面高度 h），与内核强轴约定一致。直线边用格林公式；
+    根部圆角按"正方形减四分之一圆"的解析式逐个加上：每个圆角面积 (1−π/4)r²，
+    形心距角点沿两肢各 e = r(10−3π)/(12−3π)，对过角点的肢线惯性矩
+    (1−5π/16)r⁴。圆角要求内凹角为 90° 且两肢平行于 y、z 轴，本模块的型钢轮廓都满足。
+    圆形截面另有闭合公式，这里不处理。
+    """
+    if geometry["type"] in ("circle", "tube"):
+        raise ValueError("圆形截面请用闭合公式计算截面特性。")
+    dims = dict(geometry.get("dimensions", {}))
+    radius = float(dims.pop("r", 0.0))
+    sharp = profile({**geometry, "dimensions": dims})
+    total = _polygon_moments(sharp["outer"])
+    for hole in sharp["holes"]:
+        total -= _polygon_moments(hole)
+    if radius > 0.0:
+        rounded = profile(geometry)          # 校验 r 能放得下
+        assert rounded["concave_corners"] == sharp["concave_corners"]
+        outer = np.asarray(sharp["outer"], dtype=float)
+        a = (1 - math.pi/4) * radius**2
+        e = radius * (10 - 3*math.pi) / (12 - 3*math.pi)
+        own = (1 - 5*math.pi/16) * radius**4 - a * e**2
+        for i in np.flatnonzero(_concave(outer)):
+            corner = outer[i]
+            u1 = outer[i-1] - corner
+            u2 = outer[(i+1) % len(outer)] - corner
+            u1, u2 = u1/np.linalg.norm(u1), u2/np.linalg.norm(u2)
+            if abs(u1 @ u2) > 1e-9 or min(abs(u1).max(), abs(u2).max()) < 1 - 1e-9:
+                raise ValueError("根部圆角的解析特性只适用于两肢平行于坐标轴的 90° 内凹角。")
+            c = corner + e * (u1 + u2)
+            total += np.array([a, a*c[0], a*c[1], own + a*c[0]**2, own + a*c[1]**2])
+    area, sy, sz, iyy, izz = total
+    cy, cz = sy/area, sz/area
+    return {"A": float(area), "Iy": float(izz - area*cz**2), "Iz": float(iyy - area*cy**2),
+            "centroid": [float(cy), float(cz)]}

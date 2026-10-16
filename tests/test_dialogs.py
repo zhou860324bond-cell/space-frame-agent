@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 
 import pytest
@@ -19,7 +20,7 @@ import pytest
 pytest.importorskip("PySide6", reason="未安装 PySide6，跳过桌面端测试")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication                  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog         # noqa: E402
 
 from agent import Session                                   # noqa: E402
 from desktop.dialogs import (JsonDialog, ParametricDialog,   # noqa: E402
@@ -29,7 +30,8 @@ from desktop.load_dialog import LoadDialog                   # noqa: E402
 from desktop.bc_panel import BCPanel                         # noqa: E402
 from desktop.bc_dialog import BCDialog                       # noqa: E402
 from desktop.assignment_dialog import AssignmentDialog       # noqa: E402
-from desktop.section_dialog import SectionDialog, calc_section  # noqa: E402
+from desktop.section_dialog import (SECTION_TYPES, SectionDialog,  # noqa: E402
+                                    calc_section)
 
 MATERIALS = [{"name": "Q355", "E": 2.06e11, "nu": 0.3, "density": 7850.0}]
 SECTIONS = [{"name": "COLUMN", "A": 0.0147, "Iy": 4.2e-5, "Iz": 1.18e-3,
@@ -486,7 +488,8 @@ def test_dialog_inertia_matches_the_drawn_profile(shape):
 
     kinds = {"I 型钢": "i", "矩形管": "box", "矩形": "rectangle",
              "槽钢": "channel", "等边角钢": "angle", "T 型钢": "tee"}
-    dims = DEFAULT_DIMENSIONS[shape]
+    # 直角公式对照直角轮廓；默认根部圆角为 0，不写进轮廓尺寸
+    dims = {k: v for k, v in DEFAULT_DIMENSIONS[shape].items() if k != "r"}
 
     def moments(loop):
         p = np.asarray(loop, dtype=float)
@@ -517,7 +520,7 @@ def test_the_section_whitelist_lets_the_fibre_distances_through(qt_app):
     from desktop.main_window import MainWindow
 
     source = inspect.getsource(MainWindow.create_section)
-    for key in ("cy", "cz", "circular"):
+    for key in ("cy", "cz", "circular", "geometry"):
         assert f'"{key}"' in source, f"截面白名单里没有 {key}"
 
 
@@ -556,3 +559,70 @@ def test_an_edited_material_keeps_its_allowable_stresses(qt_app):
     assert got["allow_tension"] == pytest.approx(215e6)
     assert got["allow_compression"] == pytest.approx(360e6)
     assert got["alpha"] == pytest.approx(1.2e-5)
+
+
+# ------------------------------------------------- 截面对话框：确定按钮与根部圆角
+
+def test_section_dialog_ok_button_accepts_valid_sizes(qt_app):
+    """防止点“确定”抛 TypeError：结果里有 geometry 字典，曾被送进 math.isfinite，
+
+    自 10-15 起对话框尺寸合法也关不掉，界面上根本建不出截面。
+    """
+    for shape in SECTION_TYPES:
+        dlg = SectionDialog()
+        dlg.cmb_type.setCurrentText(shape)
+        dlg.accept()
+        assert dlg.result() == QDialog.DialogCode.Accepted, shape
+
+
+def test_dialog_root_radius_reproduces_the_rolled_section_table():
+    """防止对话框只有直角轮廓：HN400×200×8×13 型钢表 A=84.12 cm²、Ix=23700 cm⁴、
+    Iy=1740 cm⁴ 含 r=16 mm 根部圆角，直角公式面积小 2.7%，节点实体随即拒绝。"""
+    dims = {"h": .4, "b": .2, "tw": .008, "tf": .013, "r": .016}
+    props = calc_section("I 型钢", dims)
+    r = dims["r"]
+    a = (1 - math.pi/4) * r**2
+    assert props["A"] == pytest.approx(2*.2*.013 + (.4 - .026)*.008 + 4*a, rel=1e-12)
+    assert props["A"] == pytest.approx(84.12e-4, rel=1e-4)
+    assert props["Iz"] == pytest.approx(23700e-8, rel=2e-3)
+    assert props["Iy"] == pytest.approx(1740e-8, rel=3e-3)
+    assert props["geometry"]["dimensions"]["r"] == r
+    # 不填 r（0）时与原直角公式逐位一致，且 geometry 不带 r（模型 schema 要求尺寸为正）
+    sharp = calc_section("I 型钢", {**dims, "r": 0.0})
+    assert sharp == calc_section("I 型钢", {k: v for k, v in dims.items() if k != "r"})
+    assert "r" not in sharp["geometry"]["dimensions"]
+
+
+def test_dialog_rejects_a_root_radius_that_does_not_fit(qt_app, monkeypatch):
+    """防止 r 填错单位（米制填 16）时生成自交轮廓：预览说明原因，确定被拦下。"""
+    from desktop import section_dialog
+
+    warnings = []
+    monkeypatch.setattr(section_dialog.QMessageBox, "warning",
+                        staticmethod(lambda *args: warnings.append(args[2])))
+    dlg = SectionDialog()
+    dlg.param_spins["I 型钢"]["r"].setValue(0.2)
+    assert "过大" in dlg.lbl_preview.text()
+    dlg.accept()
+    assert dlg.result() != QDialog.DialogCode.Accepted
+    assert warnings and "过大" in warnings[0]
+
+
+def test_editing_a_section_shows_its_root_radius(qt_app):
+    """防止编辑已有截面时 r 回显为 0，保存后圆角被悄悄去掉。"""
+    section = {"name": "HN400", **calc_section(
+        "I 型钢", {"h": .4, "b": .2, "tw": .008, "tf": .013, "r": .016})}
+    dlg = SectionDialog(section=section)
+    assert dlg.param_spins["I 型钢"]["r"].value() == pytest.approx(.016)
+    assert dlg.get_section()["A"] == pytest.approx(section["A"], rel=1e-12)
+
+
+def test_dialog_section_with_root_radius_builds_a_solid_joint():
+    """对话框建出的带圆角型钢能直接进入节点实体：面积与实体轮廓一致，不再被拒绝。"""
+    import solid_joint
+    from test_solid_joint import _l_joint
+
+    section = {"name": "HN400", **calc_section(
+        "I 型钢", {"h": .4, "b": .2, "tw": .008, "tf": .013, "r": .016})}
+    spec = solid_joint.prepare_joint_spec(_l_joint(section=section), 2)
+    assert all(arm.profile_mm["concave_corners"] == 4 for arm in spec.arms)

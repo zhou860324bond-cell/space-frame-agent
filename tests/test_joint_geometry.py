@@ -451,3 +451,33 @@ def test_root_fillet_rejects_radius_that_does_not_fit(geometry, message):
     """防止 r 填成别的单位（如毫米制模型填 16 当成 0.016 的反面）时生成自交轮廓。"""
     with pytest.raises(ValueError, match=message):
         sg.profile(geometry)
+
+
+def test_exact_section_properties_converge_from_the_discretised_fillet():
+    """防止圆角截面特性只按折线近似：解析值应是折线多边形加密的极限，误差按 n⁻² 下降。"""
+    g = {"type": "i", "dimensions": {"b": .2, "h": .4, "tw": .008, "tf": .013, "r": .016}}
+    exact = sg.section_properties(g)
+    errors = []
+    original = sg.FILLET_SEGMENTS_PER_QUARTER
+    try:
+        for n in (32, 128):
+            sg.FILLET_SEGMENTS_PER_QUARTER = n
+            m = sg._polygon_moments(sg.profile(g)["outer"])
+            iz = m[3] - m[1]**2 / m[0]
+            errors.append(abs(iz - exact["Iz"]) / exact["Iz"])
+    finally:
+        sg.FILLET_SEGMENTS_PER_QUARTER = original
+    assert errors[1] < errors[0] / 12          # 4 倍加密，误差约降 16 倍
+    assert errors[1] < 1e-5
+
+
+@pytest.mark.parametrize("geometry, closed", [
+    ({"type": "rectangle", "dimensions": {"b": .12, "h": .3}},
+     (.036, .3*.12**3/12, .12*.3**3/12)),
+    ({"type": "box", "dimensions": {"b": .2, "h": .3, "t": .01}},
+     (.2*.3 - .18*.28, (.3*.2**3 - .28*.18**3)/12, (.2*.3**3 - .18*.28**3)/12)),
+])
+def test_exact_section_properties_match_closed_forms_without_fillet(geometry, closed):
+    """直角轮廓与带孔轮廓的格林公式结果必须与经典闭合解一致（Iz 为高度方向强轴）。"""
+    p = sg.section_properties(geometry)
+    assert (p["A"], p["Iy"], p["Iz"]) == pytest.approx(closed, rel=1e-12)
