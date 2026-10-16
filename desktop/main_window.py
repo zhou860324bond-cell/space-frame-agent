@@ -210,6 +210,9 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.solid_panel.file_requested.connect(self._switch_solid_level)
         self.solid_panel.open_requested.connect(self.open_solid_result)
         self.solid_panel.model_requested.connect(self.show_model)
+        self.solid_panel.query_requested.connect(self.viewport.set_solid_query)
+        self.solid_panel.extreme_requested.connect(self.locate_solid_extreme)
+        self.solid_panel.clear_requested.connect(self.clear_solid_query)
         self.solid_dock = self.left_drawer.add_page("solid", "实体结果", self.solid_panel)
 
         # 原来这里还有一张「边界条件」表单页（逐个节点填 U1…UR3），与载荷页的
@@ -244,6 +247,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.section_opt_dock.prefer_floating = True
 
         self.viewport.picked.connect(self._on_picked)
+        self.viewport.solid_picked.connect(self.query_solid_cell)
         self.viewport.probed.connect(self.probe_member_result)
         self.viewport.node_created.connect(self._on_node_created)
         self.viewport.member_created.connect(self._on_member_created)
@@ -835,6 +839,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.case = None
         self.session.solution = None
         self._solid_grid = self._solid_binding = self._solid_info = None
+        self.clear_solid_query()
         self.solid_panel.caption.setText("实体结果已清除，请重新分析或打开已保存结果。")
         self.solid_panel.levels.clear()
         self.solid_panel.source.clear()
@@ -967,7 +972,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         if self.mode == "实体云图" and self._solid_grid is not None:
             self.viewport.show_solid_result(
                 self._solid_grid, self._solid_info[-1], **self.solid_panel.options(),
-                reset_camera=self._solid_reset_camera)
+                reset_camera=self._solid_reset_camera, query=self.solid_panel.query.isChecked())
             self._solid_reset_camera = False
             return
         frame = None
@@ -1118,6 +1123,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                 or self._solid_binding[1] != self.session.result_identity
                 or self.session.result_error()):
             self._solid_grid = self._solid_binding = self._solid_info = None
+            self.clear_solid_query()
             self.solid_panel.caption.setText("实体结果已失效，请重新求解并进行节点实体分析。")
             self.solid_panel.levels.clear()
             self.solid_panel.source.clear()
@@ -1476,6 +1482,10 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
 
     def cancel_interaction(self) -> None:
         """Esc：退出当前建模/拾取模式，回到浏览状态。"""
+        if self.viewport._solid_query_enabled:
+            self.solid_panel.query.setChecked(False)
+            self.statusBar().showMessage("已退出实体点选，可继续旋转和缩放。", 3000)
+            return
         changed = False
         region = getattr(self, "region_pick", None)
         if region is not None and region.active:
@@ -1653,6 +1663,20 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         用户在三维视图里找不到它们；有了这条路，报告里"每个数字可溯源"
         才在界面上真正兑现。
         """
+        if kind in {"solid_cell", "solid_point"}:
+            # 实体查询表里点行：在实体网格上高亮原单元或节点，结果表保留原查询
+            if self._solid_grid is not None:
+                if self.mode != "实体云图":
+                    self.set_mode("实体云图")
+                association = "cell" if kind == "solid_cell" else "point"
+                count = (self._solid_grid.n_cells if association == "cell"
+                         else self._solid_grid.n_points)
+                if 1 <= ident <= count:
+                    self.viewport.select_solid(association, ident - 1, focus=True)
+                    label = "单元" if association == "cell" else "节点"
+                    self.statusBar().showMessage(
+                        f"已定位实体{label}序号 {ident}，结果表保留原查询。", 4000)
+            return
         if self.mode == "实体云图":
             self.set_mode("模型")
         self.viewport.set_selection(kind, ident)
@@ -2843,6 +2867,8 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                                 f"结果文件读取失败：{exc}。请重新选择完整结果或重新进行节点实体分析。")
             return False
         self._solid_grid, self._solid_binding = grid, binding
+        # 换档或换文件后单元序号对应的是另一套网格，旧查询必须撤掉
+        self.clear_solid_query()
         self._solid_info = (summary, paths, index, caption)
         self.solid_panel.bind(paths, index, caption, saved=binding is None, geometry=summary.get("geometry"))
         if summary:
