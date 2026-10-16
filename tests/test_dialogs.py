@@ -440,6 +440,76 @@ def test_a_section_built_in_the_dialog_can_actually_be_checked(qt_app):
         assert "cy" not in calc_section(shape, params), shape
 
 
+def test_a_dialog_i_section_bends_about_its_strong_axis_under_vertical_load():
+    """截面对话框建的工字钢，水平悬臂梁竖向挠度必须等于 PL³/(3E·I强)。
+
+    真实问题：内核约定局部 y 沿截面高度、Iz 是强轴（``sections.py`` 文件头），
+    对话框却把 b·h³/12 写进了 Iy。默认 300×150 工字钢做 4 m 悬臂，
+    竖向挠度算成 153 mm，闭合解是 11.7 mm——差了 Iz/Iy≈13 倍，不报错。
+    这里同时和内核 builder ``sections.i_section`` 对照，两条建截面的路必须给出同一根梁。
+    """
+    import frame3d as f
+    import sections
+
+    dims = {"h": 0.30, "b": 0.15, "tw": 0.008, "tf": 0.012}
+    E, L, P = 2.06e11, 4.0, 1.0e4
+    kernel = sections.i_section("K", dims["h"], dims["b"], dims["tw"], dims["tf"])
+    dialog = calc_section("I 型钢", dims)
+    for key in ("A", "Iy", "Iz", "J"):
+        assert dialog[key] == pytest.approx(kernel[key], rel=1e-12), key
+
+    m = f.Frame()
+    m.nodes = {1: f.Node(1, 0.0, 0.0, 0.0), 2: f.Node(2, L, 0.0, 0.0)}
+    m.sections["S"] = f.Section("S", dialog["A"], dialog["Iy"], dialog["Iz"],
+                                dialog["J"])
+    m.materials["Q"] = f.Material("Q", E, 0.3)
+    m.members[1] = f.Member(1, 1, 2, "S", "Q")
+    m.supports[1] = (1, 1, 1, 1, 1, 1)
+    m.nodal_loads[2] = (0.0, 0.0, -P, 0.0, 0.0, 0.0)
+    tip = -f.solve(m).U[m.node_dofs(2)[2]]
+    assert tip == pytest.approx(P * L ** 3 / (3 * E * kernel["Iz"]), rel=1e-9)
+
+
+@pytest.mark.parametrize("shape", ["I 型钢", "矩形管", "矩形", "槽钢", "等边角钢", "T 型钢"])
+def test_dialog_inertia_matches_the_drawn_profile(shape):
+    """对话框的 Iy/Iz 必须等于视口里画出的那个轮廓对形心的二次矩。
+
+    独立参照：对 ``section_geometry.profile`` 的多边形用格林公式积分——轮廓第一
+    坐标沿局部 y（截面高度），第二坐标沿局部 z，与视口绘制一致。
+    这条防三个真实问题：五种截面强弱轴写反；槽钢弱轴、T 型钢强轴没对形心取
+    （默认尺寸下分别小一半、大七成）；角钢套错公式（比型钢表 Ix 小四成）。
+    """
+    import numpy as np
+    from section_geometry import profile
+
+    from desktop.section_dialog import DEFAULT_DIMENSIONS
+
+    kinds = {"I 型钢": "i", "矩形管": "box", "矩形": "rectangle",
+             "槽钢": "channel", "等边角钢": "angle", "T 型钢": "tee"}
+    dims = DEFAULT_DIMENSIONS[shape]
+
+    def moments(loop):
+        p = np.asarray(loop, dtype=float)
+        q = np.roll(p, -1, axis=0)
+        cross = p[:, 0] * q[:, 1] - q[:, 0] * p[:, 1]
+        sign = np.sign(cross.sum())
+        about_z = sign * (cross * (p[:, 0] ** 2 + p[:, 0] * q[:, 0]
+                                   + q[:, 0] ** 2)).sum() / 12
+        about_y = sign * (cross * (p[:, 1] ** 2 + p[:, 1] * q[:, 1]
+                                   + q[:, 1] ** 2)).sum() / 12
+        return about_y, about_z
+
+    drawn = profile({"type": kinds[shape], "dimensions": dims})
+    Iy, Iz = moments(drawn["outer"])
+    for hole in drawn["holes"]:
+        hy, hz = moments(hole)
+        Iy, Iz = Iy - hy, Iz - hz
+
+    props = calc_section(shape, dims)
+    assert props["Iy"] == pytest.approx(Iy, rel=1e-9)
+    assert props["Iz"] == pytest.approx(Iz, rel=1e-9)
+
+
 def test_the_section_whitelist_lets_the_fibre_distances_through(qt_app):
     """主窗口写回模型时的白名单漏一个键，就是一次静默的数据丢失。"""
     import inspect
