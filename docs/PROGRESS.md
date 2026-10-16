@@ -1,5 +1,14 @@
 # 工作进度
 
+## 弯扭屈曲（2026-10-16）
+
+- 第 2 步（专精梁单元 2→1→5 计划）。分支 claude/lateral-torsional-buckling 基于 claude/section-solver（PR #39），#39 合并后 rebase 到 master。
+- buckling.py 新增 thin_walled_matrices / thin_walled_system / continuous_warping_groups：14×14 局部阵（0–11 同普通单元，12、13 为两端 θ′），弹性只修正扭转块（三次 Hermite 的 GJ、EIw 减去线性 GJ/L），几何刚度由 σ = N/A − Mz·y/Iz + My·z/Iy 推出耦合项并改写为 Trahair 形式 ∫(Mz·θ·w″ + My·θ·v″)，4 点高斯积分精确。约化经 dof_basis（含 MPC 时的 P 阵）扩展到翘曲自由度；模态只返回 6 自由度部分。
+- 发现并修正默认翘曲连续性：按物理杆件分组时，直梁在中间节点拆成多根物理杆件会让翘曲断开，Mcr 偏低 18%~22%；改为共线、同截面、局部 y 同向、无释放即连续。
+- session_checks.buckling_analysis 新增 lateral_torsional、warping_restrained_nodes；_warping_constants 由轮廓求 Iw（按几何缓存），剪心偏离超过轮廓尺度 1e-3 或无轮廓的非圆截面拒绝。Agent 工具参数同步；默认关闭。
+- 回归 9 项：经典 Mcr（从上方单调收敛）、轴压相关方程、C1=1.13、无弯矩时与普通屈曲一致、约束翘曲提高 Mcr、单位不变、槽钢拒绝、无轮廓拒绝且圆管可算、翘曲连续组划分。只跑增量（屈曲、工具契约、单位不变、截面求解器）与文档闸，Ruff 干净；全量收集 2825 项（rebase 到含 #38、#39 的 master 后）。
+- 未做：剪心偏置与单轴对称 Wagner 项（槽钢、T 型钢）、荷载作用高度、桌面端入口、扭转释放杆端；下一步做变截面单元。
+
 ## 截面特性有限元求解（2026-10-16）
 
 - 用户确定专精梁单元，按 2→1→5 推进：截面特性求解器 → 弯扭屈曲（只在屈曲分析引入翘曲自由度）→ 变截面单元，每步一个 PR。本步在独立 worktree 从 master 开分支 claude/section-solver，与剪切面积 PR #38 不改同一文件，#38 合并后再 rebase。

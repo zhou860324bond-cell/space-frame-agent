@@ -280,9 +280,54 @@ class ChecksMixin:
                 "GB 50011 要求不小于 90%。加大 num_modes 再算。")
         return ToolResult(True, payload)
 
+    def _warping_constants(self) -> dict[str, float]:
+        """弯扭屈曲用的翘曲常数：由截面真实轮廓求解，并确认剪心与形心重合。
+
+        没有轮廓的非圆截面、剪心偏离形心的截面（槽钢、T 型钢、角钢等）明确拒绝：
+        前者翘曲常数无从得知，后者需要剪心偏置项，当前单元没有，不能拿近似冒充。
+        """
+        import json
+
+        import section_solver
+        from section_geometry import profile
+
+        used = {m["section"] for m in self.model.get("members") or []}
+        cache = getattr(self, "_section_solver_cache", {})
+        out: dict[str, float] = {}
+        for sec in self.model.get("sections") or []:
+            name = sec["name"]
+            if name not in used:
+                continue
+            geometry = sec.get("geometry")
+            if geometry is None:
+                if sec.get("circular"):
+                    out[name] = 0.0              # 圆截面不翘曲，剪心即形心
+                    continue
+                raise ValueError(f"截面 {name!r} 没有真实轮廓，无法确定翘曲常数与剪心。"
+                                 "请在「创建截面」中按尺寸定义该截面，或补充 geometry 后再做弯扭屈曲。")
+            key = json.dumps(geometry, sort_keys=True)
+            if key not in cache:
+                cache[key] = section_solver.solve_section(geometry)
+            solved = cache[key]
+            extent = float(np.abs(np.asarray(profile(geometry)["outer"])).max())
+            offset = float(np.hypot(*solved["shear_center"]))
+            if offset > 1e-3 * extent:
+                raise ValueError(
+                    f"截面 {name!r} 的剪心偏离形心 {offset * self.units.disp_scale:.1f} mm"
+                    "（单轴对称或不对称截面）。弯扭屈曲还需要剪心偏置与 Wagner 项，"
+                    "当前只支持剪心与形心重合的截面（工字钢、矩形管、圆管等）。")
+            out[name] = float(solved["Iw"])
+        self._section_solver_cache = cache
+        return out
+
     def buckling_analysis(self, case: str | None = None,
-                          num_modes: int = 4) -> ToolResult:
-        """线性屈曲。λ 是该工况荷载的临界放大倍数。"""
+                          num_modes: int = 4, lateral_torsional: bool = False,
+                          warping_restrained_nodes: list[int] | None = None) -> ToolResult:
+        """线性屈曲。λ 是该工况荷载的临界放大倍数。
+
+        ``lateral_torsional=True`` 做弯扭屈曲：直杆段之间翘曲连续，转角与变截面处
+        翘曲自由（叉支座），``warping_restrained_nodes`` 中的节点约束翘曲。
+        """
         errors = validate_payload(self.model)
         if errors:
             return ToolResult(False, {"errors": errors})
@@ -302,7 +347,13 @@ class ChecksMixin:
             # 不会让参考荷载变样，只是把单元对齐。
             compiled = self._eigen_compilation()
             refined = compiled.analysis_model
-            r = buckling(refined, name, int(num_modes), solution=solve(refined))
+            options: dict[str, Any] = {}
+            if lateral_torsional:
+                options = {
+                    "warping_constants": self._warping_constants(),
+                    "warping_restrained": [int(v) for v in warping_restrained_nodes or ()],
+                }
+            r = buckling(refined, name, int(num_modes), solution=solve(refined), **options)
             self.buckling_view = (self._model_key(), refined, r)
         except ImportError as exc:
             return ToolResult(False, {"error": f"屈曲模块不可用：{exc}"})
@@ -325,7 +376,17 @@ class ChecksMixin:
             return ToolResult(False, payload)
         U = self.units
         worst = min(r.axial, key=lambda m: r.axial[m])
+        extra: dict[str, Any] = {}
+        if lateral_torsional:
+            extra["lateral_torsional"] = {
+                "warping_constants": {k: v for k, v in options["warping_constants"].items()},
+                "warping_restrained_nodes": options["warping_restrained"],
+                "assumptions": "Vlasov 薄壁梁：荷载作用在剪心；共线、同截面、翼缘对齐且无释放的"
+                               "相邻杆段翘曲连续，转角与变截面处翘曲自由（叉支座），列出的节点约束翘曲。"
+                               "翘曲常数由截面真实轮廓有限元求得。",
+            }
         return ToolResult(True, {
+            **extra,
             "case": r.case,
             "critical_factor": round(float(r.critical), 6),
             "factors": [round(float(v), 6) for v in r.factors],
