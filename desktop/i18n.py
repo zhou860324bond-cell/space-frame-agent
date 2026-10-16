@@ -79,7 +79,7 @@ ZH_EN: dict[str, str] = {
     "新建": "New", "打开": "Open", "保存": "Save", "单位制": "Units",
     "Agent 对话": "Agent Chat", "撤销": "Undo", "重做": "Redo",
     "建模过程": "History", "导出学习轨迹": "Trace",
-    "草图建模": "Sketch", "草图识别": "Sketch AI", "规则框架": "Frame",
+    "草图建模": "Sketch", "草图识别": "Sketch AI", "图纸识别": "Drawing AI", "规则框架": "Frame",
     "模型表格": "Tables", "模型 JSON": "JSON",
     "门式刚架": "Portal", "截面管理器": "Sections",
     "创建材料": "Material", "创建截面": "Section",

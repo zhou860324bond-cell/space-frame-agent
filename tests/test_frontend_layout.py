@@ -184,7 +184,7 @@ def test_creation_and_selection_commands_have_distinct_semantic_icons(app):
     """草图、识别、空间框架、材料及创建/选择不能继续复用同一图案。"""
     from desktop import commands, icons
     by_name = {command.name: command for command in commands.COMMANDS}
-    for group in (("sketch", "sketch_ai", "frame"),
+    for group in (("sketch", "sketch_ai", "drawing_ai", "frame"),
                   ("material", "beam_section", "assign_section"),
                   ("model_node", "pick_node"), ("model_member", "pick_member"),
                   ("hinge", "create_bc"), ("analysis_mesh", "model_member")):

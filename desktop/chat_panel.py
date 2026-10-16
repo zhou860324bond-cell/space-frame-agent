@@ -222,7 +222,7 @@ class ChatPanel(QWidget):
     model_changed = Signal(bool)
     busy_changed = Signal(bool)
     locate_requested = Signal(str, int)
-    # 拖入了图纸图片：主窗口交给草图识别
+    # 拖入了图纸图片：主窗口交给图纸识别
     image_dropped = Signal(str)
 
     def __init__(self, session, runner, parent=None):
@@ -461,7 +461,7 @@ class ChatPanel(QWidget):
         for row, (name, text) in enumerate((
                 ("chat", "描述结构几何、材料、约束和荷载，助手调用建模工具完成"),
                 ("pick_member", "键入 @ 引用杆件或节点，键入 / 查看命令"),
-                ("sketch_ai", "把图纸图片拖进来，交给草图识别"))):
+                ("drawing_ai", "把图纸图片拖进来，交给图纸识别"))):
             mark = QLabel()
             mark.setPixmap(icons.icon(name).pixmap(
                 QSize(16, 16), QApplication.instance().devicePixelRatio()))
@@ -981,8 +981,8 @@ class ChatPanel(QWidget):
             path = url.toLocalFile()
             if path.lower().endswith(IMAGE_SUFFIXES):
                 self.image_dropped.emit(path)
-                self._append_note(f"已把图纸 {path.rsplit('/', 1)[-1]} 交给草图识别：请在识别面板里核对标注、"
-                                  "标定尺度后确认加载，识别结果需要人工复核。", level="info")
+                self._append_note(f"已把图纸 {path.rsplit('/', 1)[-1]} 交给图纸识别：请点「识别图纸」，"
+                                  "在核对表里逐项确认后再导入，识别结果需要人工复核。", level="info")
                 event.acceptProposedAction()
                 return
 
