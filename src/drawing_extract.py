@@ -67,10 +67,11 @@ source.confidence 填你对这条读数的把握（0~1）。
   "grids": {{
     "x": {{"axes": [{{"label": "1", "pos": 0.12, "source": S}}],
            "spacings": [{{"from": "1", "to": "2", "text": "6000", "source": S}}],
-           "total": {{"text": "12000", "source": S}}}},
+           "total": {{"text": "12000", "source": S}}, "edges": []}},
     "y": {{"axes": [{{"label": "A", "pos": 0.85, "source": S}}], "spacings": [], "total": null}}
   }},
-  "levels": [{{"name": "2F", "text": "3.600", "source": S}}],
+  "levels": [{{"name": "1F", "text": "±0.000", "source": S}}, {{"name": "2F", "text": "3.600", "source": S}}],
+  "level_heights": [],
   "members": [
     {{"label": "KL1", "kind": "beam", "along": "A", "from": "1", "to": "3",
       "levels": ["2F"], "source": S}},
@@ -92,13 +93,22 @@ source.confidence 填你对这条读数的把握（0~1）。
 3. x 组是数字轴号（竖向轴线，从左到右排列），y 组是字母轴号（横向轴线）。
    axes 按图上顺序列出（x 从左到右，y 从下到上）；pos 是轴线在区域图里的位置
    （x 组写横坐标、y 组写纵坐标），只用于核对。
-4. spacings 写相邻两轴之间标注的间距；从第一根轴线量到最后一根轴线的总尺寸写进 total。
-   量到建筑外边缘、柱外皮的总尺寸不是轴线总尺寸，不要写进 total，写进 notes。
-5. levels 的 name 用图上的层名（如 2F、二层）；没有层名就用标高原文作 name。
+4. spacings 写相邻两轴之间标注的间距。重复写法（如「7 at 25'-0"」「6@3600」「3×6000」）
+   照抄成一条，from/to 写这串间距首末两根轴线的轴号，不要自己展开或相乘。
+   总尺寸写进 total。总尺寸量到建筑外边缘、柱外皮时，同样写进 total，并把首末轴线到
+   外边缘的那两段尺寸（如 1'-2"）写进 edges：[{{"text": "1'-2\\"", "source": S}}]。
+5. levels 按从下到上的顺序列出，name 用图上的层名（如 2F、二层）；没有层名就用标高原文
+   作 name；既没有层名也没有标高时，从下往上用 L0、L1、L2… 命名。text 写标高原文，
+   图上没有标高就写 null。立面图只标层高时，把层高写进 level_heights：
+   {{"from": "下层 name", "to": "上层 name", "text": "22'-4\\"", "source": S}}；
+   重复写法（如「6 at 13'-4"」）照抄成一条，from/to 写首末两层，中间没有层名的层可以不列出。
    梁的 levels、柱的 from_level/to_level 引用这些 name。平面图标明适用于哪些楼层时，
    梁的 levels 列出所有这些楼层。
-6. 梁按编号所在位置写：along 是梁所在的轴线，from/to 是起止的另一方向轴号。
-   柱写所在轴线交点 at 和起止标高。只有一组轴线的立面图，梁不写 along，柱 at 只写一个轴号。
+6. 梁按所在位置写：along 是梁所在的轴线，from/to 是起止的另一方向轴号。
+   柱写所在轴线交点 at 和起止层。只有一组轴线的立面图，梁不写 along，柱 at 只写一个轴号。
+   有编号的写 label；**没有编号的梁柱也要按位置抄写，label 写 null**。同一轴线、同一层
+   连续的梁可以合并成一条（from/to 写首末轴号）；同一位置从底到顶的柱写成一条。
+   截面表里查不到规格时不要写 sections。
 7. units.value 只能是 mm、cm、m，且只在图上有单位说明时填写。
 8. support.kind 只能是 fixed（刚接/固接）、pinned（铰接）；没有说明就写 null。
 9. 看不清、被遮挡、拿不准的内容写进 notes，并把对应读数的 confidence 写低。
