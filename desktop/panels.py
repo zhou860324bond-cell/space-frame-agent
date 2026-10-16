@@ -13,7 +13,7 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFrame, QGridLayout,
-                               QHeaderView, QHBoxLayout, QLabel, QListWidget, QMenu,
+                               QHeaderView, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMenu,
                                QListWidgetItem, QPushButton, QSizePolicy, QTableWidget,
                                QTableWidgetItem, QTextBrowser, QToolButton,
                                QVBoxLayout, QWidget, QWidgetAction)
@@ -105,6 +105,7 @@ class ResultPanel(QWidget):
     display_changed = Signal(object)
     extreme_requested = Signal()
     stress_requested = Signal()
+    coordinate_requested = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -123,6 +124,21 @@ class ResultPanel(QWidget):
         self.summary_cards = []
         self.summary.hide()
         box.addWidget(self.summary)
+
+        coordinate_row = QHBoxLayout()
+        self.coordinate = QLineEdit(self)
+        self.coordinate.setPlaceholderText("原始全局坐标 X, Y, Z（当前模型长度单位）")
+        self.coordinate.setToolTip("输入未变形模型坐标；不会使用变形放大后的显示位置。")
+        self.coordinate_member = QLineEdit(self)
+        self.coordinate_member.setPlaceholderText("杆件号（可选）")
+        self.coordinate_member.setMaximumWidth(110)
+        self.btn_coordinate = QPushButton("查询坐标", self)
+        self.btn_coordinate.clicked.connect(self._query_coordinate)
+        self.coordinate.returnPressed.connect(self._query_coordinate)
+        coordinate_row.addWidget(self.coordinate, 1)
+        coordinate_row.addWidget(self.coordinate_member)
+        coordinate_row.addWidget(self.btn_coordinate)
+        box.addLayout(coordinate_row)
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("云图量程"))
@@ -305,6 +321,9 @@ class ResultPanel(QWidget):
     def _emit_display_options(self, *_args) -> None:
         self.display_changed.emit(self.display_options())
 
+    def _query_coordinate(self) -> None:
+        self.coordinate_requested.emit(self.coordinate.text(), self.coordinate_member.text())
+
     def _on_select(self) -> None:
         rows = self.table.selectionModel().selectedRows()
         if not rows:
@@ -446,6 +465,7 @@ class ResultPanel(QWidget):
         self.notes.setPlainText(details)
         self.details_button.setVisible(bool(details))
         self.details_button.setChecked(False)
+        self.notes.hide()
 
     def show_message(self, title: str, text: str) -> None:
         """没有表可给的时候（比如报错），也要在同一个地方说话，

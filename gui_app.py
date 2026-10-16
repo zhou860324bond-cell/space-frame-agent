@@ -714,6 +714,11 @@ with tab_pre:
                 st.caption(help_text)
                 frame = pd.DataFrame(pending[name], columns=list(columns))
                 out = st.data_editor(frame, num_rows="dynamic", width='stretch',
+                                     column_config={"kind": st.column_config.SelectboxColumn(
+                                         "kind", options=list(dict.fromkeys(
+                                             ["trapezoid", "point"] +
+                                             [r["kind"] for r in pending[name]])))}
+                                     if name == "member_spans" else None,
                                      hide_index=True, key=f"editor_{name}",
                                      height=min(360, 40 * (len(frame) + 2) + 40))
                 edited[name] = out.to_dict("records")
@@ -722,6 +727,14 @@ with tab_pre:
                 st.download_button(f"导出{label} CSV", MT.to_csv(edited[name], columns),
                                    file_name=f"{name}.csv", mime="text/csv",
                                    key=f"dl_{name}")
+
+            from csv_export import export_csv
+            try:
+                export_model = MT.from_tables(fem.model, edited)
+                st.download_button("导出全部模块 CSV", export_csv(fem, model=export_model),
+                                   file_name="全部模块.csv", mime="text/csv")
+            except MT.TableError as exc:
+                st.caption(f"完整导出前请修正表格：{exc}")
 
             apply_col, reset_col, _ = st.columns([2, 2, 4])
             if apply_col.button("应用修改并重算", type="primary", width='stretch'):

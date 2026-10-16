@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
+
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox,
                                QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QSpinBox, QTableWidget, QTableWidgetItem,
@@ -40,6 +42,8 @@ PARAM_DEFAULTS = {
 
 class SectionOptPanel(QWidget):
     """截面优化面板。"""
+
+    completed = Signal(object, object)
 
     def __init__(self, session, runner, parent=None):
         super().__init__(parent)
@@ -242,6 +246,7 @@ class SectionOptPanel(QWidget):
         section_type = self.cmb_type.currentText()
         algo = self.cmb_algo.currentText()
         model = self.session.model
+        self._export_key = self.session._model_key()
 
         self.btn_run.setEnabled(False)
         self.lbl_status.setText("正在遍历参数组合并求解……")
@@ -268,6 +273,8 @@ class SectionOptPanel(QWidget):
     def _on_done(self, result):
         self.btn_run.setEnabled(True)
         self._result = result
+        from dataclasses import asdict
+        self.completed.emit(getattr(self, "_export_key", self.session._model_key()), asdict(result))
         self.lbl_total.setText(str(result.total_calls))
         self.lbl_feasible.setText(str(result.feasible_count))
         self.lbl_pareto.setText(str(len(result.pareto)))
