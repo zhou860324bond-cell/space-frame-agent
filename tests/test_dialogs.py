@@ -626,3 +626,41 @@ def test_dialog_section_with_root_radius_builds_a_solid_joint():
         "I 型钢", {"h": .4, "b": .2, "tw": .008, "tf": .013, "r": .016})}
     spec = solid_joint.prepare_joint_spec(_l_joint(section=section), 2)
     assert all(arm.profile_mm["concave_corners"] == 4 for arm in spec.arms)
+
+
+# ------------------------------------------------- 截面对话框：Timoshenko 剪切面积
+
+def test_dialog_shear_area_follows_section_shape(qt_app):
+    """防止对所有截面一律取 Ay=Az=5A/6：默认工字钢强轴剪切面积因此大 2.2 倍。
+
+    每种截面的 Ay/Az 都取 section_geometry.shear_areas，预览写明所用公式。
+    """
+    import section_geometry
+
+    for shape in SECTION_TYPES:
+        dlg = SectionDialog()
+        dlg.cmb_type.setCurrentText(shape)
+        got = dlg.get_section()
+        areas = section_geometry.shear_areas(got["geometry"])
+        assert (got["Ay"], got["Az"]) == (areas["Ay"], areas["Az"]), shape
+        assert areas["formula"] in dlg.lbl_preview.text(), shape
+    dlg = SectionDialog()
+    got = dlg.get_section()
+    assert got["Ay"] < 0.5 * 5 * got["A"] / 6
+    assert got["Ay"] != got["Az"]
+    dlg.chk_shear.setChecked(False)
+    assert "Ay" not in dlg.get_section()
+    assert "剪切变形：关闭" in dlg.lbl_preview.text()
+
+
+def test_dialog_shear_area_is_unit_invariant(qt_app):
+    """米制与毫米制下建同一截面，剪切面积正好差 10⁶ 倍。
+
+    同时防止米制数值框先赋值后设三位小数：默认 tw=0.008、tf=0.012 曾被舍成 0.01。
+    """
+    dims = SectionDialog().get_section()["params"]
+    assert (dims["tw"], dims["tf"]) == (0.008, 0.012)
+    si = SectionDialog().get_section()
+    mm = SectionDialog(units="N-mm-MPa").get_section()
+    assert mm["Ay"] == pytest.approx(si["Ay"] * 1e6, rel=1e-9)
+    assert mm["Az"] == pytest.approx(si["Az"] * 1e6, rel=1e-9)

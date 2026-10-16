@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog,
                                QDoubleSpinBox, QFormLayout, QLabel, QLineEdit,
                                QMessageBox, QStackedWidget, QVBoxLayout, QWidget)
 
+import section_geometry
+
 from . import dialog_styles, theme
 
 # 截面类型定义：(显示名, 参数字典)
@@ -159,9 +161,8 @@ def calc_section(section_type: str, params: dict) -> dict:
     if radius > 0.0 and geometry is not None:
         # 带根部圆角时 A、Iy、Iz 按真实轮廓精确计算（与节点实体用的是同一轮廓），
         # 上面的直角公式只在 r=0 时成立。J 仍按薄壁公式，未计圆角。
-        from section_geometry import section_properties
         geometry["dimensions"][ROOT_RADIUS_KEY] = radius
-        exact = section_properties(geometry)
+        exact = section_geometry.section_properties(geometry)
         A, Iy, Iz = exact["A"], exact["Iy"], exact["Iz"]
     out = {"A": float(A), "Iy": float(Iy), "Iz": float(Iz), "J": float(J)}
     if geometry is not None:
@@ -219,8 +220,9 @@ class SectionDialog(QDialog):
                     sp.setSpecialValueText("0（直角）")
                     sp.setToolTip("热轧型钢腹板与翼缘交接处的圆角半径，取型钢表中的 r；"
                                   "按型钢表填截面时必须填，否则面积比表值小，节点实体会拒绝。")
-                sp.setValue(DEFAULT_DIMENSIONS[stype][key] * size_scale)
+                # 先定小数位再赋值：默认两位小数时米制 tw=0.008 会被舍成 0.01。
                 sp.setDecimals(3)
+                sp.setValue(DEFAULT_DIMENSIONS[stype][key] * size_scale)
                 sp.setSuffix(f" {self.length_unit}")
                 sp.valueChanged.connect(self._update_preview)
                 f.addRow(label, sp)
@@ -230,10 +232,11 @@ class SectionDialog(QDialog):
             self.stack.addWidget(w)
         layout.addWidget(self.stack)
 
-        self.chk_shear = QCheckBox("考虑 Timoshenko 剪切变形（Ay=Az≈5A/6）")
+        self.chk_shear = QCheckBox("考虑 Timoshenko 剪切变形（剪切面积按截面形状计算）")
         self.chk_shear.setChecked(True)
         self.chk_shear.setToolTip(
-            "短梁/深梁建议启用；旧截面若没有 Ay/Az，内核自动保持 Euler-Bernoulli")
+            "短梁/深梁建议启用；Ay、Az 按截面形状取 Cowper 剪切系数或薄壁剪力流公式，"
+            "工字钢强轴约等于腹板面积。旧截面若没有 Ay/Az，内核自动保持 Euler-Bernoulli")
         self.chk_shear.toggled.connect(self._update_preview)
         layout.addWidget(self.chk_shear)
 
@@ -281,8 +284,13 @@ class SectionDialog(QDialog):
             # 输入过程中尺寸暂时不成立（如 r 大于翼缘外伸）是常态，预览说明原因即可。
             self.lbl_preview.setText(f"当前尺寸无法构成截面：{exc}")
             return
-        shear = (f"\n  Ay = Az ≈ {5 * props['A'] / 6:.6e} {self.length_unit}²"
-                 if self.chk_shear.isChecked() else "\n  剪切变形：关闭")
+        if self.chk_shear.isChecked():
+            areas = section_geometry.shear_areas(props["geometry"])
+            shear = (f"\n  Ay = {areas['Ay']:.6e} {self.length_unit}²"
+                     f"　Az = {areas['Az']:.6e} {self.length_unit}²"
+                     f"\n  剪切面积：{areas['formula']}")
+        else:
+            shear = "\n  剪切变形：关闭"
         # 极端纤维距离决定这个截面能不能做强度验算。有就报出来，
         # 没有就**当场说清楚为什么**——不要等用户点了「强度验算」才被拒绝。
         if "cy" in props:
@@ -351,6 +359,7 @@ class SectionDialog(QDialog):
             **props,
         }
         if self.chk_shear.isChecked():
-            result["Ay"] = 5.0 * props["A"] / 6.0
-            result["Az"] = 5.0 * props["A"] / 6.0
+            # 曾一律取 5A/6：只对实心矩形成立，默认工字钢强轴剪切面积因此大 2.2 倍。
+            areas = section_geometry.shear_areas(props["geometry"])
+            result["Ay"], result["Az"] = areas["Ay"], areas["Az"]
         return result
