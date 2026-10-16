@@ -145,12 +145,15 @@ def _convert_features(features: dict, f: dict[str, float]) -> dict:
     条目又写回原单位的数——两边必须同时换。
     """
     factor = {"force": f["force"], "moment": f["moment"], "w": f["line_load"],
-              "g": f["acceleration"]}
+              "w2": f["line_load"], "g": f["acceleration"]}
     out = {k: [dict(item) for item in v] for k, v in features.items()}
     for load in out.get("loads") or []:
         for key, scale in factor.items():
             if key in load:
                 load[key] = [v * scale for v in load[key]]
+        for key in ("a", "b"):                 # 沿杆位置是长度
+            if key in load:
+                load[key] = load[key] * f["length"]
     def springs(values):
         return [v * (f["spring_translation"] if k < 3 else f["spring_rotation"])
                 for k, v in enumerate(values)]
@@ -302,8 +305,10 @@ def convert_model(model: dict, to: str) -> dict:
         if block.get("member_spans"):
             spans = []
             for e in block["member_spans"]:
-                # 集中力是力，梯形/均布是线荷载 —— 同一个字段两种量纲
-                s = f["force"] if e.get("kind") == "point" else f["line_load"]
+                # 集中力是力，集中力偶是力矩，梯形/均布是线荷载 —— 同一个字段三种量纲。
+                # 力偶曾按线荷载换：毫米制下差 10⁶ 倍，不报任何错。
+                s = {"point": f["force"], "moment": f["moment"]}.get(e.get("kind"),
+                                                                     f["line_load"])
                 item = {**e, "w1": [v * s for v in e["w1"]]}
                 if "w2" in e:
                     item["w2"] = [v * s for v in e["w2"]]

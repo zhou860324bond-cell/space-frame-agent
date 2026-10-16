@@ -16,7 +16,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
 from .object_dialogs import (BC_TYPES, CONSTRAINT_TYPES, LOAD_FIELD, LOAD_REGION, LOAD_TYPES,
-                             AssignSectionDialog, CreateObjectDialog, DisplacementBCDialog,
+                             SPAN_LOADS, AssignSectionDialog, CreateObjectDialog, DisplacementBCDialog,
                              EditBCDialog,
                              EditConstraintDialog, EditLoadDialog, ObjectManagerDialog,
                              OrientationDialog, next_name)
@@ -201,12 +201,25 @@ class WindowObjectsMixin:
         default = {"gravity": [0.0, 0.0, -self.session.units.gravity]}.get(load_type,
                                                                             [0.0, 0.0, 0.0])
         editor = EditLoadDialog(name, load_type, default,
-                                self.session.model.get("units", "N-m-Pa"), self)
+                                self.session.model.get("units", "N-m-Pa"), self,
+                                members=self._region_member_ends(load_type, region))
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
-        result = self.session.create_load(name, case, load_type, region,
-                                          **{LOAD_FIELD[load_type]: editor.vector()})
+        values = {LOAD_FIELD[load_type]: editor.vector()}
+        if load_type in SPAN_LOADS:
+            values.update(editor.span())
+        result = self.session.create_load(name, case, load_type, region, **values)
         self._object_result(result, f"已创建载荷「{name}」。")
+
+    def _region_member_ends(self, load_type: str, region: dict) -> dict:
+        """沿杆定位荷载的区域杆件 → {编号: (i 端坐标, j 端坐标)}，供对话框换算位置。"""
+        if load_type not in SPAN_LOADS:
+            return {}
+        import features
+        from coordinates import model_member_ends
+        model = self.session.model
+        ids, _problem = features.region_ids(model, region, "members")
+        return {mid: model_member_ends(model, mid) for mid in ids}
 
     # --- 截面指派 ---
 
@@ -495,10 +508,15 @@ class WindowObjectsMixin:
         elif kind == "loads":
             field = LOAD_FIELD[feature["type"]]
             editor = EditLoadDialog(name, feature["type"], feature[field],
-                                    self.session.model.get("units", "N-m-Pa"), self)
+                                    self.session.model.get("units", "N-m-Pa"), self,
+                                    span={k: feature[k] for k in ("a", "b", "w2") if k in feature},
+                                    members=self._region_member_ends(feature["type"],
+                                                                     feature["region"]))
             if editor.exec() == QDialog.DialogCode.Accepted:
                 self._object_result(self.session.edit_feature(
-                    alias, name, {field: editor.vector()}), f"「{name}」已更新。")
+                    alias, name, {field: editor.vector(),
+                                  **(editor.span() if feature["type"] in SPAN_LOADS else {})}),
+                    f"「{name}」已更新。")
         elif kind == "constraints":
             nodes = sorted(int(n["id"]) for n in self.session.model.get("nodes") or [])
             editor = EditConstraintDialog(name, feature["type"], int(feature["control"]),

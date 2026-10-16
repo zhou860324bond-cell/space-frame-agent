@@ -90,6 +90,9 @@ DIMENSIONS = {
     "features.loads.case": None, "features.loads.type": None,
     "features.loads.force": "force", "features.loads.moment": "moment",
     "features.loads.w": "line_load", "features.loads.g": "acceleration",
+    # 沿杆定位的荷载：区间梯形 b 处的强度，距 i 端的位置
+    "features.loads.w2": "line_load",
+    "features.loads.a": "length", "features.loads.b": "length",
     # 约束只有拓扑（主节点、从节点区域、自由度选择）；刚臂长度取自节点坐标，随坐标换算
     "features.constraints.name": None, "features.constraints.type": None,
     "features.constraints.control": None, "features.constraints.dofs": None,
@@ -288,6 +291,11 @@ def _kitchen_sink_body():
                  "type": "line_load", "w": [0.0, 0.0, -1e3]},
                 {"name": "自重", "region": {"members": [1]}, "case": "default",
                  "type": "gravity", "g": [0.0, 0.0, -9.80665]},
+                {"name": "q-区间", "region": {"members": [1]}, "case": "default",
+                 "type": "partial_trapezoid", "w": [0.0, 0.0, -1e3],
+                 "w2": [0.0, 0.0, -3e3], "a": 0.5, "b": 2.5},
+                {"name": "M-杆上", "region": {"members": [1]}, "case": "default",
+                 "type": "member_moment", "moment": [0.0, 2e3, 0.0], "a": 1.5},
             ],
         },
     }

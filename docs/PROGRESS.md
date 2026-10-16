@@ -1,5 +1,14 @@
 # 工作进度
 
+## 创建载荷恢复跨间荷载并支持按坐标定位（2026-10-16）
+
+- 承接坐标查询移植（PR #48）未做的一项，分支 claude/object-span-loads 堆叠在 claude/port-coordinates 上（要用它带来的 src/coordinates.py）。按 master 的对象化架构重写，不恢复旧 LoadDialog。
+- features 荷载对象新增 member_point（force、a）、member_moment（moment、a）、partial_line（w、a、b）、partial_trapezoid（w、w2、a、b），再生成到 member_spans（point / moment / partial / partial_trapezoid，带 owner）。a、b 是距 i 端的绝对距离，区域内逐杆判断，有放不下的整条拒绝并点名杆件（相对容差 1e-9·L，与单位制无关）；features.load_fields 统一给出各类型必带字段，check 同时拦缺字段与多余的 a/b/w2。旧四种对象字段与派生条目逐字节不变，不需要迁移。session.create_load 与 Agent 工具 create_load 增加 a、b、w2。
+- 桌面：EditLoadDialog 对沿杆荷载显示「距 i 端距离」/「全局坐标」两种给法。坐标经 station_on_segment 换算，离杆、越界拒绝不吸附；区域多于一根杆件时坐标方式拒绝并点名坐标所在杆件，距离方式逐杆检查杆长；数值框 6 位小数舍入到杆端时归到杆长。创建与管理器编辑两条路径都传区域杆件端点。
+- 顺带修复（units.convert_model）：member_spans 的 kind=moment 曾按线荷载换算，毫米制下力偶小 10⁶ 倍；旧代码下新单位不变性测试确认变红。features 的 a、b、w2 一并换算，test_unit_coverage 登记三个新字段并在样例模型里加两条新类型对象。
+- 回归 20 项（tests/test_span_load_features.py）：悬臂三类反力与端弯矩、跨间力偶反力与端转角、杆中集中力端挠度、简支杠杆反力，单位不变，再生成与存盘往返，旧对象不变，逐杆判断，参数校验，编辑后再生成，对话框坐标换算与拒绝、多杆区域拒绝，界面创建流程四种类型（主工作区三项对话框测试的对象化版本）。只跑增量（新文件、features、桌面窗口、结果查询、界面整合、工具契约、单位不变/覆盖、跨间荷载、坐标、对话框、界面文字、翻译、表格、装配、单位）与文档闸；全量收集 2899 项，未经全量运行确认。
+- 未做：视口对新对象的预览只经 member_spans 显示（区间符号见 PR #45）；frame3d.validate 只对 point 检查 a≤L，直接写入的 moment/partial 越界仍靠上游拦截；坐标定位只换算成 a、b 存储，节点移动后不跟随原坐标。
+
 ## AI对话面板现代化（2026-10-15）
 
 - 用户反馈对话面板“太古老”。改前实拍：顶栏是「工程对话」大标题加四个文字按钮一行、整宽模型下拉再一行；记录区套边框；每条消息常驻「复制/编辑」文字按钮；工具调用前缀为›√字符，一轮五六次调用把回答挤出屏幕；发送键在运行时变成「思考中…」使按钮变宽。改前/改后截图位于会话临时目录，未入库。

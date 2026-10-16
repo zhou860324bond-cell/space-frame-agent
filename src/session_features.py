@@ -239,26 +239,44 @@ class FeaturesMixin:
     @_records
     def create_load(self, name: str, case: str, load_type: str, region,
                     force: list[float] | None = None, moment: list[float] | None = None,
-                    w: list[float] | None = None, g: list[float] | None = None) -> ToolResult:
-        """荷载（Load 模块 Create Load）：集中力、力矩、线荷载或重力，施加在区域上。
+                    w: list[float] | None = None, g: list[float] | None = None,
+                    a: float | None = None, b: float | None = None,
+                    w2: list[float] | None = None) -> ToolResult:
+        """荷载（Load 模块 Create Load），施加在区域上。
 
-        集中力 ``force`` 与力矩 ``moment`` 作用在节点区域；线荷载 ``w``（全局
-        分量，力/长度）与重力 ``g``（加速度，全局分量）作用在杆件区域。
-        数值单位跟模型的单位制。
+        节点区域：集中力 ``force``、力矩 ``moment``。杆件区域：满跨线荷载 ``w``
+        （全局分量，力/长度）、重力 ``g``（加速度）；沿杆定位的杆上集中力
+        ``member_point``（force、a）、杆上力矩 ``member_moment``（moment、a）、
+        区间均布 ``partial_line``（w、a、b）、区间梯形 ``partial_trapezoid``
+        （a 处强度 w、b 处强度 w2、a、b）。a、b 是距 i 端的距离，区域里每根杆件
+        各自判断是否放得下。数值单位跟模型的单位制。
         """
         load_type = str(load_type)
         if load_type not in _features.LOAD_TYPES:
             return ToolResult(False, {"error": f"load_type 只能是 {list(_features.LOAD_TYPES)}"})
-        field = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
-                 "gravity": "g"}[load_type]
-        value = {"force": force, "moment": moment, "w": w, "g": g}[field]
-        if value is None:
-            return ToolResult(False, {"error": f"{load_type} 要给 {field}（三个全局分量）"})
-        vector = [float(v) for v in value]
-        if len(vector) != 3 or not all(np.isfinite(vector)):
-            return ToolResult(False, {"error": f"{field} 必须是三个有限数"})
-        feature = {"name": str(name).strip(), "case": str(case), "type": load_type,
-                   field: vector}
+        given = {"force": force, "moment": moment, "w": w, "g": g, "a": a, "b": b, "w2": w2}
+        needed = _features.load_fields(load_type)
+        unused = [key for key, value in given.items() if value is not None and key not in needed]
+        if unused:
+            return ToolResult(False, {"error": f"{load_type} 不用 {'、'.join(unused)}，"
+                                               f"它要的是 {'、'.join(needed)}"})
+        missing = [key for key in needed if given[key] is None]
+        if missing:
+            return ToolResult(False, {"error": f"{load_type} 要给 {'、'.join(missing)}"
+                                               "（向量是三个全局分量，a、b 是距 i 端的距离）"})
+        feature: dict[str, Any] = {"name": str(name).strip(), "case": str(case),
+                                   "type": load_type}
+        for key in needed:
+            if key in ("a", "b"):
+                value = float(given[key])
+                if not np.isfinite(value) or value < 0:
+                    return ToolResult(False, {"error": f"{key} 必须是不小于 0 的有限数（距 i 端的距离）"})
+                feature[key] = value
+                continue
+            vector = [float(v) for v in given[key]]
+            if len(vector) != 3 or not all(np.isfinite(vector)):
+                return ToolResult(False, {"error": f"{key} 必须是三个有限数"})
+            feature[key] = vector
         feature["region"] = _region(region, _features.region_kind("loads", feature))
         return self._create_feature("loads", feature)
 
