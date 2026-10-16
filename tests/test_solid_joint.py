@@ -712,3 +712,68 @@ def test_the_stable_channel_does_not_let_a_singular_peak_through():
         got = sj.diagnose_peak_convergence(
             _levels(sizes, [100.0 * h ** -lam for h in sizes]))
         assert got["verdict"] == "diverging", lam
+
+
+# ------------------------------------------------- 型钢表截面与支座
+
+def _hn400(with_radius: bool) -> dict:
+    section = S.i_section("HN400", 0.4, 0.2, 0.008, 0.013)
+    section["A"] = 8.412e-3                   # 型钢表面积，含 r=16 mm 根部圆角
+    if with_radius:
+        section["geometry"]["dimensions"]["r"] = 0.016
+    return section
+
+
+def test_table_area_without_root_radius_explains_the_missing_fillet():
+    """防止型钢表截面只报“面积与真实轮廓不一致”，用户不知道缺的是根部圆角 r。
+
+    真实问题：用户模型 HN400 在节点实体里每个节点都失败，报错只让核对尺寸和单位。
+    """
+    with pytest.raises(sj.SolidJointError) as info:
+        sj.prepare_joint_spec(_l_joint(section=_hn400(False)), 2)
+    text = str(info.value)
+    assert "8412.0 mm²" in text and "8192.0 mm²" in text and "根部圆角半径 r" in text
+    assert "约 16.0 mm" in text
+
+
+def test_table_section_with_root_radius_builds_a_filleted_solid_arm():
+    """补上 r 之后同一截面能建立实体规格，短臂轮廓带圆角且面积与表值一致。"""
+    spec = sj.prepare_joint_spec(_l_joint(section=_hn400(True)), 2)
+    for arm in spec.arms:
+        assert arm.profile_mm["concave_corners"] == 4
+        assert arm.profile_mm["area"] == pytest.approx(8412.0, rel=1e-4)
+        assert len(arm.profile_mm["outer"]) > 12
+
+
+def _l_joint_with_lateral_restraint() -> Session:
+    """L 形节点的角点 2 另加平面外约束（uy、rx、rz），门式刚架的常见建模方式。"""
+    session = _l_joint()
+    fixes = {1: [1, 1, 1, 1, 1, 1], 2: [0, 1, 0, 1, 0, 1]}
+    model = session.model
+    model["supports"] = [{"node": n, "fix": f} for n, f in fixes.items()]
+    session = Session(model=model)
+    assert session.solve_model().ok
+    return session
+
+
+def test_cut_motion_rejection_names_the_support_node_and_components():
+    """防止支座冲突只说“存在整体支座约束”：用户的门式刚架三个节点全被拒，
+
+    却看不出是哪个节点的哪几个约束，也不知道可以改用内力加载。
+    """
+    session = _l_joint_with_lateral_restraint()
+    with pytest.raises(sj.SolidJointError) as info:
+        sj.prepare_joint_spec(session, 2, loading_method="displacement")
+    text = str(info.value)
+    assert "节点 2（即本节点）" in text
+    assert "uy" in text and "rx" in text and "rz" in text and "ux" not in text
+    assert "杆端内力加载" in text and "loading_method=force" in text
+
+
+def test_force_loading_keeps_the_support_but_states_where_its_reaction_goes():
+    """内力加载允许保留区内有支座，但必须在结果里写明反力由锚固杆件承担，不能静默。"""
+    session = _l_joint_with_lateral_restraint()
+    spec = sj.prepare_joint_spec(session, 2, loading_method="force")
+    notes = [w for w in spec.warnings if "整体支座" in w]
+    assert len(notes) == 1
+    assert "节点 2" in notes[0] and f"锚固杆件 {spec.anchor_member}" in notes[0]

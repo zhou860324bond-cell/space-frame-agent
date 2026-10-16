@@ -70,7 +70,8 @@ TOOLS: list[dict[str, Any]] = [
                                                  "cz": {"type": "number",
                                                         "description": "局部 z 向极端纤维距离"},
                                    "geometry": {"type": "object",
-                                                "description": "真实截面轮廓：type与dimensions，或polygon的outer/holes顶点[y,z]；长度按模型单位"},
+                                                "description": "真实截面轮廓：type与dimensions，或polygon的outer/holes顶点[y,z]；长度按模型单位。"
+                                                               "按型钢表填A时，i/channel/angle/tee的dimensions要带根部圆角半径r"},
                                    "circular": {"type": "boolean",
                                                               "description": "圆形截面，"
                                                                              "两向弯曲按平方和合成"}}},

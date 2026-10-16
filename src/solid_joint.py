@@ -316,6 +316,29 @@ def _physical_end_force(session, member: dict[str, Any], node_id: int,
     return -(rotation.T @ local[:3]), -(rotation.T @ local[3:])
 
 
+def _area_mismatch_message(p: dict[str, Any], area: float, length_to_mm: float) -> str:
+    """面积对不上时说清差多少、最可能的原因和该补什么。
+
+    最常见的是型钢表截面：表中面积含腹板与翼缘交接处的根部圆角，按 b/h/tw/tf
+    画出的直角轮廓小 2%~4%。按面积差反推的 r 只用于提示，不参与建模。
+    """
+    from section_geometry import ROOT_FILLET_TYPES
+
+    to_mm2 = length_to_mm ** 2
+    head = (f"截面面积 A={area*to_mm2:.1f} mm² 与按尺寸画出的轮廓面积 {p['area']*to_mm2:.1f} mm² "
+            f"相差 {(area/p['area']-1)*100:+.2f}%")
+    dims = p["dimensions"]
+    corners = int(p.get("concave_corners", 0))
+    if p["type"] in ROOT_FILLET_TYPES and "r" not in dims and area > p["area"] and corners:
+        implied = math.sqrt((area - p["area"]) / (corners * (1 - math.pi/4)))
+        return (head + "。型钢表面积通常含根部圆角，请在截面几何 dimensions 里补根部圆角半径 r"
+                f"（按面积差推算约 {implied*length_to_mm:.1f} mm，仅供核对，请以型钢表为准）。")
+    if p["type"] in ROOT_FILLET_TYPES and "r" in dims:
+        return (head + "。已计入根部圆角仍不一致：请核对 r 与各尺寸的单位；热轧工字钢、槽钢的"
+                "斜翼缘目前无法按等厚翼缘轮廓表示，可改用 polygon 外轮廓描述真实截面。")
+    return head + "。请核对尺寸和单位，或用 polygon 外轮廓描述真实截面。"
+
+
 def prepare_joint_spec(session, node_id: int, case: str | None = None,
                        anchor_member: int | None = None,
                        arm_length_factor: float = 2.0,
@@ -389,7 +412,7 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
         try:
             p = profile(geometry)
             if abs(p["area"]-float(section["A"])) > 1e-4*float(section["A"]):
-                raise ValueError("截面面积与真实轮廓不一致，请核对尺寸和单位。")
+                raise ValueError(_area_mismatch_message(p, float(section["A"]), length_to_mm))
             p_mm = profile(scale_geometry(geometry, length_to_mm))
             probe = tuple(material_probe(p_mm))
         except (ValueError, KeyError) as exc:
@@ -481,6 +504,13 @@ def prepare_joint_spec(session, node_id: int, case: str | None = None,
     if loading_method == 'force' and any(int(load.get("node", -1)) == node_id
            for load in source_case.get("nodal_loads") or []):
         warnings.append("该节点存在直接节点荷载；局部模型按杆端截面力传递，未建加载头几何。")
+    if loading_method == "force":
+        from joint_transfer import supports_in_region
+        supports = supports_in_region(session, node_id, arms, chosen)
+        if supports:
+            warnings.append("实体保留区内有整体支座：" + "；".join(supports) +
+                            f"。内力加载未建支承，这些反力改由锚固杆件 {anchor_member} 承担；"
+                            "反力不为零时，锚固端附近应力不代表真实支承状态。")
     nominal = max((arm.nominal_normal_mpa for arm in arms
                    if loading_method == "displacement" or arm.member_id != anchor_member),
                   default=0.0)

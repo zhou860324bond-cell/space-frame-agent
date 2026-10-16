@@ -395,3 +395,59 @@ def test_negative_fillet_radius_is_rejected_before_meshing():
     with pytest.raises(solid_joint.SolidJointError, match='非负有限数'):
         solid_joint.prepare_joint_spec(session, 5, case='W_侧向', geometry_mode='transition',
                                        fillet_radius_mm=-1.)
+
+
+# ------------------------------------------------- 型钢根部圆角
+
+def test_root_fillet_area_matches_the_closed_form_and_the_section_table():
+    """防止型钢表截面（面积含根部圆角）被直角轮廓判为“面积与真实轮廓不一致”。
+
+    真实问题：HN400×200×8×13 按表填 A=84.12 cm²，直角轮廓只有 81.92 cm²，节点实体
+    每次都拒绝。四个内凹角各补 (1−π/4)r²，r=16 mm 时与表值相差不到 1e-4。
+    """
+    b, h, tw, tf, r = 0.2, 0.4, 0.008, 0.013, 0.016
+    p = sg.profile({"type": "i", "dimensions": {"b": b, "h": h, "tw": tw, "tf": tf, "r": r}})
+    exact = 2*b*tf + (h - 2*tf)*tw + 4*(1 - np.pi/4)*r**2
+    assert p["area"] == pytest.approx(exact, rel=1e-12)
+    assert abs(p["area"] - 8.412e-3) < 1e-4 * 8.412e-3
+    assert p["concave_corners"] == 4
+    # 双轴对称：四段圆弧折线必须互为镜像，形心落在几何中心
+    assert p["centroid"] == pytest.approx([h/2, b/2], abs=1e-12)
+    outer = np.asarray(p["outer"])
+    assert np.allclose(np.sort(outer[:, 0]), np.sort(-outer[:, 0]), atol=1e-12)
+    # 圆弧上的点到圆心距离恰为 r：取左下内凹角 (tf, (b−tw)/2) 的圆心
+    center = np.array([tf + r, (b - tw)/2 - r]) - np.array([h/2, b/2])
+    near = outer[np.linalg.norm(outer - center, axis=1) < r * 1.01]
+    assert len(near) >= 3
+    assert np.linalg.norm(near - center, axis=1) == pytest.approx(r, rel=1e-12)
+
+
+@pytest.mark.parametrize("kind, dims, corners, sharp", [
+    ("channel", {"h": .25, "b": .09, "tw": .008, "tf": .012}, 2, 2*.09*.012 + (.25 - .024)*.008),
+    ("angle", {"b": .075, "t": .008}, 1, 2*.075*.008 - .008**2),
+    ("tee", {"h": .2, "b": .15, "tw": .008, "tf": .012}, 2, .15*.012 + (.2 - .012)*.008),
+])
+def test_root_fillet_rounds_every_reentrant_corner_of_rolled_profiles(kind, dims, corners, sharp):
+    """防止根部圆角只对工字形生效：槽钢、角钢、T 型钢按内凹角个数补同样的解析面积。"""
+    r = .01
+    p = sg.profile({"type": kind, "dimensions": {**dims, "r": r}})
+    assert p["concave_corners"] == corners
+    assert p["area"] == pytest.approx(sharp + corners*(1 - np.pi/4)*r**2, rel=1e-12)
+
+
+def test_root_fillet_area_is_unit_invariant():
+    """防止圆角面积按模型单位出现换算误差：米制与毫米制只差长度比例的平方。"""
+    g = {"type": "i", "dimensions": {"b": .2, "h": .4, "tw": .008, "tf": .013, "r": .016}}
+    in_m, in_mm = sg.profile(g), sg.profile(sg.scale_geometry(g, 1000.0))
+    assert in_mm["area"] == pytest.approx(in_m["area"] * 1e6, rel=1e-12)
+    assert np.asarray(in_mm["outer"]) == pytest.approx(np.asarray(in_m["outer"]) * 1000, abs=1e-9)
+
+
+@pytest.mark.parametrize("geometry, message", [
+    ({"type": "i", "dimensions": {"b": .2, "h": .4, "tw": .008, "tf": .013, "r": .2}}, "过大"),
+    ({"type": "box", "dimensions": {"b": .2, "h": .3, "t": .01, "r": .01}}, "只适用于"),
+])
+def test_root_fillet_rejects_radius_that_does_not_fit(geometry, message):
+    """防止 r 填成别的单位（如毫米制模型填 16 当成 0.016 的反面）时生成自交轮廓。"""
+    with pytest.raises(ValueError, match=message):
+        sg.profile(geometry)

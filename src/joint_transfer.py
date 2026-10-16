@@ -79,6 +79,42 @@ def cut_motion(session, member_id: int, point: np.ndarray, case: str):
     raise ValueError(f"杆件 {member_id} 的实体切面未落在整体分析单元内")
 
 
+SUPPORT_DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
+
+
+def supports_in_region(session, node_id: int, arms, case: str) -> list[str]:
+    """实体保留区内（节点本身及各短臂范围）的整体支座，逐个写明约束分量与反力。
+
+    返回给用户看的描述；空列表表示保留区内没有支座。
+    """
+    frame = session.frame
+    units = session.units
+    origin = frame.nodes[node_id].xyz
+    scale = units.length_to_m * 1000.0
+    reactions = session.solution[case].R
+    found: dict[int, str] = {}
+    for arm in arms:
+        direction = np.asarray(arm.direction)
+        for nid, fixed in frame.supports.items():
+            rel = frame.nodes[nid].xyz - origin
+            axial = float(rel @ direction)
+            if (nid in found or not any(fixed)
+                    or not -1e-10 <= axial < arm.length_mm / scale - 1e-10
+                    or np.linalg.norm(rel - axial * direction) >= 1e-9):
+                continue
+            dofs = frame.node_dofs(nid)
+            parts = []
+            for k, name in enumerate(SUPPORT_DOF_NAMES):
+                if not fixed[k]:
+                    continue
+                value = float(reactions[dofs[k]])
+                shown = value * (units.force_scale if k < 3 else units.moment_scale)
+                parts.append(f"{name}（反力 {shown:.3g} {'kN' if k < 3 else 'kN·m'}）")
+            where = "即本节点" if nid == node_id else f"距节点 {axial * scale:.0f} mm"
+            found[nid] = f"节点 {nid}（{where}）约束 " + "、".join(parts)
+    return [found[nid] for nid in sorted(found)]
+
+
 def validate_local_sources(session, node_id: int, arms, case: str) -> None:
     """外载由加载区重建；仍拒绝未重建的内部支承及本征应变。"""
     if session.solution.analysis.get("type", "linear_static") != "linear_static":
@@ -86,15 +122,13 @@ def validate_local_sources(session, node_id: int, arms, case: str) -> None:
     frame = session.frame
     origin = frame.nodes[node_id].xyz
     scale = session.units.length_to_m * 1000.0
-    for arm in arms:
-        direction = np.asarray(arm.direction)
-        for nid, fixed in frame.supports.items():
-            rel = frame.nodes[nid].xyz - origin
-            axial = float(rel @ direction)
-            if (any(fixed) and -1e-10 <= axial < arm.length_mm / scale - 1e-10
-                    and np.linalg.norm(rel - axial * direction) < 1e-9):
-                raise ValueError("实体保留区域存在整体支座约束；请先明确实体支承区域，"
-                                 "不能只传切面运动而遗漏内部支承。")
+    supports = supports_in_region(session, node_id, arms, case)
+    if supports:
+        raise ValueError(
+            "实体保留区域存在整体支座约束：" + "；".join(supports) +
+            "。位移驱动只传切面运动，会遗漏这些内部支承。可改用「杆端内力加载」"
+            "（Agent 参数 loading_method=force），支座反力将改由锚固杆件承担；"
+            "或选择保留区内没有支座的节点。")
     sources = frame.combos[case].items() if case in frame.combos else [(case, 1.0)]
     for base, factor in sources:
         if factor == 0.0:

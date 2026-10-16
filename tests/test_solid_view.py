@@ -220,21 +220,35 @@ def test_solid_display_controls_keep_raw_results_and_expose_average_and_palette(
 
 
 def test_solid_analysis_dialog_exposes_geometry_mesh_and_backend(app, monkeypatch):
-    """防止用户只能接受自动粗网格，或所选连接几何和后端未进入分析参数。"""
+    """防止用户只能接受自动粗网格，或所选连接几何、加载方式和后端未进入分析参数。
+
+    加载方式原先界面上没有入口：节点本身带平面外约束的门式刚架，位移驱动
+    一律拒绝，报错提示改用内力加载，用户却在对话框里找不到这个选项。
+    """
     from PySide6.QtWidgets import QComboBox, QDialog, QDoubleSpinBox, QWidget
     host = QWidget()
     def choose(box):
         for combo in box.findChildren(QComboBox):
-            if combo.findData("abaqus") >= 0:
-                combo.setCurrentIndex(combo.findData("abaqus"))
-            if combo.findData("intersection") >= 0:
-                combo.setCurrentIndex(combo.findData("intersection"))
+            for data in ("abaqus", "intersection", "force"):
+                if combo.findData(data) >= 0:
+                    combo.setCurrentIndex(combo.findData(data))
         box.findChild(QDoubleSpinBox).setValue(5)
         return QDialog.DialogCode.Accepted
     monkeypatch.setattr(QDialog,"exec",choose)
     assert MainWindow._ask_joint_levels(host,2) == 3
     assert host._joint_analysis_options == {
-        "backend":"abaqus", "geometry_mode":"intersection", "mesh_sizes_mm":[11.25,7.5,5.]}
+        "backend":"abaqus", "geometry_mode":"intersection", "loading_method":"force",
+        "mesh_sizes_mm":[11.25,7.5,5.]}
+    host.close()
+
+
+def test_solid_analysis_dialog_defaults_to_cut_motion_loading(app, monkeypatch):
+    """防止新增加载方式后默认值悄悄变成内力加载，改变既有节点实体结果。"""
+    from PySide6.QtWidgets import QDialog, QWidget
+    host = QWidget()
+    monkeypatch.setattr(QDialog, "exec", lambda _box: QDialog.DialogCode.Accepted)
+    assert MainWindow._ask_joint_levels(host, 2) == 1
+    assert host._joint_analysis_options["loading_method"] == "displacement"
     host.close()
 
 
