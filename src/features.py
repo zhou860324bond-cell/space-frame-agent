@@ -24,7 +24,13 @@ from copy import deepcopy
 from typing import Any
 
 KINDS = ("section_assignments", "beam_orientations", "bcs", "loads", "constraints")
-LOAD_TYPES = ("concentrated_force", "moment", "line_load", "gravity")
+LOAD_TYPES = ("concentrated_force", "moment", "line_load", "gravity",
+              "member_point", "member_moment", "partial_line", "partial_trapezoid")
+#: 沿杆定位的荷载：类型 → 派生到 member_spans 的 kind（span_loads.KINDS）。
+#: 位置 a、b 是距杆件 i 端的距离（模型长度单位），区域里每根杆件各自按自己的
+#: 杆长判断；强度与力都是全局分量。区间型（有 b）的作用段是 [a, b]。
+SPAN_TYPES = {"member_point": "point", "member_moment": "moment",
+              "partial_line": "partial", "partial_trapezoid": "partial_trapezoid"}
 #: Interaction 模块的约束类型（Abaqus 名）。beam / tie / pin 是 MPC，coupling 是运动耦合。
 #: 值是 (被约束的从节点自由度, 是否带刚臂)；coupling 的自由度由对象的 dofs 给出。
 CONSTRAINT_TYPES = {
@@ -108,8 +114,13 @@ SCHEMA = {
                 "type": {"type": "string", "enum": list(LOAD_TYPES)},
                 "force": _VEC3,          # concentrated_force：力
                 "moment": _VEC3,         # moment：力×长度
-                "w": _VEC3,              # line_load：力/长度，全局分量
+                "w": _VEC3,              # line_load、partial_line：力/长度，全局分量；
+                                         # partial_trapezoid：a 处的强度
+                "w2": _VEC3,             # partial_trapezoid：b 处的强度
                 "g": _VEC3,              # gravity：加速度，全局分量
+                # 沿杆定位的荷载（SPAN_TYPES）：距 i 端的距离，模型长度单位
+                "a": {"type": "number", "minimum": 0},
+                "b": {"type": "number", "minimum": 0},
                 "suppressed": {"type": "boolean"},
             }}},
         "constraints": {"type": "array", "items": {
@@ -133,7 +144,20 @@ SCHEMA = {
 _LABELS = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
            "bcs": "边界条件", "loads": "荷载", "constraints": "约束"}
 _LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
-               "gravity": "g"}
+               "gravity": "g", "member_point": "force", "member_moment": "moment",
+               "partial_line": "w", "partial_trapezoid": "w"}
+
+
+def load_fields(load_type: str) -> tuple[str, ...]:
+    """荷载类型必须带的数值字段：主分量，加上沿杆定位荷载的 a、b、w2。"""
+    fields = (_LOAD_FIELD[load_type],)
+    if load_type in SPAN_TYPES:
+        fields += ("a",)
+        if load_type in ("partial_line", "partial_trapezoid"):
+            fields += ("b",)
+        if load_type == "partial_trapezoid":
+            fields += ("w2",)
+    return fields
 
 
 def _features(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -507,6 +531,8 @@ def _regenerate_loads(payload, problems):
         elif load_type == "line_load":
             block.setdefault("member_loads", []).extend(
                 {"member": mid, "w": list(vec), "owner": feature["name"]} for mid in ids)
+        elif load_type in SPAN_TYPES:
+            _regenerate_span(payload, feature, ids, vec, block, problems)
         else:                                          # gravity：w = ρ·A·g
             for mid in ids:
                 member = members[mid]
@@ -519,6 +545,62 @@ def _regenerate_loads(payload, problems):
                 block.setdefault("member_loads", []).append(
                     {"member": mid, "w": [rho * float(section["A"]) * gk for gk in vec],
                      "owner": feature["name"]})
+
+
+#: 位置与杆长比较的相对容差：坐标换算、十进制输入的末位舍入不该被当成越界。
+#: 与杆长成比例，换单位制不变。
+_STATION_TOLERANCE = 1e-9
+
+
+def member_lengths(payload: dict[str, Any]) -> dict[int, float]:
+    """杆件 i→j 的长度（模型长度单位）；端节点缺失的杆件不列出。"""
+    nodes = {int(n["id"]): n for n in payload.get("nodes") or []}
+    out = {}
+    for m in payload.get("members") or []:
+        ni, nj = nodes.get(int(m["i"])), nodes.get(int(m["j"]))
+        if ni is not None and nj is not None:
+            out[int(m["id"])] = sum((float(nj[k]) - float(ni[k])) ** 2 for k in "xyz") ** 0.5
+    return out
+
+
+def _regenerate_span(payload, feature, ids, vec, block, problems):
+    """沿杆定位的荷载 → 区域内每根杆件一条 member_spans（带 owner）。
+
+    a、b 是距 i 端的绝对距离，区域里的杆件长短不一时逐根判断；有杆件放不下
+    就整条不派生并点名这些杆件，不按比例缩放、也不吸附到杆端。
+    """
+    kind = SPAN_TYPES[feature["type"]]
+    interval = "b" in load_fields(feature["type"])
+    a = float(feature.get("a", 0.0))
+    b = float(feature.get("b", 0.0))
+    if interval and not a < b:
+        problems.append(f"荷载「{feature['name']}」的区间要满足起点 a < 终点 b，"
+                        f"收到 a={a:g}、b={b:g}；请调整位置")
+        return
+    entries, outside = [], []
+    lengths = member_lengths(payload)
+    for mid in ids:
+        length = lengths.get(mid)
+        if length is None:
+            continue                                   # 杆件或节点缺失由模型校验报
+        slack = _STATION_TOLERANCE * length
+        if not 0.0 <= a <= (b if interval else a) <= length + slack:
+            outside.append((mid, length))
+            continue
+        entry: dict[str, Any] = {"member": mid, "kind": kind, "w1": list(vec),
+                                 "a": min(a, length), "owner": feature["name"]}
+        if interval:
+            entry["b"] = min(b, length)
+        if "w2" in load_fields(feature["type"]):
+            entry["w2"] = [float(v) for v in feature.get("w2") or (0.0, 0.0, 0.0)]
+        entries.append(entry)
+    if outside:
+        where = f"a={a:g}、b={b:g}" if interval else f"a={a:g}"
+        listed = "、".join(f"杆件 {mid} 长 {length:g}" for mid, length in outside)
+        problems.append(f"荷载「{feature['name']}」的位置 {where} 超出了 {listed}"
+                        "（距 i 端，模型长度单位）；请改位置，或把这些杆件移出区域后逐根施加")
+        return
+    block.setdefault("member_spans", []).extend(entries)
 
 
 def check(payload: dict[str, Any]) -> list[str]:
@@ -560,9 +642,13 @@ def check(payload: dict[str, Any]) -> list[str]:
         if feature["name"] in direct_names.get(feature["case"], set()):
             errors.append(f"荷载「{feature['name']}」与工况「{feature['case']}」里直接定义的"
                           "同名荷载冲突；请改名")
-        field = _LOAD_FIELD[feature["type"]]
-        if field not in feature:
-            errors.append(f"荷载「{feature['name']}」是 {feature['type']}，缺少 {field}")
+        missing = [field for field in load_fields(feature["type"]) if field not in feature]
+        if missing:
+            errors.append(f"荷载「{feature['name']}」是 {feature['type']}，缺少 {'、'.join(missing)}")
+        extra = sorted({"a", "b", "w2"} & set(feature) - set(load_fields(feature["type"])))
+        if extra:
+            errors.append(f"荷载「{feature['name']}」是 {feature['type']}，不用 {'、'.join(extra)}；"
+                          "沿杆位置只属于杆上集中力、杆上力矩和区间荷载")
     known = {int(n["id"]) for n in payload.get("nodes") or []}
     for feature in features.get("constraints") or []:
         if feature.get("suppressed"):

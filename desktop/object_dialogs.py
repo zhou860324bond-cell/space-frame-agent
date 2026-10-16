@@ -28,11 +28,19 @@ BC_TYPES = (("位移/转角（逐个勾选）", None), ("固接 ENCASTRE", "ENCA
             ("弹性支承", "SPRING"),
             ("位移/转角（给定值，如支座沉降）", "DISPLACEMENT"))
 LOAD_TYPES = (("集中力", "concentrated_force"), ("力矩", "moment"),
-              ("线荷载", "line_load"), ("重力", "gravity"))
+              ("线荷载", "line_load"), ("重力", "gravity"),
+              ("杆上集中力", "member_point"), ("杆上力矩", "member_moment"),
+              ("区间均布荷载", "partial_line"), ("区间梯形荷载", "partial_trapezoid"))
 LOAD_REGION = {"concentrated_force": "node", "moment": "node",
-               "line_load": "member", "gravity": "member"}
+               "line_load": "member", "gravity": "member", "member_point": "member",
+               "member_moment": "member", "partial_line": "member",
+               "partial_trapezoid": "member"}
 LOAD_FIELD = {"concentrated_force": "force", "moment": "moment", "line_load": "w",
-              "gravity": "g"}
+              "gravity": "g", "member_point": "force", "member_moment": "moment",
+              "partial_line": "w", "partial_trapezoid": "w"}
+#: 沿杆定位的荷载类型 → 是否有区间终点 b（与 features.SPAN_TYPES 对应）
+SPAN_LOADS = {"member_point": False, "member_moment": False,
+              "partial_line": True, "partial_trapezoid": True}
 KIND_LABEL = {"section_assignments": "截面指派", "beam_orientations": "梁方向",
               "bcs": "边界条件", "loads": "荷载", "constraints": "约束"}
 #: Interaction 模块的约束类型（Abaqus 的 Create Constraint 列表里梁模型用得上的几种）
@@ -290,28 +298,45 @@ class EditConstraintDialog(QDialog):
 
 
 class EditLoadDialog(QDialog):
-    """第二段：荷载的三个全局分量。"""
+    """第二段：荷载的三个全局分量；沿杆定位的荷载再给作用位置。
+
+    位置有两种给法：距 i 端距离，或全局坐标（经 ``coordinates.station_on_segment``
+    换算成距 i 端距离，离开杆件中心线或越过杆端的点直接拒绝，不吸附）。
+    ``members`` 是区域里的杆件 ``{编号: (i 端坐标, j 端坐标)}``：距离方式逐根检查
+    杆长，坐标方式要求区域只有一根杆件——一个空间点只落在一根杆上，换成的距离
+    套到别的杆件上没有意义。
+    """
 
     UNITS = {"concentrated_force": "力", "moment": "力×长度",
-             "line_load": "力/长度", "gravity": "加速度"}
+             "line_load": "力/长度", "gravity": "加速度", "member_point": "力",
+             "member_moment": "力×长度", "partial_line": "力/长度",
+             "partial_trapezoid": "力/长度"}
 
     def __init__(self, name: str, load_type: str, vector: list[float], unit_system: str,
-                 parent=None):
+                 parent=None, *, span: dict[str, Any] | None = None,
+                 members: dict[int, tuple[Any, Any]] | None = None):
         super().__init__(parent)
+        import numpy as np
         self.setWindowTitle(f"编辑荷载 {name}")
+        self.load_type = load_type
+        self.members = dict(members or {})
+        self.lengths = {mid: float(np.linalg.norm(np.asarray(j, float) - np.asarray(i, float)))
+                        for mid, (i, j) in self.members.items()}
+        self._span: dict[str, Any] = {}
+        span = dict(span or {})
         layout = QVBoxLayout(self)
         system = "N、m" if unit_system == "N-m-Pa" else "N、mm"
+        length_unit = "m" if unit_system == "N-m-Pa" else "mm"
         layout.addWidget(DialogHeader(f"编辑荷载 {name}",
                                       f"全局坐标分量，单位：{self.UNITS[load_type]}（{system}）。"))
         form = QFormLayout()
-        self.values_ = []
-        for k, axis in enumerate(("X", "Y", "Z")):
-            spin = QDoubleSpinBox(self)
-            spin.setRange(-1e18, 1e18)
-            spin.setDecimals(6)
-            spin.setValue(float(vector[k]))
-            form.addRow(f"{axis} 分量", spin)
-            self.values_.append(spin)
+        trapezoid = load_type == "partial_trapezoid"
+        self.values_ = self._vector_rows(form, vector, "起点 a 处 " if trapezoid else "")
+        self.end_values = (self._vector_rows(form, span.get("w2") or vector, "终点 b 处 ")
+                           if trapezoid else [])
+        self.position = None
+        if load_type in SPAN_LOADS:
+            self._position_rows(form, span, length_unit)
         layout.addLayout(form)
         self.hint = HintLabel("", self)
         layout.addWidget(self.hint)
@@ -319,16 +344,134 @@ class EditLoadDialog(QDialog):
         box.accepted.connect(self._accept)
         box.rejected.connect(self.reject)
         layout.addWidget(box)
-        style_dialog(self, 380, 260)
+        style_dialog(self, 420, 460 if load_type in SPAN_LOADS else 260)
+
+    def _vector_rows(self, form: QFormLayout, vector, prefix: str) -> list[QDoubleSpinBox]:
+        spins = []
+        for k, axis in enumerate(("X", "Y", "Z")):
+            spin = QDoubleSpinBox(self)
+            spin.setRange(-1e18, 1e18)
+            spin.setDecimals(6)
+            spin.setValue(float(vector[k]))
+            form.addRow(f"{prefix}{axis} 分量", spin)
+            spins.append(spin)
+        return spins
+
+    def _position_rows(self, form: QFormLayout, span: dict[str, Any], length_unit: str) -> None:
+        interval = SPAN_LOADS[self.load_type]
+        shortest = min(self.lengths.values(), default=0.0)
+        self.position = QComboBox(self)
+        self.position.addItem("距 i 端距离", "distance")
+        self.position.addItem("全局坐标", "coordinate")
+        form.addRow("位置给法", self.position)
+        self.start = QDoubleSpinBox(self)
+        self.end = QDoubleSpinBox(self)
+        for spin in (self.start, self.end):
+            spin.setDecimals(6)
+            spin.setRange(0.0, max(self.lengths.values(), default=1e18))
+            spin.setSuffix(f" {length_unit}")
+        self.start.setValue(float(span.get("a", 0.0 if interval else shortest / 2)))
+        self.end.setValue(float(span.get("b", shortest)))
+        self.start_coordinate = QLineEdit(self)
+        self.end_coordinate = QLineEdit(self)
+        for edit in (self.start_coordinate, self.end_coordinate):
+            edit.setPlaceholderText(f"X, Y, Z（{length_unit}）")
+        if len(self.members) == 1:
+            (i_end, j_end), = self.members.values()
+            self.start_coordinate.setText(self._xyz(i_end))
+            self.end_coordinate.setText(self._xyz(j_end))
+        form.addRow("起点 a" if interval else "作用位置 a", self.start)
+        form.addRow("终点 b", self.end)
+        form.addRow("起点坐标" if interval else "作用点坐标", self.start_coordinate)
+        form.addRow("终点坐标", self.end_coordinate)
+        form.setRowVisible(self.end, interval)
+        form.setRowVisible(self.end_coordinate, interval)
+        lengths = "、".join(f"杆件 {mid} 长 {length:g} {length_unit}"
+                            for mid, length in sorted(self.lengths.items())[:6])
+        if len(self.lengths) > 6:
+            lengths += f" 等 {len(self.lengths)} 根"
+        self.position_note = QLabel(f"距离从每根杆件的 i 端量起：{lengths}。", self)
+        self.position_note.setWordWrap(True)
+        form.addRow(self.position_note)
+        self.position.currentIndexChanged.connect(self._refresh_position)
+        self._refresh_position()
+
+    @staticmethod
+    def _xyz(point) -> str:
+        return ", ".join(f"{float(v):.12g}" for v in point)
+
+    def _refresh_position(self, *_args) -> None:
+        coordinate = self.position.currentData() == "coordinate"
+        self.start.setEnabled(not coordinate)
+        self.end.setEnabled(not coordinate)
+        self.start_coordinate.setEnabled(coordinate)
+        self.end_coordinate.setEnabled(coordinate)
+
+    def _stations(self) -> tuple[float, float | None]:
+        """作用位置换成距 i 端距离；位置不成立时抛 ValueError（消息给用户看）。"""
+        from coordinates import parse_coordinate, station_on_segment
+        interval = SPAN_LOADS[self.load_type]
+        if self.position.currentData() == "distance":
+            a, b = self.start.value(), (self.end.value() if interval else None)
+            # 数值框只显示 6 位小数：填到杆端时末位舍入可能让值略大于杆长，归到杆长
+            step = 0.5 * 10.0 ** -self.start.decimals()
+            shortest = min(self.lengths.values(), default=None)
+            if shortest is not None:
+                a = shortest if 0 < a - shortest <= step else a
+                b = shortest if b is not None and 0 < b - shortest <= step else b
+            if interval and not a < b:
+                raise ValueError("起点 a 必须小于终点 b；请调整位置。")
+            reach = b if interval else a
+            short = [mid for mid, length in sorted(self.lengths.items()) if reach > length]
+            if short:
+                raise ValueError(f"位置超出了杆件 {short} 的杆长；请改位置，"
+                                 "或把这些杆件移出区域后逐根施加。")
+            return a, b
+        points = [parse_coordinate(self.start_coordinate.text())]
+        if interval:
+            points.append(parse_coordinate(self.end_coordinate.text()))
+        if len(self.members) != 1:
+            on = []
+            for mid, ends in sorted(self.members.items()):
+                try:
+                    for point in points:
+                        station_on_segment(point, *ends)
+                except ValueError:
+                    continue
+                on.append(mid)
+            where = f"坐标在杆件 {on} 上" if on else "坐标不在区域里任何一根杆件的中心线上"
+            raise ValueError(f"区域里有 {len(self.members)} 根杆件，全局坐标只能定位到一根杆件上"
+                             f"（{where}）；请把区域改为这一根杆件，或改用「距 i 端距离」。")
+        ends = next(iter(self.members.values()))
+        stations = [station_on_segment(point, *ends) for point in points]
+        if interval and not stations[0] < stations[1]:
+            raise ValueError("终点坐标要比起点坐标离 i 端更远；请交换两个坐标或核对杆件方向。")
+        return stations[0], (stations[1] if interval else None)
 
     def _accept(self) -> None:
-        if not any(s.value() for s in self.values_):
-            self.hint.setText("三个分量都是 0，这个荷载不起作用；请填写数值。")
+        values = [s.value() for s in self.values_ + self.end_values]
+        if not any(values):
+            self.hint.setText("分量都是 0，这个荷载不起作用；请填写数值。")
             return
+        if self.position is not None:
+            try:
+                a, b = self._stations()
+            except ValueError as exc:
+                self.hint.setText(str(exc))
+                return
+            self._span = {"a": a}
+            if b is not None:
+                self._span["b"] = b
+            if self.end_values:
+                self._span["w2"] = [s.value() for s in self.end_values]
         self.accept()
 
     def vector(self) -> list[float]:
         return [s.value() for s in self.values_]
+
+    def span(self) -> dict[str, Any]:
+        """沿杆定位荷载的 a、b（距 i 端）与梯形终点强度 w2；其他类型为空。"""
+        return dict(self._span)
 
 
 class OrientationDialog(QDialog):
@@ -446,7 +589,14 @@ def describe_values(kind: str, feature: dict[str, Any]) -> str:
         return text
     label = dict((v, k) for k, v in LOAD_TYPES)[feature["type"]]
     vec = feature.get(LOAD_FIELD[feature["type"]]) or []
-    return f"{label} ({', '.join(f'{v:g}' for v in vec)})"
+    text = f"{label} ({', '.join(f'{v:g}' for v in vec)})"
+    if "w2" in feature:
+        text += f" → ({', '.join(f'{v:g}' for v in feature['w2'])})"
+    if "b" in feature:
+        text += f"，a={feature['a']:g}～b={feature['b']:g}"
+    elif "a" in feature:
+        text += f"，a={feature['a']:g}"
+    return text
 
 
 def step_matrix(model: dict[str, Any], kind: str, features: list[dict]) -> tuple[list[str], dict]:

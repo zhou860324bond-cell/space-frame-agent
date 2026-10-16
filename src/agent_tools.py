@@ -380,19 +380,27 @@ TOOLS: list[dict[str, Any]] = [
                 "荷载对象（Abaqus 的 Create Load），属于某个工况、施加在一个区域上，是**一个**对象"
                 "而不是逐杆拆开的若干条。load_type：concentrated_force（节点区域，force 三个全局分量）、"
                 "moment（节点区域，moment）、line_load（杆件区域，w 全局线荷载）、"
-                "gravity（杆件区域，g 加速度，按 ρA 算自重）。数值单位跟模型单位制。",
+                "gravity（杆件区域，g 加速度，按 ρA 算自重）；沿杆定位（杆件区域，a、b 是距 i 端的距离，"
+                "区域里每根杆件各自判断放不放得下）：member_point（force、a）、member_moment（moment、a）、"
+                "partial_line（w、a、b）、partial_trapezoid（a 处强度 w、b 处强度 w2、a、b）。"
+                "数值单位跟模型单位制。",
             "parameters": {"type": "object", "required": ["name", "case", "load_type", "region"],
                            "properties": {
                                "name": {"type": "string"}, "case": {"type": "string"},
-                               "load_type": {"type": "string", "enum": ["concentrated_force", "moment",
-                                                                        "line_load", "gravity"]},
+                               "load_type": {"type": "string", "enum": [
+                                   "concentrated_force", "moment", "line_load", "gravity",
+                                   "member_point", "member_moment", "partial_line",
+                                   "partial_trapezoid"]},
                                "region": {"description": "集合名，或节点/杆件编号列表",
                                           "oneOf": [{"type": "string"},
                                                     {"type": "array", "items": {"type": "integer"}}]},
                                "force": {"type": "array", "items": {"type": "number"}},
                                "moment": {"type": "array", "items": {"type": "number"}},
                                "w": {"type": "array", "items": {"type": "number"}},
-                               "g": {"type": "array", "items": {"type": "number"}}},
+                               "w2": {"type": "array", "items": {"type": "number"}},
+                               "g": {"type": "array", "items": {"type": "number"}},
+                               "a": {"type": "number", "minimum": 0},
+                               "b": {"type": "number", "minimum": 0}},
                            "additionalProperties": False},
         },
     },
