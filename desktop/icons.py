@@ -666,6 +666,21 @@ def _sketch_ai(g: QPainter) -> None:
         g.drawEllipse(QPointF(x, 10), 2, 2)
 
 
+def _drawing_ai(g: QPainter) -> None:
+    """识别框中的轴网图纸：点划轴线与轴号圈，区别于手绘草图识别。"""
+    _fit(g)
+    g.setPen(QPen(_DIM, 1.2, Qt.PenStyle.DashDotLine))
+    for x in (11, 21):
+        g.drawLine(QPointF(x, 12), QPointF(x, 25))
+    g.drawLine(QPointF(8, 19), QPointF(25, 19))
+    g.setPen(_pen(_HOT, 1.6))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    for x in (11, 21):
+        g.drawEllipse(QPointF(x, 9), 2.6, 2.6)
+    g.setPen(_pen(_LINE, 1.8))
+    g.drawLine(QPointF(11, 19), QPointF(21, 19))
+
+
 def _assign(g: QPainter) -> None:
     """属性指派：截面和指向杆件的箭头。"""
     g.save()
@@ -809,7 +824,7 @@ def _connection(g: QPainter) -> None:
 DRAWERS: dict[str, Callable[[QPainter], None]] = {
     "copy": _copy, "edit": _edit, "regenerate": _regenerate, "history": _history,
     "new_chat": _new_chat, "agents": _agents, "connection": _connection,
-    "material": _material, "sketch": _sketch, "sketch_ai": _sketch_ai,
+    "material": _material, "sketch": _sketch, "sketch_ai": _sketch_ai, "drawing_ai": _drawing_ai,
     "assign_section": _assign, "create_node": _creation(_node),
     "create_member": _creation(_member), "mesh": _mesh, "hinge": _hinge,
     "float": _window_control("float"), "close": _window_control("close"),

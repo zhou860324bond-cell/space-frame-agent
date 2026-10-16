@@ -29,6 +29,7 @@ from .model_tree import ModelTree, ModelTreePanel  # noqa: E402
 from .diagram_panel import DiagramPanel             # noqa: E402
 from .panels import ResultPanel, TimelinePanel      # noqa: E402
 from .sketch_panel import SketchPanel                # noqa: E402
+from .drawing_panel import DrawingPanel              # noqa: E402
 from .section_opt_panel import SectionOptPanel       # noqa: E402
 from .properties import PropertiesPanel             # noqa: E402
 from .drawers import (BOTTOM, LEFT, RIGHT, DrawerHost,  # noqa: E402
@@ -161,6 +162,10 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.sketch = SketchPanel(self.session, self.runner, self)
         self.sketch.model_loaded.connect(self._on_sketch_loaded)
         self.sketch_dock = PanelWindow("手绘草图识别", self.sketch, self)
+        # 结构图纸 → 模型 JSON：读图上文字证据，核对后生成，是识别建模的主入口。
+        self.drawing = DrawingPanel(self.session, self.runner, self)
+        self.drawing.model_loaded.connect(self._on_sketch_loaded)
+        self.drawing_dock = PanelWindow("结构图纸识别", self.drawing, self, size=(760, 820))
 
         self.tree = ModelTree(self)
         self.tree.activated_item.connect(self._on_tree_action)
@@ -309,13 +314,13 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         box.addSpacing(6)
         actions = QHBoxLayout()
         for text, action_name, primary in (
-                ("AI 识别图纸", "sketch_ai", False),
+                ("AI 识别图纸", "drawing_ai", False),
                 ("参数化框架", "frame", True),
                 ("二维草图", "sketch", False)):
             button = QPushButton(text, panel)
             button.setMinimumHeight(34)
-            if action_name == "sketch_ai":
-                button.setToolTip("实验性：识别后请核对拓扑、尺度和边界条件，再确认加载。")
+            if action_name == "drawing_ai":
+                button.setToolTip("实验性：上传结构图纸，识别后在核对表里逐项确认，再生成模型。")
             if primary:
                 button.setProperty("role", "primary")
             button.clicked.connect(self.actions_by_name[action_name].trigger)
@@ -726,6 +731,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.properties.session = session
         self.properties.clear()
         self.sketch.session = session
+        self.drawing.session = session
         self.section_opt.session = session
         self.lbl_pick.setText("")
 
@@ -2350,11 +2356,21 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         else:
             self.set_prompt("就绪 | 选择上方功能区模块开始建模")
 
+    def open_drawing_ai(self) -> None:
+        """打开结构图纸识别：上传图纸 → 识别文字 → 逐项核对 → 生成模型。"""
+        visible = self.drawing_dock.isVisible()
+        self.drawing_dock.setVisible(not visible)
+        if not visible:
+            self.drawing_dock.raise_()
+            self.set_prompt("图纸识别：添加图纸 → 识别图纸 → 处理核对表 → 生成模型 JSON 或导入")
+        else:
+            self.set_prompt("就绪 | 选择上方功能区模块开始建模")
+
     def _recognize_dropped_image(self, path: str) -> None:
-        """对话面板拖入的图纸：打开草图识别面板并载入，后续核对与确认仍由用户完成。"""
-        if not self.sketch_dock.isVisible():
-            self.open_sketch_ai()
-        self.sketch.load_image(path)
+        """对话面板拖入的图纸：打开图纸识别面板并加入，后续识别与核对仍由用户完成。"""
+        if not self.drawing_dock.isVisible():
+            self.open_drawing_ai()
+        self.drawing.load_images([path])
 
     def _generate_from_sketch(self, data: dict) -> None:
         """把 2D 草图转换成 3D 模型，支持沿进深方向拉伸。"""

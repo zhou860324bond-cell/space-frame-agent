@@ -609,7 +609,7 @@ def build(window) -> Ribbon:
     # ========== 建模 ==========
     p = r.page("建模")
     g = p.group("创建")
-    g.add_large(a["sketch"]); g.add_large(a["sketch_ai"])
+    g.add_large(a["sketch"]); g.add_large(a["drawing_ai"]); g.add_large(a["sketch_ai"])
     g.add_large(a["frame"])
     g = p.group("编辑")
     g.add_small(a["brace"]); g.add_small(a["partition_member"])

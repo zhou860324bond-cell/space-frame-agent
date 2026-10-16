@@ -305,7 +305,7 @@ def test_chat_persists_and_restores_with_context(panel, monkeypatch, tmp_path):
     other.close()
 
 
-def test_dropped_drawing_goes_to_sketch_recognition(panel, tmp_path):
+def test_dropped_drawing_goes_to_drawing_recognition(panel, tmp_path):
     """拖图保留本机中文路径，防止用 Windows 盘符假定 Linux 的 QUrl 行为。"""
     got = []
     panel.image_dropped.connect(got.append)
@@ -318,7 +318,7 @@ def test_dropped_drawing_goes_to_sketch_recognition(panel, tmp_path):
     panel.dragEnterEvent(event)
     panel.dropEvent(event)
     assert got == [drawing] and len(accepted) == 2
-    assert "草图识别" in panel.view.toPlainText()
+    assert "图纸识别" in panel.view.toPlainText()
 
 
 def test_transcript_never_scrolls_sideways(panel):
