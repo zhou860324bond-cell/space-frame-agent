@@ -316,3 +316,151 @@ def section_properties(geometry):
     cy, cz = sy/area, sz/area
     return {"A": float(area), "Iy": float(izz - area*cz**2), "Iz": float(iyy - area*cy**2),
             "centroid": [float(cy), float(cz)]}
+
+
+#: 剪切面积默认泊松比（钢）。截面不携带材料，而 Cowper 剪切系数与 ν 有关；
+#: ν 在 0.25~0.35 之间变化时实心矩形的系数只变 ±0.4%。
+STEEL_POISSON = 0.3
+
+
+def _cowper_rectangle(nu):
+    """Cowper (1966) 实心矩形：k = 10(1+ν)/(12+11ν)，ν=0 时即 Timoshenko 的 5/6。"""
+    return 10 * (1 + nu) / (12 + 11 * nu)
+
+
+def _cowper_hollow_circle(nu, m):
+    """Cowper (1966) 圆环，m = 内径/外径：
+    k = 6(1+ν)(1+m²)² / [(7+6ν)(1+m²)² + (20+12ν)m²]。m=0 为实心圆 6(1+ν)/(7+6ν)，
+    m→1 为薄壁圆管 2(1+ν)/(4+3ν)。"""
+    s = (1 + m * m) ** 2
+    return 6 * (1 + nu) * s / ((7 + 6 * nu) * s + (20 + 12 * nu) * m * m)
+
+
+def _thin_box(h, b, t):
+    """等厚薄壁矩形管沿 h 受剪的剪切面积，中线尺寸 h、b。
+
+    Cowper (1966) 薄壁箱形公式取 ν=0（与开口薄壁的剪力流能量法同一假定）：
+    m = b·t₁/(h·t)，n = b/h，k = 10(1+3m)² / [12+72m+150m²+90m³+30n²(m+m²)]，
+    As = k·2(b+h)t。等厚时 m = n。
+    """
+    m = n = b / h
+    k = 10 * (1 + 3 * m) ** 2 / (12 + 72 * m + 150 * m * m + 90 * m ** 3
+                                  + 30 * n * n * (m + m * m))
+    return k * 2 * (b + h) * t
+
+
+def _midline_segments(kind, d):
+    """开口薄壁截面的中线：[(起点[y,z], 终点[y,z], 壁厚)]，在交汇点断开成树。"""
+    if kind == "angle":
+        b, t = d["b"], d["t"]
+        c = (t / 2, t / 2)
+        return [(c, (b, t / 2), t), (c, (t / 2, b), t)]
+    h, b, tw, tf = d["h"], d["b"], d["tw"], d["tf"]
+    if kind == "i":
+        y = (h - tf) / 2
+        return [((-y, 0), (y, 0), tw),
+                ((y, 0), (y, -b / 2), tf), ((y, 0), (y, b / 2), tf),
+                ((-y, 0), (-y, -b / 2), tf), ((-y, 0), (-y, b / 2), tf)]
+    if kind == "channel":
+        y, z = (h - tf) / 2, tw / 2
+        return [((-y, z), (y, z), tw), ((y, z), (y, b), tf), ((-y, z), (-y, b), tf)]
+    y = h - tf / 2                                     # T 型钢：翼缘中线高度
+    return [((0, 0), (y, 0), tw), ((y, 0), (y, -b / 2), tf), ((y, 0), (y, b / 2), tf)]
+
+
+def _open_thin_walled(segments):
+    """开口薄壁截面按 Jourawski 剪力流求剪切面积 (Ay, Az)。
+
+    剪力 V 引起的剪力流 q(s) 由截面切开一侧的面积矩给出，剪切应变能
+    ∫q²/(2Gt)ds 与 V²/(2G·As) 相等，于是 As = V² / ∫q²/t ds。中线、壁厚按
+    薄壁理论计（与 Cowper 薄壁公式同一理想化），截面为树形时切开任一点都把截面
+    分成两块、两块面积矩等值反号，所以不必选起点。主轴不与 y、z 重合时
+    （角钢）计入惯性积。q 沿每段是二次式，3 点 Gauss 积分精确。
+    """
+    segs = [(np.asarray(a, float), np.asarray(b, float), float(t)) for a, b, t in segments]
+    lengths = [float(np.linalg.norm(b - a)) for a, b, _ in segs]
+    area = sum(t * L for (_, _, t), L in zip(segs, lengths, strict=True))
+    centre = sum(t * L * (a + b) / 2 for (a, b, t), L in zip(segs, lengths, strict=True)) / area
+    segs = [(a - centre, b - centre, t) for a, b, t in segs]
+    # 线积分：∫y²、∫z²、∫yz（壁厚方向的 t³ 项按薄壁理论略去）
+    iyy = izz = pyz = 0.0
+    for (a, b, t), L in zip(segs, lengths, strict=True):
+        w = t * L / 3
+        iyy += w * (a[0]**2 + a[0]*b[0] + b[0]**2)
+        izz += w * (a[1]**2 + a[1]*b[1] + b[1]**2)
+        pyz += w * (a[0]*a[1] + (a[0]*b[1] + a[1]*b[0]) / 2 + b[0]*b[1])
+    det = iyy * izz - pyz * pyz
+
+    def key(p):
+        return tuple(np.round(p / max(lengths), 9))
+    ends = [(key(a), key(b)) for a, b, _ in segs]
+    if len({p for e in ends for p in e}) != len(segs) + 1:
+        raise ValueError("薄壁剪力流只适用于开口（树形）截面。")
+
+    def side_moment(i, node):
+        """从第 i 段的 node 端出发、不经过第 i 段能到达的各段面积矩 (∫y, ∫z)。"""
+        seen, stack, total = {i}, [node], np.zeros(2)
+        while stack:
+            p = stack.pop()
+            for j, (pa, pb) in enumerate(ends):
+                if j not in seen and p in (pa, pb):
+                    seen.add(j)
+                    a, b, t = segs[j]
+                    total += t * lengths[j] * (a + b) / 2
+                    stack.append(pb if p == pa else pa)
+        return total
+
+    gauss = ((0.5 - math.sqrt(0.15), 5 / 18), (0.5, 8 / 18), (0.5 + math.sqrt(0.15), 5 / 18))
+    energy = np.zeros(2)
+    for i, ((a, b, t), L) in enumerate(zip(segs, lengths, strict=True)):
+        base = side_moment(i, ends[i][0])
+        for u, w in gauss:
+            qy, qz = base + t * L * u * (a + (b - a) * u / 2)
+            flow_y = (izz * qy - pyz * qz) / det       # 单位 Vy
+            flow_z = (iyy * qz - pyz * qy) / det       # 单位 Vz
+            energy += w * L * np.array([flow_y**2, flow_z**2]) / t
+    return float(1 / energy[0]), float(1 / energy[1])
+
+
+def shear_areas(geometry, nu=STEEL_POISSON):
+    """Timoshenko 梁的有效剪切面积 ``Ay``（对应 Vy，沿截面高度 h）与 ``Az``（沿宽度 b）。
+
+    只有实心矩形的 As = 5A/6；薄壁截面的剪力主要由平行于剪力的板件承担，工字钢
+    强轴 As 接近腹板面积，按 5A/6 会把剪切刚度高估约一倍。取法：
+
+    * 实心矩形、实心圆、圆管：Cowper (1966) 闭合式，与 ν 有关，默认 ν=0.3；
+    * 矩形管：Cowper 薄壁箱形公式（ν=0）；
+    * 工字钢、槽钢、T 型钢、角钢：薄壁剪力流能量法（``_open_thin_walled``），
+      工字钢强轴与 Cowper 薄壁工字形公式 ν=0 时逐位一致。
+
+    根部圆角 r 不计入（剪力流按中线计）。返回 ``{"Ay", "Az", "formula"}``，
+    ``formula`` 是写给用户看的公式说明。多边形截面没有闭合解，明确拒绝。
+
+    参考：G. R. Cowper, The shear coefficient in Timoshenko's beam theory,
+    J. Appl. Mech. 33 (1966) 335–340。
+    """
+    kind = geometry["type"]
+    if kind == "polygon":
+        raise ValueError("多边形截面没有剪切面积闭合解：请直接填写 Ay/Az，或关闭剪切变形。")
+    p = profile(geometry)
+    d = p["dimensions"]
+    if kind == "rectangle":
+        k = _cowper_rectangle(nu)
+        area = k * p["area"]
+        return {"Ay": area, "Az": area,
+                "formula": f"Cowper 实心矩形 k=10(1+ν)/(12+11ν)={k:.4f}（ν={nu:g}），As=k·A"}
+    if kind in ("circle", "tube"):
+        m = (d["d"] - 2 * d["t"]) / d["d"] if kind == "tube" else 0.0
+        k = _cowper_hollow_circle(nu, m)
+        area = k * p["area"]
+        text = ("Cowper 实心圆 k=6(1+ν)/(7+6ν)" if kind == "circle" else
+                f"Cowper 圆环 k=6(1+ν)(1+m²)²/[(7+6ν)(1+m²)²+(20+12ν)m²]，m=内径/外径={m:.4f}，")
+        return {"Ay": area, "Az": area, "formula": f"{text}k={k:.4f}（ν={nu:g}），As=k·A"}
+    if kind == "box":
+        h, b, t = d["h"] - d["t"], d["b"] - d["t"], d["t"]
+        return {"Ay": _thin_box(h, b, t), "Az": _thin_box(b, h, t),
+                "formula": "Cowper 薄壁箱形 k=10(1+3m)²/[12+72m+150m²+90m³+30n²(m+m²)]"
+                           "（ν=0，按中线尺寸），As=k·A"}
+    ay, az = _open_thin_walled(_midline_segments(kind, d))
+    return {"Ay": ay, "Az": az,
+            "formula": "薄壁剪力流能量法 As=V²/∫q²/t ds，q=V·S/I（按中线计，未计根部圆角）"}
