@@ -1,4 +1,4 @@
-"""用固定示例模型重拍使用手册的五张真实界面图。
+"""用固定示例模型重拍使用手册的六张真实界面图。
 
 需要 Windows 图形会话和 OpenGL；只生成文档截图，不执行演示验收。
 """
@@ -98,6 +98,25 @@ def main() -> None:
         settle()
         capture(window, "05-应力云图.png")
         window.close()
+
+        # 06：离线演示的一轮真实对话与模型并排。离线演示的意图为预设脚本，
+        # 工具调用与求解真实执行；不使用任何在线密钥。
+        os.environ["FRAMELAB_SETTINGS_FILE"] = str(Path(scratch) / "chat-settings.ini")
+        chat_window = MainWindow()
+        chat_window.resize(1440, 900)
+        chat_window.move(0, 0)
+        chat_window.show()
+        chat_window.chat_dock.show()
+        chat = chat_window.chat
+        chat.model_selector.setCurrentIndex(chat.model_selector.findData("offline"))
+        settle()
+        chat.send("单跨 24 米门式刚架，檐口高 7.5 米，柱脚铰接，Q355，屋面恒载 8 kN/m，建模求解并看看挠跨比。")
+        chat_window.runner.wait(60000)
+        settle()
+        chat_window.view_fit()
+        chat.view.scroll_to_bottom()
+        capture(chat_window, "06-Agent工作台.png")
+        chat_window.close()
 
 
 if __name__ == "__main__":

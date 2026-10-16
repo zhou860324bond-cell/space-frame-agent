@@ -15,10 +15,14 @@ from model_profiles import ModelProfile, ProfileStore, redact
 from . import dialog_styles
 
 
+#: 提供商模板的显示名，与下方 ``_preset`` 的模板顺序一致；对话面板的模型下拉框也用它列出添加入口
+PROVIDERS = ("DeepSeek", "OpenAI", "Anthropic", "自定义兼容接口")
+
+
 class ModelSettings(QDialog):
     profiles_changed = Signal(object, str)
 
-    def __init__(self, runner, profiles, selected, parent=None):
+    def __init__(self, runner, profiles, selected, parent=None, preset: int | None = None):
         super().__init__(parent)
         self.runner = runner
         self.profiles = [replace(p) for p in profiles]
@@ -50,7 +54,7 @@ class ModelSettings(QDialog):
         self.form.setVerticalSpacing(7)
         self.form.addRow("已保存的连接", top)
         self.preset = QComboBox()
-        self.preset.addItems(["DeepSeek", "OpenAI", "Anthropic", "自定义兼容接口"])
+        self.preset.addItems(list(PROVIDERS))
         self.label = QLineEdit()
         self.protocol = QComboBox()
         self.protocol.addItem("Chat Completions", "openai-chat")
@@ -108,6 +112,12 @@ class ModelSettings(QDialog):
         runner.busy_changed.connect(self._busy)
         self._preset(0)
         self.saved.setCurrentIndex(max(0, self.saved.findData(selected)))
+        if preset is not None:
+            # 从对话面板「添加某提供商连接」进来：新建连接并套用该模板
+            self.saved.setCurrentIndex(0)
+            self.preset.setCurrentIndex(preset)
+            self._preset(preset)
+            self.key.setFocus()
         self._busy(runner.busy)
 
     def _preset(self, index):

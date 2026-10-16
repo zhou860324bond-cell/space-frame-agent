@@ -726,7 +726,89 @@ def _window_control(kind: str):
     return paint
 
 
+# --- 对话面板的小图标：消息操作与面板顶栏。线条更细，16–18 像素下仍清楚 ---
+
+def _copy(g: QPainter) -> None:
+    """两张叠放的纸：后面一张只露出边角。"""
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.setPen(_pen(_DIM, 1.8))
+    g.drawPolyline(QPolygonF([QPointF(8, 20), QPointF(8, 7), QPointF(19, 7)]))
+    g.setPen(_pen(_LINE, 2.0))
+    g.drawRoundedRect(QRectF(12, 11, 13, 15), 2, 2)
+
+
+def _edit(g: QPainter) -> None:
+    """铅笔压在一行文字上：改的是消息，不是模型。"""
+    g.setPen(_pen(_LINE, 2.0))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawPolygon(QPolygonF([QPointF(9, 23), QPointF(10, 19), QPointF(21, 8),
+                             QPointF(24, 11), QPointF(13, 22)]))
+    g.setPen(_pen(_HOT, 1.8))
+    g.drawLine(QPointF(15, 26), QPointF(26, 26))
+
+
+def _regenerate(g: QPainter) -> None:
+    """几乎闭合的环形箭头：同一句话再问一次。"""
+    g.setPen(_pen(_LINE, 2.2))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawArc(QRectF(7, 7, 18, 18), 60 * 16, 280 * 16)
+    g.setBrush(QBrush(_HOT)); g.setPen(Qt.PenStyle.NoPen)
+    g.drawPolygon(QPolygonF([QPointF(26, 5), QPointF(26, 13), QPointF(18.5, 10)]))
+
+
+def _history(g: QPainter) -> None:
+    """钟面加逆时针箭头：以前的对话。"""
+    g.setPen(_pen(_LINE, 2.0))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawArc(QRectF(6, 6, 20, 20), 150 * 16, -300 * 16)
+    g.setBrush(QBrush(_LINE)); g.setPen(Qt.PenStyle.NoPen)
+    g.drawPolygon(QPolygonF([QPointF(4, 10), QPointF(11, 11), QPointF(6, 16)]))
+    g.setPen(_pen(_HOT, 2.0))
+    g.drawPolyline(QPolygonF([QPointF(16, 11), QPointF(16, 16.5), QPointF(20, 19)]))
+
+
+def _new_chat(g: QPainter) -> None:
+    """对话框里一个加号。"""
+    g.setPen(_pen(_LINE, 2.0))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(5, 6, 22, 16), 4, 4)
+    path.moveTo(QPointF(10, 22)); path.lineTo(QPointF(9, 27)); path.lineTo(QPointF(15, 22))
+    g.drawPath(path)
+    g.setPen(_pen(_HOT, 2.2))
+    g.drawLine(QPointF(16, 10), QPointF(16, 18))
+    g.drawLine(QPointF(12, 14), QPointF(20, 14))
+
+
+def _agents(g: QPainter) -> None:
+    """主 Agent 在上，向下分派给两个子 Agent。"""
+    g.setPen(_pen(_DIM, 1.8))
+    g.drawPolyline(QPolygonF([QPointF(9, 22), QPointF(9, 17), QPointF(23, 17), QPointF(23, 22)]))
+    g.drawLine(QPointF(16, 12), QPointF(16, 17))
+    g.setPen(_pen(_HOT, 1.8))
+    g.setBrush(QBrush(QColor(_HOT.red(), _HOT.green(), _HOT.blue(), 70)))
+    g.drawEllipse(QPointF(16, 8), 4, 4)
+    g.setPen(_pen(_LINE, 1.8))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawEllipse(QPointF(9, 25), 3.4, 3.4)
+    g.drawEllipse(QPointF(23, 25), 3.4, 3.4)
+
+
+def _connection(g: QPainter) -> None:
+    """插头与插座：模型连接，不是通用的齿轮。"""
+    g.setPen(_pen(_LINE, 2.0))
+    g.setBrush(Qt.BrushStyle.NoBrush)
+    g.drawRoundedRect(QRectF(7, 11, 10, 10), 2, 2)
+    g.drawLine(QPointF(4, 16), QPointF(7, 16))
+    g.drawLine(QPointF(17, 13.5), QPointF(21, 13.5))
+    g.drawLine(QPointF(17, 18.5), QPointF(21, 18.5))
+    g.setPen(_pen(_HOT, 2.0))
+    g.drawArc(QRectF(19, 9, 10, 14), -90 * 16, 180 * 16)
+
+
 DRAWERS: dict[str, Callable[[QPainter], None]] = {
+    "copy": _copy, "edit": _edit, "regenerate": _regenerate, "history": _history,
+    "new_chat": _new_chat, "agents": _agents, "connection": _connection,
     "material": _material, "sketch": _sketch, "sketch_ai": _sketch_ai,
     "assign_section": _assign, "create_node": _creation(_node),
     "create_member": _creation(_member), "mesh": _mesh, "hinge": _hinge,
