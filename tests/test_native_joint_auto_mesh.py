@@ -91,3 +91,54 @@ def test_one_level_is_the_quick_default(monkeypatch):
         None, 8.0, 1, max_elements=80000, max_dof=180000)
     assert [size for size, _p in plan] == [16.0]
     assert options is None and note is None
+
+
+def test_no_dof_limit_does_not_coarsen_a_mesh_within_element_budget(monkeypatch):
+    """取消自由度限制后，超过旧18万自由度但未超过单元预算的网格不应被放粗。"""
+    calls = []
+    monkeypatch.setattr(native_joint, "generate_joint_mesh",
+                        _fake_mesher(calls, elements_at_reference=40000))
+    size, _hotspot, mesh, _cuts, note = native_joint._fit_default_mesh(
+        None, 20.0, 8.0, max_elements=80000, max_dof=None)
+    assert 3 * len(mesh.nodes) > 180000
+    assert size == 20.0 and note is None
+    assert len(calls) == 1
+
+
+def _stub_large_joint_mesh(monkeypatch):
+    import numpy as np
+
+    spec = SimpleNamespace(node_id=5, case="LC1", loading_method="force",
+                           arms=[], anchor_member=1, elastic_modulus_mpa=206000.0,
+                           poisson=0.3)
+    mesh = SimpleNamespace(nodes=np.zeros((60001, 3)), elements=range(1))
+    monkeypatch.setattr(native_joint, "prepare_joint_spec", lambda *a, **kw: spec)
+    monkeypatch.setattr(native_joint, "mesh_reference_length", lambda s: 8.0)
+    monkeypatch.setattr(native_joint, "generate_joint_mesh", lambda *a: (mesh, {1: []}))
+    return mesh
+
+
+@pytest.mark.parametrize("options", [{}, {"max_dof": None}])
+def test_explicit_mesh_above_old_dof_limit_reaches_solver(monkeypatch, tmp_path, options):
+    """用户节点5被18万自由度固定阈值拒绝；默认或显式无限制时都应进入求解。"""
+    mesh = _stub_large_joint_mesh(monkeypatch)
+
+    class SolverReached(Exception):
+        pass
+
+    def solve(received, *args, **kwargs):
+        assert received is mesh
+        raise SolverReached
+
+    monkeypatch.setattr(native_joint.solid3d, "solve", solve)
+    with pytest.raises(SolverReached):
+        native_joint.run_native_joint_analysis(None, 5, mesh_sizes_mm=[20.0],
+                                               output_dir=tmp_path, **options)
+
+
+def test_explicit_dof_budget_is_still_respected(monkeypatch, tmp_path):
+    """调用方主动指定自由度预算时仍可限制规模，默认取消上限不应忽略明确预算。"""
+    _stub_large_joint_mesh(monkeypatch)
+    with pytest.raises(SolidJointError, match="180000 自由度"):
+        native_joint.run_native_joint_analysis(None, 5, mesh_sizes_mm=[20.0],
+                                               output_dir=tmp_path, max_dof=180000)
