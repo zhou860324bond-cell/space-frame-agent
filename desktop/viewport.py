@@ -288,6 +288,7 @@ class Viewport(QWidget):
         # 实体结果查询：当前高亮的 ("cell" | "point", 零基序号)，以及是否开着点选
         self._solid_selection: tuple[str, int] | None = None
         self._solid_query_enabled = False
+        self._pick_node_cloud = None           # 当前显示的变形节点，不能按原始位置拾取
 
         # 人工建模状态
         self.model_mode: str | None = None     # None / "node" / "member"
@@ -878,6 +879,7 @@ class Viewport(QWidget):
                 pass
             self.mode_badge.hide()
         self._solid_query_enabled = False
+        self._pick_node_cloud = None
         self._annotation_context = None
         if getattr(self, "_solid_active", False):
             self._first_render = True
@@ -964,6 +966,10 @@ class Viewport(QWidget):
                         always_visible=True, show_points=False)
             else:
                 mesh = scene.highlight_nodes(frame, [ident])
+                if self._pick_node_cloud is not None:
+                    points = self._pick_node_cloud.points[self._pick_node_cloud["node"] == ident]
+                    if len(points) == mesh.n_points:
+                        mesh.points = points
                 if mesh.n_points:
                     self.plotter.add_mesh(mesh, color=theme.HIGHLIGHT,
                                           name="_selection", point_size=16,
@@ -1500,14 +1506,45 @@ class Viewport(QWidget):
         # 普通拾取模式
         if self.pick_mode is None:
             return
-        found = scene.nearest(self._frame, pt, self.pick_mode)
+        found = None
+        reference = pt
+        if self.pick_mode == "member" and _args:
+            picker = _args[0]
+            dataset = picker.GetDataSet()
+            point_id = int(picker.GetPointId())
+            owners = dataset.GetPointData().GetArray("member") if dataset is not None else None
+            coordinates = dataset.GetPointData().GetArray("reference") if dataset is not None else None
+            if (owners is not None and coordinates is not None
+                    and 0 <= point_id < owners.GetNumberOfTuples()):
+                candidate = int(owners.GetTuple1(point_id))
+                if candidate in self._frame.members:
+                    found = candidate
+                    reference = np.asarray(coordinates.GetTuple3(point_id), dtype=float)
+        if self.pick_mode == "node" and _args:
+            # 变形点云携带真实节点号。其显示坐标已放大，不能再用原始位置判断。
+            picker = _args[0]
+            dataset = picker.GetDataSet()
+            point_id = int(picker.GetPointId())
+            ids = dataset.GetPointData().GetArray("node") if dataset is not None else None
+            if ids is not None and 0 <= point_id < ids.GetNumberOfTuples():
+                ident = int(ids.GetTuple1(point_id))
+                if ident in self._frame.nodes:
+                    found = ident
+        if found is None:
+            if self.pick_mode == "node" and self._pick_node_cloud is not None:
+                distances = np.linalg.norm(self._pick_node_cloud.points - pt, axis=1)
+                index = int(np.argmin(distances)) if len(distances) else None
+                if index is not None and distances[index] <= .1 * scene.model_size(self._frame):
+                    found = int(self._pick_node_cloud["node"][index])
+            else:
+                found = scene.nearest(self._frame, pt, self.pick_mode)
         if found is None:
             return
         ident = self._owner(found) if self.pick_mode == "member" else found
         self.set_selection(self.pick_mode, ident)
         self.picked.emit(self.pick_mode, ident)
         if self.pick_mode == "member":
-            self.probed.emit(found, pt.copy())     # 探针按点中的那个分析杆段取值
+            self.probed.emit(found, reference.copy())
 
     def _fit(self) -> None:
         """首次显示时摆好相机；之后保持用户转过的视角。
@@ -1648,6 +1685,7 @@ class Viewport(QWidget):
                    supports: bool = True, loads: bool = True) -> dict:
         """求解前的模型视图。"""
         frame = self.visible_frame(frame)
+        self._pick_node_cloud = None
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
@@ -1740,11 +1778,12 @@ class Viewport(QWidget):
     def show_deformed(self, frame, solution, case: str, scale: float,
                       overlay: bool = True, supports: bool = True) -> None:
         frame = self.visible_frame(frame)
+        self.clear()
+        self._pick_node_cloud = scene.displaced_node_points(frame, solution[case].U, scale)
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False
             return
-        self.clear()
         if overlay:
             # 未变形轮廓画成细线而不是管：它是参照物，不该和主体抢注意力
             self.plotter.add_mesh(scene.member_polylines(frame),
@@ -1758,7 +1797,7 @@ class Viewport(QWidget):
         if links.n_points:
             self.plotter.add_mesh(links, color=theme.REFERENCE, line_width=5)
         self.plotter.add_mesh(
-            scene.displaced_node_points(frame, solution[case].U, scale),
+            self._pick_node_cloud,
             color=theme.MEMBER, point_size=5, render_points_as_spheres=True)
         if supports:
             for mesh in scene.support_glyphs(frame).values():
@@ -1915,6 +1954,7 @@ class Viewport(QWidget):
         连续渐变上读不出"这一段到底是多少"，只读得出"这边比那边红"。
         """
         frame = self.visible_frame(frame)
+        self._pick_node_cloud = None
         if not CAN_RENDER:
             self._frame = frame
             self._first_render = False

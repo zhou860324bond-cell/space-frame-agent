@@ -249,6 +249,10 @@ COMMANDS: tuple[Command, ...] = (
             "run_solid_joint"),
 
     # --- 结果 ---
+    Command("coordinate_query", "坐标查询", "pick_node",
+            "输入原始全局坐标，查询节点位移或杆件截面内力与正应力", "show_coordinate_query"),
+    Command("export_all_csv", "导出全部 CSV", "report",
+            "导出全部模型输入及各模块已生成结果，保留工况、单位和结果状态", "export_all_csv"),
     Command("model", "模型", "geometry", "显示几何、支座与荷载符号",
             "show_model", "Ctrl+1", True),
     Command("deformed", "变形", "deformed", "变形图（叠未变形轮廓）",

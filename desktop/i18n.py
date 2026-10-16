@@ -53,6 +53,7 @@ ZH_EN: dict[str, str] = {
     "自动连接过渡实体": "Automatic joint transition solid",
     "原始杆件交汇": "Original member intersection", "求解后端": "Solver backend",
     "节点几何": "Joint geometry", "网格尺寸": "Mesh size",
+    "坐标查询": "Coordinate query", "导出全部 CSV": "Export all CSV",
     "建模设置": "Modeling settings", "停靠回工作区": "Dock to workspace",
     "高级参数": "Advanced parameters", "说明": "Details",
     # --- 功能区页签 ---

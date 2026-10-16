@@ -705,7 +705,8 @@ def build(window) -> Ribbon:
     g = p.group("实体结果")
     g.add_large(a["open_solid_result"])
     g = p.group("查询")
-    g.add_small(a["results_table"]); g.add_small(a["curve"]); g.add_small(a["path_plot"])
+    g.add_small(a["results_table"]); g.add_small(a["coordinate_query"])
+    g.add_small(a["export_all_csv"]); g.add_small(a["curve"]); g.add_small(a["path_plot"])
     g.add_small(a["deflection"]); g.add_small(a["envelope"]); g.add_small(a["report"])
     # 校核单独成一组：它回答的是"够不够"，与"是多少"不是一回事，
     # 混在查询里会让人以为它只是又一种查询方式。

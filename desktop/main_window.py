@@ -229,6 +229,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.results.display_changed.connect(self._on_result_display_changed)
         self.results.extreme_requested.connect(self.locate_current_extreme)
         self.results.stress_requested.connect(self.show_section_stress)
+        self.results.coordinate_requested.connect(self.query_coordinate)
         self.result_display_options = self.results.display_options()
         self._last_probe = None
         self.results.setMinimumHeight(120)
@@ -242,6 +243,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.diagram_dock.prefer_floating = True
 
         self.section_opt = SectionOptPanel(self.session, self.runner, self)
+        self.section_opt.completed.connect(self._remember_optimization)
         self.section_opt_dock = self.bottom_drawer.add_page(
             "section_opt", "截面优化", self.section_opt)
         self.section_opt_dock.prefer_floating = True
@@ -542,7 +544,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         """
         from PySide6.QtWidgets import QToolButton
 
-        menus = (("文件", ("new", "open", "save", None, "report", "learning_trace")),
+        menus = (("文件", ("new", "open", "save", None, "report", "export_all_csv", "learning_trace")),
                  ("建模", ("modeling_workflow", "sketch", "frame", "portal", None,
                            "model_node", "model_member", "delete", "brace", None,
                            "tables", "json")),
@@ -558,7 +560,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                            "diagnose", "analysis_mesh")),
                  ("结果", ("model", "deformed", "contour", "force_diagram",
                            "utilization", "solid_contour", "open_solid_result",
-                           "diagram", None,
+                           "diagram", "coordinate_query", "export_all_csv", None,
                            "envelope", "clear_results", "labels")),
                  ("视图", ("iso", "front", "side", "top", "fit", None,
                            "bg_settings", "grid_floor", "labels", "load_labels",
@@ -669,7 +671,10 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             self.quickbar.show_context_for(
                 self.ribbon.tabText(self.ribbon.currentIndex()), name)
         if name in {"变形", "云图", "内力图", "应力比"} and self.session.solution is not None:
-            self.viewport.set_pick_mode("member")
+            # 沿用用户选择的对象类型，默认杆件时也同步按钮，避免显示与拾取不一致。
+            if not any(action.isChecked() for action in self.pick_actions.values()):
+                self.pick_actions["member"].setChecked(True)
+            self._apply_pick_mode()
         act = self.mode_actions.get(name)
         if act is not None:
             act.setChecked(True)
@@ -717,6 +722,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.viewport.set_problem_refs([])
         self._last_probe = None
         self.chat.reset_session(session)
+        self._analysis_exports = {}
         self.properties.session = session
         self.properties.clear()
         self.sketch.session = session
@@ -1066,6 +1072,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                     self.set_mode("模型")
                     return
                 cached = self.session.modal_view
+                self._remember_analysis("modal", got.payload)
             frame, r = cached[2], cached[3]
             f1 = r.frequencies[0]
             self.viewport.show_mode(frame, r.shapes, 0,
@@ -1137,6 +1144,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             self._displayed_solution = self.session.solution
             self._last_probe = None
             self._utilization = None
+            self._analysis_exports = {}
             self.diagram.attach(self.session, self.case)
             self.viewport.set_result_marker(None)
         if stale or changed or (self.result is not None and self.result.ok
@@ -1329,6 +1337,8 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             self.viewport.set_result_marker(None)
             self.redraw()
             self.lbl_solve.setText(self._solve_text())
+            if self._selected_kind == "node":
+                self.query_node_displacement(self._selected_id)
 
     def set_scale(self, value: float) -> None:
         """变形放大系数。0 表示按模型尺寸自动定。"""
@@ -1383,6 +1393,11 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                     None)
         if mode and self.mode == "实体云图":
             self.set_mode("模型")
+        if mode:
+            for name in ("model_node", "model_member"):
+                self.actions_by_name[name].setChecked(False)
+            if self.viewport.model_mode is not None:
+                self.viewport.set_model_mode(None)
         self.viewport.set_pick_mode(mode)
         if mode == "node":
             self.set_prompt("选择节点模式：在视口中点击节点选中，可用于创建边界条件/载荷/查看属性")
@@ -1740,6 +1755,8 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         # 点中一根杆，内力图就切到它——**这是"在哪"和"多大"接起来的一步**
         if kind == "member" and self.diagram_dock.isVisible():
             self.diagram.member.setCurrentText(str(ident))
+        if kind == "node":
+            self.query_node_displacement(ident)
         self._resume_pending_command(kind)
 
     def _on_selection_cleared(self) -> None:
@@ -2291,7 +2308,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         # 已经在合适的拾取模式里就沿用；否则取最后一个（荷载默认拾杆件）
         mode = current if current in accepted else accepted[-1]
         self.pick_actions[mode].setChecked(True)
-        self.viewport.set_pick_mode(mode)
+        self._apply_pick_mode()
         what = "节点或杆件" if len(accepted) > 1 else "节点"
         self.set_prompt(f"{label}：请在视口中点选一个{what}（Esc 取消）")
         self.statusBar().showMessage(f"{label}：在视口中点选一个{what}", 6000)
@@ -2939,6 +2956,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
     def _remember_strength(self, solution, payload: dict) -> None:
         """记下某次求解的验算结果，并把逐杆表填进结果页（不弹出）。"""
         self._utilization = (solution, payload)
+        self._remember_analysis("strength", payload)
         caption, cols, rows, loc = result_rows.to_rows("strength", payload)
         self.results.show_rows(f"强度验算　{caption}", cols, rows, loc,
                                result_rows.row_marks("strength", payload),
@@ -3166,6 +3184,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                     f"{title}未完成",
                     self._explain(result.payload))
             else:
+                self._remember_analysis(kind, result.payload)
                 if kind == "strength":
                     # 从「强度验算」按钮算过就记下，应力比图直接复用
                     self._utilization = (self.session.solution, result.payload)
@@ -3292,6 +3311,14 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         super().closeEvent(event)
 
     # --- 导出 ---
+
+    def show_coordinate_query(self) -> None:
+        """为命令注册表提供坐标查询入口，具体查询由结果模块处理。"""
+        super().show_coordinate_query()
+
+    def export_all_csv(self) -> None:
+        """为命令注册表提供完整 CSV 入口，复用结果模块的有效性检查。"""
+        super().export_all_csv()
 
     def _solve_text(self) -> str:
         if self.result is None:

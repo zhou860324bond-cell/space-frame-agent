@@ -1,5 +1,11 @@
 # 工作进度
 
+## 主工作区与公开仓库合并：坐标查询与完整 CSV（2026-10-16）
+
+- 第四批移植（主工作区 7804922、02309db、465b56c），分支堆叠在实体查询 PR #47 上（坐标查询在实体云图下调用实体单元/节点查询）。src 新增 coordinates.py、csv_export.py；model_tables.py 用三方合并移入区间终点 b、约束字符串布尔、保留其他模块。桌面端三个提交逐个 git apply -3，冲突手工处理：i18n 只加坐标查询与 CSV 两条（草图审核词条让位 #42）；功能区结果组保留 master 的结果表与路径曲线；主窗口丢弃主工作区旧版 create_load（master 已改对象流程），模态缓存沿用 session.modal_view 只补记录已完成分析；视口拾取采用主工作区的变形点云与 reference 映射。
+- 未移植“按坐标施加跨间荷载”：master 的对象化创建载荷只有集中力、力矩、满跨线荷载、重力，旧 LoadDialog 已无入口；要恢复跨间荷载需扩展荷载对象（features），属设计决定，已向用户提出。对应三项对话框测试未迁入。
+- 主工作区 test_coordinate_workflows.py 十四项迁入（去掉上述三项），在 master 上先红后绿；命令注册、功能区、翻译、表格、场景、结果查询、截面优化、网页端等受影响测试通过。手册 3.5 节补坐标查询与完整 CSV 说明。只跑增量与文档闸，全量收集 2881 项（rebase 到含 #45–#47、#49 的 master 后）。
+
 ## 主工作区与公开仓库合并：实体结果点查询（2026-10-16）
 
 - 第三批移植（主工作区 d8c8cc6 的实体查询部分）。按 master 结构补：solid_result.query_cell / result_extreme 与面板的点选、极值、清除控件；视口 solid_picked 信号、表面单元拾取（vtkOriginalCellIds 映回体单元，原体网格的来源标签不当序号）、select_solid 高亮与相机平移、模式徽章；show_solid_result 新增 query 参数，重画时保留选择；主窗口 locate 支持 solid_cell / solid_point 定位，换档/失效/清除结果时 clear_solid_query，Esc 先退出点选。

@@ -409,7 +409,34 @@ class TableDialog(QDialog):
                 value = row.get(key)
                 table.setItem(r, c, QTableWidgetItem(
                     "" if value is None else str(value)))
+        if name == "member_spans":
+            self._install_kinds(table)
         return table
+
+    @staticmethod
+    def _install_kinds(table):
+        from model_tables import SPAN_LOAD_COLUMNS
+
+        column = SPAN_LOAD_COLUMNS.index("kind")
+        for row in range(table.rowCount()):
+            item = table.item(row, column)
+            previous = table.cellWidget(row, column)
+            current = (str(previous.currentData()) if isinstance(previous, QComboBox)
+                       else item.text().strip() if item else "")
+            if current == "partial_trapezoid":
+                current = "trapezoid"
+            combo = QComboBox(table)
+            combo.addItem("（请选择）", "")
+            combo.addItem("梯形荷载", "trapezoid")
+            combo.addItem("集中荷载", "point")
+            if current and combo.findData(current) < 0:
+                # 历史均布、区间或力矩记录必须保留原类型，不能打开表格就改义。
+                label = {"uniform": "既有满跨均布", "partial": "既有区间均布",
+                         "partial_trapezoid": "梯形荷载（既有区间）",
+                         "moment": "既有集中力矩"}.get(current, current)
+                combo.addItem(label, current)
+            combo.setCurrentIndex(max(0, combo.findData(current)))
+            table.setCellWidget(row, column, combo)
 
     def _current(self) -> QTableWidget:
         return self.tabs.currentWidget()
@@ -417,6 +444,8 @@ class TableDialog(QDialog):
     def _add_row(self) -> None:
         t = self._current()
         t.insertRow(t.rowCount())
+        if t is self.tables["member_spans"]:
+            self._install_kinds(t)
 
     def _del_row(self) -> None:
         t = self._current()
@@ -435,6 +464,9 @@ class TableDialog(QDialog):
             for c, key in enumerate(cols):
                 item = table.item(r, c)
                 row[key] = item.text().strip() if item else ""
+                widget = table.cellWidget(r, c)
+                if isinstance(widget, QComboBox):
+                    row[key] = str(widget.currentData())
             if any(v for v in row.values()):     # 整行空白就是删除
                 out.append(row)
         return out
@@ -467,37 +499,48 @@ class TableDialog(QDialog):
     # --- CSV ---
 
     def _import_csv(self) -> None:
-        import csv
-
         name = list(self.tables)[self.tabs.currentIndex()]
         path, _ = QFileDialog.getOpenFileName(
             self, f"导入 {name} 表", "", "CSV 文件 (*.csv)")
         if not path:
             return
-        from model_tables import COLUMNS
+        from model_tables import COLUMNS, from_csv
         cols = list(COLUMNS[name])
-        with open(path, newline="", encoding="utf-8-sig") as fh:
-            rows = list(csv.DictReader(fh))
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as fh:
+                rows = from_csv(fh.read(), COLUMNS[name])
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "CSV 导入失败", f"{exc}\n请检查表头和文件路径后重试。")
+            return
         table = self.tables[name]
+        for row in range(table.rowCount()):
+            for column in range(table.columnCount()):
+                table.removeCellWidget(row, column)
+        table.clearContents()
         table.setRowCount(len(rows) + 3)
         for r, row in enumerate(rows):
             for c, key in enumerate(cols):
                 table.setItem(r, c, QTableWidgetItem(str(row.get(key, ""))))
+        if name == "member_spans":
+            self._install_kinds(table)
 
     def _export_csv(self) -> None:
-        import csv
-
-        name = list(self.tables)[self.tabs.currentIndex()]
         path, _ = QFileDialog.getSaveFileName(
-            self, f"导出 {name} 表", f"{name}.csv", "CSV 文件 (*.csv)")
+            self, "导出全部模块 CSV", "全部模块.csv", "CSV 文件 (*.csv)")
         if not path:
             return
-        from model_tables import COLUMNS
-        cols = list(COLUMNS[name])
-        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
-            writer = csv.DictWriter(fh, fieldnames=cols)
-            writer.writeheader()
-            writer.writerows(self._rows_of(name))
+        from csv_export import export_csv
+        from model_tables import from_tables
+        try:
+            model = from_tables(self.session.model, self.collect())
+            parent = self.parent()
+            analyses = getattr(parent, "_analysis_exports", {})
+            solid = getattr(parent, "_solid_grid", None)
+            text = export_csv(self.session, model=model, analyses=analyses, solid=solid)
+            with open(path, "w", newline="", encoding="utf-8") as fh:
+                fh.write(text)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "CSV 导出失败", f"{exc}\n请修正表格或检查文件路径后重试。")
 
 
 class JsonDialog(QDialog):
