@@ -754,3 +754,25 @@ def test_beam_profiles_are_rendered_with_the_real_section_and_orientation():
     assert hi[0] - lo[0] == pytest.approx(0.4, rel=1e-9), "竖直柱局部 y 取全局 X"
     rest = scene.member_tubes_except(f, drawn)
     assert set(np.unique(rest["member"])) == {3}, "没有截面几何的杆件退回圆管"
+
+
+def test_partial_distributed_loads_show_the_actual_range_and_intensity():
+    """防止图IV-5前3米均布被画成全杆递减荷载，区间梯形也须遵守实际起终点。"""
+    s = beam()
+    for kind, a, w2 in (("partial", 0.0, None), ("partial", 1.0, None),
+                        ("partial_trapezoid", 1.0, [0, 0, -1600])):
+        entry = {"member": 1, "kind": kind, "w1": [0, 0, -800], "a": a, "b": 3.0}
+        if w2 is not None:
+            entry["w2"] = w2
+        assert s.set_load_cases(cases=[{"name": "D", "member_spans": [entry]}]).ok
+        mesh = scene.load_arrows(s.preview_frame(), "D", size=1.0, per_member=3)["杆间荷载"]
+        # 箭头尖端覆盖真实区间，横向半径只占很小余量，不能伸到8米梁的后半段。
+        assert a - 0.01 <= mesh.bounds[0] <= a
+        assert 3.0 <= mesh.bounds[1] <= 3.01
+        points = np.asarray(mesh.points)
+        heights = [points[np.abs(points[:, 0] - x) < 0.01, 2].max()
+                   for x in (a, (a + 3.0) / 2, 3.0)]
+        if kind == "partial":
+            np.testing.assert_allclose(heights, heights[0], atol=1e-6)
+        else:
+            assert heights[0] < heights[1] < heights[2]
