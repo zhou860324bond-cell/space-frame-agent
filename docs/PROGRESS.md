@@ -1,5 +1,13 @@
 # 工作进度
 
+## 变截面杆件（2026-10-16）
+
+- 第 3 步（专精梁单元计划收尾）。分支 claude/tapered-members 基于 claude/lateral-torsional-buckling（PR #40），#39、#40 合并后依次 rebase。
+- 方案取编译器阶梯近似而非专用变截面单元：所有分析类型自动适用，不必分别推导质量阵、几何刚度阵和固端力。新增 src/taper.py（校验、轮廓插值、分段截面），model_io 增加 section_j 字段与 section_from_dict，compile_model 对变截面杆件强制至少 TAPER_MIN_DIVISIONS=16 段并按段中点生成截面（名如 H600→H300@1.3）。标定：楔形工字钢 Iz 比 4.8 时 8 段 0.49%、16 段 0.12%。
+- 连带处理：strength.check_strength 剔除变截面杆件并写 notes；solve_with_abaqus 拒绝；弯扭屈曲的翘曲常数改由分析模型各分段截面几何求解，continuous_warping_groups 增加 same_member，使同一物理杆件的分段翘曲连续；retaper 增加 end_section，不给时清除 section_j，两端不匹配时不写入模型。
+- 回归 13 项：线性 Iz 闭合解与平方收敛、楔形工字钢精确积分、分段截面插值与命名、单位不变、四种非法定义、retaper 设置/清除/拒绝、强度校核剔除、Abaqus 拒绝、变截面弯扭屈曲介于两端等截面之间且翘曲连续。只跑增量（编译、schema、强度、应力、屈曲、弯扭、工具契约、单位不变等 15 个文件）与文档闸，Ruff 干净；全量收集 2838 项（rebase 到含 #38–#40 的 master 后）。首轮 CI 三平台只红 tests/test_unit_coverage.py：新字段 members.section_j 未登记量纲（截面名，无量纲），已补；增量范围漏了这条 schema 覆盖测试，以后改 schema 要一并跑。
+- 未做：桌面端设置变截面的入口与视口按变截面绘制、变截面杆件的逐截面强度与稳定验算、Abaqus 导出变截面。
+
 ## 弯扭屈曲（2026-10-16）
 
 - 第 2 步（专精梁单元 2→1→5 计划）。分支 claude/lateral-torsional-buckling 基于 claude/section-solver（PR #39），#39 合并后 rebase 到 master。

@@ -570,16 +570,22 @@ class ModelingMixin:
                                  "warnings": errors})
 
     @_records
-    def retaper(self, member_ids, section) -> ToolResult:
+    def retaper(self, member_ids, section, end_section: str | None = None) -> ToolResult:
         if not self.model.get("nodes"):
             return ToolResult(False, {"error": "当前没有模型"})
-        if section not in {str(item["name"]) for item in self.model.get("sections") or []}:
-            return ToolResult(False, {"error": f"截面 {section!r} 未定义"})
+        names = {str(item["name"]) for item in self.model.get("sections") or []}
+        for name in (section, end_section):
+            if name is not None and name not in names:
+                return ToolResult(False, {"error": f"截面 {name!r} 未定义"})
         try:
             member_ids = self._expand_members(member_ids)
-            model, info = _bent.retaper(self.model, member_ids, section)
+            model, info = _bent.retaper(self.model, member_ids, section, end_section)
         except (GeneratorError, TypeError, ValueError) as exc:
             return ToolResult(False, {"error": str(exc)})
+        import taper
+        # 变截面的两端截面不匹配时不写入模型：那是用户要改的输入，不是可以带病保存的警告
+        if taper_errors := taper.check(model):
+            return ToolResult(False, {"errors": taper_errors})
         errors = validate_payload(model)
         self.model = model
         self._invalidate()

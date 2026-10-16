@@ -192,12 +192,15 @@ def _scatter(n: int, all_dofs: list[list[int]], blocks: list[np.ndarray]) -> csr
                       shape=(n, n)).tocsr()
 
 
-def continuous_warping_groups(model: Frame) -> dict[int, int]:
+def continuous_warping_groups(model: Frame,
+                              same_member: dict[int, int] | None = None) -> dict[int, int]:
     """按物理条件划分翘曲连续的单元组：同一直杆内翘曲连续，转角与变截面处断开。
 
-    两根单元在共有节点处翘曲连续的条件：轴线共线、截面相同、局部 y 轴同向（翼缘
-    对齐），且该端没有任何释放。这覆盖了"一根直梁在次梁连接处被拆成几段"的常见
-    建模；梁柱节点等方向改变处翘曲按自由处理（叉支座假定，偏保守）。
+    两根单元在共有节点处翘曲连续的条件：轴线共线、局部 y 轴同向（翼缘对齐）、该端
+    没有任何释放，并且截面相同或属于同一物理杆件（``same_member`` 给出单元 → 物理
+    杆件；变截面杆件的各分段截面名不同，但杆件本身是连续的）。这覆盖了"一根直梁在
+    次梁连接处被拆成几段"的常见建模；梁柱节点等方向改变处翘曲按自由处理（叉支座
+    假定，偏保守），不同截面的杆件相接处同样按自由处理。
     """
     from frame3d import local_axes, member_endpoints
 
@@ -223,7 +226,8 @@ def continuous_warping_groups(model: Frame) -> dict[int, int]:
             for b in range(a + 1, len(at_node)):
                 (ea, fa), (eb, fb) = at_node[a], at_node[b]
                 ma, mb = model.members[ea], model.members[eb]
-                if not (fa and fb) or ma.section != mb.section:
+                same = same_member is not None and same_member.get(ea) == same_member.get(eb)
+                if not (fa and fb) or (ma.section != mb.section and not same):
                     continue
                 Ra, Rb = axes[ea], axes[eb]
                 if abs(abs(Ra[0] @ Rb[0]) - 1.0) > 1e-9 or abs(abs(Ra[1] @ Rb[1]) - 1.0) > 1e-9:
