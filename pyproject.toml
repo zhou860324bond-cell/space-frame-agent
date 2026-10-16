@@ -37,6 +37,8 @@ desktop = ["PySide6==6.11.2", "pyvista>=0.44", "pyvistaqt>=0.11", "vtk>=9.3"]
 web = ["streamlit>=1.40", "plotly>=5.20"]
 # 节点局部实体子模型：Gmsh 只生成二次四面体网格，刚度与求解均为自研
 solid = ["gmsh>=4.11"]
+# 结构图纸识别的 DXF 入口（只读实体，MIT 许可）
+dxf = ["ezdxf>=1.1"]
 # 接真实大模型（离线测试与演示都不需要）
 llm = ["openai>=1.40", "mcp>=2.1"]
 dev = ["pytest>=8.0", "ruff>=0.16"]
@@ -45,6 +47,7 @@ all = [
     "space-frame-agent[desktop]",
     "space-frame-agent[web]",
     "space-frame-agent[solid]",
+    "space-frame-agent[dxf]",
     "space-frame-agent[llm]",
     "space-frame-agent[dev]",
 ]

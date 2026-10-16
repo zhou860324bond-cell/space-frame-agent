@@ -11,6 +11,7 @@ plotly>=5.20
 # openai>=1.40
 python-docx        # 出 Word 报告；只出 Markdown 的话不需要
 Pillow>=10         # 多模态图片 EXIF、裁剪和 90° 旋转
+ezdxf>=1.1         # 结构图纸 DXF 入口（MIT）；只读 DXF 实体，不渲染
 # 桌面端（PySide6 + PyVista）。约 400 MB；只用网页版的话不必装：
 # PySide6==6.11.2
 # pyvista>=0.44

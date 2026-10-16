@@ -37,6 +37,18 @@
 （0~1 归一化图片坐标，原点左上角），用户在核对表里填写的值为 ``{"user": true}``。
 x 族轴线是数字轴（竖向轴线，沿水平方向排列），y 族是字母轴；``pos`` 是轴线
 在图上的位置（x 族取横坐标 u，y 族取纵坐标 v），**只用于报警，不用于取值**。
+
+矢量文件（DXF）的出处不是图上一块区域，而是文件里的实体：``SRC`` 写作
+``{"file": "D1", "handles": ["2A", "2B"], "layer": "AXIS"}``（文件头变量写
+``"header": "$INSUNITS"``），文件登记在 ``"files": [{"id": "D1", "name": …,
+"sha256": …, "kind": "dxf"}]``。另有三处只有矢量入口会用到：
+
+* 条目可带 ``"value"``：读取器从实体直接取得的数（如 DIMENSION 的实测值），
+  ``text`` 仍是原文；两者不符时组装报冲突，用户改写后以文字为准。
+* 条目可带 ``"check"``：需要用户确认的原因（如单位取自 $INSUNITS）。
+* ``"layers": [{"name": "AXIS", "role": "axis", "summary": "LINE 3、CIRCLE 3",
+  "source": SRC}]``：图层用途只由用户或大模型判断（``LAYER_ROLES``），
+  ``role`` 为 null 表示尚未判断、暂不读取；判断结果进核对表确认。
 """
 
 from __future__ import annotations
@@ -54,6 +66,13 @@ LENGTH_UNITS = ("mm", "cm", "m")
 
 #: 置信度低于此值的证据要用户逐条确认；与草图识别面板的「低」档一致。
 LOW_CONFIDENCE = 0.75
+
+#: 矢量图纸的图层用途。图层名怎样对应这些用途只由用户或大模型判断，代码不按名字猜。
+LAYER_ROLES = {
+    "axis": "轴线与轴号", "dimension": "尺寸标注", "level": "标高", "beam": "梁",
+    "column": "柱", "label": "杆件编号", "table": "截面表", "notes": "说明",
+    "ignore": "不使用",
+}
 
 _FULL_WIDTH = str.maketrans({
     "０": "0", "１": "1", "２": "2", "３": "3", "４": "4", "５": "5", "６": "6",
@@ -218,6 +237,10 @@ def _source_errors(where: str, source: Any) -> list[str]:
         return [f"{where}.source 必须是对象"]
     if source.get("user"):
         return []
+    handles = source.get("handles")
+    if handles is not None and not (isinstance(handles, list) and handles
+                                    and all(_is_text(h) for h in handles)):
+        return [f"{where}.source.handles 必须是非空的实体句柄数组"]
     bbox = source.get("bbox")
     if bbox is not None and not (
             isinstance(bbox, list) and len(bbox) == 4
@@ -309,4 +332,9 @@ def validate_evidence(evidence: Any) -> list[str]:
     if support is not None and (not isinstance(support, Mapping) or support.get("kind")
                                 not in (None, "fixed", "pinned")):
         errors.append("support.kind 只能是 fixed、pinned 或 null")
+    for index, layer in enumerate(evidence.get("layers") or []):
+        if not isinstance(layer, Mapping) or not _is_text(layer.get("name")) \
+                or layer.get("role") not in (None, *LAYER_ROLES):
+            errors.append(f"layers[{index}] 需要 name，role 只能是 "
+                          f"{'、'.join(LAYER_ROLES)} 或 null")
     return errors

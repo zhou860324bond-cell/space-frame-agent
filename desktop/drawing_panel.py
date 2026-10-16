@@ -22,12 +22,21 @@ from . import glyphs, theme
 from .sketch_panel import _provider_with_credentials
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+DXF_SUFFIX = ".dxf"
+DXF_VIEW_NOTE = ("DXF 是矢量文件，这里不显示图片。\n核对表「来源」列写明每个数取自哪个实体"
+                 "（#句柄）和图层，可在 CAD 中按句柄或图层找到原对象核对。")
 STATUS_TEXT = {"ok": "已读取", "confirm": "需确认", "missing": "缺失", "conflict": "冲突"}
 STATUS_COLOR = {"ok": theme.SUCCESS, "confirm": theme.WARN,
                 "missing": theme.ERROR, "conflict": theme.ERROR}
 STATUS_ORDER = {"conflict": 0, "missing": 1, "confirm": 2, "ok": 3}
 PDF_HINT = ("本版不能直接读取 PDF：请在看图软件中把需要的页导出为 PNG（建议 200 dpi 以上），"
             "再用「添加图纸」选入。")
+
+
+def _layer_roles(evidence: dict | None) -> dict:
+    """各图层用途；未判断与「不使用」都不读取，视为相同。"""
+    return {item.get("name"): item.get("role") or "ignore"
+            for item in (evidence or {}).get("layers") or []}
 
 
 class DrawingView(QWidget):
@@ -40,10 +49,19 @@ class DrawingView(QWidget):
         self._image_id: str | None = None
         self._highlight: list[float] | None = None
         self._axes: list[tuple[str, str, float, float]] = []   # 族、轴号、位置、坐标
+        self.note = ""
 
     def show_image(self, path: str | None, image_id: str | None) -> None:
         self._pixmap = QPixmap(path) if path else None
         self._image_id = image_id
+        self.note = ""
+        self.update()
+
+    def show_note(self, text: str) -> None:
+        """没有图片可显示（如 DXF）时写一段替代说明。"""
+        self._pixmap = None
+        self._image_id = None
+        self.note = text
         self.update()
 
     @property
@@ -69,8 +87,9 @@ class DrawingView(QWidget):
         target = self._target()
         if target is None:
             painter.setPen(QColor(theme.INK_MUTED))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                             "添加图纸后在这里显示")
+            painter.drawText(self.rect().adjusted(12, 12, -12, -12),
+                             Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+                             self.note or "添加图纸后在这里显示")
             return
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.drawPixmap(target, self._pixmap, QRectF(self._pixmap.rect()))
@@ -162,7 +181,8 @@ class DrawingPanel(QWidget):
 
         buttons = QHBoxLayout()
         self.btn_add = QPushButton("添加图纸…")
-        self.btn_add.setToolTip("平面图、立面图、截面表的图片，可一次选多张")
+        self.btn_add.setToolTip("平面图、立面图、截面表的图片，可一次选多张；"
+                                "或一个 DXF 文件（矢量图纸，数值直接取自实体）")
         self.btn_add.clicked.connect(self._pick_images)
         self.btn_clear = QPushButton("清空")
         self.btn_clear.clicked.connect(self.clear)
@@ -253,25 +273,64 @@ class DrawingPanel(QWidget):
     # ---- 图纸 ----
     def _pick_images(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "添加结构图纸", "", "图纸图片 (*.png *.jpg *.jpeg *.webp);;PDF (*.pdf)")
+            self, "添加结构图纸", "",
+            "图纸图片或 DXF (*.png *.jpg *.jpeg *.webp *.dxf);;DXF (*.dxf);;PDF (*.pdf)")
         if paths:
             self.load_images(paths)
 
+    @property
+    def dxf_path(self) -> str | None:
+        """当前图纸是一个 DXF 时返回它的路径。"""
+        if len(self.images) == 1 and Path(self.images[0]).suffix.lower() == DXF_SUFFIX:
+            return self.images[0]
+        return None
+
     def load_images(self, paths) -> None:
-        """加入图纸；对话面板拖入图纸也走这里。新图纸会让已有识别结果作废。"""
+        """加入图纸；对话面板拖入图纸也走这里。新图纸会让已有识别结果作废。
+
+        DXF 一次读一个，且不与图片混用：图片靠大模型抄字，DXF 直接读实体，两份
+        证据的出处不同。加入 DXF 后立即在本机读取，不需要识别模型。
+        """
         skipped_pdf = False
-        for path in paths:
-            suffix = Path(path).suffix.lower()
-            if suffix == ".pdf":
-                skipped_pdf = True
-                continue
-            if suffix in IMAGE_SUFFIXES and path not in self.images:
-                self.images.append(str(path))
+        replaced = ""
+        dxf = [str(p) for p in paths if Path(p).suffix.lower() == DXF_SUFFIX]
+        if dxf:
+            if self.images or len(dxf) > 1:
+                replaced = (f"DXF 一次读取一个，且不与图片一起识别：已改为只读取"
+                            f"「{Path(dxf[0]).name}」。")
+            self.images = [dxf[0]]
+        else:
+            if self.dxf_path:
+                replaced = "图片与 DXF 不一起识别：已移除 DXF，改为识别图片。"
+                self.images = []
+            for path in paths:
+                suffix = Path(path).suffix.lower()
+                if suffix == ".pdf":
+                    skipped_pdf = True
+                    continue
+                if suffix in IMAGE_SUFFIXES and path not in self.images:
+                    self.images.append(str(path))
         self.evidence = None
         self.assembly = None
         self._refresh()
-        if skipped_pdf:
+        if self.dxf_path:
+            self._read_dxf(replaced)
+        elif skipped_pdf:
             self._status(PDF_HINT, theme.WARN)
+        elif replaced:
+            self._status(replaced + self.lbl_status.text(), theme.WARN)
+
+    def _read_dxf(self, prefix: str = "") -> None:
+        from drawing_dxf import DxfError, read_dxf
+        try:
+            evidence = read_dxf(self.dxf_path)
+        except DxfError as exc:
+            self._status(prefix + str(exc), theme.ERROR)
+            return
+        self.set_evidence(evidence)
+        self._status(prefix + f"已读取 DXF：{len(evidence['layers'])} 个图层。图层用途要由你"
+                     "或大模型判断：在核对表里为各图层选择用途，或点「识别图纸」请大模型判断。",
+                     theme.WARN)
 
     def clear(self) -> None:
         self.images.clear()
@@ -281,7 +340,9 @@ class DrawingPanel(QWidget):
         self._refresh()
 
     def _show_image_at(self, index: int) -> None:
-        if 0 <= index < len(self.images):
+        if self.dxf_path:
+            self.view.show_note(DXF_VIEW_NOTE)
+        elif 0 <= index < len(self.images):
             self.view.show_image(self.images[index], f"P{index + 1}")
         else:
             self.view.show_image(None, None)
@@ -297,18 +358,41 @@ class DrawingPanel(QWidget):
         repairs = self.spn_repairs.value()
         paths = list(self.images)
         work_dir = Path.cwd() / ".multimodal_tmp" / "drawing"
+        dxf = self.dxf_path
+        keep = [item for item in (self.evidence or {}).get("layers") or []
+                if (item.get("source") or {}).get("user")]
+
+        def parser():
+            from sketch_parser import SketchParser
+            return (SketchParser(provider=provider, api_key=key, model=model) if key
+                    else SketchParser.from_env(provider, model=model))
 
         def job():
             from drawing_extract import DrawingExtractor
-            from sketch_parser import SketchParser
-            parser = (SketchParser(provider=provider, api_key=key, model=model) if key
-                      else SketchParser.from_env(provider, model=model))
-            return DrawingExtractor(parser, work_dir).extract(paths, max_repairs=repairs)
+            return DrawingExtractor(parser(), work_dir).extract(paths, max_repairs=repairs)
+
+        def dxf_job():
+            from drawing_dxf import judge_layers, model_layer_items, read_dxf, scan_layers
+            from drawing_extract import DrawingExtractor
+            extractor = DrawingExtractor(parser(), work_dir)
+            roles = judge_layers(lambda system, text: extractor._call(system, [("text", text)]),
+                                 scan_layers(dxf))
+            return read_dxf(dxf, model_layer_items(dxf, roles, f"{provider} {model}", keep))
 
         self.btn_recognize.setEnabled(False)
         self._set_steps(2)
+        if dxf:
+            self._status("正在请大模型按图层名与内容判断图层用途；数值仍直接取自 DXF 实体…")
+            self.runner.submit(dxf_job, on_done=self._on_layers_judged,
+                               on_failed=self._on_failed)
+            return
         self._status("正在识别：先定位各区域，再按原分辨率逐块抄写文字…")
         self.runner.submit(job, on_done=self._on_recognized, on_failed=self._on_failed)
+
+    def _on_layers_judged(self, evidence: dict) -> None:
+        self.set_evidence(evidence)
+        self._status("图层用途已由大模型判断，请在核对表的「图层」类中逐个确认或改选。"
+                     + self.assembly.summary(), theme.WARN)
 
     def _on_recognized(self, result) -> None:
         if not result.success:
@@ -436,10 +520,15 @@ class DrawingPanel(QWidget):
         if row is None or self.evidence is None:
             return
         try:
-            self.evidence = resolve(self.evidence, row.id, value)
-        except ValueError as exc:
+            evidence = resolve(self.evidence, row.id, value)
+            if self.dxf_path and row.id.startswith("layers.") \
+                    and _layer_roles(evidence) != _layer_roles(self.evidence):
+                from drawing_dxf import reread
+                evidence = reread(evidence, self.dxf_path)
+        except ValueError as exc:    # DxfError 也是 ValueError
             self._status(f"{row.item}未更新：{exc}", theme.ERROR)
             return
+        self.evidence = evidence
         self._reassemble(keep_row=None if value is None else row.id)
 
     def confirm_selected(self) -> None:

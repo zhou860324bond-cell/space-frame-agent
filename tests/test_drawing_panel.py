@@ -137,6 +137,49 @@ def test_pdf_is_refused_with_a_next_step(qt_app, tmp_path):
     assert "导出为 PNG" in panel.lbl_status.text()
 
 
+def test_dxf_is_read_locally_and_view_explains_there_is_no_picture(qt_app, drawing, tmp_path):
+    """「添加图纸」接受 DXF：本机直接读出图层待判断，视图写明没有图片时怎样核对出处。"""
+    pytest.importorskip("ezdxf", reason="未安装 ezdxf")
+    from test_drawing_dxf import _frame_dxf
+    dxf = _frame_dxf(tmp_path / "框架立面.dxf")
+    panel = DrawingPanel(Session(), Runner())
+    panel.load_images([drawing])
+    panel.load_images([dxf])
+    assert panel.images == [dxf] and panel.dxf_path == dxf
+    assert "不与图片一起识别" in panel.lbl_status.text()
+    assert "句柄" in panel.view.note and panel.view._pixmap is None
+    layer_rows = [row for row in panel._rows if row.category == "图层"]
+    assert layer_rows and all(row.status == "confirm" for row in layer_rows)
+    assert not panel.btn_import.isEnabled()
+    # 其余图层已指定、只差「尺寸」：在核对表里选为尺寸标注，按新用途重读，间距来自标注实体
+    from drawing_dxf import read_dxf
+    from test_drawing_dxf import ROLES
+    panel.set_evidence(read_dxf(dxf, {k: v for k, v in ROLES.items() if k != "尺寸"}))
+    assert not panel.evidence["grids"]["x"]["spacings"]
+    row = next(row for row in panel._rows if "「尺寸」" in row.item)
+    _select(panel, row.id)
+    panel.cmb_value.setCurrentText("尺寸标注")
+    panel.apply_selected()
+    spacing = panel.evidence["grids"]["x"]["spacings"][0]
+    assert spacing["value"] == 6000.0 and spacing["source"]["handles"]
+
+
+def test_dxf_layer_judgement_runs_in_background(qt_app, tmp_path):
+    """「识别图纸」对 DXF 只请大模型判断图层用途；结果待确认，用户已定的图层不被覆盖。"""
+    pytest.importorskip("ezdxf", reason="未安装 ezdxf")
+    from drawing_dxf import model_layer_items, read_dxf
+    from test_drawing_dxf import ROLES, _frame_dxf
+    dxf = _frame_dxf(tmp_path / "框架立面.dxf")
+    panel = DrawingPanel(Session(), Runner())
+    panel.load_images([dxf])
+    panel.recognize()
+    assert len(panel.runner.jobs) == 1 and "图层用途" in panel.lbl_status.text()
+    _, on_done, _ = panel.runner.jobs[0]
+    on_done(read_dxf(dxf, model_layer_items(dxf, ROLES, "测试模型")))
+    assert "逐个确认" in panel.lbl_status.text()
+    assert any("大模型" in row.message for row in panel._rows if row.category == "图层")
+
+
 def test_save_writes_model_and_evidence_sidecar(panel, tmp_path):
     """保存的模型 JSON 通过校验，旁边的证据文件记下每个数的出处。"""
     panel.set_evidence(_evidence())
