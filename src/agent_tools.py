@@ -2120,6 +2120,14 @@ TOOLS: list[dict[str, Any]] = [
                     "case": {"type": "string",
                              "description": "参考荷载工况；留空取控制工况"},
                     "num_modes": {"type": "integer", "description": "默认 4"},
+                    "lateral_torsional": {
+                        "type": "boolean",
+                        "description": "true 做弯扭屈曲（受弯钢梁的侧向失稳）：加入翘曲自由度与弯矩耦合，"
+                                       "翘曲常数由截面轮廓求得。只支持剪心与形心重合的截面，"
+                                       "截面须有真实尺寸；默认 false 为普通屈曲。"},
+                    "warping_restrained_nodes": {
+                        "type": "array", "items": {"type": "integer"},
+                        "description": "弯扭屈曲时约束翘曲的节点（如嵌固端）；默认杆端翘曲自由"},
                 },
             },
         },
