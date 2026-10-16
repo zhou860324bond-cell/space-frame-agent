@@ -25,7 +25,7 @@ from agent import Session                          # noqa: E402
 from stress import StressUnavailable                # noqa: E402
 from . import scene, theme                         # noqa: E402
 from .chat_panel import ChatPanel                  # noqa: E402
-from .model_tree import ModelTree                  # noqa: E402
+from .model_tree import ModelTree, ModelTreePanel  # noqa: E402
 from .diagram_panel import DiagramPanel             # noqa: E402
 from .panels import ResultPanel, TimelinePanel      # noqa: E402
 from .sketch_panel import SketchPanel                # noqa: E402
@@ -171,7 +171,9 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.model_panel.setObjectName("modelPanel")
         self.model_panel.setChildrenCollapsible(False)
         self.model_panel.setMinimumWidth(240)
-        self.model_panel.addWidget(self.tree)
+        # 树上方带搜索框：按名称筛选或输入“节点 65”精确定位，与视口共用同一选择
+        self.tree_panel = ModelTreePanel(self.tree, self)
+        self.model_panel.addWidget(self.tree_panel)
         self.agent_splitter.insertWidget(0, self.model_panel)
         self.agent_splitter.setStretchFactor(0, 0)
         self.agent_splitter.setStretchFactor(1, 1)
@@ -1705,6 +1707,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         # **选中就显示属性。** 这一步是把"拾取"这条路走完：
         # 之前点中一根杆只能看到它多长，改不了
         self.properties.show_object(kind, ident)
+        self.tree.select_object(kind, ident)
         # 建模时点中就把属性摆出来，这是"拾取"这条路的终点；看结果时点选是
         # 在查数（值写进结果表与状态栏），再弹一个抽屉只会把模型又挤掉一块。
         # 左抽屉本来就开着时照常切到属性页。
@@ -3320,6 +3323,9 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
     # --- 树的动作 ---
 
     def _on_tree_action(self, action: str, payload) -> None:
+        if action == "locate_object":
+            self.locate(*payload)
+            return
         if action == "feature_branch":
             self.open_object_manager(str(payload))
             return
