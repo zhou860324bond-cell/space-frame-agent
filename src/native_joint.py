@@ -292,7 +292,7 @@ _DEFAULT_MESH_RETRIES = 3
 
 
 def _fit_default_mesh(spec, size: float, reference: float,
-                      max_elements: int, max_dof: int):
+                      max_elements: int | None, max_dof: int | None):
     """划默认网格；超过求解规模就按实测规律放粗重划。
 
     连杆多、管径大的相贯节点，默认 2.5t 的网格能到上限的三四倍（实测 6 杆
@@ -316,7 +316,7 @@ def _fit_default_mesh(spec, size: float, reference: float,
         except solid3d.Solid3DError as exc:
             raise SolidJointError(f"自研实体网格检查失败：{exc}") from exc
         elements, dof = len(mesh.elements), 3 * len(mesh.nodes)
-        if elements <= max_elements and dof <= max_dof:
+        if (max_elements is None or elements <= max_elements) and (max_dof is None or dof <= max_dof):
             note = None
             if size > first:
                 note = (f"默认网格（全局 {first:.1f} mm）超过自研求解器规模上限，"
@@ -325,15 +325,21 @@ def _fit_default_mesh(spec, size: float, reference: float,
                         "取直线以免薄壁处单元翻转。热点区网格变粗后热点外推可能"
                         "不收敛；需要细网格结论请改用 Abaqus 后端。")
             return size, hotspot, mesh, cut_faces, note
-        excess = max(elements / max_elements, dof / max_dof)
+        excess = max(elements / max_elements if max_elements is not None else 0.0,
+                     dof / max_dof if max_dof is not None else 0.0)
         size *= 1.12 * excess ** (1.0 / _ELEMENT_SIZE_EXPONENT)
+    limits = []
+    if max_elements is not None:
+        limits.append(f"{max_elements} 个 C3D10")
+    if max_dof is not None:
+        limits.append(f"{max_dof} 自由度")
     raise SolidJointError(
         f"自动放粗 {_DEFAULT_MESH_RETRIES} 次后网格仍超过自研求解器上限"
-        f"（{max_elements} 个 C3D10 / {max_dof} 自由度）。这个节点请改用 Abaqus 后端。")
+        f"（{' / '.join(limits)}）。这个节点请改用 Abaqus 后端。")
 
 
 def _default_plan(spec, reference: float, levels: int,
-                  max_elements: int, max_dof: int):
+                  max_elements: int | None, max_dof: int | None):
     """默认网格的档位安排：[(全局尺寸, 已划好的网格或 None)]，由粗到细。
 
     最细一档是求解规模内能划到的最细（超限会自动放粗）；多档时另外两档
@@ -364,14 +370,15 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                               anchor_member: int | None = None,
                               mesh_sizes_mm: list[float] | None = None,
                               output_dir: Path | str = "results/native_solid_joint",
-                              *, max_elements: int = 80000,
-                              max_dof: int = 180000, levels: int = 1,
+                              *, max_elements: int | None = None,
+                              max_dof: int | None = None, levels: int = 1,
                               progress=None,
                               loading_method: str = "displacement",
                               geometry_mode: str = "transition",
                               fillet_radius_mm: float | None = None) -> dict[str, Any]:
     """使用自研 C3D10 求解器运行一档或多档节点实体网格。
 
+    默认不限制单元和自由度数量；调用方可通过 ``max_elements`` / ``max_dof`` 显式指定预算。
     没有显式给 ``mesh_sizes_mm`` 时，默认那一档若超过求解规模上限，会按
     实测规律自动放粗后重划（见 ``_fit_default_mesh``），并在结果里写明；
     显式给了尺寸就照给的划，超限直接报错——那是用户的明确要求。
@@ -423,11 +430,11 @@ def run_native_joint_analysis(session, node_id: int, case: str | None = None,
                     options if mesh_sizes_mm is None else None)
             except solid3d.Solid3DError as exc:
                 raise SolidJointError(f"自研实体网格检查失败：{exc}") from exc
-        if len(mesh.elements) > int(max_elements):
+        if max_elements is not None and len(mesh.elements) > int(max_elements):
             raise SolidJointError(
                 f"自研求解器安全上限为 {max_elements} 个 C3D10；当前网格有 "
                 f"{len(mesh.elements)} 个。请先增大网格尺寸或提高 max_elements。")
-        if 3 * len(mesh.nodes) > int(max_dof):
+        if max_dof is not None and 3 * len(mesh.nodes) > int(max_dof):
             raise SolidJointError(
                 f"native-v1 稀疏直接解安全上限为 {max_dof} 自由度；当前有 "
                 f"{3 * len(mesh.nodes)}。请增大网格尺寸，或使用 Abaqus 后端跑细网格。")

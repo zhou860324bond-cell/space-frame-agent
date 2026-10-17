@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLab
                                QProgressBar, QPushButton, QScrollArea, QSizePolicy,
                                QToolButton, QToolTip, QVBoxLayout, QWidget)
 
-from . import glyphs, icons, theme
+from . import glyphs, icons, motion, theme
 
 TOOL_LABELS = {
     "define_materials_and_sections": "定义材料与截面", "generate_frame": "生成规则框架",
@@ -299,6 +299,7 @@ class StatusIcon(QWidget):
         self._timer.timeout.connect(self._spin)
         self.setFixedSize(size, size)
         _passive(self)
+        motion.motion().changed.connect(self._sync_timer)
         self.set_state(state)
 
     def state(self) -> str:
@@ -308,11 +309,15 @@ class StatusIcon(QWidget):
         if state == self._state:
             return
         self._state = state
-        if state == "running":
+        self._sync_timer()
+        self.update()
+
+    def _sync_timer(self, *_args) -> None:
+        # 减少动效时圆弧停在原处：仍看得出「运行中」，只是不转
+        if self._state == "running" and not motion.reduced():
             self._timer.start()
         else:
             self._timer.stop()
-        self.update()
 
     def _spin(self) -> None:
         self._angle = (self._angle + 30) % 360
@@ -383,14 +388,21 @@ class TypingDots(QWidget):
         self._timer.setInterval(140)
         self._timer.timeout.connect(self._step)
         self.setFixedSize(36, 16)
+        motion.motion().changed.connect(self._sync_timer)
 
     def _step(self) -> None:
         self._phase = (self._phase + 1) % 6
         self.update()
 
+    def _sync_timer(self, *_args) -> None:
+        if self.isVisible() and not motion.reduced():
+            self._timer.start()
+        else:
+            self._timer.stop()
+
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
-        self._timer.start()
+        self._sync_timer()
 
     def hideEvent(self, event):  # noqa: N802
         super().hideEvent(event)
@@ -817,7 +829,8 @@ class EntryWidget(QFrame):
             head.addWidget(speaker)
             self.busy_mark = StatusIcon("running", 14, self)
             head.addWidget(self.busy_mark)
-            self.status_label = _label("", "caption")
+            self.status_label = motion.ShimmerLabel(self)
+            self.status_label.setProperty("chat", "caption")
             head.addWidget(self.status_label, 1)
             self.box.addLayout(head)
             self.content = QVBoxLayout()
@@ -993,10 +1006,14 @@ class EntryWidget(QFrame):
                     group.update_run([(k, segments[k]) for k in run], streaming)
                     self._tool_cards.update(group.cards)
                 i = end
-        activity = entry.get("activity", "")
-        if entry.get("elapsed"):
-            activity += f"　{entry['elapsed']} s"
-        self.status_label.setText(activity if streaming else "")
+        if streaming:
+            # 仿 Codex 的状态行：标题带流光，后面暗色写用时和怎么停
+            hint = "Esc 停止"
+            if entry.get("elapsed"):
+                hint = f"{motion.format_elapsed(entry['elapsed'])} · {hint}"
+            self.status_label.set_text(entry.get("activity", "").rstrip("…"), hint)
+        else:
+            self.status_label.clear()
         self.busy_mark.setVisible(streaming)
         self.busy_mark.set_state("running" if streaming else "pending")
         self.typing.setVisible(streaming and not segments)
