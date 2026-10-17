@@ -116,17 +116,20 @@ def _fail_reasons(runs: list[Verdict]) -> list[str]:
 
 
 def render(cases: list[dict], results: dict[str, list[Verdict]],
-           times: int, elapsed: float, fingerprint: dict[str, str]) -> str:
+           times: int, elapsed: float, fingerprint: dict[str, str],
+           model: str = "") -> str:
     per_run_pass = [sum(1 for c in cases if results[c["id"]][k].passed)
                     for k in range(times)]
     total = len(cases)
 
-    lines = ["# 评测集稳定性（多轮）", "",
+    # 跨模型对比时同一套题会出好几份报告，不写模型名就分不清哪份是谁的。
+    lines = ["# 评测集稳定性（多轮）", ""] + ([f"- 模型：`{model}`"] if model else []) + [
              f"- 轮次：{times}，每轮 {total} 题，总耗时 {elapsed:.0f} 秒",
              f"- 每轮通过数：{per_run_pass}",
              f"- 通过率：{statistics.mean(per_run_pass) / total:.1%}"
              + (f"（范围 {min(per_run_pass)}/{total} ~ {max(per_run_pass)}/{total}）"
-                if min(per_run_pass) != max(per_run_pass) else "（每轮一致）"), ""]
+                if min(per_run_pass) != max(per_run_pass)
+                else ("（只跑 1 轮）" if times == 1 else "（每轮一致）")), ""]
 
     lines.append("代码指纹：" + "，".join(f"{k} `{v}`" for k, v in fingerprint.items()))
     lines += ["", "> 工具描述一改就等于提示词变了，`temperature=0` 也保证不了跨版本复现。",
@@ -157,7 +160,11 @@ def render(cases: list[dict], results: dict[str, list[Verdict]],
         lines.append(f"- {label}：{total_tokens}")
 
     lines += ["", "## 结论", ""]
-    if not unstable:
+    if times == 1:
+        # 一轮谈不上稳定：把它写成「完全一致」等于替没测过的波动作了保证。
+        lines.append("只跑了 1 轮，只能说明这一次的通过情况，看不出波动；"
+                     "要引用稳定性，至少连跑 3 轮。")
+    elif not unstable:
         lines.append(f"{times} 轮结果完全一致，未见波动。")
     else:
         lines.append(f"以下题目在 {times} 轮中结果不一致，**不能只贴某一轮的成绩单**："
@@ -171,7 +178,7 @@ def render(cases: list[dict], results: dict[str, list[Verdict]],
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--times", type=int, default=3)
-    parser.add_argument("--model", default="deepseek-v4-flash")
+    parser.add_argument("--model", default="deepseek-flash")   # 见 run_eval.py 同一参数的说明
     parser.add_argument("--id", nargs="*")
     parser.add_argument("--category")
     # 跟随产品自己的默认值，不要在这里另写一个数。
@@ -207,7 +214,8 @@ def main() -> None:
     results = repeat(selected,
                      lambda case: run_one(case, api_key, args.model, args.max_rounds),
                      args.times)
-    text = render(selected, results, args.times, time.time() - started, fingerprint)
+    text = render(selected, results, args.times, time.time() - started, fingerprint,
+                  model=args.model)
     Path(args.out).write_text(text, encoding="utf-8")
     print("\n" + text)
     print(f"\n报告已写入 {args.out}")

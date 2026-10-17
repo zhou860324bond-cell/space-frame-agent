@@ -134,7 +134,9 @@ def render(verdicts: list[Verdict], model: str, elapsed: float) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="deepseek-v4-flash")
+    # 2026-10 起 DeepSeek 已下线 V4-Flash，旧名 deepseek-v4-flash 仍可调用但实际由
+    # V4.1-Flash 应答。默认值改用官方现名，免得报告里写着旧名、跑的却是新模型。
+    parser.add_argument("--model", default="deepseek-flash")
     parser.add_argument("--id", nargs="*", help="只跑这些题号")
     parser.add_argument("--category", help="只跑这一类")
     # 跟随产品自己的默认值，不要在这里另写一个数。

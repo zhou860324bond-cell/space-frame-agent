@@ -89,6 +89,21 @@ def test_usage_is_summed_across_all_runs():
     assert "输出：90" in text
 
 
+def test_report_names_the_model_it_measured():
+    """2026-10-17 跨模型重跑：旧报告不写模型名，flash 与 pro 两份 stability 报告分不清。"""
+    text = render(CASES, run_three(), 3, 12.0, {"源码摘要": "abc123"}, model="deepseek-flash")
+    assert "- 模型：`deepseek-flash`" in text
+
+
+def test_single_run_does_not_claim_stability():
+    """pro 只跑 1 轮时，旧结论写「1 轮结果完全一致，未见波动」，替没测过的波动作了保证。"""
+    pattern = {"AAA": [True], "BBB": [False], "CCC": [True]}
+    results = repeat(CASES, make_runner(pattern), times=1, progress=False)
+    text = render(CASES, results, 1, 12.0, {"源码摘要": "abc123"})
+    assert "完全一致" not in text and "每轮一致" not in text
+    assert "看不出波动" in text.split("## 结论")[1]
+
+
 def test_fingerprint_covers_the_source_modules():
     fp = code_fingerprint()
     assert len(fp["源码摘要"]) == 12
