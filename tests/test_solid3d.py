@@ -63,6 +63,21 @@ def test_element_stiffness_has_six_rigid_body_modes():
     assert K == pytest.approx(K.T, abs=1e-10)
 
 
+@pytest.mark.parametrize("scale,E", [(1.0, 206e9), (1000.0, 206000.0)])
+def test_cached_quadrature_preserves_affine_tet_strain_energy(scale, E):
+    """固定积分点缓存及B矩阵向量化不能改变斜四面体的解析应变能，两套单位都验证。"""
+    xyz = _unit_tet() @ np.array([[2.0, 0.2, 0.1], [0.0, 1.5, 0.3], [0.0, 0.0, 0.8]])
+    xyz = scale * (xyz + np.array([3.0, -2.0, 1.0]))
+    gradient = np.array([[0.001, 0.002, -0.003],
+                         [0.004, -0.002, 0.001], [0.003, 0.005, 0.006]])
+    u = (xyz @ gradient.T).ravel()
+    strain = np.array([0.001, -0.002, 0.006, 0.006, 0.006, 0.0])
+    volume = abs(np.linalg.det((xyz[1:4] - xyz[0]).T)) / 6.0
+    expected = 0.5 * volume * (strain @ s3.elasticity_matrix(E, 0.3) @ strain)
+    actual = 0.5 * (u @ s3.element_stiffness(xyz, E, 0.3) @ u)
+    assert actual == pytest.approx(expected, rel=1e-12)
+
+
 def test_distributed_cut_face_forces_reproduce_the_six_component_wrench():
     points = np.array([[2., -1., -1.], [2., 1., -1.],
                        [2., 1., 1.], [2., -1., 1.], [2., 0., 0.]])
