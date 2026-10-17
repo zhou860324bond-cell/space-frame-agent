@@ -7,7 +7,7 @@ import os
 
 from PySide6.QtCore import QSettings
 
-from . import scene
+from . import motion, scene
 
 
 def _settings() -> QSettings:
@@ -52,6 +52,9 @@ class WindowPreferencesMixin:
         component = settings.value("results/component")
         if component in {"M", "V", "N", "Vy", "Vz", "T", "My", "Mz", scene.STRESS}:
             self.component = component
+        reduced = str(settings.value("ui/reduced_motion", "false")).lower() == "true"
+        self.actions_by_name["reduce_motion"].setChecked(reduced)
+        motion.set_reduced(reduced)
         self.drawers.relayout()
 
     def _save_preferences(self) -> None:
@@ -67,3 +70,4 @@ class WindowPreferencesMixin:
         settings.setValue("results/display",
                           json.dumps(self.results.display_options()))
         settings.setValue("results/component", self.component)
+        settings.setValue("ui/reduced_motion", motion.reduced())

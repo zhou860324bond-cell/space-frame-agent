@@ -4,6 +4,7 @@
 识别结果不是坐标而是图上的文字证据，组装由 ``drawing_assemble`` 确定性完成；
 核对表里每行写明值、出处与状态，选中一行即在原图上高亮那段原文。缺失和冲突
 必须由用户填写或改正，需确认的项点一次「确认原值」。全部处理完才能生成。
+识别提示只列出来供对照原图，不需要逐条确认。
 """
 
 from __future__ import annotations
@@ -25,10 +26,11 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 DXF_SUFFIX = ".dxf"
 DXF_VIEW_NOTE = ("DXF 是矢量文件，这里不显示图片。\n核对表「来源」列写明每个数取自哪个实体"
                  "（#句柄）和图层，可在 CAD 中按句柄或图层找到原对象核对。")
-STATUS_TEXT = {"ok": "已读取", "confirm": "需确认", "missing": "缺失", "conflict": "冲突"}
+STATUS_TEXT = {"ok": "已读取", "confirm": "需确认", "missing": "缺失", "conflict": "冲突",
+               "info": "提示"}
 STATUS_COLOR = {"ok": theme.SUCCESS, "confirm": theme.WARN,
-                "missing": theme.ERROR, "conflict": theme.ERROR}
-STATUS_ORDER = {"conflict": 0, "missing": 1, "confirm": 2, "ok": 3}
+                "missing": theme.ERROR, "conflict": theme.ERROR, "info": theme.INK_MUTED}
+STATUS_ORDER = {"conflict": 0, "missing": 1, "confirm": 2, "info": 3, "ok": 4}
 PDF_HINT = ("本版不能直接读取 PDF：请在看图软件中把需要的页导出为 PNG（建议 200 dpi 以上），"
             "再用「添加图纸」选入。")
 
@@ -459,7 +461,7 @@ class DrawingPanel(QWidget):
             self._status(self.assembly.summary(), theme.SUCCESS if ready else theme.WARN)
         target = next((i for i, r in enumerate(rows) if r.id == keep_row), None)
         if target is None:
-            target = next((i for i, r in enumerate(rows) if r.status != "ok"),
+            target = next((i for i, r in enumerate(rows) if r.blocking or r.confirmable),
                           0 if rows else None)
         if target is not None:
             self.table.selectRow(target)

@@ -191,7 +191,8 @@ def test_image_records_hash_and_size(tmp_path):
 
 def test_unparseable_notation_is_never_sent_back_for_rewriting(tmp_path):
     """真实验收（FEMA 451 图 5.2-1）：英尺英寸间距 `25'-0"` 读不懂时，旧代码把给用户的
-    「请改为纯数字」回喂模型，模型就把原文改抄成 `25`。读不懂的写法只交给用户，不回喂。"""
+    「请改为纯数字」回喂模型，模型就把原文改抄成 `25`。读不懂的写法只交给用户，不回喂；
+    现在英尺英寸已能直接读取，本测试仍防原文被改写。"""
     image = _drawing(tmp_path)
     raw = _raw()
     for spacing in raw["grids"]["x"]["spacings"]:
@@ -209,7 +210,7 @@ def test_reread_feedback_is_separate_from_user_instructions():
     from drawing_assemble import assemble
     from test_drawing_assemble import _evidence
     evidence = _evidence()
-    evidence["grids"]["x"]["spacings"][0]["text"] = "20'-0\""
+    evidence["grids"]["x"]["spacings"][0]["text"] = "6000(估)"   # 英尺英寸已可读，改用读不懂的写法
     evidence["grids"]["y"]["spacings"][0]["text"] = "7000"
     evidence["grids"]["y"]["total"] = {"text": "7200"}
     rows = {row.id: row for row in assemble(evidence).rows}

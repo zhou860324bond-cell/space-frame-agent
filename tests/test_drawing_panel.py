@@ -230,3 +230,20 @@ def test_main_window_entry_and_dropped_drawing(qt_app, drawing):
     w._recognize_dropped_image(drawing)
     assert w.drawing.images == [drawing] and w.drawing_dock.isVisible()
     w.drawing_dock.close()
+
+
+def test_recognition_notes_are_shown_but_never_need_clicking(panel):
+    """FEMA 451 真实验收（2026-10-16）：识别提示逐条点确认太繁琐。提示行显示为「提示」，
+    不抢选中、不能也不必确认；只剩它们时即可导入。"""
+    evidence = _evidence()
+    evidence["notes"] = [{"text": f"第 {k} 处字迹不清", "source": {"image": "P1",
+                                                          "confidence": 0.4}}
+                         for k in range(5)]
+    panel.set_evidence(evidence)
+    assert panel.selected_row().id == "material"
+    panel.confirm_selected()
+    assert panel.btn_import.isEnabled()
+    assert "识别提示 5 条" in panel.lbl_status.text()
+    note = _select(panel, "notes.0")
+    assert panel.table.item(panel._rows.index(note), 0).text() == "提示"
+    assert not panel.btn_confirm.isEnabled() and not panel.btn_apply.isEnabled()

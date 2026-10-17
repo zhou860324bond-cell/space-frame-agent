@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import re
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -39,7 +40,7 @@ from . import result_rows                           # noqa: E402
 from .viewport import Viewport                     # noqa: E402
 from .worker import Runner                         # noqa: E402
 from .workflow_bar import WorkflowBar, draft_target  # noqa: E402
-from . import glyphs
+from . import glyphs, motion
 from .window_commands import WindowCommandsMixin
 from .window_preferences import WindowPreferencesMixin, _settings
 from .window_results import WindowResultsMixin
@@ -569,7 +570,7 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                            "envelope", "clear_results", "labels")),
                  ("视图", ("iso", "front", "side", "top", "fit", None,
                            "bg_settings", "grid_floor", "labels", "load_labels",
-                           "camera", None, "lang", None, "chat", "props")))
+                           "camera", None, "lang", "reduce_motion", None, "chat", "props")))
         root = QMenu(self)
         root.setTitle("主菜单")
         for title, names in menus:
@@ -644,6 +645,19 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
         self.lbl_last.setToolTip("最近一次成功或失败的建模操作")
         self.lbl_last.setStyleSheet(f"color: {theme.INK_DIM}; padding: 1px 6px;")
         self.statusBar().addPermanentWidget(self.lbl_last)
+        # 后台任务状态行：求解等长任务把状态栏消息转到这里，标题带流光、后面写用时，
+        # 看得出还在算（做法见 motion.py）
+        self.lbl_task = motion.ShimmerLabel(self)
+        self.lbl_task.setMaximumWidth(360)
+        self.lbl_task.setStyleSheet("padding: 1px 6px;")
+        self.lbl_task.setVisible(False)
+        self.statusBar().addPermanentWidget(self.lbl_task)
+        self._task_header = ""
+        self._task_started = time.monotonic()
+        self._task_clock = QTimer(self)
+        self._task_clock.setInterval(1000)
+        self._task_clock.timeout.connect(self._sync_task_status)
+        self.statusBar().messageChanged.connect(self._on_status_message)
         self.btn_cancel_task = QPushButton("停止任务", self)
         self.btn_cancel_task.setVisible(False)
         self.btn_cancel_task.clicked.connect(self.stop_task)
@@ -887,9 +901,13 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                 if name not in self.BUSY_ALLOWED}
             self._pending_command = None
             self.viewport.set_model_mode(None)
+            self._task_started = time.monotonic()
         for name, enabled in self._busy_action_states.items():
             self.actions_by_name[name].setEnabled(idle and enabled)
         self._task_busy = busy
+        if idle:
+            self._task_header = ""
+        self._sync_task_status()
         self.act_solve.setEnabled(idle and bool(self.session.model.get("nodes")))
         self.actions_by_name["stop_task"].setEnabled(busy)
         self.btn_cancel_task.setVisible(busy)
@@ -900,6 +918,36 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             widget.setEnabled(idle)
         if idle and self._close_pending:
             QTimer.singleShot(0, self.close)
+
+    def _on_status_message(self, text: str) -> None:
+        """任务运行期间的状态栏消息（「求解中…」「正在停止任务…」）作为任务状态行的标题。
+
+        各个长任务都是先置忙、再写状态栏消息，所以这里只认置忙之后的消息；
+        对话回合不写状态栏，不会出现任务状态行。
+        """
+        if self._task_busy and text:
+            self._task_header = text.rstrip("…。. ")
+            self._sync_task_status()
+
+    def _sync_task_status(self) -> None:
+        header = self._task_header if self._task_busy else ""
+        if not header:
+            self._task_clock.stop()
+            self.lbl_task.clear()
+            self.lbl_task.setVisible(False)
+            return
+        if not self._task_clock.isActive():
+            self._task_clock.start()
+        self.lbl_task.set_text(header, motion.format_elapsed(time.monotonic() - self._task_started))
+        self.lbl_task.setVisible(True)
+
+    def toggle_reduced_motion(self) -> None:
+        """减少动效：流光与转圈停下，用时仍按秒刷新。"""
+        on = self.actions_by_name["reduce_motion"].isChecked()
+        motion.set_reduced(on)
+        self.statusBar().showMessage(
+            "已减少动效：流光与转圈图标改为静止显示，用时仍按秒刷新。" if on
+            else "已恢复界面动效。", 5000)
 
     def stop_task(self) -> None:
         """请求停止当前任务，等安全检查点到达后再恢复编辑。"""
