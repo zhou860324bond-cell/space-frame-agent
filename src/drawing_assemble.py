@@ -24,7 +24,7 @@ from typing import Any, Mapping
 import sections as section_builders
 from drawing_evidence import (EVIDENCE_FORMAT, LAYER_ROLES, LENGTH_UNITS,
                               LOW_CONFIDENCE, length_factor, parse_designation,
-                              parse_material, parse_number)
+                              parse_length, parse_material, section_labels)
 from generator import _COLUMN_REF
 from model_io import CURRENT_SCHEMA_VERSION, validate_payload
 
@@ -139,12 +139,12 @@ def _base_status(item: Mapping[str, Any]) -> tuple[str, str]:
     return OK, ""
 
 
-def _read_number(item: Mapping[str, Any]) -> tuple[float | None, str]:
+def _read_number(item: Mapping[str, Any], unit: Any = None) -> tuple[float | None, str]:
     """条目的数值：矢量入口从实体直接取得的 ``value`` 优先，``text`` 是原文。
 
     两者不符（如 DIMENSION 文字被改写成与实测不同的数）时返回冲突说明；
     用户改写过的条目以用户文字为准。"""
-    text_value = parse_number(item.get("text"))
+    text_value = parse_length(item.get("text"), unit)
     value = item.get("value")
     source = item.get("source")
     by_user = isinstance(source, Mapping) and bool(source.get("user"))
@@ -264,6 +264,7 @@ class _Builder:
     def grid(self, family: str, used: bool) -> tuple[list[str], dict[str, float]]:
         """返回轴号顺序与各轴坐标（图纸长度单位，首轴为 0）。"""
         grid = (self.ev.get("grids") or {}).get(family) or {}
+        unit = ((self.ev.get("units") or {}).get("length") or {}).get("value")
         name = "x 向（数字轴）" if family == "x" else "y 向（字母轴）"
         labels = [str(axis["label"]).strip() for axis in grid.get("axes") or []
                   if isinstance(axis, Mapping) and str(axis.get("label") or "").strip()]
@@ -293,7 +294,7 @@ class _Builder:
                 continue
             index, item = found
             consecutive.add(index)
-            value, mismatch = _read_number(item)
+            value, mismatch = _read_number(item, unit)
             row_id = f"grids.{family}.spacings.{index}"
             if value is None or value <= 0 or mismatch:
                 self.add(row_id, "轴网", item_name, "—" if value is None else _fmt(value),
@@ -318,7 +319,7 @@ class _Builder:
                     continue
                 a, b = str(item.get("from")).strip(), str(item.get("to")).strip()
                 row_id = f"grids.{family}.spacings.{index}"
-                value, mismatch = _read_number(item)
+                value, mismatch = _read_number(item, unit)
                 if mismatch:
                     self.add(row_id, "轴网", f"轴 {a}→{b} 尺寸", _fmt(value), item, CONFLICT,
                              mismatch, edit="text", current=str(item.get("text") or ""))
@@ -334,7 +335,7 @@ class _Builder:
             total = grid.get("total")
             if isinstance(total, Mapping) and str(total.get("text") or "").strip():
                 self._check_chain(f"grids.{family}.total", f"{name}总尺寸", total,
-                                  _read_number(total)[0],
+                                  _read_number(total, unit)[0],
                                   coords[labels[-1]] - coords[labels[0]])
         return labels, coords
 
@@ -418,7 +419,8 @@ class _Builder:
         seen_values: dict[float, str] = {}
         for index, item in enumerate(items):
             name = str(item.get("name") or "").strip()
-            value = parse_number(item.get("text"))
+            value = parse_length(item.get("text"), ((self.ev.get("units") or {}).get(
+                "elevation") or {}).get("value"))
             row_id = f"levels.{index}"
             label = f"标高 {name}"
             if value is None:
@@ -426,28 +428,29 @@ class _Builder:
                          f"读不懂标高「{item.get('text')}」；请改为数字，如 3.600。",
                          edit="text", current=str(item.get("text") or ""))
                 continue
-            if name in result or value in seen_values:
-                other = name if name in result else seen_values[value]
+            if name in result and result[name] != value:
                 self.add(row_id, "标高", label, _fmt(value), item, CONFLICT,
-                         f"与标高 {other} 重复；请改正。", edit="text",
-                         current=str(item.get("text")))
+                         f"同名标高 {name} 的读数不一致；请对照各视图改正。", edit="text",
+                         current=str(item.get("text")), reread=f"同名标高 {name} 的读数不一致")
                 continue
             status, message = _base_status(item)
+            if value in seen_values:
+                message = (message + f" 与标高 {seen_values[value]} 为同一标高。").strip()
             self.add(row_id, "标高", label, _fmt(value), item, status, message,
                      edit="text", current=str(item.get("text")))
             result[name] = value
-            seen_values[value] = name
+            seen_values.setdefault(value, name)
         return result
 
 
 def _level_key(levels: Mapping[str, float], evidence_levels: list, ref: Any) -> str | None:
     name = str(ref or "").strip()
     if name in levels:
-        return name
+        return next(key for key, value in levels.items() if value == levels[name])
     for item in evidence_levels:
         if isinstance(item, Mapping) and str(item.get("text") or "").strip() == name \
                 and str(item.get("name") or "").strip() in levels:
-            return str(item.get("name")).strip()
+            return _level_key(levels, [], item.get("name"))
     return None
 
 
@@ -480,7 +483,8 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     segments: dict[frozenset, dict[str, Any]] = {}
     member_paths: dict[frozenset, str] = {}
     used_labels: list[str] = []
-    level_order = sorted(levels, key=lambda key: levels[key])
+    level_order = list({value: _level_key(levels, [], name)
+                        for name, value in sorted(levels.items(), key=lambda pair: pair[1])}.values())
     for index, item in active:
         label = str(item.get("label") or "").strip() or f"杆件{index + 1}"
         row_id = f"members.{index}"
@@ -517,18 +521,19 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
               "图上没有读到任何杆件；请上传含梁柱布置的平面图或立面图。")
 
     # ---- 截面 ----
-    sec_items = {}
+    sec_items = []
     for index, item in enumerate(evidence.get("sections") or []):
-        if isinstance(item, Mapping) and str(item.get("label") or "").strip():
-            sec_items.setdefault(str(item["label"]).strip(), (index, item))
+        if isinstance(item, Mapping) and section_labels(item):
+            sec_items.append((index, item, section_labels(item)))
     built_sections: dict[str, dict[str, Any]] = {}
     label_section: dict[str, str] = {}
     for label in used_labels:
-        if label not in sec_items:
+        if not any(label in labels for _, _, labels in sec_items):
             b.add(f"sections+{label}", "截面", f"{label} 规格", "—", None, MISSING,
                   "截面表里没有读到这个编号的规格；请照图填写，如 HN400×200×8×13。",
                   edit="text")
-    for label, (index, item) in sec_items.items():
+    for index, item, labels in sec_items:
+        label = "、".join(labels)
         row_id = f"sections.{index}"
         text = str(item.get("text") or "")
         try:
@@ -538,6 +543,13 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
                   edit="text", current=text)
             continue
         value = _describe_shape(shape)
+        conflicts = [target for target in labels if target in label_section
+                     and label_section[target] != shape["name"]]
+        if conflicts:
+            b.add(row_id, "截面", f"{label} 规格", value, item, CONFLICT,
+                  f"编号 {'、'.join(conflicts)} 的规格与另一条截面说明不一致；请对照原图改正。",
+                  edit="text", current=text)
+            continue
         section = None
         if f_len is not None:
             try:
@@ -553,13 +565,13 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
         notes = [message] if message else []
         if shape["type"] == "i":
             notes.append("规格不含根部圆角 r，按直角轮廓计算；需要时导入后在「创建截面」中补 r。")
-        if label not in used_labels:
+        if not any(target in used_labels for target in labels):
             notes.append("图上没有读到这个编号的杆件。")
         b.add(row_id, "截面", f"{label} 规格", value, item, status, " ".join(notes),
               edit="text", current=text)
         if section is not None:
             built_sections.setdefault(section["name"], section)
-            label_section[label] = section["name"]
+            label_section.update({target: section["name"] for target in labels})
 
     # ---- 材料与支座 ----
     material_item = evidence.get("material") if isinstance(evidence.get("material"),
