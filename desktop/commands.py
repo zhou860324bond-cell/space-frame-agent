@@ -206,6 +206,9 @@ COMMANDS: tuple[Command, ...] = (
     Command("lang", "中 / EN", "units",
             "在中文与英文界面之间切换（功能区、菜单、状态栏；对话框仍为中文）",
             "toggle_language", "", True),
+    Command("reduce_motion", "减少动效", "timeline",
+            "让状态行的流光和转圈图标静止显示，用时仍按秒刷新。远程桌面卡顿或对动画敏感时打开",
+            "toggle_reduced_motion", "", True),
 
     # 这个按钮从前叫「分析步」，但它做的是选求解过程和增量数——跟真正的
     # Step 对象没有关系。名字改诚实，真正的分析步管理器另立一个。

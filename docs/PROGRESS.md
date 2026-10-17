@@ -1,5 +1,14 @@
 # 工作进度
 
+## 界面动效：流光状态行、用时格式、减少动效（2026-10-17）
+
+- 用户提出把 Codex 的界面和动效加进来。调研结论：开源的只有 Codex CLI（openai/codex，Apache-2.0，Rust 终端界面），桌面 App 与 IDE 插件不开源，不能照搬；终端代码也无法直接用于 PySide6。用户选定精简版：只借鉴状态行的动效算法，只改对话面板和长任务进度。分支 claude/codex-motion（在 agent开发-master 本地检出上）。
+- 新增 desktop/motion.py：format_elapsed（「1 分 05 秒」）、shimmer_levels（按 codex-rs/tui/src/shimmer.rs 公开算法重写：周期 2 s、两侧空白 10 字符、亮带半宽 5、余弦衰减，混色上限 0.9）、ShimmerLabel（继承 QLabel 沿用样式表字号，可见且有标题且未减少动效时才 32 ms 重画）、全局「减少动效」开关（信号通知所有在动的小部件）。
+- 对话面板：助手状态行换成 ShimmerLabel，标题去掉省略号，说明写「用时 · Esc 停止」；StatusIcon 转圈与 TypingDots 在减少动效时停住。
+- 主窗口：状态栏「停止任务」旁新增任务状态行 lbl_task。各长任务都是先 _on_busy(True) 再 showMessage，所以只镜像置忙期间的状态栏消息作为标题；对话回合不写状态栏，不会出现。新增命令 reduce_motion「减少动效」（视图菜单，英文 Reduce Motion），设置键 ui/reduced_motion。
+- 回归：新增 tests/test_motion.py 9 项（含主窗口两项，本机有 OpenGL 已实际运行），命令注册表按命令参数化多 1 项。全量收集 3014 项（collect-only 得出，与 master CI 的 3004 项对得上，未跑全量）。按约定只跑增量：动效、对话现代化/对话/对话 Agent 界面、命令注册、翻译、界面文字、功能区、自动保存（含设置恢复）、主窗口、草图面板与文档闸均通过；Ruff 全仓干净。真实字体下渲染截图确认亮带从左扫到右、说明保持暗色。
+- 未做：草图识别与图纸识别面板里各自的「已用 Ns」没有统一换成新格式（不在本次范围）；手册未写「减少动效」。下一步：建 PR，CI 三平台全绿后先问用户再合并；用户在本地检出里打开程序目测一次对话与求解时的效果。
+
 ## 结构图纸识别：DXF 入口（2026-10-16）
 
 - 承接 PR #42 的证据层，按用户选定的「证据与组装只写一次」做第二个入口，分支 feat/drawing-dxf（基于 feat/drawing-recognition）。新增 src/drawing_dxf.py（ezdxf 读实体 → 同一证据格式 → drawing_assemble.assemble）；这是**通用机制**，不是特例：图片与 DXF 共用组装、核对表与写回。
