@@ -37,6 +37,9 @@
 （0~1 归一化图片坐标，原点左上角），用户在核对表里填写的值为 ``{"user": true}``。
 x 族轴线是数字轴（竖向轴线，沿水平方向排列），y 族是字母轴；``pos`` 是轴线
 在图上的位置（x 族取横坐标 u，y 族取纵坐标 v），**只用于报警，不用于取值**。
+数值原文可带明确单位（如 ``+3.500 m``），组装时换算到已确认的对应单位。
+跨视图同值标高的不同名称共用节点；同名异值仍报冲突。统一截面说明可用
+``sections[].labels`` 显式列出多个适用编号，旧 ``label`` 写法继续可用。
 
 矢量文件（DXF）的出处不是图上一块区域，而是文件里的实体：``SRC`` 写作
 ``{"file": "D1", "handles": ["2A", "2B"], "layer": "AXIS"}``（文件头变量写
@@ -110,6 +113,35 @@ def parse_number(text: Any) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
+
+
+def parse_length(text: Any, unit: Any) -> float | None:
+    """标注原文 → 指定单位下的长度；显式单位参与换算，不剥掉后直接当数。"""
+    number = parse_number(text)
+    if number is not None or not isinstance(text, str):
+        return number
+    match = re.fullmatch(r"(.+?)\s*(mm|cm|m|毫米|厘米|米)",
+                         text.translate(_FULL_WIDTH).strip(), re.IGNORECASE)
+    target = length_factor(unit)
+    if not match or target is None:
+        return None
+    number = parse_number(match[1].strip())
+    source_unit = {"毫米": "mm", "厘米": "cm", "米": "m"}.get(match[2], match[2].lower())
+    if number is None:
+        return None
+    ratio = length_factor(source_unit) / target
+    # mm→m 用整除，避免与无后缀读数产生浮点末位不同，导致同标高不能合并。
+    divisor = 1.0 / ratio
+    result = number / round(divisor) if divisor > 1 and divisor.is_integer() else number * ratio
+    return result if math.isfinite(result) else None
+
+
+def section_labels(item: Mapping[str, Any]) -> list[str]:
+    """单条规格的显式适用编号；兼容旧 label，统一说明用 labels 列出目标。"""
+    labels = item.get("labels") if "labels" in item else [item.get("label")]
+    if not isinstance(labels, list) or not labels or not all(_is_text(v) for v in labels):
+        return []
+    return list(dict.fromkeys(label.strip() for label in labels))
 
 
 # ---- 构件规格 ----------------------------------------------------------------
@@ -325,9 +357,9 @@ def validate_evidence(evidence: Any) -> list[str]:
         errors.append("sections 必须是数组")
         sections = []
     for index, item in enumerate(sections):
-        if not isinstance(item, Mapping) or not _is_text(item.get("label")) \
+        if not isinstance(item, Mapping) or not section_labels(item) \
                 or "text" not in item:
-            errors.append(f"sections[{index}] 需要 label 与 text")
+            errors.append(f"sections[{index}] 需要 label 或非空 labels 数组，以及 text")
     support = evidence.get("support")
     if support is not None and (not isinstance(support, Mapping) or support.get("kind")
                                 not in (None, "fixed", "pinned")):
