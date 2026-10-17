@@ -104,6 +104,21 @@ def test_single_run_does_not_claim_stability():
     assert "看不出波动" in text.split("## 结论")[1]
 
 
+def test_exhausted_balance_stops_the_whole_batch():
+    """2026-10-17 余额中途用完，后续 56 次调用全记成「未通过」，计费错误冒充了模型失败。"""
+    import pytest
+    from run_repeat import AccountExhausted
+
+    def runner(case):
+        v = verdict(case, case["id"] == "AAA")
+        if case["id"] == "BBB":
+            v.error = "APIStatusError: Error code: 402 - Insufficient Balance"
+        return v
+
+    with pytest.raises(AccountExhausted, match="BBB"):
+        repeat(CASES, runner, times=3, progress=False)
+
+
 def test_fingerprint_covers_the_source_modules():
     fp = code_fingerprint()
     assert len(fp["源码摘要"]) == 12

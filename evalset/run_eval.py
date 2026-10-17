@@ -73,6 +73,20 @@ def play_case(case: dict, provider, max_rounds: int):
     return out, first
 
 
+class AccountExhausted(RuntimeError):
+    """服务商账户余额耗尽：之后每题都会同样失败。
+
+    2026-10-17 重跑时余额中途用完，flash 第 3 轮 37 题、pro 后 19 题全记成
+    「APIStatusError 未通过」——计费错误被当成了模型没做对，整批数据作废。
+    遇到就整批停下，不写成绩单。
+    """
+
+
+def account_exhausted(v: Verdict) -> bool:
+    """这一题是不是因为余额不足（HTTP 402）而失败。"""
+    return bool(v.error) and ("Error code: 402" in v.error or "Insufficient Balance" in v.error)
+
+
 def run_one(case: dict, api_key: str, model: str, max_rounds: int) -> Verdict:
     """跑一题。任何异常都收成这一题的失败，不许打断整批。"""
     started = time.time()
@@ -168,6 +182,9 @@ def main() -> None:
     for k, case in enumerate(selected, 1):
         print(f"[{k}/{len(selected)}] {case['id']} {case['category']} … ", end="", flush=True)
         v = run_one(case, api_key, args.model, args.max_rounds)
+        if account_exhausted(v):
+            print(f"\n账户余额不足（{v.error}），已停止，未写成绩单。充值后重跑。")
+            sys.exit(2)
         verdicts.append(v)
         failed = [name for name, ok in v.checks.items() if not ok]
         print(("通过" if v.passed else f"未通过（{'、'.join(failed) or v.error}）")

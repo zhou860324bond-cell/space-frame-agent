@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Callable
 
 from cases import CASES
-from run_eval import MAX_ROUNDS, run_one
+from run_eval import MAX_ROUNDS, AccountExhausted, account_exhausted, run_one
 from score import Verdict
 
 
@@ -94,13 +94,16 @@ def repeat(cases: list[dict], runner: Callable[[dict], Verdict],
     results: dict[str, list[Verdict]] = {c["id"]: [] for c in cases}
     for run_index in range(1, times + 1):
         if progress:
-            print(f"\n—— 第 {run_index}/{times} 轮 ——")
+            print(f"\n—— 第 {run_index}/{times} 轮 ——", flush=True)
         for case in cases:
             v = runner(case)
+            if account_exhausted(v):
+                raise AccountExhausted(f"第 {run_index} 轮 {case['id']}：{v.error}")
             results[case["id"]].append(v)
             if progress:
+                # 输出重定向到文件时也要逐题落盘，长时间运行才看得到进度
                 print(f"  {case['id']:<5} {'通过' if v.passed else '未通过':<6} "
-                      f"{v.rounds} 轮 {v.seconds:.0f}s")
+                      f"{v.rounds} 轮 {v.seconds:.0f}s", flush=True)
     return results
 
 
@@ -211,9 +214,13 @@ def main() -> None:
     print("代码指纹：" + "，".join(f"{k}={v}" for k, v in fingerprint.items()))
 
     started = time.time()
-    results = repeat(selected,
-                     lambda case: run_one(case, api_key, args.model, args.max_rounds),
-                     args.times)
+    try:
+        results = repeat(selected,
+                         lambda case: run_one(case, api_key, args.model, args.max_rounds),
+                         args.times)
+    except AccountExhausted as exc:
+        print(f"\n账户余额不足，已停止，未写报告。充值后重跑。\n{exc}")
+        sys.exit(2)
     text = render(selected, results, args.times, time.time() - started, fingerprint,
                   model=args.model)
     Path(args.out).write_text(text, encoding="utf-8")
