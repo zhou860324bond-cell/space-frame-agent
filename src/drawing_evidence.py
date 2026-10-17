@@ -39,6 +39,9 @@
 （0~1 归一化图片坐标，原点左上角），用户在核对表里填写的值为 ``{"user": true}``。
 x 族轴线是数字轴（竖向轴线，沿水平方向排列），y 族是字母轴；``pos`` 是轴线
 在图上的位置（x 族取横坐标 u，y 族取纵坐标 v），**只用于报警，不用于取值**。
+数值原文可带明确单位（如 ``+3.500 m``），组装时换算到已确认的对应单位。
+跨视图同值标高的不同名称共用节点；同名异值仍报冲突。统一截面说明可用
+``sections[].labels`` 显式列出多个适用编号，旧 ``label`` 写法继续可用。
 
 矢量文件（DXF）的出处不是图上一块区域，而是文件里的实体：``SRC`` 写作
 ``{"file": "D1", "handles": ["2A", "2B"], "layer": "AXIS"}``（文件头变量写
@@ -121,12 +124,16 @@ def parse_number(text: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-# ---- 尺寸写法：英尺英寸、重复写法 ------------------------------------------------
+# ---- 尺寸写法：自带单位（英尺英寸、mm/cm/m 后缀）、重复写法 ----------------------
 
 #: 1 英寸 = 254/10000 米（1959 年国际码协定的定义值，不是近似）；1 英尺 = 12 英寸。
 INCH_M = 0.0254
 
-DIMENSION_HELP = ("可识别的写法：6000、6,000、25'-0\"、13'-4 1/2\"，以及重复写法"
+#: 原文紧邻的公制单位后缀（#52：「+3.500 m」「6000 mm」）。
+_METRIC_SUFFIX = re.compile(r"(.+?)\s*(mm|cm|m|毫米|厘米|米)", re.IGNORECASE)
+_METRIC_NAMES = {"毫米": "mm", "厘米": "cm", "米": "m"}
+
+DIMENSION_HELP = ("可识别的写法：6000、6,000、3.500 m、6000 mm、25'-0\"、13'-4 1/2\"，以及重复写法"
                   "「7 at 25'-0\"」「6@3600」「3×6000」，可带「= 总长」。")
 
 _PRIMES = str.maketrans({"′": "'", "’": "'", "‘": "'", "´": "'",
@@ -142,14 +149,18 @@ _REPEAT = re.compile(r"(?P<count>\d+)\s*(?:SPA(?:CES|\.)?\s*)?(?:AT\b|@|×)\s*(?
 class Dimension:
     """一条尺寸文字的确定性读法；原文仍保存在证据里。
 
-    ``value`` 是每段的数：写法自带单位（英尺英寸）时为英寸，``inches`` 为真；
-    否则是图纸长度单位，换算要靠图上的单位说明。``count`` 是重复写法的段数，
-    「7 at 25'-0"」为 7 段、每段 300 英寸。
+    ``value`` 是每段的数，单位是 ``unit``：写法自带单位时为 ``in``（英尺英寸写法
+    折成英寸）或 ``mm``/``cm``/``m``（原文带后缀）；空串表示不带单位，换算要靠图上
+    的单位说明。``count`` 是重复写法的段数，「7 at 25'-0"」为 7 段、每段 300 英寸。
     """
 
     value: float
     count: int = 1
-    inches: bool = False
+    unit: str = ""
+
+    @property
+    def inches(self) -> bool:
+        return self.unit == "in"
 
     @property
     def total(self) -> float:
@@ -158,7 +169,18 @@ class Dimension:
     def show(self, value: float | None = None) -> str:
         """按原写法的单位写出一个数（默认每段的数）。"""
         value = self.value if value is None else value
-        return format_feet_inches(value) if self.inches else _plain(value)
+        if self.inches:
+            return format_feet_inches(value)
+        return f"{_plain(value)} {self.unit}" if self.unit else _plain(value)
+
+
+def unit_to_m(value: float, unit: str) -> float:
+    """自带单位的数 → 米。英寸按定义 1 in = 254/10000 m；mm、cm 用整除，
+    与不带后缀、按单位说明换算的同一个数逐位相同（同值标高才能合并）。"""
+    if unit == "in":
+        return value * 254 / 10000
+    divisor = round(1.0 / length_factor(unit))
+    return value / divisor if divisor > 1 else value * length_factor(unit)
 
 
 def _plain(value: float) -> str:
@@ -196,14 +218,22 @@ def _single_dimension(text: str) -> Dimension | None:
     if number is not None:
         return Dimension(number)
     inches = _parse_feet_inches(text)
-    return None if inches is None else Dimension(inches, inches=True)
+    if inches is not None:
+        return Dimension(inches, unit="in")
+    match = _METRIC_SUFFIX.fullmatch(text)
+    if match:
+        number = parse_number(match[1].strip())
+        if number is not None:
+            return Dimension(number, unit=_METRIC_NAMES.get(match[2], match[2].lower()))
+    return None
 
 
 def parse_dimension(text: Any) -> Dimension:
     """尺寸文字 → :class:`Dimension`；读不懂抛 ValueError 并说明支持的写法。
 
-    在 :func:`parse_number` 之外再认两种写法，都是确定性的：
+    在 :func:`parse_number` 之外再认三种写法，都是确定性的：
 
+    * 公制后缀 ``+3.500 m``、``6000 mm``，自带单位，按后缀换算，不剥掉后缀当数；
     * 英尺英寸 ``25'-0"``、``13'-4"``、``1'-2"``、``22'-4 1/2"``，自带单位；
     * 重复写法 ``7 at 25'-0"``、``6@3600``、``3×6000``，可带 ``= 175'-0"``，
       等号两边对不上时拒绝（不替图纸决定哪边是对的）。
@@ -224,14 +254,14 @@ def parse_dimension(text: Any) -> Dimension:
         count = int(repeat.group("count"))
         if each is None or count < 1:
             raise ValueError(f"读不懂重复写法「{text}」。" + DIMENSION_HELP)
-        dimension = Dimension(each.value, count, each.inches)
+        dimension = Dimension(each.value, count, each.unit)
     else:
         dimension = _single_dimension(left)
         if dimension is None:
             raise ValueError(f"读不懂尺寸「{text}」。" + DIMENSION_HELP)
     if equals:
         total = _single_dimension(right)
-        if total is None or total.inches != dimension.inches:
+        if total is None or total.unit != dimension.unit:
             raise ValueError(f"读不懂「{text}」等号后的总长。" + DIMENSION_HELP)
         if abs(total.value - dimension.total) > 1e-6 * max(1.0, abs(total.value)):
             raise ValueError(f"「{text}」中 {dimension.count} 段之和 "
@@ -257,6 +287,8 @@ def read_dimension(item: Mapping[str, Any]) -> Dimension:
         dimension = parse_dimension(item.get("text"))
     except ValueError:
         return Dimension(value)
+    if dimension.unit not in ("", "in"):    # 原文带公制后缀：实测值的单位未知，以原文为准
+        return dimension
     if abs(dimension.total - value) > 1e-6 * max(1.0, abs(value)):
         raise ValueError(f"标注文字「{item.get('text')}」与实体实测值 {_plain(value)} 不符；"
                          "请照图纸意图填写正确的数。")
@@ -357,6 +389,14 @@ def expand_chain(labels: list[str], items: list[Any], *, name_gaps: bool = False
         else:
             chain.spans.append((index, a, b, dimension))
     return chain
+
+
+def section_labels(item: Mapping[str, Any]) -> list[str]:
+    """单条规格的显式适用编号；兼容旧 label，统一说明用 labels 列出目标。"""
+    labels = item.get("labels") if "labels" in item else [item.get("label")]
+    if not isinstance(labels, list) or not labels or not all(_is_text(v) for v in labels):
+        return []
+    return list(dict.fromkeys(label.strip() for label in labels))
 
 
 # ---- 构件规格 ----------------------------------------------------------------
@@ -593,9 +633,9 @@ def validate_evidence(evidence: Any) -> list[str]:
         errors.append("sections 必须是数组")
         sections = []
     for index, item in enumerate(sections):
-        if not isinstance(item, Mapping) or not _is_text(item.get("label")) \
+        if not isinstance(item, Mapping) or not section_labels(item) \
                 or "text" not in item:
-            errors.append(f"sections[{index}] 需要 label 与 text")
+            errors.append(f"sections[{index}] 需要 label 或非空 labels 数组，以及 text")
     support = evidence.get("support")
     if support is not None and (not isinstance(support, Mapping) or support.get("kind")
                                 not in (None, "fixed", "pinned")):

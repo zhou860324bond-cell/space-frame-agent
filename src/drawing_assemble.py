@@ -26,7 +26,7 @@ from typing import Any, Mapping
 import sections as section_builders
 from drawing_evidence import (EVIDENCE_FORMAT, LAYER_ROLES, LENGTH_UNITS, LOW_CONFIDENCE,
                               Dimension, expand_chain, length_factor, parse_designation,
-                              parse_material, read_dimension)
+                              parse_material, read_dimension, section_labels, unit_to_m)
 from generator import _COLUMN_REF
 from model_io import CURRENT_SCHEMA_VERSION, validate_payload
 
@@ -162,11 +162,6 @@ def _from_m(value: float, factor: float) -> float:
     return value / factor
 
 
-def _inches_m(inches: float) -> float:
-    """英寸 → 米，按定义 1 in = 254/10000 m，做一次正确舍入的除法。"""
-    return inches * 254 / 10000
-
-
 def _fmt(value: float) -> str:
     return f"{value:.3f}".rstrip("0").rstrip(".") if value != 0 else "0"
 
@@ -176,40 +171,57 @@ def _same(a: float, b: float) -> bool:
 
 
 class _Length:
-    """累加的长度，按写法分开存：不带单位的部分（图纸单位）与英寸部分。
+    """累加的长度，按单位分开存：不带单位的部分（图纸单位，键为空串）与各自带单位
+    （in、mm、cm、m）的部分。
 
     分开累加让同一种写法的链保持精确（6000+6000 仍是整数，最后一次换算成米），
     只在需要米时合并。"""
 
-    __slots__ = ("plain", "inches")
+    __slots__ = ("parts",)
 
-    def __init__(self, plain: float = 0.0, inches: float = 0.0):
-        self.plain, self.inches = plain, inches
+    def __init__(self, parts: dict[str, float] | None = None):
+        self.parts = dict(parts or {})
 
     def plus(self, dim: Dimension, count: int = 1) -> _Length:
-        step = dim.value * count
-        return _Length(self.plain + (0.0 if dim.inches else step),
-                       self.inches + (step if dim.inches else 0.0))
+        parts = dict(self.parts)
+        parts[dim.unit] = parts.get(dim.unit, 0.0) + dim.value * count
+        return _Length(parts)
 
     def minus(self, other: _Length) -> _Length:
-        return _Length(self.plain - other.plain, self.inches - other.inches)
+        parts = dict(self.parts)
+        for unit, value in other.parts.items():
+            parts[unit] = parts.get(unit, 0.0) - value
+        return _Length(parts)
 
     def metres(self, factor: float | None) -> float:
-        plain = _to_m(self.plain, factor) if self.plain and factor else self.plain
-        return plain + (_inches_m(self.inches) if self.inches else 0.0)
+        total = 0.0
+        for unit, value in self.parts.items():
+            if value:
+                total += unit_to_m(value, unit) if unit else (
+                    _to_m(value, factor) if factor else value)
+        return total
 
 
 def _dim_m(dim: Dimension, value: float, factor: float | None) -> float:
     """读法里的一个数 → 米；不带单位的数在单位未定时暂按 1 计（只作相对核对）。"""
-    if dim.inches:
-        return _inches_m(value)
+    if dim.unit:
+        return unit_to_m(value, dim.unit)
     return _to_m(value, factor) if factor else value
+
+
+def _m_to_dim_unit(dim: Dimension, metres: float, factor: float | None) -> float:
+    """米 → 这条读法自己的单位，用于在核对说明里按原写法写出对比值。"""
+    if dim.inches:
+        return metres * 10000 / 254
+    if dim.unit:
+        return _from_m(metres, length_factor(dim.unit))
+    return _from_m(metres, factor) if factor else metres
 
 
 def _describe_dim(dim: Dimension) -> str:
     each = dim.show()
     if dim.inches:
-        each += f"（{_fmt(_inches_m(dim.value))} m）"
+        each += f"（{_fmt(unit_to_m(dim.value, 'in'))} m）"
     return f"{dim.count} 段 × {each}" if dim.count > 1 else each
 
 
@@ -228,7 +240,10 @@ def _length_items(evidence: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def _unit_scan(items: list[Mapping[str, Any]]) -> tuple[bool, str]:
-    """(有没有不带单位的数, 一个英尺英寸原文示例)。读不懂的条目不计，等用户改正后再看。"""
+    """(有没有不带单位的数, 一个英尺英寸原文示例)。
+
+    自带单位的写法（英尺英寸、mm/cm/m 后缀）不需要单位说明；英尺英寸与公制单位
+    说明并存才算矛盾，所以只回报英尺英寸的例子。读不懂的条目不计，等用户改正后再看。"""
     plain, example = False, ""
     for item in items:
         text = item.get("text")
@@ -241,7 +256,7 @@ def _unit_scan(items: list[Mapping[str, Any]]) -> tuple[bool, str]:
             continue
         if dim.inches:
             example = example or str(text).strip()
-        else:
+        elif not dim.unit:
             plain = True
     return plain, example
 
@@ -432,9 +447,7 @@ class _Builder:
             return
 
         def show(metres: float) -> str:
-            if dim.inches:
-                return dim.show(metres * 10000 / 254)
-            return dim.show(_from_m(metres, factor) if factor else metres)
+            return dim.show(_m_to_dim_unit(dim, metres, factor))
         extra = "（计入两端外边距也不符）" if edges is not None else ""
         self.add(row_id, category, item_name, _describe_dim(dim), item, CONFLICT,
                  f"分段间距之和为 {show(expected_m)}，与标注 {show(value)} 不符{extra}；"
@@ -461,7 +474,7 @@ class _Builder:
             pair_name=lambda a, b: f"轴 {a}→{b} 间距",
             missing_message="图上没有读到这段间距；请照图填写（单位同尺寸单位），不从图上量取。")
         factor = self.f_len
-        kinds = {dim.inches for *_, dim in segments}
+        kinds = {bool(dim.unit) for *_, dim in segments}
         edges: _Length | None = None
         for index, item in enumerate(grid.get("edges") or []):
             if not isinstance(item, Mapping):
@@ -474,7 +487,7 @@ class _Builder:
                 self.add(row_id, "轴网", item_name, "—", item, CONFLICT, str(exc),
                          edit="text", current=current)
                 continue
-            kinds.add(dim.inches)
+            kinds.add(bool(dim.unit))
             status, message = _base_status(item)
             self.add(row_id, "轴网", item_name, _describe_dim(dim), item, status,
                      message or "首末轴线到外边缘的尺寸，只用来核对量到外边缘的总尺寸。",
@@ -575,7 +588,7 @@ class _Builder:
         if heights:
             return self._level_chain(items, heights)
         result: dict[str, float] = {}
-        seen_values: list[tuple[float, str]] = []
+        seen_values: dict[float, str] = {}
         for index, item in items:
             name = str(item.get("name") or "").strip()
             row_id, label = f"levels.{index}", f"标高 {name}"
@@ -589,17 +602,20 @@ class _Builder:
                 self.add(row_id, "标高", label, "—", item, CONFLICT, problem,
                          edit="text", current=current)
                 continue
-            other = name if name in result else next(
-                (key for seen, key in seen_values if _same(seen, value)), None)
-            if other is not None:
+            # 不同视图里同值、不同名的标高（屋面 与 +3.500 m）是同一层，共用节点；
+            # 同名异值才是读错了。
+            if name in result and result[name] != value:
                 self.add(row_id, "标高", label, _fmt(value), item, CONFLICT,
-                         f"与标高 {other} 重复；请改正。", edit="text", current=current)
+                         f"同名标高 {name} 的读数不一致；请对照各视图改正。", edit="text",
+                         current=current, reread=f"同名标高 {name} 的读数不一致")
                 continue
             status, message = _base_status(item)
+            if value in seen_values:
+                message = (message + f" 与标高 {seen_values[value]} 为同一标高。").strip()
             self.add(row_id, "标高", label, _fmt(value), item, status, message,
                      edit="text", current=current)
             result[name] = value
-            seen_values.append((value, name))
+            seen_values.setdefault(value, name)
         return result
 
     def _level_chain(self, items, heights) -> dict[str, float]:
@@ -654,8 +670,8 @@ class _Builder:
             self.add(f"levels.{index}", "标高", f"标高 {base_label}", "0（按 ±0.000 计）",
                      item, status, message, edit="text", current="")
         provisional = (
-            (self.f_len is None and any(not dim.inches for *_, dim in segments))
-            or (self.f_elev is None and any(not read_dimension(item).inches
+            (self.f_len is None and any(not dim.unit for *_, dim in segments))
+            or (self.f_elev is None and any(not read_dimension(item).unit
                                             for _l, _i, item, _v in anchors)))
         anchored = {label for label, *_ in anchors}
         for label, index, item, value in anchors:
@@ -689,11 +705,11 @@ class _Builder:
 def _level_key(levels: Mapping[str, float], evidence_levels: list, ref: Any) -> str | None:
     name = str(ref or "").strip()
     if name in levels:
-        return name
+        return next(key for key, value in levels.items() if value == levels[name])
     for item in evidence_levels:
         if isinstance(item, Mapping) and str(item.get("text") or "").strip() == name \
                 and str(item.get("name") or "").strip() in levels:
-            return str(item.get("name")).strip()
+            return _level_key(levels, [], item.get("name"))
     return None
 
 
@@ -734,7 +750,8 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     segments: dict[frozenset, dict[str, Any]] = {}
     member_paths: dict[frozenset, str] = {}
     used_labels: list[str] = []
-    level_order = sorted(levels, key=lambda key: levels[key])
+    level_order = list({value: _level_key(levels, [], name)
+                        for name, value in sorted(levels.items(), key=lambda pair: pair[1])}.values())
     for index, item in active:
         kind = item.get("kind")
         label = str(item.get("label") or "").strip() or UNNUMBERED.get(kind, f"杆件{index + 1}")
@@ -771,21 +788,22 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
               "图上没有读到任何杆件；请上传含梁柱布置的平面图或立面图。")
 
     # ---- 截面 ----
-    sec_items = {}
+    sec_items = []
     for index, item in enumerate(evidence.get("sections") or []):
-        if isinstance(item, Mapping) and str(item.get("label") or "").strip():
-            sec_items.setdefault(str(item["label"]).strip(), (index, item))
+        if isinstance(item, Mapping) and section_labels(item):
+            sec_items.append((index, item, section_labels(item)))
     built_sections: dict[str, dict[str, Any]] = {}
     label_section: dict[str, str] = {}
     for label in used_labels:
-        if label not in sec_items:
+        if not any(label in labels for _, _, labels in sec_items):
             message = ("截面表里没有读到这个编号的规格；请照图填写，如 HN400×200×8×13。"
                        if label not in UNNUMBERED.values() else
                        f"图上这些杆件没有编号，查不到截面表；请照图填写规格，如 HN400×200×8×13。"
                        f"所有{label}共用这一规格，规格不同的请导入后在模型中修改。")
             b.add(f"sections+{label}", "截面", f"{label} 规格", "—", None, MISSING, message,
                   edit="text")
-    for label, (index, item) in sec_items.items():
+    for index, item, labels in sec_items:
+        label = "、".join(labels)
         row_id = f"sections.{index}"
         text = str(item.get("text") or "")
         try:
@@ -795,6 +813,13 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
                   edit="text", current=text)
             continue
         value = _describe_shape(shape)
+        conflicts = [target for target in labels if target in label_section
+                     and label_section[target] != shape["name"]]
+        if conflicts:
+            b.add(row_id, "截面", f"{label} 规格", value, item, CONFLICT,
+                  f"编号 {'、'.join(conflicts)} 的规格与另一条截面说明不一致；请对照原图改正。",
+                  edit="text", current=text)
+            continue
         section = None
         if b.f_len is not None:
             try:
@@ -810,13 +835,13 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
         notes = [message] if message else []
         if shape["type"] == "i":
             notes.append("规格不含根部圆角 r，按直角轮廓计算；需要时导入后在「创建截面」中补 r。")
-        if label not in used_labels:
+        if not any(target in used_labels for target in labels):
             notes.append("图上没有读到这个编号的杆件。")
         b.add(row_id, "截面", f"{label} 规格", value, item, status, " ".join(notes),
               edit="text", current=text)
         if section is not None:
             built_sections.setdefault(section["name"], section)
-            label_section[label] = section["name"]
+            label_section.update({target: section["name"] for target in labels})
 
     # ---- 材料与支座 ----
     material_item = evidence.get("material") if isinstance(evidence.get("material"),

@@ -21,7 +21,7 @@ from desktop.drawing_panel import DrawingPanel  # noqa: E402
 from drawing_assemble import resolve  # noqa: E402
 from drawing_extract import ExtractResult  # noqa: E402
 from model_io import validate_payload  # noqa: E402
-from test_drawing_assemble import _evidence  # noqa: E402
+from test_drawing_assemble import _evidence, _screenshot_evidence  # noqa: E402
 
 
 class Runner:
@@ -75,6 +75,19 @@ def test_generate_and_import_are_locked_until_every_row_is_handled(panel):
     assert len(panel.session.model["members"]) == 26
     assert all(m["section"] for m in panel.session.model["members"])
     assert loaded and panel.session.undo()
+
+
+def test_screenshot_frame_can_be_reviewed_and_imported(panel):
+    """用户截图的八杆框架应完成核对并导入，不把同一标高和统一规格列成冲突。"""
+    panel.set_evidence(_screenshot_evidence())
+    assert not panel.assembly.blocking
+    assert len([row for row in panel._rows if row.category == "杆件"]) == 8
+    _select(panel, "material")
+    panel.confirm_selected()
+    assert panel.btn_import.isEnabled()
+    assert panel.import_model()
+    assert len(panel.session.model["members"]) == 8
+    assert len(panel.session.model["sections"]) == 1
 
 
 def test_missing_spacing_is_filled_through_the_text_editor(panel):

@@ -163,6 +163,15 @@ def test_anthropic_provider_sends_image_blocks(tmp_path):
     assert sum(block["type"] == "image" for block in content) == 2
 
 
+def test_deepseek_uses_provider_budget_including_reasoning(tmp_path):
+    """实图验收：8K 上限被 7941 个思考 token 耗尽，只剩截断 JSON，重读仍失败。"""
+    image = _drawing(tmp_path)
+    client = FakeOpenAI([LAYOUT, json.dumps(_raw())])
+    result = _extractor(tmp_path, client, provider="deepseek").extract([image])
+    assert result.success
+    assert all("max_tokens" not in request for request in client.chat.requests)
+
+
 def test_provider_errors_are_reported_not_raised(tmp_path):
     """网络或密钥错误原样报给用户，不让后台线程抛出。"""
     image = _drawing(tmp_path)

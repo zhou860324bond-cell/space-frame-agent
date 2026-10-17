@@ -69,6 +69,129 @@ def _row(assembly, row_id):
     return next(row for row in assembly.rows if row.id == row_id)
 
 
+def _screenshot_evidence():
+    """按用户截图的 6000×4000×3500、四柱四梁与统一截面重建证据，不使用像素尺寸。"""
+    evidence = _evidence()
+    evidence["grids"]["x"]["axes"] = _axes(["1", "2"], [0.1, 0.7])
+    evidence["grids"]["x"]["spacings"] = [{"from": "1", "to": "2", "text": "6000"}]
+    evidence["grids"]["x"]["total"] = {"text": "6000 mm"}
+    evidence["grids"]["y"]["spacings"][0]["text"] = "4000"
+    evidence["levels"] = [{"name": "±0.000", "text": "±0.000", "source": _src()},
+                          {"name": "屋面", "text": "3.500 m", "source": _src()},
+                          {"name": "+3.500 m", "text": "+3.500 m", "source": _src()}]
+    evidence["members"] = [
+        {"label": label, "kind": "column", "at": at, "from_level": "±0.000",
+         "to_level": "屋面", "source": _src()}
+        for label, at in (("C1", ["1", "A"]), ("C2", ["2", "A"]),
+                          ("C3", ["2", "B"]), ("C4", ["1", "B"]))]
+    evidence["members"] += [
+        {"label": label, "kind": "beam", "along": along, "from": a, "to": b,
+         "levels": ["屋面"], "source": _src()}
+        for label, along, a, b in (("B1", "A", "1", "2"), ("B2", "2", "A", "B"),
+                                   ("B3", "B", "2", "1"), ("B4", "1", "B", "A"))]
+    evidence["sections"] = [{"labels": [item["label"] for item in evidence["members"]],
+                             "text": "H300×200×8×12", "source": _src()}]
+    return evidence
+
+
+def test_screenshot_evidence_generates_all_eight_members():
+    """截图中的八根杆件不应因带单位标高、跨图别名和统一截面全部变成冲突。"""
+    result = assemble(_screenshot_evidence())
+    assert not result.blocking
+    assert len(result.model["nodes"]) == len(result.model["members"]) == 8
+    assert len(result.model["supports"]) == 4
+    assert len(result.model["sections"]) == 1
+    assert {n["z"] for n in result.model["nodes"]} == {0.0, 3.5}
+    assert {n["x"] for n in result.model["nodes"]} == {0.0, 6.0}
+    assert {n["y"] for n in result.model["nodes"]} == {0.0, 4.0}
+    assert validate_payload(result.model) == []
+
+
+def test_unit_bearing_levels_and_repeated_view_names_share_one_storey():
+    """用户截图：屋面与 +3.500 m 在不同视图重复，旧实现让全部梁柱冲突。"""
+    evidence = _evidence()
+    evidence["levels"][1]["text"] = "+3.600 m"
+    evidence["levels"].append({"name": "屋面", "text": "+3.600 m", "source": _src()})
+    for member in evidence["members"]:
+        if member["kind"] == "beam":
+            member["levels"] = ["屋面", "3F"]
+    result = assemble(evidence)
+    assert not result.blocking
+    assert len(result.model["nodes"]) == 18
+    assert len(result.model["members"]) == 26
+    assert {node["z"] for node in result.model["nodes"]} == {0.0, 3.6, 7.2}
+    assert evidence["levels"][1]["text"] == "+3.600 m"
+
+
+def test_explicit_length_units_convert_to_declared_units():
+    """标注自带单位时换算，不删除单位后把 3600 mm 当作 3600 m。"""
+    evidence = _evidence()
+    evidence["levels"][1]["text"] = "3600 mm"
+    evidence["grids"]["x"]["spacings"][0]["text"] = "6 m"
+    result = assemble(evidence)
+    assert not result.blocking
+    assert {node["z"] for node in result.model["nodes"]} == {0.0, 3.6, 7.2}
+    assert {node["x"] for node in result.model["nodes"]} == {0.0, 6.0, 12.0}
+    evidence["units"]["elevation"] = None
+    missing_unit = assemble(evidence)
+    assert _row(missing_unit, "units.elevation").status == MISSING
+    assert missing_unit.model is None
+
+
+@pytest.mark.parametrize("text", ["约3.6m", "3.6m+3.6m", "3.6 ft"])
+def test_ambiguous_or_unsupported_length_text_still_blocks(text):
+    """支持单位后缀不应变成从不确定说明、算式或不支持单位中随意取数。"""
+    evidence = _evidence()
+    evidence["levels"][1]["text"] = text
+    result = assemble(evidence)
+    assert _row(result, "levels.1").status == CONFLICT
+    assert result.model is None
+
+
+def test_conflicting_values_for_same_level_name_still_block():
+    """跨图同名且异值的标高不能当别名合并，必须保留冲突。"""
+    evidence = _evidence()
+    evidence["levels"].append({"name": "2F", "text": "4.200 m", "source": _src()})
+    result = assemble(evidence)
+    assert _row(result, "levels.3").status == CONFLICT
+    assert result.model is None
+
+
+def test_shared_section_targets_explicit_member_labels():
+    """用户截图：全部梁柱同截面不能被当成不存在的单个杆件编号。"""
+    evidence = _evidence()
+    evidence["sections"] = [{"labels": ["KZ1", "KL1", "KL2"],
+                             "text": "H300×200×8×12", "source": _src()}]
+    assert validate_evidence(evidence) == []
+    result = assemble(evidence)
+    assert not result.blocking
+    assert len(result.model["sections"]) == 1
+    assert {member["section"] for member in result.model["members"]} == {"H300×200×8×12"}
+    assert _row(result, "sections.0").source.endswith("原文「H300×200×8×12」")
+    corrected = assemble(resolve(evidence, "sections.0", "H400×200×8×13"))
+    assert {m["section"] for m in corrected.model["members"]} == {"H400×200×8×13"}
+
+
+def test_shared_section_does_not_fill_unlisted_members():
+    """统一说明只应用于明确列出的编号，不扩散到未指定的杆件。"""
+    evidence = _evidence()
+    evidence["sections"] = [{"labels": ["KZ1", "KL1"],
+                             "text": "H300×200×8×12", "source": _src()}]
+    result = assemble(evidence)
+    assert _row(result, "sections+KL2").status == MISSING
+    assert result.model is None
+
+
+def test_shared_section_conflicting_assignment_is_reported():
+    """统一说明与单独截面表冲突时不能靠读取顺序静默覆盖。"""
+    evidence = _evidence()
+    evidence["sections"].append({"labels": ["KZ1", "KL1"],
+                                 "text": "H300×200×8×12", "source": _src()})
+    result = assemble(evidence)
+    assert _row(result, "sections.3").status == CONFLICT
+    assert result.model is None
+
+
 def test_frame_assembles_exact_coordinates_from_dimension_text():
     """坐标来自间距文字累加与标高文字，不来自像素；拆跨、拆层后通过模型校验。"""
     result = assemble(_evidence())
@@ -510,3 +633,17 @@ def test_level_heights_must_reference_listed_levels():
     evidence = _fema_elevation()
     evidence["level_heights"][1]["to"] = "R"
     assert any("R" in error for error in validate_evidence(evidence))
+
+
+def test_unit_suffix_is_its_own_unit_evidence():
+    """#52 实图（标高写成 +3.500 m）与 #44 英尺英寸合并后的统一规则：原文自带单位
+    （mm/cm/m 后缀或英尺英寸）就是单位证据，全部标高都带后缀时不再要求标高单位说明；
+    有一个不带后缀的数仍要求（见 test_explicit_length_units_convert_to_declared_units）。"""
+    evidence = _evidence()
+    for level, text in zip(evidence["levels"], ("±0.000 m", "3600 mm", "+7.200 m"),
+                           strict=True):
+        level["text"] = text
+    del evidence["units"]["elevation"]
+    result = assemble(resolve(evidence, "material"))
+    assert not any(row.id == "units.elevation" for row in result.rows)
+    assert {node["z"] for node in result.model["nodes"]} == {0.0, 3.6, 7.2}

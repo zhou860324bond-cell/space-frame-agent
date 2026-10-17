@@ -54,6 +54,7 @@ image 是图的序号（从 1 开始）；bbox 是 0~1 归一化坐标 [左, 上
 
 TRANSCRIBE_PROMPT = f"""你是结构施工图抄写助手。你的任务是**原样抄写图上的文字**，
 不是计算，也不是估算。只输出一个 JSON 对象，不要 Markdown、不要解释。
+同时将原文明确说明的适用范围关联到已读的杆件编号；引用图上已有编号不属于估算。
 
 下面会给出若干区域图，每张前面写着「区域 k」。所有 source.region 填区域序号，
 source.bbox 填该文字在**这张区域图**里的 0~1 归一化坐标 [左, 上, 右, 下]，
@@ -78,7 +79,7 @@ source.confidence 填你对这条读数的把握（0~1）。
     {{"label": "KZ1", "kind": "column", "at": ["1", "A"],
       "from_level": "1F", "to_level": "3F", "source": S}}
   ],
-  "sections": [{{"label": "KL1", "text": "HN400×200×8×13", "source": S}}],
+  "sections": [{{"labels": ["KL1", "KL2"], "text": "HN400×200×8×13", "source": S}}],
   "material": {{"text": "钢材均采用 Q355B", "source": S}},
   "support": {{"kind": "fixed", "text": "柱脚刚接", "source": S}},
   "notes": [{{"text": "看不清或拿不准的内容", "source": S}}]
@@ -103,15 +104,26 @@ source.confidence 填你对这条读数的把握（0~1）。
    {{"from": "下层 name", "to": "上层 name", "text": "22'-4\\"", "source": S}}；
    重复写法（如「6 at 13'-4"」）照抄成一条，from/to 写首末两层，中间没有层名的层可以不列出。
    梁的 levels、柱的 from_level/to_level 引用这些 name。平面图标明适用于哪些楼层时，
-   梁的 levels 列出所有这些楼层。
+   梁的 levels 列出所有这些楼层。text 抄写数值及其紧邻的单位（如 +3.500 m），
+   图名「屋面平面图（Z=3.500 m）」中 name 为屋面，text 为 3.500 m。
+   同一标高出现在多个视图时保留其原文，不能把屋面与 +3.500 m 当成两个不同楼层。
 6. 梁按所在位置写：along 是梁所在的轴线，from/to 是起止的另一方向轴号。
    柱写所在轴线交点 at 和起止层。只有一组轴线的立面图，梁不写 along，柱 at 只写一个轴号。
    有编号的写 label；**没有编号的梁柱也要按位置抄写，label 写 null**。同一轴线、同一层
    连续的梁可以合并成一条（from/to 写首末轴号）；同一位置从底到顶的柱写成一条。
    截面表里查不到规格时不要写 sections。
-7. units.value 只能是 mm、cm、m，且只在图上有单位说明时填写。
+7. units.value 只能是 mm、cm、m，且只在图上有明确单位证据时填写。
+   数值紧邻的单位后缀也是单位证据：如标高 +3.500 m 已明确给出标高单位 m，
+   不要求另有总说明；原文仍保留各条后缀，组装代码会按后缀换算。
 8. support.kind 只能是 fixed（刚接/固接）、pinned（铰接）；没有说明就写 null。
 9. 看不清、被遮挡、拿不准的内容写进 notes，并把对应读数的 confidence 写低。
+10. 截面说明适用于多个编号时，用一条 {{"labels": ["C1", "C2", "B1", "B2"],
+    "text": "H300×200×8×12", "source": S}} 列出明确适用的全部杆件编号。
+    「全部梁柱」「所有梁」「所有柱」是适用范围，不能写成虚构的 label。
+    原文为「全部梁柱」时，labels 必须列出 members 中每个梁柱的 label；
+    「所有梁」只列 beam 的 label，「所有柱」只列 column 的 label。
+    这是原文适用范围的引用，不是补写规格或编造编号，不能因此把 labels 留空。
+    text 只摘抄原文中的规格片段，尺寸次序、单位等解释放 notes，source 指向原说明。
 """
 
 
@@ -169,8 +181,12 @@ class DrawingExtractor:
                        {"type": "image_url",
                         "image_url": {"url": parser._encode_image(value)}}
                        for kind, value in blocks]
+            # DeepSeek 的额度包含思考 token。实图中思考占 7941/8000，JSON 尚未
+            # 写完就被截断；沿用服务的默认总额度，其他接口保留原先的输出上限。
+            # https://api-docs.deepseek.com/api/create-chat-completion/
+            options = {} if parser._provider == "deepseek" else {"max_tokens": 8000}
             response = client.chat.completions.create(
-                model=parser._model, temperature=parser._temperature, max_tokens=8000,
+                model=parser._model, temperature=parser._temperature, **options,
                 messages=[{"role": "system", "content": system},
                           {"role": "user", "content": content}])
             return response.choices[0].message.content or ""
