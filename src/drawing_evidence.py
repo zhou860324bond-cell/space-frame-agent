@@ -55,6 +55,16 @@ x 族轴线是数字轴（竖向轴线，沿水平方向排列），y 族是字�
   "source": SRC}]``：图层用途只由用户或大模型判断（``LAYER_ROLES``），
   ``role`` 为 null 表示尚未判断、暂不读取；判断结果进核对表确认。
 
+用户写的补充说明是第三种出处：代码先按句切分（:func:`split_sentences`），大模型只把
+各句里写明的内容原样抄成条目，``SRC`` 写作 ``{"statement": "T1", "sentence": 2}``，
+说明登记在 ``"statements": [{"id": "T1", "name": "补充说明", "sha256": …,
+"sentences": [...]}]``。抄出的原文必须逐字出现在所引的句子里，由
+:func:`bind_statement_sources` 确定性核对，对不上的条目不采用。
+
+多份证据（图片、几个 DXF、补充说明）由 ``drawing_merge`` 合并成一份：同一键
+（轴号对、标高名、编号）的几条读数放进主条目的 ``"alternatives"``，组装时值相同即合并、
+值不同即报冲突让用户选。
+
 间距与层高的 ``text`` 可以是英尺英寸写法和重复写法（「7 at 25'-0"」，from/to 为
 首末轴号），由 :func:`parse_dimension` 与 :func:`expand_chain` 确定性展开，原文不改。
 ``edges`` 是首末轴线到建筑外边缘的尺寸，用来认出量到外边缘的总尺寸。``levels``
@@ -399,6 +409,163 @@ def section_labels(item: Mapping[str, Any]) -> list[str]:
     return list(dict.fromkeys(label.strip() for label in labels))
 
 
+def settled(item: Any) -> bool:
+    """用户处理过的条目：确认过原值，或来源已是用户。"""
+    if not isinstance(item, Mapping):
+        return False
+    source = item.get("source")
+    return bool(item.get("confirmed")) or (isinstance(source, Mapping) and bool(source.get("user")))
+
+
+def reading(item: Mapping[str, Any]) -> str:
+    """一条读数的原文标识，用来判断用户处理时是否已经见过它（单位说明连同所填单位）。"""
+    parts = ["" if item.get("text") is None else str(item.get("text")).strip()]
+    for key in ("value", "kind"):
+        if isinstance(item.get(key), str):
+            parts.append(item[key])
+    return " | ".join(parts)
+
+
+# ---- 补充说明：逐句编号、原文核对 -------------------------------------------------
+
+#: 句子分隔符：换行与中英文句号、分号、叹号、问号。小数点「.」不算，「3.6 m」不会被切开。
+_SENTENCE_END = re.compile(r"[\n\r。；;！!？?]+")
+_UNIT_WORD = re.compile(r"毫米|厘米|米|(?<![A-Za-z])(?:mm|cm|m)(?![A-Za-z])")
+_UNIT_WORD_NAMES = {"毫米": "mm", "厘米": "cm", "米": "m"}
+
+#: 每类条目里引用名称（轴号、层名、编号）的字段；名称必须出现在原句里或是图上已读到的。
+_NAME_FIELDS = ("label", "from", "to", "along", "name", "from_level", "to_level")
+_NAME_LISTS = ("at", "levels", "labels")
+
+
+def split_sentences(text: Any) -> list[str]:
+    """把补充说明确定性地切成句子（编号从 1 起，由调用方加）；空句丢弃。"""
+    if not isinstance(text, str):
+        return []
+    return [part.strip() for part in _SENTENCE_END.split(text) if part.strip()]
+
+
+def _squash(text: Any) -> str:
+    """逐字核对用的写法归一：全角转半角、各种撇号归一、去掉空白。不改数字与单位。"""
+    return re.sub(r"\s+", "", str(text).translate(_FULL_WIDTH).translate(_PRIMES))
+
+
+def _cited(source: Any, count: int) -> list[int] | None:
+    numbers = source.get("sentence") if isinstance(source, Mapping) else None
+    numbers = numbers if isinstance(numbers, list) else [numbers]
+    if not numbers or not all(isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= count
+                              for n in numbers):
+        return None
+    return list(dict.fromkeys(numbers))
+
+
+def _sentence_label(numbers: list[int]) -> str:
+    return "第 " + "、".join(str(n) for n in numbers) + " 句"
+
+
+def bind_statement_sources(raw: Mapping[str, Any], statement_id: str, sentences: list[str],
+                           known: Any = ()) -> dict[str, Any]:
+    """把大模型从补充说明抄出的条目绑定到原句，并逐字核对；返回新证据。
+
+    每条的 ``source.sentence`` 必须指向存在的句子；``text`` 必须逐字（忽略空白与全角）
+    出现在所引句子里；引用的轴号、层名、编号要么也出现在原句里，要么是 ``known``
+    （图上已读到的名称）——后者是大模型做的关联，标为需确认。单位说明的 value 必须与
+    原文里的单位词一致。核对不过的条目不采用，写成一条要用户确认的提示（``unused``），
+    不让说明里的内容悄悄丢掉，也不让没出处的数混进来。
+    """
+    known = {str(name).strip() for name in known if str(name).strip()}
+    ev: dict[str, Any] = {key: value for key, value in dict(raw).items()}
+    notes: list[dict[str, Any]] = []
+
+    def unused(item: Mapping[str, Any], numbers: list[int] | None, reason: str) -> None:
+        where = _sentence_label(numbers) + "：" if numbers else ""
+        note: dict[str, Any] = {"text": f"{where}{reason}", "unused": True}
+        if numbers:
+            note["source"] = {"statement": statement_id,
+                              "sentence": numbers[0] if len(numbers) == 1 else numbers}
+        notes.append(note)
+
+    def bind(item: Any, names: list[str]) -> dict[str, Any] | None:
+        if not isinstance(item, Mapping):
+            return None
+        item = dict(item)
+        numbers = _cited(item.get("source"), len(sentences))
+        what = f"「{item.get('text')}」" if item.get("text") not in (None, "") else "这一条"
+        if numbers is None:
+            unused(item, None, f"补充说明里抄出的{what}没有指明出自哪一句，未采用")
+            return None
+        cited = _squash("".join(sentences[n - 1] for n in numbers))
+        text = item.get("text")
+        if isinstance(text, str) and text.strip() and _squash(text) not in cited:
+            unused(item, numbers, f"原句里没有{what}这段文字，未采用")
+            return None
+        inferred = []
+        for name in names:
+            if _squash(name) in cited or name == str(text or "").strip():
+                continue
+            if name in known:
+                inferred.append(name)
+                continue
+            unused(item, numbers, f"「{name}」既不在原句里，也不是图上已读到的名称，{what}未采用")
+            return None
+        if inferred:
+            item["check"] = (f"「{'、'.join(inferred)}」是按说明关联到图上已读到的名称，"
+                             f"原句没有直接写出；请对照说明{_sentence_label(numbers)}确认。")
+        item["source"] = {"statement": statement_id,
+                          "sentence": numbers[0] if len(numbers) == 1 else numbers}
+        return item
+
+    def names_of(item: Any) -> list[str]:
+        if not isinstance(item, Mapping):
+            return []
+        names = [item[key] for key in _NAME_FIELDS if _is_text(item.get(key))]
+        for key in _NAME_LISTS:
+            if isinstance(item.get(key), list):
+                names += [value for value in item[key] if _is_text(value)]
+        return list(dict.fromkeys(str(name).strip() for name in names))
+
+    def bind_list(items: Any) -> list[dict[str, Any]]:
+        return [bound for bound in (bind(item, names_of(item)) for item in items or [])
+                if bound is not None]
+
+    units = {}
+    for key, item in (ev.get("units") or {}).items():
+        bound = bind(item, [])
+        if bound is None:
+            continue
+        words = {_UNIT_WORD_NAMES.get(m, m) for m in _UNIT_WORD.findall(str(bound.get("text")))}
+        if words != {bound.get("value")}:
+            unused(bound, _cited(bound["source"], len(sentences)),
+                   f"「{bound.get('text')}」里的单位与填写的 {bound.get('value')} 对不上，未采用")
+            continue
+        units[key] = bound
+    ev["units"] = units
+    grids = {}
+    for family, grid in (ev.get("grids") or {}).items():
+        if not isinstance(grid, Mapping):
+            continue
+        grids[family] = {"axes": bind_list(grid.get("axes")),
+                         "spacings": bind_list(grid.get("spacings")),
+                         "total": bind(grid.get("total"), []) if grid.get("total") else None,
+                         "edges": bind_list(grid.get("edges"))}
+    ev["grids"] = grids
+    for key in ("levels", "level_heights", "members", "sections"):
+        ev[key] = bind_list(ev.get(key))
+    for key in ("material", "support"):
+        ev[key] = bind(ev.get(key), []) if ev.get(key) else None
+    hints = []
+    for note in ev.get("notes") or []:
+        if isinstance(note, Mapping) and _is_text(note.get("text")):
+            numbers = _cited(note.get("source"), len(sentences))
+            hint: dict[str, Any] = {"text": str(note["text"]).strip()}
+            if numbers:
+                hint["source"] = {"statement": statement_id,
+                                  "sentence": numbers[0] if len(numbers) == 1 else numbers}
+            hints.append(hint)
+    ev["notes"] = hints + notes
+    return ev
+
+
 # ---- 构件规格 ----------------------------------------------------------------
 
 _H_PATTERN = re.compile(r"(?:B?H[NWMTP]?)-?(\d+(?:\.\d+)?)×(\d+(?:\.\d+)?)"
@@ -528,6 +695,8 @@ def _source_errors(where: str, source: Any) -> list[str]:
     if handles is not None and not (isinstance(handles, list) and handles
                                     and all(_is_text(h) for h in handles)):
         return [f"{where}.source.handles 必须是非空的实体句柄数组"]
+    if "statement" in source and _cited(source, 10**6) is None:
+        return [f"{where}.source.sentence 必须是从 1 起的句号（或句号数组）"]
     bbox = source.get("bbox")
     if bbox is not None and not (
             isinstance(bbox, list) and len(bbox) == 4
