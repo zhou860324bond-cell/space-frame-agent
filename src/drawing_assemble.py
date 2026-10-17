@@ -14,6 +14,11 @@
 给出 z，梁沿轴线逐跨拆分，
 柱在轴线交点逐层拆分，规格交给 ``sections`` 构造器算特性，柱底按图纸说明设
 支座。**不从像素量任何长度**；图上轴线位置只用来检查抄写的间距是否可疑。
+
+几份证据合并而来（``drawing_merge``）时，同一项可能有几条读数（``alternatives``）。
+单位确定后逐项比较：换算后相同即合并，「来源」列出全部出处；不同即报冲突，下拉框
+列出每份读数及其来源，由用户选，不自动以哪边为准。只有一个方向轴线的 DXF（立面、
+剖面）与平面轴网合并时，要用户选它所在的另一方向轴线，杆件才放进三维模型。
 """
 
 from __future__ import annotations
@@ -26,7 +31,9 @@ from typing import Any, Mapping
 import sections as section_builders
 from drawing_evidence import (EVIDENCE_FORMAT, LAYER_ROLES, LENGTH_UNITS, LOW_CONFIDENCE,
                               Dimension, expand_chain, length_factor, parse_designation,
-                              parse_material, read_dimension, section_labels, unit_to_m)
+                              parse_material, read_dimension, reading, section_labels, settled,
+                              unit_to_m)
+from drawing_merge import FAMILY_NAMES, origin
 from generator import _COLUMN_REF
 from model_io import CURRENT_SCHEMA_VERSION, validate_payload
 
@@ -128,10 +135,95 @@ def _confidence(source: Any) -> float | None:
     return None
 
 
-def _settled(item: Mapping[str, Any]) -> bool:
-    source = item.get("source")
-    return bool(item.get("confirmed")) or (isinstance(source, Mapping)
-                                           and bool(source.get("user")))
+_settled = settled
+#: 读数还不能比较（不带单位的数，而单位尚未确定）；单位那一行已经要用户处理。
+_PENDING = object()
+
+
+def _equal(a: Any, b: Any) -> bool:
+    if isinstance(a, float) and isinstance(b, float):
+        return _same(a, b)
+    if isinstance(a, tuple) and isinstance(b, tuple) and len(a) == len(b):
+        return all(_equal(x, y) for x, y in zip(a, b, strict=True))
+    return a == b
+
+
+def _candidate_text(item: Mapping[str, Any]) -> str:
+    text = item.get("text")
+    if text not in (None, ""):
+        return str(text).strip()
+    for key in ("value", "kind"):
+        if item.get(key) not in (None, ""):
+            return str(item[key])
+    return "—"
+
+
+def short_source(evidence: Mapping[str, Any], source: Any) -> str:
+    """一条出处的简称：图 1、DXF「立面.dxf」、用户说明第 2 句、用户填写。"""
+    if not isinstance(source, Mapping) or source.get("user"):
+        return "用户填写"
+    if source.get("image") is not None:
+        for index, image in enumerate(evidence.get("images") or [], 1):
+            if isinstance(image, Mapping) and image.get("id") == source["image"]:
+                return f"图 {index}"
+    if source.get("file") is not None:
+        for record in evidence.get("files") or []:
+            if isinstance(record, Mapping) and record.get("id") == source["file"]:
+                return f"DXF「{record.get('name', '')}」"
+    if source.get("statement") is not None:
+        numbers = source.get("sentence")
+        numbers = numbers if isinstance(numbers, list) else [numbers]
+        return "用户说明第 " + "、".join(str(n) for n in numbers) + " 句"
+    return "出处不明"
+
+
+def candidate_options(evidence: Mapping[str, Any],
+                      candidates: list[Mapping[str, Any]]) -> tuple[str, ...]:
+    """冲突行的下拉选项：每份读数的原文加来源简称，选项互不相同。"""
+    options: list[str] = []
+    for item in candidates:
+        option = f"{_candidate_text(item)}（{short_source(evidence, item.get('source'))}）"
+        base, count = option, 2
+        while option in options:
+            option, count = f"{base} 之{count}", count + 1
+        options.append(option)
+    return tuple(options)
+
+
+def _planar(item: Mapping[str, Any]) -> bool:
+    """只在一个方向轴线上定位的杆件：梁没有所在轴线、柱只给了一个轴号（立面、剖面上读到的）。"""
+    if item.get("kind") == "beam":
+        return not str(item.get("along") or "").strip()
+    return item.get("kind") == "column" and len(item.get("at") or []) == 1
+
+
+def _run_label(item: Mapping[str, Any]) -> str:
+    ref = item.get("from") if item.get("kind") == "beam" else (item.get("at") or [""])[0]
+    return str(ref or "").strip()
+
+
+def unplaced_views(evidence: Mapping[str, Any]) -> list[str]:
+    """有平面内杆件、而合并后的轴网里没有另一方向轴线可选的各份证据（出处标识）。
+
+    这些视图的杆件都按另一方向坐标 0 放置；不止一份时它们会落在同一平面上，
+    是否真的是同一榀框架只有用户知道。"""
+    labels = {family: {str(axis.get("label") or "").strip() for axis in
+                       ((evidence.get("grids") or {}).get(family) or {}).get("axes") or []
+                       if isinstance(axis, Mapping)} for family in ("x", "y")}
+    views = []
+    for item in evidence.get("members") or []:
+        if not isinstance(item, Mapping) or item.get("deleted") or not _planar(item):
+            continue
+        run = next((family for family in ("x", "y") if _run_label(item) in labels[family]), None)
+        if run is None or labels["y" if run == "x" else "x"]:
+            continue
+        views.append(origin(item.get("source")))
+    return sorted(set(views))
+
+
+def _origin_source(view: str) -> dict[str, Any]:
+    kind, _, ident = view.partition(":")
+    return {kind: ident} if ident else {"user": True}
 
 
 def _base_status(item: Mapping[str, Any]) -> tuple[str, str]:
@@ -271,20 +363,43 @@ class _Builder:
                        if isinstance(item, Mapping)}
         self.files = {str(item.get("id")): item for item in evidence.get("files") or []
                       if isinstance(item, Mapping)}
+        self.statements = {str(item.get("id")): item for item in evidence.get("statements") or []
+                           if isinstance(item, Mapping)}
         self.f_len: float | None = None
         self.f_elev: float | None = None
         #: 尺寸单位未定、坐标只是相对值的轴网方向；这些方向不往原图上画轴线。
         self.provisional: set[str] = set()
+        #: 几份读数互相冲突的条目已由冲突行占住；后续同一行号不再另加一行。
+        self.claimed: dict[str, CheckRow] = {}
 
     # ---- 行与来源 ----
     def source_text(self, item: Mapping[str, Any] | None) -> str:
         if not item:
             return "图上未读到"
+        texts = [self._source_one(item)] + [
+            self._source_one(alt) for alt in item.get("alternatives") or []
+            if isinstance(alt, Mapping)]
+        text = "；".join(dict.fromkeys(texts))
+        before = item.get("alternatives_before")
+        if isinstance(before, list) and before and not (item.get("source") or {}).get("user"):
+            text += f"（用户在 {len(before) + 1} 份读数中选定）"
+        return text
+
+    def _source_one(self, item: Mapping[str, Any]) -> str:
         source = item.get("source")
         if isinstance(source, Mapping) and source.get("user"):
             return "用户填写"
         raw = item.get("text")
         parts = []
+        if isinstance(source, Mapping) and str(source.get("statement")) in self.statements:
+            sentences = self.statements[str(source["statement"])].get("sentences") or []
+            numbers = source.get("sentence")
+            numbers = numbers if isinstance(numbers, list) else [numbers]
+            quoted = "".join(sentences[n - 1] for n in numbers
+                             if isinstance(n, int) and 0 < n <= len(sentences))
+            if len(quoted) > 24:
+                quoted = quoted[:24] + "…"
+            parts.append(short_source(self.ev, source) + (f"「{quoted}」" if quoted else ""))
         if isinstance(source, Mapping) and str(source.get("image")) in self.images:
             index, image = self.images[str(source.get("image"))]
             parts.append(f"图 {index}「{image.get('name', '')}」")
@@ -305,6 +420,8 @@ class _Builder:
             item: Mapping[str, Any] | None, status: str, message: str = "", *,
             edit: str = "none", options: tuple[str, ...] = (),
             current: str = "", reread: str = "") -> CheckRow:
+        if row_id in self.claimed:
+            return self.claimed[row_id]
         source = item.get("source") if item else None
         image = bbox = None
         if isinstance(source, Mapping) and not source.get("user"):
@@ -314,6 +431,166 @@ class _Builder:
                        message, image, bbox, edit, options, current, reread)
         self.rows.append(row)
         return row
+
+    # ---- 几份证据的读数对照 ----
+    def reconcile(self, row_id: str, category: str, item_name: str,
+                  item: Mapping[str, Any] | None, value_of) -> None:
+        """同一项有几条读数时逐条换算比较：相同就合并（来源列出全部出处），不同就报冲突。
+
+        冲突行占住 ``row_id``，下拉框列出每份读数与来源；后续计算仍用第一份读数，
+        但这一行不解决就不会生成模型。"""
+        if not isinstance(item, Mapping):
+            return
+        candidates = [item] + [alt for alt in item.get("alternatives") or []
+                               if isinstance(alt, Mapping)]
+        if len(candidates) < 2:
+            return
+        values = [value_of(candidate) for candidate in candidates]
+        if any(value is _PENDING for value in values):
+            return
+        if all(value is not None for value in values) and all(
+                _equal(values[0], value) for value in values[1:]):
+            return
+        if all(value is None for value in values) and len(
+                {reading(candidate) for candidate in candidates}) == 1:
+            return
+        detail = "；".join(f"{self._source_one(c)}" for c in candidates)
+        row = self.add(row_id, category, item_name,
+                       " / ".join(_candidate_text(c) for c in candidates), item, CONFLICT,
+                       f"{len(candidates)} 份证据的读数不同：{detail}。请对照原图在下拉框中选择正确的"
+                       "一项；不自动以哪一份为准。", edit="choice",
+                       options=candidate_options(self.ev, candidates))
+        self.claimed[row_id] = row
+
+    def _length_value(self, item: Mapping[str, Any]) -> Any:
+        try:
+            dim = read_dimension(item)
+        except ValueError:
+            return None
+        if not dim.unit and self.f_len is None:
+            return _PENDING
+        return _dim_m(dim, dim.total, self.f_len)
+
+    def _level_value(self, item: Mapping[str, Any]) -> Any:
+        if not str(item.get("text") or "").strip():
+            return None
+        try:
+            dim = read_dimension(item)
+        except ValueError:
+            return None
+        if dim.count != 1:
+            return None
+        if not dim.unit and self.f_elev is None:
+            return _PENDING
+        return _dim_m(dim, dim.value, self.f_elev)
+
+    def reconcile_lengths(self) -> None:
+        for family in ("x", "y"):
+            grid = (self.ev.get("grids") or {}).get(family) or {}
+            if not isinstance(grid, Mapping):
+                continue
+            name = "x 向（数字轴）" if family == "x" else "y 向（字母轴）"
+            for index, item in enumerate(grid.get("spacings") or []):
+                if isinstance(item, Mapping):
+                    self.reconcile(f"grids.{family}.spacings.{index}", "轴网",
+                                   f"轴 {item.get('from')}→{item.get('to')} 间距", item,
+                                   self._length_value)
+            self.reconcile(f"grids.{family}.total", "轴网", f"{name}总尺寸", grid.get("total"),
+                           self._length_value)
+            for index, item in enumerate(grid.get("edges") or []):
+                self.reconcile(f"grids.{family}.edges.{index}", "轴网", f"{name}外边距", item,
+                               self._length_value)
+        for index, item in enumerate(self.ev.get("level_heights") or []):
+            if isinstance(item, Mapping):
+                self.reconcile(f"level_heights.{index}", "标高",
+                               f"层高 {item.get('from')}→{item.get('to')}", item,
+                               self._length_value)
+
+    def reconcile_levels(self) -> None:
+        for index, item in enumerate(self.ev.get("levels") or []):
+            if isinstance(item, Mapping):
+                self.reconcile(f"levels.{index}", "标高", f"标高 {item.get('name')}", item,
+                               self._level_value)
+
+    def order_problems(self) -> None:
+        """几份证据的轴号（或层名）先后顺序合不起来：交给用户，不猜。"""
+        for family in ("x", "y"):
+            grid = (self.ev.get("grids") or {}).get(family) or {}
+            problem = grid.get("order_problem") if isinstance(grid, Mapping) else None
+            if problem:
+                labels = "、".join(str(axis.get("label")) for axis in grid.get("axes") or []
+                                  if isinstance(axis, Mapping))
+                self.add(f"grids.{family}.order", "轴网", f"{FAMILY_NAMES[family]}轴号顺序",
+                         labels, None, CONFLICT, str(problem))
+        if self.ev.get("level_order_problem"):
+            self.add("levels.order", "标高", "层名顺序", "—", None, CONFLICT,
+                     str(self.ev["level_order_problem"]))
+
+    # ---- 视图：只有一个方向轴线的 DXF 放进三维 ----
+    def views(self, active: list[tuple[int, Mapping[str, Any]]], x_labels: list[str],
+              y_labels: list[str]) -> list[tuple[int, Mapping[str, Any]]]:
+        """返回可以组装的杆件（DXF 立面上的杆件补上所选的所在轴线）。
+
+        DXF 一个文件只读一个视图，所以「所在轴线」按文件选一次；图片里可能有几个视图，
+        仍按杆件逐条报缺。合并后没有另一方向轴线、却有不止一份视图时，问用户它们是不是
+        同一榀框架，不默认叠在一起。"""
+        labels = {"x": x_labels, "y": y_labels}
+        family_of = {label: family for family in ("x", "y") for label in labels[family]}
+        files = {str(record.get("id")): (index, record) for index, record in
+                 enumerate(self.ev.get("files") or []) if isinstance(record, Mapping)}
+        by_file: dict[str, list[tuple[int, Mapping[str, Any]]]] = {}
+        for index, item in active:
+            fid = (item.get("source") or {}).get("file")
+            if _planar(item) and str(fid) in files:
+                by_file.setdefault(str(fid), []).append((index, item))
+        placed: dict[int, Mapping[str, Any]] = {}
+        skipped: set[int] = set()
+        for fid, members in by_file.items():
+            run = next((family_of[_run_label(m)] for _, m in members
+                        if _run_label(m) in family_of), None)
+            if run is None:
+                continue
+            cross = "y" if run == "x" else "x"
+            options = tuple(labels[cross])
+            if not options:
+                continue
+            index, record = files[fid]
+            plane = str(record.get("plane") or "").strip()
+            row_id, name = f"files.{index}.plane", f"DXF「{record.get('name', '')}」所在轴线"
+            if plane in options:
+                self.add(row_id, "视图", name, f"{FAMILY_NAMES[cross]}轴 {plane}",
+                         {"source": {"user": True}}, OK,
+                         "这份 DXF 只有一个方向的轴线（立面或剖面），杆件按所选轴线放进三维模型。",
+                         edit="choice", options=options, current=plane)
+                for member_index, item in members:
+                    item = dict(item)
+                    if item.get("kind") == "beam":
+                        item["along"] = plane
+                    else:
+                        item["at"] = [*item["at"], plane]
+                    placed[member_index] = item
+                continue
+            message = (f"这份 DXF 只有一个方向的轴线（立面或剖面），而平面轴网还有"
+                       f"{FAMILY_NAMES[cross]}轴线。请选择它画的是哪一根{FAMILY_NAMES[cross]}轴线上"
+                       "的框架，杆件按这根轴线放进三维模型；不按图名或文件名猜。")
+            if plane:
+                message = f"所选轴线「{plane}」不在{FAMILY_NAMES[cross]}轴号中。" + message
+            self.add(row_id, "视图", name, plane or "—", None, CONFLICT if plane else MISSING,
+                     message, edit="choice", options=options)
+            skipped |= {member_index for member_index, _ in members}
+        views = unplaced_views(self.ev)
+        if len(views) > 1:
+            names = "、".join(short_source(self.ev, _origin_source(view)) for view in views)
+            same = self.ev.get("views") if isinstance(self.ev.get("views"), Mapping) else {}
+            agreed = bool(same.get("same_plane")) and sorted(same.get("seen") or []) == views
+            self.add("views", "视图", "几份立面是否同一榀", names, same if agreed else None,
+                     OK if agreed else CONFIRM,
+                     f"{names} 都只有一个方向的轴线，合并后杆件落在同一平面。"
+                     + ("已确认是同一榀框架。" if agreed else
+                        "如果它们画的是同一榀框架，点「确认原值」按同一平面合并；如果不是，"
+                        "请加入含另一方向轴网的平面图（DXF 立面随后可以选择所在轴线）。"))
+        return [(index, placed.get(index, item)) for index, item in active
+                if index not in skipped]
 
     # ---- 图层用途（矢量入口） ----
     def layers(self) -> None:
@@ -331,7 +608,9 @@ class _Builder:
             else:
                 status, value = CONFIRM, LAYER_ROLES[role]
                 message = str(item.get("check") or "") or "图层用途须经确认。"
-            self.add(f"layers.{index}", "图层", f"图层「{item.get('name')}」",
+            owner = self.files.get(str(item.get("file") or (item.get("source") or {}).get("file")))
+            where = f"DXF「{owner.get('name', '')}」" if owner and len(self.files) > 1 else ""
+            self.add(f"layers.{index}", "图层", f"{where}图层「{item.get('name')}」",
                      f"{value}（{summary}）" if summary else value, item, status, message,
                      edit="choice", options=tuple(LAYER_CHOICES),
                      current=LAYER_ROLES.get(role, ""))
@@ -344,6 +623,10 @@ class _Builder:
         value = item.get("value")
         factor = length_factor(value) if value in LENGTH_UNITS else None
         row_id = f"units.{key}"
+        self.reconcile(row_id, "单位", label, item,
+                       lambda c: c.get("value") if c.get("value") in LENGTH_UNITS else None)
+        if row_id in self.claimed:
+            return None
         if factor is None:
             if needed:
                 self.add(row_id, "单位", label, "—", item or None, MISSING,
@@ -727,6 +1010,8 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     has_sections = any(isinstance(item, Mapping) for item in evidence.get("sections") or [])
     len_needed = plain_length or has_sections or not length_items
     b.f_len = b.unit("length", "尺寸单位", len_needed, inch_length)
+    b.reconcile_lengths()
+    b.order_problems()
     uses_y = any(item.get("kind") == "beam" and item.get("along")
                  or item.get("kind") == "column" and len(item.get("at") or []) == 2
                  for _, item in active)
@@ -741,6 +1026,7 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     elev_needed = plain_elev or (not levels_ev and bool(active))
     if levels_ev or active:
         b.f_elev = b.unit("elevation", "标高单位", elev_needed, inch_elev)
+    b.reconcile_levels()
     levels = b.levels(needed=bool(active))
     axes = {family: coords for family, coords in (("x", x_coords), ("y", y_coords))
             if coords and family not in b.provisional}
@@ -752,7 +1038,10 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     used_labels: list[str] = []
     level_order = list({value: _level_key(levels, [], name)
                         for name, value in sorted(levels.items(), key=lambda pair: pair[1])}.values())
-    for index, item in active:
+    # 有编号的先排：另一视图里同一位置没写编号的杆件随后按同一根合并，不报重叠。
+    placed = sorted(b.views(active, x_labels, y_labels),
+                    key=lambda pair: not str(pair[1].get("label") or "").strip())
+    for index, item in placed:
         kind = item.get("kind")
         label = str(item.get("label") or "").strip() or UNNUMBERED.get(kind, f"杆件{index + 1}")
         row_id = f"members.{index}"
@@ -763,20 +1052,25 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
             b.add(row_id, "杆件", label, _describe_member(item), item, CONFLICT, str(exc),
                   edit="choice", options=(DELETE_CHOICE,), reread=f"杆件 {label}：{exc}")
             continue
-        overlap = None
-        for key, piece in pieces:
-            other = segments.get(key)
-            if other is not None and other["label"] != label:
-                overlap = other["label"]
-                break
+        others = [segments.get(key) for key, _ in pieces]
+        overlap = next((other for other in others
+                        if other is not None and other["label"] != label), None)
+        if overlap and not str(item.get("label") or "").strip() and all(others):
+            names = "、".join(dict.fromkeys(other["label"] for other in others))
+            status, message = _base_status(item)
+            b.add(row_id, "杆件", label, _describe_member(item), item, status,
+                  (message + " " if message else "") + f"与 {names} 位置相同，按同一杆件合并"
+                  "（这一条没有写编号）。", edit="choice", options=(DELETE_CHOICE,))
+            continue
         if overlap:
+            name = overlap["label"]
             b.add(row_id, "杆件", label, _describe_member(item), item, CONFLICT,
-                  f"与 {overlap} 位置重叠；请删除读错的那一条。",
+                  f"与 {name}（{b.source_text(overlap['item'])}）位置重叠；请删除读错的那一条。",
                   edit="choice", options=(DELETE_CHOICE,),
-                  reread=f"杆件 {label} 与 {overlap} 落在同一位置")
+                  reread=f"杆件 {label} 与 {name} 落在同一位置")
             continue
         for key, piece in pieces:
-            segments.setdefault(key, {"label": label, "kind": kind, "ends": piece})
+            segments.setdefault(key, {"label": label, "kind": kind, "ends": piece, "item": item})
             member_paths.setdefault(key, row_id)
         if label not in used_labels:
             used_labels.append(label)
@@ -805,6 +1099,7 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     for index, item, labels in sec_items:
         label = "、".join(labels)
         row_id = f"sections.{index}"
+        b.reconcile(row_id, "截面", f"{label} 规格", item, _designation_name)
         text = str(item.get("text") or "")
         try:
             shape = parse_designation(text)
@@ -847,6 +1142,7 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     material_item = evidence.get("material") if isinstance(evidence.get("material"),
                                                            Mapping) else None
     material = None
+    b.reconcile("material", "材料", "材料", material_item, _material_value)
     try:
         material = parse_material((material_item or {}).get("text"))
     except ValueError as exc:
@@ -866,6 +1162,8 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     support_item = evidence.get("support") if isinstance(evidence.get("support"),
                                                          Mapping) else None
     support_kind = (support_item or {}).get("kind")
+    b.reconcile("support", "支座", "柱底支座", support_item,
+                lambda c: c.get("kind") if c.get("kind") in SUPPORT_FIX else None)
     if support_kind not in SUPPORT_FIX:
         b.add("support", "支座", "柱底支座", "—", support_item, MISSING,
               "图上没有读到柱脚做法说明；请按图纸选择，不设默认。",
@@ -880,7 +1178,14 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
     # 识别提示不逐条确认：它涉及的每个数都已在自己那一行按置信度、缺失或冲突处理，
     # 这里只列出来供对照原图（真实验收中提示多时逐条点击过于繁琐）。
     for index, note in enumerate(evidence.get("notes") or []):
-        if isinstance(note, Mapping) and str(note.get("text") or "").strip():
+        if isinstance(note, Mapping) and note.get("unused") and str(note.get("text") or "").strip():
+            done = _settled(note)
+            b.add(f"notes.{index}", "说明", "未采用的说明", str(note["text"]).strip(), note,
+                  INFO if done else CONFIRM,
+                  "已确认不采用这一处说明。" if done else
+                  "补充说明里的这一处没有采用，原因见「值」。请改写这句说明后重新识别；"
+                  "如果不需要它，点「确认原值」按不采用处理。")
+        elif isinstance(note, Mapping) and str(note.get("text") or "").strip():
             b.add(f"notes.{index}", "图纸", "识别提示", str(note["text"]).strip(), note, INFO,
                   "识别时看不清或拿不准的内容，仅供对照原图；相关读数已在各自的行里核对，"
                   "不影响生成。")
@@ -904,6 +1209,22 @@ def assemble(evidence: Mapping[str, Any]) -> Assembly:
         b.add("model", "模型", "模型校验", "未通过", None, CONFLICT, "；".join(errors[:5]))
         return Assembly(b.rows, None, axes=axes)
     return Assembly(b.rows, model, provenance, axes)
+
+
+def _designation_name(item: Mapping[str, Any]) -> str | None:
+    try:
+        return parse_designation(str(item.get("text") or ""))["name"]
+    except ValueError:
+        return None
+
+
+def _material_value(item: Mapping[str, Any]) -> tuple[str, float, float] | None:
+    """牌号连同参数一起比较：Q235 与 Q355 弹性模量相同，但不是同一种材料。"""
+    try:
+        material = parse_material(item.get("text"))
+    except ValueError:
+        return None
+    return str(material["name"]), float(material["E"]), float(material["nu"])
 
 
 def _member_pieces(item, kind, x_labels, y_labels, x_set, y_set, levels, levels_ev,
@@ -1065,6 +1386,32 @@ def _build_model(evidence, segments, member_paths, x_coords, y_coords, levels,
 
 # ---- 用户处理写回证据 ----------------------------------------------------------
 
+def _choose(ev: dict, row_id: str, text: str | None) -> dict | None:
+    """冲突行的处理：在几份读数里选一项。选中的读数保留自己的出处并记为已确认。"""
+    if text is None:
+        return None
+    try:
+        item = _walk(ev, row_id.split("."))
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+    if not isinstance(item, dict) or not item.get("alternatives"):
+        return None
+    candidates = [item] + [alt for alt in item["alternatives"] if isinstance(alt, Mapping)]
+    options = candidate_options(ev, candidates)
+    if text not in options:
+        return None
+    position = options.index(text)
+    seen = sorted({reading(candidate) for candidate in candidates} | set(item.get("seen") or []))
+    chosen = {key: value for key, value in deepcopy(dict(candidates[position])).items()
+              if key != "alternatives"}
+    others = [{key: value for key, value in deepcopy(dict(candidate)).items()
+               if key != "alternatives"}
+              for index, candidate in enumerate(candidates) if index != position]
+    item.clear()
+    item.update(chosen, alternatives_before=others, seen=seen, confirmed=True)
+    return ev
+
+
 def _walk(container: Any, parts: list[str]) -> Any:
     for part in parts:
         container = container[int(part)] if isinstance(container, list) else container[part]
@@ -1084,7 +1431,13 @@ def resolve(evidence: Mapping[str, Any], row_id: str, value: str | None = None) 
         raise ValueError("请填写内容后再应用。")
 
     def settle(item: dict, **fields) -> None:
+        # 记下处理时见过的全部读数：重读后出现没见过的原文才重新报冲突。
+        item["seen"] = sorted({reading(item), *(reading(alt) for alt in
+                                                 item.get("alternatives") or []),
+                               *(item.get("seen") or [])})
         if fields:
+            if item.get("alternatives"):
+                item["alternatives_before"] = item.pop("alternatives")
             if item.get("source") is not None and not item.get("source", {}).get("user"):
                 item.setdefault("source_before", item["source"])
             if "value" in item:     # 用户改写后以文字为准，实测值留作追溯
@@ -1094,6 +1447,23 @@ def resolve(evidence: Mapping[str, Any], row_id: str, value: str | None = None) 
             item["source"] = dict(user)
         item["confirmed"] = True
 
+    chosen = _choose(ev, row_id, text)
+    if chosen is not None:
+        return chosen
+    if row_id == "views":
+        ev["views"] = {"same_plane": True, "seen": unplaced_views(ev), "confirmed": True,
+                       "source": dict(user)}
+        return ev
+    if row_id.startswith("files.") and row_id.endswith(".plane"):
+        try:
+            record = ev["files"][int(row_id.split(".")[1])]
+        except (KeyError, IndexError, ValueError, TypeError) as exc:
+            raise ValueError(f"核对项 {row_id} 已不存在，请重新识别。") from exc
+        if text is None and not record.get("plane"):
+            raise ValueError("请在下拉框中选择这份 DXF 所在的轴线后点「应用修改」。")
+        if text is not None:
+            record["plane"] = text
+        return ev
     if row_id.startswith("units."):
         key = row_id.split(".", 1)[1]
         units = ev.setdefault("units", {})

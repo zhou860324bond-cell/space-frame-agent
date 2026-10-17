@@ -21,6 +21,9 @@
 
 **几何坐标只用来判断「哪个实体挨着哪根轴线、哪个标高」，从不换算成长度。**
 读不到、对不上的内容写进 ``notes`` 或保持缺失，由核对表交给用户。
+
+一个文件只读一个视图。几个 DXF（以及图片、补充说明）可以一起使用：每个文件按
+``file_id``（D1、D2…）各自产出证据，由 ``drawing_merge`` 合并后交给组装。
 """
 
 from __future__ import annotations
@@ -210,9 +213,9 @@ def _collect(doc) -> _Content:
     return content
 
 
-def file_record(path: str | Path) -> dict[str, Any]:
+def file_record(path: str | Path, file_id: str = "D1") -> dict[str, Any]:
     path = Path(path)
-    return {"id": "D1", "name": path.name, "path": str(path), "sha256": file_digest(path),
+    return {"id": file_id, "name": path.name, "path": str(path), "sha256": file_digest(path),
             "kind": "dxf"}
 
 
@@ -340,8 +343,8 @@ class _Reader:
             for label, items in entries.items():
                 coords = sorted({coord for coord, _, _ in items})
                 if coords[-1] - coords[0] > tol:
-                    raise DxfError(f"轴号「{label}」在图中出现在 {len(coords)} 处，本版 DXF 入口"
-                                   "一次只读一个视图；请在 CAD 中把各视图另存为单独的 DXF 再分别识别。")
+                    raise DxfError(f"轴号「{label}」在图中出现在 {len(coords)} 处，一个 DXF 文件"
+                                   "只读一个视图；请在 CAD 中把各视图另存为单独的 DXF，再一起加入。")
                 handles = [h for _, hs, _ in items for h in hs]
                 axes.append({"label": label, "coord": coords[0], "handles": handles,
                              "layer": items[0][2]})
@@ -590,17 +593,32 @@ def _layer_items(summaries: list[dict[str, Any]],
                                             if key not in ("name", "summary")}
     items = []
     for summary in summaries:
-        item = {"name": summary["name"], "role": None, "summary": summary["summary"],
+        item = {"name": summary["name"], "file": "D1", "role": None,
+                "summary": summary["summary"],
                 "source": {"file": "D1", "layer": summary["name"]}}
         item.update(given.get(summary["name"], {}))
         items.append(item)
     return items
 
 
+def _retarget(value: Any, file_id: str) -> Any:
+    """把证据里全部出处的文件号改成 ``file_id``（读取器内部一律先写 D1）。"""
+    if isinstance(value, list):
+        return [_retarget(item, file_id) for item in value]
+    if not isinstance(value, dict):
+        return value
+    out = {key: _retarget(item, file_id) for key, item in value.items()}
+    if "file" in out and isinstance(out["file"], str):
+        out["file"] = file_id
+    return out
+
+
 def read_dxf(path: str | Path,
-             layers: Mapping[str, str | None] | Sequence[Mapping[str, Any]] | None = None
-             ) -> dict[str, Any]:
-    """读一个 DXF，按图层用途产出文字证据（格式同图片入口）。"""
+             layers: Mapping[str, str | None] | Sequence[Mapping[str, Any]] | None = None,
+             file_id: str = "D1") -> dict[str, Any]:
+    """读一个 DXF，按图层用途产出文字证据（格式同图片入口）。
+
+    ``file_id`` 是这份文件在合并证据里的编号；几个 DXF 一起使用时各取 D1、D2…。"""
     path = Path(path)
     content = _collect(_open(path))
     items = _layer_items(_layer_summaries(content), layers)
@@ -637,12 +655,17 @@ def read_dxf(path: str | Path,
             "value": unit, "text": f"$INSUNITS = {content.insunits}（{_UNIT_NAMES[unit]}）",
             "source": {"file": "D1", "header": "$INSUNITS"},
             "check": "取自文件头 $INSUNITS；不少图纸没有正确设置这一项，请对照尺寸数值确认。"}
+    if file_id != "D1":
+        evidence = _retarget(evidence, file_id)
+        evidence["files"][0]["id"] = file_id
     return evidence
 
 
 def reread(evidence: Mapping[str, Any], path: str | Path) -> dict[str, Any]:
     """图层用途改变后按新用途重读；单位、材料、支座上用户已处理的结果保留。"""
-    fresh = read_dxf(path, evidence.get("layers") or [])
+    files = [record for record in evidence.get("files") or [] if isinstance(record, Mapping)]
+    fresh = read_dxf(path, evidence.get("layers") or [],
+                     file_id=str(files[0].get("id")) if files else "D1")
     for key in ("material", "support"):
         item = evidence.get(key)
         if isinstance(item, Mapping) and (item.get("confirmed") or
@@ -692,7 +715,8 @@ def judge_layers(call: Callable[[str, str], str], summaries: list[dict[str, Any]
 
 
 def model_layer_items(path: str | Path, roles: Mapping[str, str | None], judge: str,
-                      keep: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
+                      keep: Sequence[Mapping[str, Any]] = (), file_id: str = "D1"
+                      ) -> list[dict[str, Any]]:
     """大模型判断结果 → 证据 ``layers`` 条目（待用户确认）；``keep`` 里用户已定的图层不改。"""
     kept = {str(item.get("name")): dict(item) for item in keep}
     items = []
@@ -701,8 +725,8 @@ def model_layer_items(path: str | Path, roles: Mapping[str, str | None], judge: 
             items.append(kept[summary["name"]])
             continue
         role = roles.get(summary["name"])
-        item = {"name": summary["name"], "role": role,
-                "source": {"file": "D1", "layer": summary["name"]}}
+        item = {"name": summary["name"], "file": file_id, "role": role,
+                "source": {"file": file_id, "layer": summary["name"]}}
         if role is not None:
             item["check"] = f"由大模型（{judge}）按图层名与内容判断，请确认。"
         items.append(item)
