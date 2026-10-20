@@ -1,0 +1,131 @@
+{
+  "case": "three_arm",
+  "same_nodes": 69653,
+  "same_elements": 37643,
+  "constraints": 18,
+  "constraint_pivot_condition": 7.962307488657488,
+  "historical_constraint_residual": 9.237055564881302e-14,
+  "abaqus_constraint_residual_mm": 1.1701094586963797e-07,
+  "displacement_relative_l2": 2.6231998282591634e-08,
+  "reaction_relative_l2": 3.019250146421374e-08,
+  "mean_stress_relative_l2": 1.331294462806907e-08,
+  "element_max_mises_relative_l2": 4.27185989790721e-08,
+  "native_peak_mpa": 646.3352277734756,
+  "abaqus_peak_mpa": 646.335205078125,
+  "native_max_u_mm": 48.40564875364073,
+  "abaqus_max_u_mm": 48.40564960123696,
+  "native_energy_nmm": 28364.17735426181,
+  "abaqus_boundary_work_nmm": 28364.171380414293,
+  "abaqus_force_balance_n": [
+    -0.0023813153576526247,
+    0.0005148119356590541,
+    0.0030084411014463797
+  ],
+  "abaqus_moment_balance_nmm": [
+    0.38524016942392336,
+    -0.33860188650294276,
+    -0.10881060879546567
+  ],
+  "cuts": {
+    "1": {
+      "force_n": [
+        -1694.9945989401556,
+        -7223.607510461767,
+        453.2034572223756
+      ],
+      "moment_nmm": [
+        5962459.6304696165,
+        -11189347.996993104,
+        166431.8053375495
+      ]
+    },
+    "2": {
+      "force_n": [
+        608.5021700764413,
+        1088.212732168544,
+        -3600.102032328667
+      ],
+      "moment_nmm": [
+        -234407.54009204105,
+        11223111.742981004,
+        146339.25293610722
+      ]
+    },
+    "3": {
+      "force_n": [
+        1086.4900475483646,
+        6135.395293105172,
+        3146.901583547395
+      ],
+      "moment_nmm": [
+        -5728051.705137407,
+        -33764.08458977755,
+        -312771.1670842656
+      ]
+    }
+  },
+  "constraint_export": "C u = g; QR chooses independent pivots; invertible row transformation; exact Abaqus EQUATION with prescribed auxiliary DOFs",
+  "odb_metadata": {
+    "elements": 37643,
+    "fields": [
+      "RF",
+      "S",
+      "U"
+    ],
+    "frame": 1,
+    "instance": "PART-1-1",
+    "step": "Static",
+    "version": "Abaqus/Standard 6.14-1",
+    "time": 1.0,
+    "nodes": 69671,
+    "odb": "C:\\Users\\86318\\AppData\\Local\\Temp\\sfshot_20261020_three_arm\\matched.odb",
+    "history": {
+      "Assembly Assembly-1/ALLWK": 28364.16796875,
+      "Assembly Assembly-1/ALLAE": 0.0,
+      "Assembly Assembly-1/ALLSE": 28364.177734375
+    }
+  },
+  "abaqus_mesh_peak_change_last": 0.12638886708140365,
+  "native_cut_force_error_max": 1.3229210444195294,
+  "same_mesh_warning_lines": [
+    "***WARNING: MPCS (EXTERNAL or INTERNAL, including those generated from rigid",
+    "***WARNING: 14 elements are distorted. Either the isoparametric angles are out",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69654 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69654 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69655 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69655 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69656 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69656 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69657 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69657 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69658 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69658 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69659 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69659 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69660 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69660 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69661 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69661 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69662 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69662 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69663 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69663 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69664 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69664 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69665 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69665 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69666 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69666 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69667 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69667 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69668 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69668 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69669 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69669 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69670 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69670 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 2 IS NOT ACTIVE ON NODE 69671 - THIS BOUNDARY",
+    "***WARNING: DEGREE OF FREEDOM 3 IS NOT ACTIVE ON NODE 69671 - THIS BOUNDARY",
+    "***WARNING: Boundary conditions are specified on inactive dof of 18 nodes. The"
+  ]
+}
