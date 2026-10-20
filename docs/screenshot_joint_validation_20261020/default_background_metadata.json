@@ -1,0 +1,21 @@
+{
+  "images": [
+    {
+      "case": "two_arm", 
+      "output": "two_arm_default_background", 
+      "odb": "two_arm.odb", 
+      "p99_mises_mpa": 61.3249473571777
+    }, 
+    {
+      "case": "three_arm", 
+      "output": "three_arm_default_background", 
+      "odb": "three_arm.odb", 
+      "p99_mises_mpa": 119.146369934082
+    }
+  ], 
+  "graphics": {
+    "backgroundStyle": "GRADIENT", 
+    "backgroundColor": "#1B2D46", 
+    "backgroundBottomColor": "#A3B1C6"
+  }
+}
