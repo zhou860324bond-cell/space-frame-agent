@@ -5,7 +5,17 @@
 - 起因：用户要求重拍实体云图截图（成品在桌面「新建文件夹/实体云图重拍_20261021」，不入库）。重拍时发现 export_screenshot 把 plotter.screenshot 的物理像素画面 scaled 到视口逻辑尺寸，再画进设备像素比 1.5 的整窗图，等于先缩小再放大，标签和网格线发虚；且按视口 geometry 铺，盖住了视口 1 px 边框。分支 claude/retake-screenshots-60d1f6（基于 507dd97）。
 - 修改：VTK 画面按 截图宽/插值器逻辑宽 设设备像素比，贴在插值器左上角，不再缩放。通用改动，不依赖缩放比例。
 - 回归：新增 test_export_screenshot_keeps_viewport_pixels_on_high_dpi（模拟 2 倍设备像素比的整窗图，VTK 画面用 1 px 棋盘格，导出后视口中心 40×40 像素必须逐位相同），旧代码上确认失败。截图相关 3 项通过；真实屏幕（150%）用三向节点实体结果实拍，标签与网格线清楚。全量收集 3107 项（collect-only，未跑全量）；README、报告三处计数已同步。
+- 2026-10-22 #61 先合入 master，本分支合并 master：export_screenshot 自动合并（VTK 画面按物理像素贴回 + 浮层按遮罩裁剪），CHANGELOG、PROGRESS 两节都保留，计数重算为 3108 项（collect-only），Word 重新导出。
 - 与 PR #61（浮层遮罩）同改 export_screenshot 的相邻几行，谁后合谁解决冲突并重算计数（#61 也是 3107）。下一步：PR 三平台 CI 全绿后先问用户再合并。
+
+## 视口色标与坐标指示器不显示（2026-10-21）
+
+- 起因：用户反馈实体云图没有色标。分支 claude/overlay-native-visible（在 agent开发-master 本地检出上，基于 507dd97）。
+- 原因：VTK 视口是原生 OpenGL 子窗口，色标 ColorScale、符号图例 SymbolKey（共用 viewport_legend._Card）和坐标指示器 AxisIndicator 也都成了原生子窗口，并设了 WA_TranslucentBackground。Windows 上这种半透明原生子窗口压在 OpenGL 窗口上不绘制：Qt 报告可见、位置 (899, 12) 正确，`window.grab()` 里也有，真实屏幕截图（QScreen.grabWindow）上没有。左上角结果摘要没设该属性，所以一直正常。属性由 #33 引入，梁内力云图的色标用同一控件，应同样受影响（本次只实测实体云图）。
+- 修复：两类浮层去掉半透明背景，底色改不透明（viewport_card 的 surface 只取 RGB），_Card 在 resizeEvent 里按圆角矩形设遮罩，AxisIndicator 用内缩 1 px 的圆形遮罩（150% 缩放下不内缩会在底边露出一行白线），圆盘铺满遮罩。export_screenshot 贴回浮层时按遮罩裁剪，否则导出图里露出方角。
+- 回归：tests/test_solid_view.py 新增 1 项（三种浮层不带半透明属性、遮罩非空且裁掉角），在旧代码上确认失败。全量收集 3107 项（3106 + 1，未跑全量）。按约定只跑增量：test_solid_view、test_desktop_window 与文档闸；Ruff 干净。真实屏幕在 150% 缩放下截图核对：色标、坐标指示器显示正常，导出截图无方角。
+- 未做：浅色背景下没有实拍核对；梁内力云图、应力比图的色标未单独实拍。下一步：建 PR，CI 三平台全绿后先问用户再合并。
+- 同日另查了自研 C3D10 求解慢的原因（未改代码）：瓶颈是 scipy spsolve（SuperLU）——7 万自由度解方程 73.5 s，占总耗时约 92%，组装 4.2 s、应力恢复约 2 s；耗时约按自由度平方增长，40 万自由度外推约 40 分钟（未实测）。改进方向：pypardiso 或 pyamg+CG，位移驱动的鞍点系统需另行处理。用户决定之后再做。
 
 ## 课程报告补写梁单元专精与结构图纸识别（2026-10-17）
 
