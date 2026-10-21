@@ -3431,8 +3431,13 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
                             self.viewport.symbol_key, self.left_drawer,
                             self.right_drawer, self.bottom_drawer):
                 if overlay.isVisible():
-                    painter.drawPixmap(self.mapFromGlobal(overlay.mapToGlobal(overlay.rect().topLeft())),
-                                       overlay.grab())
+                    origin = self.mapFromGlobal(overlay.mapToGlobal(overlay.rect().topLeft()))
+                    # grab() 不管遮罩，圆角卡片和圆形坐标指示器按遮罩裁一次，不露方角
+                    mask = overlay.mask()
+                    painter.setClipRegion(mask.translated(origin))
+                    painter.setClipping(not mask.isEmpty())
+                    painter.drawPixmap(origin, overlay.grab())
+                    painter.setClipping(False)
             painter.end()
         chrome.save(path)
         return path
