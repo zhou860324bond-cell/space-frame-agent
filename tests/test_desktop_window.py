@@ -1042,6 +1042,14 @@ def test_colour_scale_ticks_keep_both_ends_and_never_overlap(qt_app):
     assert len(shown) < 25, "160 像素高放不下 25 个刻度，必须隔着标"
 
 
+def test_peak_tag_states_length_unit():
+    """视口峰值标签曾写「杆件 24, x = 3」，读不出是 3 m 还是 3 mm。"""
+    from desktop.viewport import peak_tag
+
+    assert peak_tag("M = ", 128.1, "kN·m", 24, 3.0, "m").endswith("杆件 24, x = 3 m")
+    assert peak_tag("M = ", 128.1, "kN·m", 24, 3000.0, "mm").endswith("x = 3e+03 mm")
+
+
 def test_result_marker_imports_pyvista_itself(qt_app):
     """放结果标记这条路径必须自己把 pyvista 导进来。
 

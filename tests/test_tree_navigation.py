@@ -52,6 +52,22 @@ def test_number_search_is_exact_and_name_search_keeps_ancestors(app):
         assert "梯形/集中" not in item.parent().text(0)
 
 
+def test_generated_frame_tree_counts_direct_supports_and_top_level_loads(app):
+    """「规则框架」生成的模型支座都在「直接定义」、荷载写在顶层：树曾显示
+    「边界条件（0）」和「荷载（0 工况）」，6 个支座与 14 条均布荷载在树里都看不到。"""
+    session = build_session()
+    tree = ModelTree()
+    tree.rebuild(session)
+    tops = {tree.topLevelItem(k).text(0): tree.topLevelItem(k)
+            for k in range(tree.topLevelItemCount())}
+    assert "边界条件（6）" in tops
+    assert "荷载（1 工况）" in tops
+    case = tops["荷载（1 工况）"].child(0)
+    assert case.text(0).startswith("default") and "均布14" in case.text(0)
+    assert case.data(0, ACTION) == "loads" and case.data(0, PAYLOAD) == "default"
+    assert case.childCount() == 14
+
+
 def test_search_enter_and_viewport_pick_share_selection(app):
     """编号定位和视口拾取应使用同一对象选择，不得重复创建选择状态。"""
     window = MainWindow(build_session())

@@ -1,5 +1,13 @@
 # 工作进度
 
+## 冻结前界面检查（2026-10-22）
+
+- 起因：10-24 冻结前用户要求检查使用显示上的问题并快速修改。用 tools/capture_ui_states.py 在 master 507dd97 上拍 1440×900 与 1366×768 两组界面状态图逐张看。
+- 修复：模型树「边界条件」标题计数包含「直接定义」的支座（原来 6 个支座显示 0）；顶层荷载（单工况写法，「规则框架」生成的就是这种）按 default 工况列在「荷载」下（原来「荷载（0 工况）」、荷载在树里看不到）；峰值标签与内力图信息卡的 x 带长度单位。回归：tests/test_tree_navigation.py、tests/test_desktop_window.py 各加一项。
+- 仍开着、与显示有关且 CI 已全绿的 PR：#61（色标与坐标指示器在 Windows 上被 OpenGL 窗口遮挡）、#62（高 DPI 导出截图发虚），两者改 export_screenshot 相邻几行，后合的要解决冲突并重算计数。
+- 看到但没改：变形模式没有信息卡写最大位移与放大系数；属性面板空状态说明在 1366 宽度下末尾单字换行。
+- 回归计数：collect-only 3108 项（未跑全量）；增量跑 test_desktop_window、test_tree_navigation、test_ui_text、test_ui_consolidation、test_docs_current 通过；Ruff 干净；Word 重新导出。
+
 ## 课程报告补写梁单元专精与结构图纸识别（2026-10-17）
 
 - 起因：10-16 以后合进 master 的 #38–#44、#52 没有写进课程报告，「弯扭」「变截面」「剪心」在报告里出现 0 次。分支 claude/report-new-features（在 agent开发-master 本地检出上），只改文档，不动代码与 run_*.bat。

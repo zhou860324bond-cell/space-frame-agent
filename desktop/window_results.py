@@ -268,11 +268,13 @@ class WindowResultsMixin:
             return
         extreme = {**extreme, "member": self.viewport._owner(extreme["member"])}
         self.locate("member", extreme["member"])
+        from units import of as unit_system
+
         from .viewport import peak_tag
         self.viewport.set_result_marker(
             extreme["point"],
             peak_tag(f"|{self.component}|max = ", extreme["value"], extreme["unit"],
-                     extreme["member"], extreme["x"]))
+                     extreme["member"], extreme["x"], unit_system(self.session.frame).length))
         self.results.show_rows(
             f"{self.component} 全结构绝对极值，工况 {extreme['case']}",
             ["杆件", "距 i 端 x", "值", "单位"],

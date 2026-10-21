@@ -161,14 +161,17 @@ _LEGEND_TEXT = {
     "给定转角": "给定转角",
 }
 
-def peak_tag(prefix: str, value: float, unit: str, member, x: float) -> str:
+def peak_tag(prefix: str, value: float, unit: str, member, x: float,
+             length: str = "") -> str:
     """极值标注：第一行是数值，第二行是位置。
 
     画在 VTK 里，只用 ASCII 标点：中文字体文件里未必有 U+2212 减号和
     间隔点，缺字形时整个字符消失——负的峰值会被读成正的（改前实测）。
+    length 是模型长度单位；不写时「x = 3」读不出是 3 m 还是 3 mm。
     """
-    where = (f"Member {member}, x = {x:.3g}" if i18n.language() == "en"
-             else f"杆件 {member}, x = {x:.3g}")
+    at = f"x = {x:.3g}" + (f" {length}" if length else "")
+    where = (f"Member {member}, {at}" if i18n.language() == "en"
+             else f"杆件 {member}, {at}")
     return f"{prefix}{value:+.3g} {unit}\n{where}"
 
 
@@ -1928,12 +1931,13 @@ class Viewport(QWidget):
         self._show_result_summary({
             "title": f"Internal-force diagram {component} · {unit}" if english else f"三维内力图 {component} · {unit}",
             "peak": ("Peak: " if english else "峰值：") + f"{shown['value']:+.4g} {unit}",
-            "range_text": (f"Member {shown['member']} · x={shown['x']:.4g}" if english else f"杆件 {shown['member']} · x={shown['x']:.4g}") if shown["member"] is not None else "—",
+            "range_text": (f"Member {shown['member']} · x={shown['x']:.4g} {system.length}" if english else f"杆件 {shown['member']} · x={shown['x']:.4g} {system.length}") if shown["member"] is not None else "—",
             "status": convention,
             "details": convention + (". One scale for all members." if english else "。各杆件采用同一比例尺；内力图表示梁内力，不是截面应力。")})
         if shown["member"] is not None and shown["point"] is not None:
             self._add_tag(shown["point"], peak_tag(
-                f"{component} = ", shown["value"], unit, shown["member"], shown["x"]),
+                f"{component} = ", shown["value"], unit, shown["member"], shown["x"],
+                system.length),
                 "_diagram_peak")
         self._contour_actors = True
         self._place_contour_overlays()
@@ -2057,7 +2061,8 @@ class Viewport(QWidget):
             if extreme["member"] is not None:
                 self._add_tag(extreme["point"], peak_tag(
                     f"{label} = ", extreme["value"], extreme["unit"],
-                    extreme["member"], extreme["x"]), "_contour_extreme")
+                    extreme["member"], extreme["x"], system.length),
+                    "_contour_extreme")
         for mesh in scene.support_glyphs(frame).values():
             self.plotter.add_mesh(
                 mesh, color=theme.SUPPORT, smooth_shading=True,
