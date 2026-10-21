@@ -300,6 +300,32 @@ def test_feature_outline_cannot_replace_the_stress_legend(app, files, monkeypatc
     view.close()
 
 
+def test_viewport_overlays_stay_opaque_over_the_opengl_window(app):
+    """防止实体云图色标在 Windows 上整块看不见（2026-10-21 用户反馈）。
+
+    VTK 视口是原生 OpenGL 子窗口，叠在上面的色标、图例、坐标指示器也是
+    原生子窗口。它们原来设了 WA_TranslucentBackground：Qt 报告色标可见、
+    位置也对，真实屏幕截图上却什么都没有。浮层必须不透明，圆角和圆形
+    改用遮罩裁出；遮罩为空说明形状没裁，会露出方角。
+    """
+    from PySide6.QtCore import Qt
+    from desktop import viewport
+    view = viewport.Viewport()
+    view.resize(800, 600)
+    view.show()                                # 隐藏控件的尺寸变化要到显示时才派发
+    view.color_scale.set_scale("Mises (MPa)", [(0., 0., 1.), (1., 0., 0.)], (0., 1.),
+                               banded=True)
+    view.color_scale.setFixedHeight(200)
+    view.symbol_key.set_entries([("杆件", "#4c8bf5")])
+    app.processEvents()
+    for overlay in (view.color_scale, view.symbol_key, view.axis_indicator):
+        name = type(overlay).__name__
+        assert not overlay.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground), name
+        assert not overlay.mask().isEmpty(), name
+        assert not overlay.mask().contains(overlay.rect().topLeft()), f"{name} 的角没有裁掉"
+    view.close()
+
+
 def test_cell_query_reads_original_stress_connectivity_and_nodal_values(files):
     """单元查询不能拿 P99 值或把十个节点位移平均成虚构的单元位移。"""
     directory, _ = files
