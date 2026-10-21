@@ -1,5 +1,12 @@
 # 工作进度
 
+## 高 DPI 截图导出发虚修复（2026-10-21）
+
+- 起因：用户要求重拍实体云图截图（成品在桌面「新建文件夹/实体云图重拍_20261021」，不入库）。重拍时发现 export_screenshot 把 plotter.screenshot 的物理像素画面 scaled 到视口逻辑尺寸，再画进设备像素比 1.5 的整窗图，等于先缩小再放大，标签和网格线发虚；且按视口 geometry 铺，盖住了视口 1 px 边框。分支 claude/retake-screenshots-60d1f6（基于 507dd97）。
+- 修改：VTK 画面按 截图宽/插值器逻辑宽 设设备像素比，贴在插值器左上角，不再缩放。通用改动，不依赖缩放比例。
+- 回归：新增 test_export_screenshot_keeps_viewport_pixels_on_high_dpi（模拟 2 倍设备像素比的整窗图，VTK 画面用 1 px 棋盘格，导出后视口中心 40×40 像素必须逐位相同），旧代码上确认失败。截图相关 3 项通过；真实屏幕（150%）用三向节点实体结果实拍，标签与网格线清楚。全量收集 3107 项（collect-only，未跑全量）；README、报告三处计数已同步。
+- 2026-10-22 #61 先合入 master，本分支合并 master：export_screenshot 自动合并（VTK 画面按物理像素贴回 + 浮层按遮罩裁剪），CHANGELOG、PROGRESS 两节都保留，计数重算为 3108 项（collect-only），Word 重新导出。下一步：PR 三平台 CI 全绿后先问用户再合并。
+
 ## 视口色标与坐标指示器不显示（2026-10-21）
 
 - 起因：用户反馈实体云图没有色标。分支 claude/overlay-native-visible（在 agent开发-master 本地检出上，基于 507dd97）。
