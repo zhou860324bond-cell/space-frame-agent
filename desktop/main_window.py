@@ -3418,12 +3418,14 @@ class MainWindow(WindowObjectsMixin, WindowAssemblyMixin, WindowJobsMixin, Windo
             arr = np.ascontiguousarray(shot[:, :, :3])
             h, w, _ = arr.shape
             view = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-            geo = self.viewport.geometry()
-            top_left = self.viewport.mapTo(self, self.viewport.rect().topLeft())
+            # VTK 画面按物理像素渲染，只铺在插值器上（视口另有 1 px 边框）。
+            # 按自身像素比贴回，高 DPI 下 1:1 不重采样；缩到逻辑尺寸再随整窗放大会发虚
+            interactor = self.viewport.plotter.interactor
+            view.setDevicePixelRatio(w / max(1, interactor.width()))
+            top_left = interactor.mapTo(self, interactor.rect().topLeft())
             from PySide6.QtGui import QPainter
             painter = QPainter(chrome)
-            painter.drawImage(top_left, view.scaled(
-                geo.width(), geo.height()))
+            painter.drawImage(top_left, view)
             # 抽屉是独立的 Tool 窗口，空模型引导卡片在视口上层；
             # VTK 画面贴回后必须把这些覆盖层再贴一次，否则导出图里会消失。
             for overlay in (self.empty_state, self.viewport.axis_indicator,

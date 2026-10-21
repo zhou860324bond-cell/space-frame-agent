@@ -4,10 +4,18 @@
 
 - 起因：10-24 冻结前用户要求检查使用显示上的问题并快速修改。用 tools/capture_ui_states.py 在 master 507dd97 上拍 1440×900 与 1366×768 两组界面状态图逐张看。
 - 修复：模型树「边界条件」标题计数包含「直接定义」的支座（原来 6 个支座显示 0）；顶层荷载（单工况写法，「规则框架」生成的就是这种）按 default 工况列在「荷载」下（原来「荷载（0 工况）」、荷载在树里看不到）；峰值标签与内力图信息卡的 x 带长度单位。回归：tests/test_tree_navigation.py、tests/test_desktop_window.py 各加一项。
-- 仍开着、与显示有关且 CI 已全绿的 PR：#61（色标与坐标指示器在 Windows 上被 OpenGL 窗口遮挡）、#62（高 DPI 导出截图发虚），两者改 export_screenshot 相邻几行，后合的要解决冲突并重算计数。
+- 同期的显示修复 #61（色标与坐标指示器在 Windows 上被 OpenGL 窗口遮挡）、#62（高 DPI 导出截图发虚）已于 10-22 先后合入 master。
 - 看到但没改：变形模式没有信息卡写最大位移与放大系数；属性面板空状态说明在 1366 宽度下末尾单字换行。
 - 2026-10-22 #61 合入 master 后本分支合并 master：CHANGELOG、PROGRESS 两节都保留，计数重算为 3109 项（collect-only），Word 重新导出。
+- #62 合入后再合并一次 master，计数重算为 3110 项（collect-only），Word 重新导出。
 - 回归计数：collect-only 3108 项（未跑全量）；增量跑 test_desktop_window、test_tree_navigation、test_ui_text、test_ui_consolidation、test_docs_current 通过；Ruff 干净；Word 重新导出。
+
+## 高 DPI 截图导出发虚修复（2026-10-21）
+
+- 起因：用户要求重拍实体云图截图（成品在桌面「新建文件夹/实体云图重拍_20261021」，不入库）。重拍时发现 export_screenshot 把 plotter.screenshot 的物理像素画面 scaled 到视口逻辑尺寸，再画进设备像素比 1.5 的整窗图，等于先缩小再放大，标签和网格线发虚；且按视口 geometry 铺，盖住了视口 1 px 边框。分支 claude/retake-screenshots-60d1f6（基于 507dd97）。
+- 修改：VTK 画面按 截图宽/插值器逻辑宽 设设备像素比，贴在插值器左上角，不再缩放。通用改动，不依赖缩放比例。
+- 回归：新增 test_export_screenshot_keeps_viewport_pixels_on_high_dpi（模拟 2 倍设备像素比的整窗图，VTK 画面用 1 px 棋盘格，导出后视口中心 40×40 像素必须逐位相同），旧代码上确认失败。截图相关 3 项通过；真实屏幕（150%）用三向节点实体结果实拍，标签与网格线清楚。全量收集 3107 项（collect-only，未跑全量）；README、报告三处计数已同步。
+- 2026-10-22 #61 先合入 master，本分支合并 master：export_screenshot 自动合并（VTK 画面按物理像素贴回 + 浮层按遮罩裁剪），CHANGELOG、PROGRESS 两节都保留，计数重算为 3108 项（collect-only），Word 重新导出。下一步：PR 三平台 CI 全绿后先问用户再合并。
 
 ## 视口色标与坐标指示器不显示（2026-10-21）
 
