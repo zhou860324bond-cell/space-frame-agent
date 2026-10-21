@@ -16,7 +16,8 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
+from PySide6.QtGui import (QColor, QFont, QFontMetrics, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QRegion)
 from PySide6.QtWidgets import QWidget
 
 from . import theme
@@ -45,15 +46,28 @@ def tick_text(value: float) -> str:
 
 
 class _Card(QWidget):
-    """浮层底板：跟随视口明暗配色，不接鼠标，旋转缩放照常穿透到视口。"""
+    """浮层底板：跟随视口明暗配色，不接鼠标，旋转缩放照常穿透到视口。
+
+    **不能设 WA_TranslucentBackground。** 视口里的 VTK 是原生 OpenGL 子窗口，
+    叠在上面的浮层也都是原生子窗口；Windows 上半透明的原生子窗口压在
+    OpenGL 窗口上根本画不出来——Qt 报告「可见」，屏幕上却什么都没有，
+    实体云图的色标就是这样丢的。所以底板画成不透明，圆角靠遮罩裁出。
+    """
+
+    RADIUS = 4
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.active = False
         self._light = False
         self.hide()
+
+    def resizeEvent(self, event) -> None:
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), self.RADIUS, self.RADIUS)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        super().resizeEvent(event)
 
     def set_light(self, light: bool) -> None:
         self._light = bool(light)
@@ -65,8 +79,9 @@ class _Card(QWidget):
     def _paint_card(self, painter: QPainter) -> None:
         colours = self._palette()
         painter.setPen(QPen(QColor(*colours["edge"]), 1))
-        painter.setBrush(QColor(*colours["surface"]))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        painter.setBrush(QColor(*colours["surface"][:3]))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                                self.RADIUS, self.RADIUS)
 
     @staticmethod
     def _font(size: str, bold: bool = False) -> QFont:

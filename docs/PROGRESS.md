@@ -6,7 +6,17 @@
 - 修复：模型树「边界条件」标题计数包含「直接定义」的支座（原来 6 个支座显示 0）；顶层荷载（单工况写法，「规则框架」生成的就是这种）按 default 工况列在「荷载」下（原来「荷载（0 工况）」、荷载在树里看不到）；峰值标签与内力图信息卡的 x 带长度单位。回归：tests/test_tree_navigation.py、tests/test_desktop_window.py 各加一项。
 - 仍开着、与显示有关且 CI 已全绿的 PR：#61（色标与坐标指示器在 Windows 上被 OpenGL 窗口遮挡）、#62（高 DPI 导出截图发虚），两者改 export_screenshot 相邻几行，后合的要解决冲突并重算计数。
 - 看到但没改：变形模式没有信息卡写最大位移与放大系数；属性面板空状态说明在 1366 宽度下末尾单字换行。
+- 2026-10-22 #61 合入 master 后本分支合并 master：CHANGELOG、PROGRESS 两节都保留，计数重算为 3109 项（collect-only），Word 重新导出。
 - 回归计数：collect-only 3108 项（未跑全量）；增量跑 test_desktop_window、test_tree_navigation、test_ui_text、test_ui_consolidation、test_docs_current 通过；Ruff 干净；Word 重新导出。
+
+## 视口色标与坐标指示器不显示（2026-10-21）
+
+- 起因：用户反馈实体云图没有色标。分支 claude/overlay-native-visible（在 agent开发-master 本地检出上，基于 507dd97）。
+- 原因：VTK 视口是原生 OpenGL 子窗口，色标 ColorScale、符号图例 SymbolKey（共用 viewport_legend._Card）和坐标指示器 AxisIndicator 也都成了原生子窗口，并设了 WA_TranslucentBackground。Windows 上这种半透明原生子窗口压在 OpenGL 窗口上不绘制：Qt 报告可见、位置 (899, 12) 正确，`window.grab()` 里也有，真实屏幕截图（QScreen.grabWindow）上没有。左上角结果摘要没设该属性，所以一直正常。属性由 #33 引入，梁内力云图的色标用同一控件，应同样受影响（本次只实测实体云图）。
+- 修复：两类浮层去掉半透明背景，底色改不透明（viewport_card 的 surface 只取 RGB），_Card 在 resizeEvent 里按圆角矩形设遮罩，AxisIndicator 用内缩 1 px 的圆形遮罩（150% 缩放下不内缩会在底边露出一行白线），圆盘铺满遮罩。export_screenshot 贴回浮层时按遮罩裁剪，否则导出图里露出方角。
+- 回归：tests/test_solid_view.py 新增 1 项（三种浮层不带半透明属性、遮罩非空且裁掉角），在旧代码上确认失败。全量收集 3107 项（3106 + 1，未跑全量）。按约定只跑增量：test_solid_view、test_desktop_window 与文档闸；Ruff 干净。真实屏幕在 150% 缩放下截图核对：色标、坐标指示器显示正常，导出截图无方角。
+- 未做：浅色背景下没有实拍核对；梁内力云图、应力比图的色标未单独实拍。下一步：建 PR，CI 三平台全绿后先问用户再合并。
+- 同日另查了自研 C3D10 求解慢的原因（未改代码）：瓶颈是 scipy spsolve（SuperLU）——7 万自由度解方程 73.5 s，占总耗时约 92%，组装 4.2 s、应力恢复约 2 s；耗时约按自由度平方增长，40 万自由度外推约 40 分钟（未实测）。改进方向：pypardiso 或 pyamg+CG，位移驱动的鞍点系统需另行处理。用户决定之后再做。
 
 ## 课程报告补写梁单元专精与结构图纸识别（2026-10-17）
 

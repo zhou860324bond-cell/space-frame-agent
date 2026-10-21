@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QRegion
 from PySide6.QtWidgets import QWidget
 
 from . import theme
@@ -31,7 +31,10 @@ class AxisIndicator(QWidget):
         super().__init__(parent)
         self.setFixedSize(80, 80)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # 不用半透明背景：原生子窗口在 OpenGL 视口上会整个不显示（见
+        # viewport_legend._Card），改成不透明圆盘，圆形靠遮罩裁出
+        # 内缩 1 px：150% 缩放下遮罩换算到物理像素会多出一行，露出一条没画到的白线
+        self.setMask(QRegion(self.rect().adjusted(1, 1, -1, -1), QRegion.RegionType.Ellipse))
         self._rotation = _ISOMETRIC.copy()
         self._light = False
 
@@ -63,9 +66,12 @@ class AxisIndicator(QWidget):
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             colours = theme.viewport_card(self._light)
             centre = QPointF(self.width() / 2, self.height() / 2)
-            p.setBrush(QColor(*colours["surface"][:3], 150))
+            # 先铺满遮罩内的整块，遮罩边缘不抗锯齿，不能留没画到的缝
+            p.fillRect(self.rect(), QColor(*colours["surface"][:3]))
+            p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(QColor(*colours["edge"]), 1))
-            p.drawEllipse(centre, 34, 34)
+            radius = self.width() / 2 - 2
+            p.drawEllipse(centre, radius, radius)
 
             font = QFont()
             font.setPointSizeF(float(theme.FONT_CAPTION.rstrip("pt")))
