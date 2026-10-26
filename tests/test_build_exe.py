@@ -91,10 +91,15 @@ def test_the_launcher_pins_the_qt_binding_before_importing_qt():
 
 
 def test_a_frozen_build_is_documented_as_a_folder_not_a_single_file():
-    """单文件版启动要解压近 1 GB，用户会以为卡死。这条决定要写下来。"""
+    """防止随包说明再次混入开发者构建步骤、依赖取舍与调试记录。"""
     notes = (PACKAGING / "分发说明.md").read_text(encoding="utf-8")
     assert "onefile" in _spec_text() or "单文件" in _spec_text()
     assert "整个文件夹" in notes, "分发说明没写清楚不能只发 exe"
+    for internal in ("给要打包的人", "build_exe.bat", "frame_lab.spec",
+                     "traceback", "PyInstaller", "已经砍掉的"):
+        assert internal not in notes, f"随包说明包含内部构建信息：{internal}"
+    for required in ("FrameLab.exe", "模型连接设置", "离线", "许可"):
+        assert required in notes, f"随包说明缺少使用信息：{required}"
 
 
 def test_the_workflow_hook_override_is_in_place():
