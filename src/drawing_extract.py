@@ -11,12 +11,18 @@
 不存在的轴号，就把错误连同同一批裁剪图回喂，让模型重读（最多 ``max_repairs``
 次）。图上确实没有的信息保持缺失，交给核对表由用户补，不让模型编。
 
+用户在面板里写的「补充说明」走同一套抄写流程（:meth:`DrawingExtractor.transcribe_statements`）：
+代码先逐句编号，模型只把句子里写明的内容原样抄成证据条目，出处写句号；
+``drawing_evidence.bind_statement_sources`` 再逐字核对原文，不在原句里的条目不采用。
+说明不拼进图纸抄写的提示词，所以它不会影响模型怎样读图，只作为一份平级的证据参与合并。
+
 客户端、图片编码、超时沿用 ``sketch_parser.SketchParser``，提供商设置与草图
 识别一致。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -24,7 +30,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from drawing_assemble import assemble
-from drawing_evidence import EVIDENCE_FORMAT, validate_evidence
+from drawing_evidence import (EVIDENCE_FORMAT, bind_statement_sources, parse_dimension,
+                              split_sentences, validate_evidence)
 from multimodal_contract import file_digest
 
 #: 区域边缘外扩比例，防止框得太紧把轴号圈或尺寸数字切掉一半。
@@ -68,10 +75,11 @@ source.confidence 填你对这条读数的把握（0~1）。
   "grids": {{
     "x": {{"axes": [{{"label": "1", "pos": 0.12, "source": S}}],
            "spacings": [{{"from": "1", "to": "2", "text": "6000", "source": S}}],
-           "total": {{"text": "12000", "source": S}}}},
+           "total": {{"text": "12000", "source": S}}, "edges": []}},
     "y": {{"axes": [{{"label": "A", "pos": 0.85, "source": S}}], "spacings": [], "total": null}}
   }},
-  "levels": [{{"name": "2F", "text": "3.600", "source": S}}],
+  "levels": [{{"name": "1F", "text": "±0.000", "source": S}}, {{"name": "2F", "text": "3.600", "source": S}}],
+  "level_heights": [],
   "members": [
     {{"label": "KL1", "kind": "beam", "along": "A", "from": "1", "to": "3",
       "levels": ["2F"], "source": S}},
@@ -93,15 +101,24 @@ source.confidence 填你对这条读数的把握（0~1）。
 3. x 组是数字轴号（竖向轴线，从左到右排列），y 组是字母轴号（横向轴线）。
    axes 按图上顺序列出（x 从左到右，y 从下到上）；pos 是轴线在区域图里的位置
    （x 组写横坐标、y 组写纵坐标），只用于核对。
-4. spacings 写相邻两轴之间标注的间距；从第一根轴线量到最后一根轴线的总尺寸写进 total。
-   量到建筑外边缘、柱外皮的总尺寸不是轴线总尺寸，不要写进 total，写进 notes。
-5. levels 的 name 用图上的层名（如 2F、二层）；没有层名就用标高原文作 name。
+4. spacings 写相邻两轴之间标注的间距。重复写法（如「7 at 25'-0"」「6@3600」「3×6000」）
+   照抄成一条，from/to 写这串间距首末两根轴线的轴号，不要自己展开或相乘。
+   总尺寸写进 total。总尺寸量到建筑外边缘、柱外皮时，同样写进 total，并把首末轴线到
+   外边缘的那两段尺寸（如 1'-2"）写进 edges：[{{"text": "1'-2\\"", "source": S}}]。
+5. levels 按从下到上的顺序列出，name 用图上的层名（如 2F、二层）；没有层名就用标高原文
+   作 name；既没有层名也没有标高时，从下往上用 L0、L1、L2… 命名。text 写标高原文，
+   图上没有标高就写 null。立面图只标层高时，把层高写进 level_heights：
+   {{"from": "下层 name", "to": "上层 name", "text": "22'-4\\"", "source": S}}；
+   重复写法（如「6 at 13'-4"」）照抄成一条，from/to 写首末两层，中间没有层名的层可以不列出。
    梁的 levels、柱的 from_level/to_level 引用这些 name。平面图标明适用于哪些楼层时，
    梁的 levels 列出所有这些楼层。text 抄写数值及其紧邻的单位（如 +3.500 m），
    图名「屋面平面图（Z=3.500 m）」中 name 为屋面，text 为 3.500 m。
    同一标高出现在多个视图时保留其原文，不能把屋面与 +3.500 m 当成两个不同楼层。
-6. 梁按编号所在位置写：along 是梁所在的轴线，from/to 是起止的另一方向轴号。
-   柱写所在轴线交点 at 和起止标高。只有一组轴线的立面图，梁不写 along，柱 at 只写一个轴号。
+6. 梁按所在位置写：along 是梁所在的轴线，from/to 是起止的另一方向轴号。
+   柱写所在轴线交点 at 和起止层。只有一组轴线的立面图，梁不写 along，柱 at 只写一个轴号。
+   有编号的写 label；**没有编号的梁柱也要按位置抄写，label 写 null**。同一轴线、同一层
+   连续的梁可以合并成一条（from/to 写首末轴号）；同一位置从底到顶的柱写成一条。
+   截面表里查不到规格时不要写 sections。
 7. units.value 只能是 mm、cm、m，且只在图上有明确单位证据时填写。
    数值紧邻的单位后缀也是单位证据：如标高 +3.500 m 已明确给出标高单位 m，
    不要求另有总说明；原文仍保留各条后缀，组装代码会按后缀换算。
@@ -114,6 +131,34 @@ source.confidence 填你对这条读数的把握（0~1）。
     「所有梁」只列 beam 的 label，「所有柱」只列 column 的 label。
     这是原文适用范围的引用，不是补写规格或编造编号，不能因此把 labels 留空。
     text 只摘抄原文中的规格片段，尺寸次序、单位等解释放 notes，source 指向原说明。
+"""
+
+
+STATEMENT_PROMPT = f"""你是结构设计说明抄写助手。下面是用户写的补充说明，已按句编号。
+你的任务是**把说明里明确写出的内容原样抄成证据条目**，不是计算、推断或补全。
+只输出一个 JSON 对象，不要 Markdown、不要解释。
+
+输出格式与图纸抄写相同：
+{{"format": "{EVIDENCE_FORMAT}", "units": {{}}, "grids": {{"x": {{"axes": [], "spacings": []}},
+  "y": {{"axes": [], "spacings": []}}}}, "levels": [], "level_heights": [], "members": [],
+  "sections": [], "material": null, "support": null, "notes": []}}
+各字段的写法同图纸抄写（x 组是数字轴号，y 组是字母轴号；spacings 为
+{{"from": "1", "to": "2", "text": "6000", "source": S}}；levels 为 {{"name": "2F", "text": "3.600",
+"source": S}}；sections 为 {{"labels": ["KL1"], "text": "HN400×200×8×13", "source": S}}；
+material 为 {{"text": "Q355", "source": S}}；support 为 {{"kind": "pinned", "text": "柱脚铰接",
+"source": S}}；units 为 {{"length": {{"value": "mm", "text": "尺寸单位为毫米", "source": S}}}}）。
+其中 S 写 {{"sentence": k}}，k 是这条内容所在的句号（跨两句时写 [k, k+1]）。
+
+硬性规则：
+1. text 必须是第 k 句里**连续的一段原文**，逐字照抄，含单位、±号、英尺英寸符号；不换算、
+   不改写、不补零。代码会逐字核对，原句里找不到的条目不会被采用。
+2. 说明里没写的不要写；「共 3 层」「均为」「同上」之类的概括不要自己展开或相乘，不估算任何数。
+3. 轴号、层名、杆件编号要么在该句原文里出现，要么取自下面「已读到的名称」；不要编造新名称。
+4. 「所有梁」「全部柱」这类适用范围：sections 的 labels 列出「已读到的名称」里对应的编号。
+5. units.value 只能是 mm、cm、m，且只在句子里写明了单位时填写；support.kind 只能是 fixed、pinned。
+6. 一句说明改正了图上的某个数（如「1~2 轴间距应为 6600」），就照常抄成那一项，不要删去
+   其他条目，也不要判断谁对——冲突由用户在核对表里选。
+7. 拿不准的写进 notes：{{"text": "…", "source": S}}。
 """
 
 
@@ -138,6 +183,40 @@ class ExtractResult:
     @property
     def success(self) -> bool:
         return self.evidence is not None
+
+
+def statement_record(text: str, statement_id: str = "T1") -> dict[str, Any]:
+    """补充说明的登记项：编号、逐句切分的原文与哈希（证据里出处的锚点）。"""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return {"id": statement_id, "name": "补充说明", "sha256": digest,
+            "sentences": split_sentences(text)}
+
+
+def _is_value(text: str) -> bool:
+    try:
+        parse_dimension(text)
+    except ValueError:
+        return False
+    return True
+
+
+def known_names(parts: list[dict[str, Any]]) -> list[str]:
+    """其他证据里已读到的名称（轴号、层名、杆件编号），只给说明抄写作引用，不含任何数值。
+
+    DXF 与没有层名的图把标高原文当层名（「3.600」），这类层名本身就是数，不放进列表；
+    说明里提到这个标高时原句里自然有这个数，逐字核对照样能过。"""
+    names: list[str] = []
+    for part in parts:
+        for family in ("x", "y"):
+            grid = (part.get("grids") or {}).get(family) or {}
+            names += [str(axis.get("label")) for axis in grid.get("axes") or []
+                      if isinstance(axis, dict) and axis.get("label")]
+        names += [str(level.get("name")) for level in part.get("levels") or []
+                  if isinstance(level, dict) and level.get("name")
+                  and not _is_value(str(level.get("name")))]
+        names += [str(member.get("label")) for member in part.get("members") or []
+                  if isinstance(member, dict) and member.get("label")]
+    return list(dict.fromkeys(name.strip() for name in names if name.strip()))
 
 
 def image_records(paths: list[str | Path]) -> list[dict[str, Any]]:
@@ -370,6 +449,52 @@ class DrawingExtractor:
                 correction = ("上次输出中以下读数彼此对不上。请对照区域图逐字重读相关文字后输出完整 JSON。"
                               "如果原图本来就是这样写的，保持原文不变，不要为了让数字一致或能被换算"
                               "而改写；图上确实没有的保持缺失，不要编造：\n" + "\n".join(problems[:12]))
+        except Exception as exc:  # noqa: BLE001  提供商与网络边界：原样报给用户
+            result.errors.append(f"调用识别模型失败：{type(exc).__name__}: {exc}")
+        result.duration_ms = (time.monotonic() - start) * 1000
+        return result
+
+    def transcribe_statements(self, text: str, known: list[str] | None = None, *,
+                              statement_id: str = "T1", max_repairs: int = 1) -> ExtractResult:
+        """把补充说明抄成一份证据（出处为「用户说明第 k 句」）。失败时 ``evidence`` 为 None。
+
+        ``known`` 是其他证据里读到的名称，只用于让模型引用已有的轴号与编号；
+        数值从不经过这份列表。抄出的每条都由 ``bind_statement_sources`` 逐字核对。"""
+        start = time.monotonic()
+        result = ExtractResult()
+        record = statement_record(text, statement_id)
+        sentences = record["sentences"]
+        if not sentences:
+            result.errors.append("补充说明为空。")
+            return result
+        listing = "\n".join(f"第 {k} 句：{sentence}" for k, sentence in enumerate(sentences, 1))
+        names = "、".join(known or []) or "（无）"
+        request = f"补充说明：\n{listing}\n\n已读到的名称（只用于引用，不是数值）：{names}"
+        correction = ""
+        try:
+            for attempt in range(max_repairs + 1):
+                result.calls += 1
+                blocks: list[tuple[str, Any]] = [("text", request)]
+                if correction:
+                    blocks.append(("text", correction))
+                try:
+                    raw = self.parser._extract_json(self._call(STATEMENT_PROMPT, blocks))
+                except (ValueError, json.JSONDecodeError) as exc:
+                    result.errors.append(f"第 {attempt + 1} 次抄写说明没有得到 JSON：{exc}")
+                    correction = "上次输出不是合法 JSON。只输出一个 JSON 对象。"
+                    continue
+                problems = validate_evidence(raw)
+                if problems:
+                    result.errors.append(f"第 {attempt + 1} 次抄写说明格式不对：" + "；".join(problems[:6]))
+                    correction = ("上次输出的格式有误，请按格式重写完整 JSON：\n"
+                                  + "\n".join(problems[:12]))
+                    continue
+                evidence = bind_statement_sources(raw, statement_id, sentences, known or [])
+                evidence["format"] = EVIDENCE_FORMAT
+                evidence["images"], evidence["files"] = [], []
+                evidence["statements"] = [record]
+                result.evidence = evidence
+                break
         except Exception as exc:  # noqa: BLE001  提供商与网络边界：原样报给用户
             result.errors.append(f"调用识别模型失败：{type(exc).__name__}: {exc}")
         result.duration_ms = (time.monotonic() - start) * 1000

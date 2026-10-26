@@ -4,19 +4,26 @@
 识别结果不是坐标而是图上的文字证据，组装由 ``drawing_assemble`` 确定性完成；
 核对表里每行写明值、出处与状态，选中一行即在原图上高亮那段原文。缺失和冲突
 必须由用户填写或改正，需确认的项点一次「确认原值」。全部处理完才能生成。
+识别提示只列出来供对照原图，不需要逐条确认。
+
+输入可以混合：几张图片、几个 DXF、一段「补充说明」。每种输入各自产出一份证据
+（图片由大模型抄字，DXF 在本机直接读实体，说明由大模型逐句原样抄写并逐字核对），
+``drawing_merge`` 把它们合并成一份再组装；同一项几份读数不同时在核对表里报冲突，
+列出两边来源由用户选。重读、加图后，用户已处理的行按同一键保留。
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout,
-                               QHeaderView, QLabel, QLineEdit, QListWidget, QPushButton,
-                               QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QHeaderView, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
+                               QPushButton, QSpinBox, QSplitter, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import glyphs, theme
 from .sketch_panel import _provider_with_credentials
@@ -25,18 +32,38 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 DXF_SUFFIX = ".dxf"
 DXF_VIEW_NOTE = ("DXF 是矢量文件，这里不显示图片。\n核对表「来源」列写明每个数取自哪个实体"
                  "（#句柄）和图层，可在 CAD 中按句柄或图层找到原对象核对。")
-STATUS_TEXT = {"ok": "已读取", "confirm": "需确认", "missing": "缺失", "conflict": "冲突"}
+STATUS_TEXT = {"ok": "已读取", "confirm": "需确认", "missing": "缺失", "conflict": "冲突",
+               "info": "提示"}
 STATUS_COLOR = {"ok": theme.SUCCESS, "confirm": theme.WARN,
-                "missing": theme.ERROR, "conflict": theme.ERROR}
-STATUS_ORDER = {"conflict": 0, "missing": 1, "confirm": 2, "ok": 3}
+                "missing": theme.ERROR, "conflict": theme.ERROR, "info": theme.INK_MUTED}
+STATUS_ORDER = {"conflict": 0, "missing": 1, "confirm": 2, "info": 3, "ok": 4}
 PDF_HINT = ("本版不能直接读取 PDF：请在看图软件中把需要的页导出为 PNG（建议 200 dpi 以上），"
             "再用「添加图纸」选入。")
+#: 保留几次合并结果用来找回用户的处理；每次加图、重读、识别各算一次，8 次足够覆盖一轮核对。
+HISTORY_DEPTH = 8
+NOTES_HINT = ("补充说明（可选）：写明图上没有或需要更正的内容，一句一事，如「1~2 轴间距 6000 mm」"
+              "「柱脚铰接」。识别时与图纸一起逐句原样抄写，核对表写明每条出自第几句。")
 
 
 def _layer_roles(evidence: dict | None) -> dict:
-    """各图层用途；未判断与「不使用」都不读取，视为相同。"""
-    return {item.get("name"): item.get("role") or "ignore"
+    """各图层用途（按文件区分同名图层）；未判断与「不使用」都不读取，视为相同。"""
+    return {(_layer_file(item), item.get("name")): item.get("role") or "ignore"
             for item in (evidence or {}).get("layers") or []}
+
+
+def _layer_file(item: dict) -> str | None:
+    """图层条目属于哪个 DXF（文件号）；用户处理后出处变成用户，文件号另存在 file。"""
+    return item.get("file") or (item.get("source") or {}).get("file")
+
+
+@dataclass
+class Recognition:
+    """一次「识别图纸」的结果：图片抄写、各 DXF 的图层判断、补充说明抄写，各自独立。"""
+
+    images: object | None = None                  # drawing_extract.ExtractResult
+    dxf: dict = field(default_factory=dict)       # DXF 路径 → 按判断结果重读的证据
+    statements: object | None = None              # drawing_extract.ExtractResult
+    errors: list = field(default_factory=list)
 
 
 class DrawingView(QWidget):
@@ -127,7 +154,11 @@ class DrawingPanel(QWidget):
         self.session = session
         self.runner = runner
         self.images: list[str] = []
-        self.evidence: dict | None = None
+        self.evidence: dict | None = None       # 合并后的证据，含用户的处理
+        self.parts: dict[str, dict] = {}         # 各份证据：images / DXF 路径 / statements
+        #: 之前几次合并的结果（新的在前），只用来找回用户的处理：加图后图片证据暂时撤出，
+        #: 重新识别回来时用户在图片读数上的处理仍按同一键保留。
+        self._history: list[dict] = []
         self.assembly = None
         self._records: dict[str, str] = {}       # 证据图号 → 本地路径
         self._rows = []
@@ -181,8 +212,8 @@ class DrawingPanel(QWidget):
 
         buttons = QHBoxLayout()
         self.btn_add = QPushButton("添加图纸…")
-        self.btn_add.setToolTip("平面图、立面图、截面表的图片，可一次选多张；"
-                                "或一个 DXF 文件（矢量图纸，数值直接取自实体）")
+        self.btn_add.setToolTip("平面图、立面图、截面表的图片与 DXF 文件（矢量图纸，数值直接取自"
+                                "实体），可一次选多份、混合使用")
         self.btn_add.clicked.connect(self._pick_images)
         self.btn_clear = QPushButton("清空")
         self.btn_clear.clicked.connect(self.clear)
@@ -196,6 +227,15 @@ class DrawingPanel(QWidget):
         self.lst_images.setMaximumHeight(64)
         self.lst_images.currentRowChanged.connect(self._show_image_at)
         layout.addWidget(self.lst_images)
+        notes_title = QLabel("补充说明")
+        notes_title.setStyleSheet(f"font-size:{theme.FONT_CAPTION}; color:{theme.INK_MUTED};")
+        layout.addWidget(notes_title)
+        self.txt_notes = QPlainTextEdit()
+        self.txt_notes.setPlaceholderText(NOTES_HINT)
+        self.txt_notes.setToolTip(NOTES_HINT)
+        self.txt_notes.setMaximumHeight(72)
+        self.txt_notes.textChanged.connect(self._on_notes_changed)
+        layout.addWidget(self.txt_notes)
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
         self.view = DrawingView(splitter)
@@ -279,88 +319,143 @@ class DrawingPanel(QWidget):
             self.load_images(paths)
 
     @property
+    def image_paths(self) -> list[str]:
+        return [path for path in self.images if Path(path).suffix.lower() != DXF_SUFFIX]
+
+    @property
+    def dxf_paths(self) -> list[str]:
+        return [path for path in self.images if Path(path).suffix.lower() == DXF_SUFFIX]
+
+    @property
     def dxf_path(self) -> str | None:
-        """当前图纸是一个 DXF 时返回它的路径。"""
-        if len(self.images) == 1 and Path(self.images[0]).suffix.lower() == DXF_SUFFIX:
-            return self.images[0]
-        return None
+        """第一个 DXF 的路径（没有 DXF 时为 None）。"""
+        paths = self.dxf_paths
+        return paths[0] if paths else None
+
+    @property
+    def statement_text(self) -> str:
+        return self.txt_notes.toPlainText().strip()
+
+    def _dxf_id(self, path: str) -> str:
+        return f"D{self.dxf_paths.index(path) + 1}"
 
     def load_images(self, paths) -> None:
-        """加入图纸；对话面板拖入图纸也走这里。新图纸会让已有识别结果作废。
+        """加入图纸（图片与 DXF 可以混用、可以多份）；对话面板拖入图纸也走这里。
 
-        DXF 一次读一个，且不与图片混用：图片靠大模型抄字，DXF 直接读实体，两份
-        证据的出处不同。加入 DXF 后立即在本机读取，不需要识别模型。
-        """
+        DXF 加入即在本机读取，不需要识别模型；新加的图片要点「识别图纸」才会抄写，
+        之前的图片抄写结果作废（几张图一起抄写，才能互相引用编号）。"""
         skipped_pdf = False
-        replaced = ""
-        dxf = [str(p) for p in paths if Path(p).suffix.lower() == DXF_SUFFIX]
-        if dxf:
-            if self.images or len(dxf) > 1:
-                replaced = (f"DXF 一次读取一个，且不与图片一起识别：已改为只读取"
-                            f"「{Path(dxf[0]).name}」。")
-            self.images = [dxf[0]]
-        else:
-            if self.dxf_path:
-                replaced = "图片与 DXF 不一起识别：已移除 DXF，改为识别图片。"
-                self.images = []
-            for path in paths:
-                suffix = Path(path).suffix.lower()
-                if suffix == ".pdf":
-                    skipped_pdf = True
-                    continue
-                if suffix in IMAGE_SUFFIXES and path not in self.images:
-                    self.images.append(str(path))
-        self.evidence = None
-        self.assembly = None
-        self._refresh()
-        if self.dxf_path:
-            self._read_dxf(replaced)
-        elif skipped_pdf:
-            self._status(PDF_HINT, theme.WARN)
-        elif replaced:
-            self._status(replaced + self.lbl_status.text(), theme.WARN)
+        added: list[str] = []
+        for path in map(str, paths):
+            suffix = Path(path).suffix.lower()
+            if suffix == ".pdf":
+                skipped_pdf = True
+            elif suffix in (*IMAGE_SUFFIXES, DXF_SUFFIX) and path not in self.images:
+                self.images.append(path)
+                added.append(path)
+        if any(Path(path).suffix.lower() != DXF_SUFFIX for path in added):
+            self.parts.pop("images", None)
+        problems = []
+        for path in [p for p in added if Path(p).suffix.lower() == DXF_SUFFIX]:
+            error = self._read_dxf(path)
+            if error:
+                problems.append(error)
+                self.images.remove(path)
+                added.remove(path)
+        self._remerge(select=added[0] if added else None)
+        if skipped_pdf:
+            problems.append(PDF_HINT)
+        new_dxf = [path for path in added if path in self.parts]
+        if problems:
+            self._status(" ".join(problems), theme.WARN if added else theme.ERROR)
+        elif new_dxf:
+            count = sum(len(self.parts[path].get("layers") or []) for path in new_dxf)
+            self._status(f"已读取 DXF：{count} 个图层。图层用途要由你或大模型判断：在核对表里为"
+                         "各图层选择用途，或点「识别图纸」请大模型判断。" + self.lbl_status.text(),
+                         theme.WARN)
 
-    def _read_dxf(self, prefix: str = "") -> None:
+    def _read_dxf(self, path: str) -> str:
+        """在本机读一个 DXF 作为一份证据；读不了时返回原因（不加入）。"""
         from drawing_dxf import DxfError, read_dxf
         try:
-            evidence = read_dxf(self.dxf_path)
+            self.parts[path] = read_dxf(path, file_id=self._dxf_id(path))
         except DxfError as exc:
-            self._status(prefix + str(exc), theme.ERROR)
-            return
-        self.set_evidence(evidence)
-        self._status(prefix + f"已读取 DXF：{len(evidence['layers'])} 个图层。图层用途要由你"
-                     "或大模型判断：在核对表里为各图层选择用途，或点「识别图纸」请大模型判断。",
-                     theme.WARN)
+            return str(exc)
+        return ""
+
+    def _ordered_parts(self) -> list[dict]:
+        keys = ["images", *self.dxf_paths, "statements"]
+        return [self.parts[key] for key in keys if key in self.parts]
+
+    def _remerge(self, select: str | None = None) -> None:
+        """各份证据重新合并；上一次合并后用户处理过的行按同一键保留。"""
+        from drawing_merge import merge_evidence
+        self._records = {f"P{index}": path for index, path in enumerate(self.image_paths, 1)}
+        if self.evidence is not None:
+            self._history = [self.evidence, *self._history][:HISTORY_DEPTH]
+        self.evidence = merge_evidence(self._ordered_parts(), previous=self._history)
+        self._reassemble()
+        if select is not None and select in self.images:
+            self.lst_images.setCurrentRow(self.images.index(select))
 
     def clear(self) -> None:
         self.images.clear()
+        self.parts.clear()
+        self._history.clear()
         self.evidence = None
         self.assembly = None
         self._records.clear()
+        self.txt_notes.blockSignals(True)
+        self.txt_notes.clear()
+        self.txt_notes.blockSignals(False)
         self._refresh()
 
+    def _on_notes_changed(self) -> None:
+        """说明改了，上次的抄写结果就不再代表它：立即撤出合并，等重新识别。"""
+        if "statements" in self.parts:
+            self.parts.pop("statements")
+            self._remerge()
+        self.btn_recognize.setEnabled(bool(self.images or self.statement_text)
+                                      and not self.runner.busy)
+
     def _show_image_at(self, index: int) -> None:
-        if self.dxf_path:
+        if 0 <= index < len(self.images) and self.images[index] in self.dxf_paths:
             self.view.show_note(DXF_VIEW_NOTE)
         elif 0 <= index < len(self.images):
-            self.view.show_image(self.images[index], f"P{index + 1}")
+            path = self.images[index]
+            self.view.show_image(path, f"P{self.image_paths.index(path) + 1}")
         else:
             self.view.show_image(None, None)
         self._update_overlay()
 
     # ---- 识别 ----
+    def _file_layers(self, file_id: str, *, user_only: bool = False) -> list[dict]:
+        return [item for item in (self.evidence or {}).get("layers") or []
+                if _layer_file(item) == file_id
+                and (not user_only or (item.get("source") or {}).get("user"))]
+
     def recognize(self) -> None:
-        if not self.images or self.runner.busy:
+        text = self.statement_text
+        if not (self.images or text) or self.runner.busy:
             return
         provider = self.cmb_provider.currentText()
         model = self.txt_model.text().strip()
         key = self.txt_key.text().strip()
         repairs = self.spn_repairs.value()
-        paths = list(self.images)
         work_dir = Path.cwd() / ".multimodal_tmp" / "drawing"
-        dxf = self.dxf_path
-        keep = [item for item in (self.evidence or {}).get("layers") or []
-                if (item.get("source") or {}).get("user")]
+        images = self.image_paths
+        # 只重做过期的部分：新加的图片、改过的说明、还有图层没判断的 DXF；都不过期时全部重做。
+        do_images = bool(images) and "images" not in self.parts
+        do_text = bool(text) and "statements" not in self.parts
+        dxf_jobs = [(path, self._dxf_id(path)) for path in self.dxf_paths
+                    if any(item.get("role") is None for item in self._file_layers(
+                        self._dxf_id(path)))]
+        if not (do_images or do_text or dxf_jobs):
+            do_images, do_text = bool(images), bool(text)
+            dxf_jobs = [(path, self._dxf_id(path)) for path in self.dxf_paths]
+        dxf_jobs = [(path, fid, self._file_layers(fid, user_only=True)) for path, fid in dxf_jobs]
+        context = [part for name, part in self.parts.items()
+                   if name != "statements" and not (name == "images" and do_images)]
 
         def parser():
             from sketch_parser import SketchParser
@@ -368,51 +463,83 @@ class DrawingPanel(QWidget):
                     else SketchParser.from_env(provider, model=model))
 
         def job():
-            from drawing_extract import DrawingExtractor
-            return DrawingExtractor(parser(), work_dir).extract(paths, max_repairs=repairs)
-
-        def dxf_job():
-            from drawing_dxf import judge_layers, model_layer_items, read_dxf, scan_layers
-            from drawing_extract import DrawingExtractor
+            from drawing_dxf import (DxfError, judge_layers, model_layer_items, read_dxf,
+                                     scan_layers)
+            from drawing_extract import DrawingExtractor, known_names
             extractor = DrawingExtractor(parser(), work_dir)
-            roles = judge_layers(lambda system, text: extractor._call(system, [("text", text)]),
-                                 scan_layers(dxf))
-            return read_dxf(dxf, model_layer_items(dxf, roles, f"{provider} {model}", keep))
+            result = Recognition()
+            if do_images:
+                result.images = extractor.extract(images, max_repairs=repairs)
+            for path, fid, keep in dxf_jobs:
+                try:
+                    roles = judge_layers(
+                        lambda system, user: extractor._call(system, [("text", user)]),
+                        scan_layers(path))
+                    result.dxf[path] = read_dxf(path, model_layer_items(
+                        path, roles, f"{provider} {model}", keep, file_id=fid), file_id=fid)
+                except (DxfError, ValueError) as exc:
+                    result.errors.append(f"{Path(path).name} 的图层判断未完成：{exc}")
+            if do_text:
+                parts = [part for part in context if part is not None]
+                if result.images is not None and result.images.evidence is not None:
+                    parts.append(result.images.evidence)
+                parts += list(result.dxf.values())
+                result.statements = extractor.transcribe_statements(
+                    text, known_names(parts), max_repairs=repairs)
+            return result
 
         self.btn_recognize.setEnabled(False)
         self._set_steps(2)
-        if dxf:
-            self._status("正在请大模型按图层名与内容判断图层用途；数值仍直接取自 DXF 实体…")
-            self.runner.submit(dxf_job, on_done=self._on_layers_judged,
-                               on_failed=self._on_failed)
-            return
-        self._status("正在识别：先定位各区域，再按原分辨率逐块抄写文字…")
+        doing = []
+        if do_images:
+            doing.append("先定位各区域，再按原分辨率逐块抄写图片上的文字")
+        if dxf_jobs:
+            doing.append("请大模型按图层名与内容判断 DXF 图层用途（数值仍直接取自实体）")
+        if do_text:
+            doing.append("逐句原样抄写补充说明")
+        self._status("正在识别：" + "；".join(doing) + "…")
         self.runner.submit(job, on_done=self._on_recognized, on_failed=self._on_failed)
 
-    def _on_layers_judged(self, evidence: dict) -> None:
-        self.set_evidence(evidence)
-        self._status("图层用途已由大模型判断，请在核对表的「图层」类中逐个确认或改选。"
-                     + self.assembly.summary(), theme.WARN)
-
-    def _on_recognized(self, result) -> None:
-        if not result.success:
-            self._refresh()
-            self._status("识别没有得到结果：" + "；".join(result.errors[-2:])
-                         + "。请检查识别设置中的提供商与密钥后重试。", theme.ERROR)
-            return
-        self.set_evidence(result.evidence)
-        if result.errors:
-            self._status(self.lbl_status.text() + " 识别过程提示：" + result.errors[-1],
-                         theme.WARN)
+    def _on_recognized(self, result: Recognition) -> None:
+        problems = list(result.errors)
+        failed = False
+        if result.images is not None:
+            if result.images.success:
+                self.parts["images"] = result.images.evidence
+                if result.images.errors:
+                    problems.append("识别过程提示：" + result.images.errors[-1])
+            else:
+                failed = True
+                problems.append("图片识别没有得到结果：" + "；".join(result.images.errors[-2:])
+                                + "。请检查识别设置中的提供商与密钥后重试")
+        for path, evidence in result.dxf.items():
+            if path in self.images:
+                self.parts[path] = evidence
+        if result.statements is not None:
+            if result.statements.success:
+                self.parts["statements"] = result.statements.evidence
+            else:
+                failed = True
+                problems.append("补充说明没有抄写成功：" + "；".join(result.statements.errors[-2:])
+                                + "。请检查识别设置中的提供商与密钥后重试")
+        self._remerge()
+        lead = ("图层用途已由大模型判断，请在核对表的「图层」类中逐个确认或改选。"
+                if result.dxf else "")
+        summary = self.assembly.summary() if self.assembly else ""
+        tail = ("　" + "；".join(problems) + "。") if problems else ""
+        ready = bool(self.assembly and self.assembly.ready)
+        color = theme.ERROR if failed else theme.SUCCESS if ready and not (lead or tail) \
+            else theme.WARN
+        self._status(lead + summary + tail, color)
 
     def _on_failed(self, exc_type: str, message: str) -> None:
         self._refresh()
         self._status(f"识别失败（{exc_type}）：{message}。请检查网络与密钥后重试。", theme.ERROR)
 
     def set_evidence(self, evidence: dict) -> None:
-        """载入一份证据（识别结果或以后的 DXF 读取结果）并重新组装。"""
+        """直接载入一份（已合并的）证据并重新组装。"""
         self.evidence = evidence
-        self._records = {f"P{index}": path for index, path in enumerate(self.images, 1)}
+        self._records = {f"P{index}": path for index, path in enumerate(self.image_paths, 1)}
         self._reassemble()
 
     def _reassemble(self, keep_row: str | None = None) -> None:
@@ -425,14 +552,17 @@ class DrawingPanel(QWidget):
         self.lst_images.blockSignals(True)
         current = self.lst_images.currentRow()
         self.lst_images.clear()
-        for index, path in enumerate(self.images, 1):
-            self.lst_images.addItem(f"图 {index}  {Path(path).name}")
+        for path in self.images:
+            name = Path(path).name
+            self.lst_images.addItem(f"DXF  {name}" if path in self.dxf_paths else
+                                    f"图 {self.image_paths.index(path) + 1}  {name}")
         self.lst_images.blockSignals(False)
         if self.images:
             self.lst_images.setCurrentRow(min(max(current, 0), len(self.images) - 1))
         else:
             self._show_image_at(-1)
-        self.btn_recognize.setEnabled(bool(self.images) and not self.runner.busy)
+        self.btn_recognize.setEnabled(bool(self.images or self.statement_text)
+                                      and not self.runner.busy)
         rows = sorted(self.assembly.rows, key=lambda r: STATUS_ORDER[r.status]) \
             if self.assembly else []
         self._rows = rows
@@ -450,16 +580,23 @@ class DrawingPanel(QWidget):
         ready = bool(self.assembly and self.assembly.ready)
         self.btn_save.setEnabled(ready)
         self.btn_import.setEnabled(ready)
+        waiting = []
+        if self.image_paths and "images" not in self.parts:
+            waiting.append(f"{len(self.image_paths)} 张图片")
+        if self.statement_text and "statements" not in self.parts:
+            waiting.append("补充说明")
+        later = ("还有" + "、".join(waiting) + "没有识别，点「识别图纸」后一起核对。") if waiting else ""
         if self.assembly is None:
-            self._set_steps(1 if not self.images else 2)
-            self._status("添加平面图、立面图与截面表后点「识别图纸」。" if not self.images
-                         else f"已添加 {len(self.images)} 张图纸，点「识别图纸」开始。")
+            self._set_steps(1 if not (self.images or self.statement_text) else 2)
+            self._status(later or "添加平面图、立面图与截面表（图片或 DXF），可再写补充说明，"
+                         "然后点「识别图纸」。")
         else:
-            self._set_steps(4 if ready else 3)
-            self._status(self.assembly.summary(), theme.SUCCESS if ready else theme.WARN)
+            self._set_steps(4 if ready and not waiting else 3)
+            self._status(self.assembly.summary() + later,
+                         theme.SUCCESS if ready and not waiting else theme.WARN)
         target = next((i for i, r in enumerate(rows) if r.id == keep_row), None)
         if target is None:
-            target = next((i for i, r in enumerate(rows) if r.status != "ok"),
+            target = next((i for i, r in enumerate(rows) if r.blocking or r.confirmable),
                           0 if rows else None)
         if target is not None:
             self.table.selectRow(target)
@@ -521,15 +658,26 @@ class DrawingPanel(QWidget):
             return
         try:
             evidence = resolve(self.evidence, row.id, value)
-            if self.dxf_path and row.id.startswith("layers.") \
-                    and _layer_roles(evidence) != _layer_roles(self.evidence):
-                from drawing_dxf import reread
-                evidence = reread(evidence, self.dxf_path)
+            changed = row.id.startswith("layers.") \
+                and _layer_roles(evidence) != _layer_roles(self.evidence)
+            if changed:
+                # 图层用途改了：只按新用途重读这一个 DXF，其他证据与用户的处理不变。
+                from drawing_dxf import read_dxf
+                layer = evidence["layers"][int(row.id.split(".")[1])]
+                fid = _layer_file(layer)
+                path = next((p for p in self.dxf_paths if self._dxf_id(p) == fid), None)
+                if path is None:
+                    raise ValueError("找不到这个图层所在的 DXF，请重新添加")
+                layers = [item for item in evidence["layers"] if _layer_file(item) == fid]
+                self.parts[path] = read_dxf(path, layers, file_id=fid)
         except ValueError as exc:    # DxfError 也是 ValueError
             self._status(f"{row.item}未更新：{exc}", theme.ERROR)
             return
         self.evidence = evidence
-        self._reassemble(keep_row=None if value is None else row.id)
+        if changed:
+            self._remerge()
+        else:
+            self._reassemble(keep_row=None if value is None else row.id)
 
     def confirm_selected(self) -> None:
         self._resolve(None)

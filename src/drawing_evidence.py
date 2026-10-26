@@ -20,9 +20,11 @@
       "grids": {"x": {"axes": [{"label": "1", "pos": 0.12, "source": SRC}],
                       "spacings": [{"from": "1", "to": "2", "text": "6000",
                                     "source": SRC}],
-                      "total": {"text": "12000", "source": SRC}},
+                      "total": {"text": "12000", "source": SRC},
+                      "edges": [{"text": "1'-2\"", "source": SRC}]},
                 "y": {…}},
       "levels": [{"name": "2F", "text": "3.600", "source": SRC}],
+      "level_heights": [{"from": "1F", "to": "2F", "text": "3600", "source": SRC}],
       "members": [{"label": "KL1", "kind": "beam", "along": "A",
                    "from": "1", "to": "3", "levels": ["2F"], "source": SRC},
                   {"label": "KZ1", "kind": "column", "at": ["1", "A"],
@@ -52,12 +54,29 @@ x 族轴线是数字轴（竖向轴线，沿水平方向排列），y 族是字�
 * ``"layers": [{"name": "AXIS", "role": "axis", "summary": "LINE 3、CIRCLE 3",
   "source": SRC}]``：图层用途只由用户或大模型判断（``LAYER_ROLES``），
   ``role`` 为 null 表示尚未判断、暂不读取；判断结果进核对表确认。
+
+用户写的补充说明是第三种出处：代码先按句切分（:func:`split_sentences`），大模型只把
+各句里写明的内容原样抄成条目，``SRC`` 写作 ``{"statement": "T1", "sentence": 2}``，
+说明登记在 ``"statements": [{"id": "T1", "name": "补充说明", "sha256": …,
+"sentences": [...]}]``。抄出的原文必须逐字出现在所引的句子里，由
+:func:`bind_statement_sources` 确定性核对，对不上的条目不采用。
+
+多份证据（图片、几个 DXF、补充说明）由 ``drawing_merge`` 合并成一份：同一键
+（轴号对、标高名、编号）的几条读数放进主条目的 ``"alternatives"``，组装时值相同即合并、
+值不同即报冲突让用户选。
+
+间距与层高的 ``text`` 可以是英尺英寸写法和重复写法（「7 at 25'-0"」，from/to 为
+首末轴号），由 :func:`parse_dimension` 与 :func:`expand_chain` 确定性展开，原文不改。
+``edges`` 是首末轴线到建筑外边缘的尺寸，用来认出量到外边缘的总尺寸。``levels``
+按从下到上排列；立面图只给层高时 ``text`` 为 null，标高由 ``level_heights`` 累加。
+没有编号的梁柱 ``label`` 为 null，按位置抄写。
 """
 
 from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from dimension_constraints import length_to_m
@@ -115,25 +134,271 @@ def parse_number(text: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def parse_length(text: Any, unit: Any) -> float | None:
-    """标注原文 → 指定单位下的长度；显式单位参与换算，不剥掉后直接当数。"""
+# ---- 尺寸写法：自带单位（英尺英寸、mm/cm/m 后缀）、重复写法 ----------------------
+
+#: 1 英寸 = 254/10000 米（1959 年国际码协定的定义值，不是近似）；1 英尺 = 12 英寸。
+INCH_M = 0.0254
+
+#: 原文紧邻的公制单位后缀（#52：「+3.500 m」「6000 mm」）。
+_METRIC_SUFFIX = re.compile(r"(.+?)\s*(mm|cm|m|毫米|厘米|米)", re.IGNORECASE)
+_METRIC_NAMES = {"毫米": "mm", "厘米": "cm", "米": "m"}
+
+DIMENSION_HELP = ("可识别的写法：6000、6,000、3.500 m、6000 mm、25'-0\"、13'-4 1/2\"，以及重复写法"
+                  "「7 at 25'-0\"」「6@3600」「3×6000」，可带「= 总长」。")
+
+_PRIMES = str.maketrans({"′": "'", "’": "'", "‘": "'", "´": "'",
+                         "″": '"', "”": '"', "“": '"'})
+_FEET_INCHES = re.compile(
+    r"(?:(?P<ft>\d+(?:\.\d+)?)\s*')?"
+    r"(?:\s*-?\s*(?P<inch>\d+(?:\.\d+)?)?(?:\s*-?\s*(?P<num>\d+)/(?P<den>\d+))?\s*\")?")
+_REPEAT = re.compile(r"(?P<count>\d+)\s*(?:SPA(?:CES|\.)?\s*)?(?:AT\b|@|×)\s*(?P<each>.+)",
+                     re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class Dimension:
+    """一条尺寸文字的确定性读法；原文仍保存在证据里。
+
+    ``value`` 是每段的数，单位是 ``unit``：写法自带单位时为 ``in``（英尺英寸写法
+    折成英寸）或 ``mm``/``cm``/``m``（原文带后缀）；空串表示不带单位，换算要靠图上
+    的单位说明。``count`` 是重复写法的段数，「7 at 25'-0"」为 7 段、每段 300 英寸。
+    """
+
+    value: float
+    count: int = 1
+    unit: str = ""
+
+    @property
+    def inches(self) -> bool:
+        return self.unit == "in"
+
+    @property
+    def total(self) -> float:
+        return self.value * self.count
+
+    def show(self, value: float | None = None) -> str:
+        """按原写法的单位写出一个数（默认每段的数）。"""
+        value = self.value if value is None else value
+        if self.inches:
+            return format_feet_inches(value)
+        return f"{_plain(value)} {self.unit}" if self.unit else _plain(value)
+
+
+def unit_to_m(value: float, unit: str) -> float:
+    """自带单位的数 → 米。英寸按定义 1 in = 254/10000 m；mm、cm 用整除，
+    与不带后缀、按单位说明换算的同一个数逐位相同（同值标高才能合并）。"""
+    if unit == "in":
+        return value * 254 / 10000
+    divisor = round(1.0 / length_factor(unit))
+    return value / divisor if divisor > 1 else value * length_factor(unit)
+
+
+def _plain(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".") if value != 0 else "0"
+
+
+def format_feet_inches(inches: float) -> str:
+    """英寸 → 图上习惯的 ft'-in" 写法，如 300 → 25'-0"，160 → 13'-4"。"""
+    sign = "-" if inches < 0 else ""
+    inches = round(abs(inches), 6)
+    feet = int(inches // 12)
+    return f"{sign}{feet}'-{_plain(inches - 12 * feet)}\""
+
+
+def _parse_feet_inches(text: str) -> float | None:
+    """ft'-in" 写法 → 英寸；不是这种写法返回 None。"""
+    sign = 1.0
+    if text[:1] in "+-±":
+        sign = -1.0 if text[0] == "-" else 1.0
+        text = text[1:].strip()
+    match = _FEET_INCHES.fullmatch(text)
+    if not match or not any(match.group(key) for key in ("ft", "inch", "num")):
+        return None
+    inches = 12.0 * float(match.group("ft") or 0) + float(match.group("inch") or 0)
+    if match.group("num"):
+        denominator = float(match.group("den"))
+        if denominator == 0:
+            return None
+        inches += float(match.group("num")) / denominator
+    return sign * inches
+
+
+def _single_dimension(text: str) -> Dimension | None:
     number = parse_number(text)
-    if number is not None or not isinstance(text, str):
-        return number
-    match = re.fullmatch(r"(.+?)\s*(mm|cm|m|毫米|厘米|米)",
-                         text.translate(_FULL_WIDTH).strip(), re.IGNORECASE)
-    target = length_factor(unit)
-    if not match or target is None:
-        return None
-    number = parse_number(match[1].strip())
-    source_unit = {"毫米": "mm", "厘米": "cm", "米": "m"}.get(match[2], match[2].lower())
-    if number is None:
-        return None
-    ratio = length_factor(source_unit) / target
-    # mm→m 用整除，避免与无后缀读数产生浮点末位不同，导致同标高不能合并。
-    divisor = 1.0 / ratio
-    result = number / round(divisor) if divisor > 1 and divisor.is_integer() else number * ratio
-    return result if math.isfinite(result) else None
+    if number is not None:
+        return Dimension(number)
+    inches = _parse_feet_inches(text)
+    if inches is not None:
+        return Dimension(inches, unit="in")
+    match = _METRIC_SUFFIX.fullmatch(text)
+    if match:
+        number = parse_number(match[1].strip())
+        if number is not None:
+            return Dimension(number, unit=_METRIC_NAMES.get(match[2], match[2].lower()))
+    return None
+
+
+def parse_dimension(text: Any) -> Dimension:
+    """尺寸文字 → :class:`Dimension`；读不懂抛 ValueError 并说明支持的写法。
+
+    在 :func:`parse_number` 之外再认三种写法，都是确定性的：
+
+    * 公制后缀 ``+3.500 m``、``6000 mm``，自带单位，按后缀换算，不剥掉后缀当数；
+    * 英尺英寸 ``25'-0"``、``13'-4"``、``1'-2"``、``22'-4 1/2"``，自带单位；
+    * 重复写法 ``7 at 25'-0"``、``6@3600``、``3×6000``，可带 ``= 175'-0"``，
+      等号两边对不上时拒绝（不替图纸决定哪边是对的）。
+    """
+    if isinstance(text, (int, float)) and not isinstance(text, bool):
+        number = parse_number(text)
+        if number is None:
+            raise ValueError(f"尺寸「{text}」不是有限数。" + DIMENSION_HELP)
+        return Dimension(number)
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("尺寸为空。" + DIMENSION_HELP)
+    value = text.translate(_FULL_WIDTH).translate(_PRIMES).replace("''", '"').strip()
+    value = re.sub(r"(?<=\d)\s*[xX*](?=\s*\d)", "×", value)
+    left, equals, right = (part.strip() for part in value.partition("="))
+    repeat = _REPEAT.fullmatch(left)
+    if repeat:
+        each = _single_dimension(repeat.group("each").strip())
+        count = int(repeat.group("count"))
+        if each is None or count < 1:
+            raise ValueError(f"读不懂重复写法「{text}」。" + DIMENSION_HELP)
+        dimension = Dimension(each.value, count, each.unit)
+    else:
+        dimension = _single_dimension(left)
+        if dimension is None:
+            raise ValueError(f"读不懂尺寸「{text}」。" + DIMENSION_HELP)
+    if equals:
+        total = _single_dimension(right)
+        if total is None or total.unit != dimension.unit:
+            raise ValueError(f"读不懂「{text}」等号后的总长。" + DIMENSION_HELP)
+        if abs(total.value - dimension.total) > 1e-6 * max(1.0, abs(total.value)):
+            raise ValueError(f"「{text}」中 {dimension.count} 段之和 "
+                             f"{dimension.show(dimension.total)} 与等号后的 "
+                             f"{total.show()} 不符；请对照原图改正其中一边。")
+    return dimension
+
+
+def read_dimension(item: Mapping[str, Any]) -> Dimension:
+    """一条证据的尺寸读法：矢量入口从实体直接取得的 ``value`` 优先，``text`` 是原文。
+
+    ``value`` 是实体实测值（图纸单位下的总长）。原文读得懂且与实测值不符（如
+    DIMENSION 文字被改写成别的数）时抛 ValueError；原文读不懂时用实测值。
+    用户改写过的条目以用户文字为准。"""
+    value = item.get("value")
+    source = item.get("source")
+    by_user = isinstance(source, Mapping) and bool(source.get("user"))
+    if by_user or isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(float(value)):
+        return parse_dimension(item.get("text"))
+    value = float(value)
+    try:
+        dimension = parse_dimension(item.get("text"))
+    except ValueError:
+        return Dimension(value)
+    if dimension.unit not in ("", "in"):    # 原文带公制后缀：实测值的单位未知，以原文为准
+        return dimension
+    if abs(dimension.total - value) > 1e-6 * max(1.0, abs(value)):
+        raise ValueError(f"标注文字「{item.get('text')}」与实体实测值 {_plain(value)} 不符；"
+                         "请照图纸意图填写正确的数。")
+    return dimension
+
+
+@dataclass
+class ChainLink:
+    """相邻两根轴线（或两层）之间的一段，由证据第 ``index`` 条给出。"""
+
+    index: int
+    dimension: Dimension
+    part: int = 0                   # 重复写法展开后的第几段（从 1 起）；单段写法为 0
+
+
+@dataclass
+class Chain:
+    """一组间距证据按轴号顺序展开后的结果，轴网与层高共用。"""
+
+    labels: list[str]
+    links: dict[tuple[str, str], ChainLink] = field(default_factory=dict)
+    #: 跨越多段的单值尺寸或与已有分段重复的尺寸：(条目序号, 起, 止, 读法)，只用来核对。
+    spans: list[tuple[int, str, str, Dimension]] = field(default_factory=list)
+    #: 条目序号 → (给用户的说明, 给识别模型重读的中性描述，空串表示不回喂)。
+    problems: dict[int, tuple[str, str]] = field(default_factory=dict)
+    #: 被有问题的条目占住的相邻段 → 条目序号；这些段不再另报「缺失」。
+    blocked: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: 自动补的层名 → 由哪一条重复写法补出。
+    generated: dict[str, int] = field(default_factory=dict)
+
+
+def expand_chain(labels: list[str], items: list[Any], *, name_gaps: bool = False,
+                 noun: str = "轴号") -> Chain:
+    """把间距证据（含重复写法）确定性展开为相邻两轴之间的逐段间距。
+
+    重复写法「7 at 25'-0"」的 from/to 是这串间距的首末轴号，两者之间正好隔 7 段时
+    逐段展开；段数对不上就报出来，不猜哪根轴线没读到。立面图常常不给中间各层的
+    层名，``name_gaps`` 为真时，若重复写法的首末层在列表里相邻，就按段数补上自动
+    层名（「L1 上第 2 层」），数值仍全部来自原文。原文不改写，展开结果只引用条目序号。
+    """
+    labels = list(labels)
+    entries = []
+    for index, item in enumerate(items):
+        if not isinstance(item, Mapping):
+            continue
+        a, b = str(item.get("from") or "").strip(), str(item.get("to") or "").strip()
+        try:
+            dimension: Dimension | None = read_dimension(item)
+        except ValueError as exc:
+            dimension, message = None, str(exc)
+        else:
+            message = ""
+        entries.append((index, item, a, b, dimension, message))
+    generated: dict[str, int] = {}
+    if name_gaps:
+        for index, _item, a, b, dimension, _ in entries:
+            if dimension is None or dimension.count < 2 or a not in labels \
+                    or b not in labels:
+                continue
+            i, j = sorted((labels.index(a), labels.index(b)))
+            if j - i != 1:
+                continue
+            names = [f"{labels[i]} 上第 {k} 层" for k in range(1, dimension.count)]
+            if any(name in labels for name in names):
+                continue
+            labels[j:j] = names
+            generated.update(dict.fromkeys(names, index))
+    chain = Chain(labels, generated=generated)
+    order = {label: position for position, label in enumerate(labels)}
+    for index, item, a, b, dimension, message in entries:
+        if a not in order or b not in order:
+            missing = "、".join(label for label in (a, b) if label not in order) or "（空）"
+            chain.problems[index] = (
+                f"引用了不存在的{noun}「{missing}」；请改正或删除这条尺寸。",
+                f"尺寸 {a}→{b} 引用的{noun}不在{noun}列表里")
+            continue
+        i, j = sorted((order[a], order[b]))
+        pairs = [(labels[k], labels[k + 1]) for k in range(i, j)]
+        if not pairs:
+            chain.problems[index] = (f"起止{noun}相同；请改正或删除这条尺寸。",
+                                     f"尺寸 {a}→{b} 的起止{noun}相同")
+            continue
+        if dimension is None or (dimension.count > 1 and dimension.count != len(pairs)):
+            if dimension is None:
+                chain.problems[index] = (message, "")
+            else:
+                chain.problems[index] = (
+                    f"重复写法写的是 {dimension.count} 段，但{noun} {a}→{b} 之间有 "
+                    f"{len(pairs)} 段；请对照原图改正起止{noun}或这条尺寸。",
+                    f"尺寸 {a}→{b} 原文「{item.get('text')}」的段数与两{noun}之间的段数对不上")
+            for pair in pairs:
+                chain.blocked.setdefault(pair, index)
+            continue
+        if len(pairs) == dimension.count and not any(pair in chain.links for pair in pairs):
+            for part, pair in enumerate(pairs, 1):
+                chain.links[pair] = ChainLink(index, dimension,
+                                              part if dimension.count > 1 else 0)
+        else:
+            chain.spans.append((index, a, b, dimension))
+    return chain
 
 
 def section_labels(item: Mapping[str, Any]) -> list[str]:
@@ -142,6 +407,163 @@ def section_labels(item: Mapping[str, Any]) -> list[str]:
     if not isinstance(labels, list) or not labels or not all(_is_text(v) for v in labels):
         return []
     return list(dict.fromkeys(label.strip() for label in labels))
+
+
+def settled(item: Any) -> bool:
+    """用户处理过的条目：确认过原值，或来源已是用户。"""
+    if not isinstance(item, Mapping):
+        return False
+    source = item.get("source")
+    return bool(item.get("confirmed")) or (isinstance(source, Mapping) and bool(source.get("user")))
+
+
+def reading(item: Mapping[str, Any]) -> str:
+    """一条读数的原文标识，用来判断用户处理时是否已经见过它（单位说明连同所填单位）。"""
+    parts = ["" if item.get("text") is None else str(item.get("text")).strip()]
+    for key in ("value", "kind"):
+        if isinstance(item.get(key), str):
+            parts.append(item[key])
+    return " | ".join(parts)
+
+
+# ---- 补充说明：逐句编号、原文核对 -------------------------------------------------
+
+#: 句子分隔符：换行与中英文句号、分号、叹号、问号。小数点「.」不算，「3.6 m」不会被切开。
+_SENTENCE_END = re.compile(r"[\n\r。；;！!？?]+")
+_UNIT_WORD = re.compile(r"毫米|厘米|米|(?<![A-Za-z])(?:mm|cm|m)(?![A-Za-z])")
+_UNIT_WORD_NAMES = {"毫米": "mm", "厘米": "cm", "米": "m"}
+
+#: 每类条目里引用名称（轴号、层名、编号）的字段；名称必须出现在原句里或是图上已读到的。
+_NAME_FIELDS = ("label", "from", "to", "along", "name", "from_level", "to_level")
+_NAME_LISTS = ("at", "levels", "labels")
+
+
+def split_sentences(text: Any) -> list[str]:
+    """把补充说明确定性地切成句子（编号从 1 起，由调用方加）；空句丢弃。"""
+    if not isinstance(text, str):
+        return []
+    return [part.strip() for part in _SENTENCE_END.split(text) if part.strip()]
+
+
+def _squash(text: Any) -> str:
+    """逐字核对用的写法归一：全角转半角、各种撇号归一、去掉空白。不改数字与单位。"""
+    return re.sub(r"\s+", "", str(text).translate(_FULL_WIDTH).translate(_PRIMES))
+
+
+def _cited(source: Any, count: int) -> list[int] | None:
+    numbers = source.get("sentence") if isinstance(source, Mapping) else None
+    numbers = numbers if isinstance(numbers, list) else [numbers]
+    if not numbers or not all(isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= count
+                              for n in numbers):
+        return None
+    return list(dict.fromkeys(numbers))
+
+
+def _sentence_label(numbers: list[int]) -> str:
+    return "第 " + "、".join(str(n) for n in numbers) + " 句"
+
+
+def bind_statement_sources(raw: Mapping[str, Any], statement_id: str, sentences: list[str],
+                           known: Any = ()) -> dict[str, Any]:
+    """把大模型从补充说明抄出的条目绑定到原句，并逐字核对；返回新证据。
+
+    每条的 ``source.sentence`` 必须指向存在的句子；``text`` 必须逐字（忽略空白与全角）
+    出现在所引句子里；引用的轴号、层名、编号要么也出现在原句里，要么是 ``known``
+    （图上已读到的名称）——后者是大模型做的关联，标为需确认。单位说明的 value 必须与
+    原文里的单位词一致。核对不过的条目不采用，写成一条要用户确认的提示（``unused``），
+    不让说明里的内容悄悄丢掉，也不让没出处的数混进来。
+    """
+    known = {str(name).strip() for name in known if str(name).strip()}
+    ev: dict[str, Any] = {key: value for key, value in dict(raw).items()}
+    notes: list[dict[str, Any]] = []
+
+    def unused(item: Mapping[str, Any], numbers: list[int] | None, reason: str) -> None:
+        where = _sentence_label(numbers) + "：" if numbers else ""
+        note: dict[str, Any] = {"text": f"{where}{reason}", "unused": True}
+        if numbers:
+            note["source"] = {"statement": statement_id,
+                              "sentence": numbers[0] if len(numbers) == 1 else numbers}
+        notes.append(note)
+
+    def bind(item: Any, names: list[str]) -> dict[str, Any] | None:
+        if not isinstance(item, Mapping):
+            return None
+        item = dict(item)
+        numbers = _cited(item.get("source"), len(sentences))
+        what = f"「{item.get('text')}」" if item.get("text") not in (None, "") else "这一条"
+        if numbers is None:
+            unused(item, None, f"补充说明里抄出的{what}没有指明出自哪一句，未采用")
+            return None
+        cited = _squash("".join(sentences[n - 1] for n in numbers))
+        text = item.get("text")
+        if isinstance(text, str) and text.strip() and _squash(text) not in cited:
+            unused(item, numbers, f"原句里没有{what}这段文字，未采用")
+            return None
+        inferred = []
+        for name in names:
+            if _squash(name) in cited or name == str(text or "").strip():
+                continue
+            if name in known:
+                inferred.append(name)
+                continue
+            unused(item, numbers, f"「{name}」既不在原句里，也不是图上已读到的名称，{what}未采用")
+            return None
+        if inferred:
+            item["check"] = (f"「{'、'.join(inferred)}」是按说明关联到图上已读到的名称，"
+                             f"原句没有直接写出；请对照说明{_sentence_label(numbers)}确认。")
+        item["source"] = {"statement": statement_id,
+                          "sentence": numbers[0] if len(numbers) == 1 else numbers}
+        return item
+
+    def names_of(item: Any) -> list[str]:
+        if not isinstance(item, Mapping):
+            return []
+        names = [item[key] for key in _NAME_FIELDS if _is_text(item.get(key))]
+        for key in _NAME_LISTS:
+            if isinstance(item.get(key), list):
+                names += [value for value in item[key] if _is_text(value)]
+        return list(dict.fromkeys(str(name).strip() for name in names))
+
+    def bind_list(items: Any) -> list[dict[str, Any]]:
+        return [bound for bound in (bind(item, names_of(item)) for item in items or [])
+                if bound is not None]
+
+    units = {}
+    for key, item in (ev.get("units") or {}).items():
+        bound = bind(item, [])
+        if bound is None:
+            continue
+        words = {_UNIT_WORD_NAMES.get(m, m) for m in _UNIT_WORD.findall(str(bound.get("text")))}
+        if words != {bound.get("value")}:
+            unused(bound, _cited(bound["source"], len(sentences)),
+                   f"「{bound.get('text')}」里的单位与填写的 {bound.get('value')} 对不上，未采用")
+            continue
+        units[key] = bound
+    ev["units"] = units
+    grids = {}
+    for family, grid in (ev.get("grids") or {}).items():
+        if not isinstance(grid, Mapping):
+            continue
+        grids[family] = {"axes": bind_list(grid.get("axes")),
+                         "spacings": bind_list(grid.get("spacings")),
+                         "total": bind(grid.get("total"), []) if grid.get("total") else None,
+                         "edges": bind_list(grid.get("edges"))}
+    ev["grids"] = grids
+    for key in ("levels", "level_heights", "members", "sections"):
+        ev[key] = bind_list(ev.get(key))
+    for key in ("material", "support"):
+        ev[key] = bind(ev.get(key), []) if ev.get(key) else None
+    hints = []
+    for note in ev.get("notes") or []:
+        if isinstance(note, Mapping) and _is_text(note.get("text")):
+            numbers = _cited(note.get("source"), len(sentences))
+            hint: dict[str, Any] = {"text": str(note["text"]).strip()}
+            if numbers:
+                hint["source"] = {"statement": statement_id,
+                                  "sentence": numbers[0] if len(numbers) == 1 else numbers}
+            hints.append(hint)
+    ev["notes"] = hints + notes
+    return ev
 
 
 # ---- 构件规格 ----------------------------------------------------------------
@@ -273,6 +695,8 @@ def _source_errors(where: str, source: Any) -> list[str]:
     if handles is not None and not (isinstance(handles, list) and handles
                                     and all(_is_text(h) for h in handles)):
         return [f"{where}.source.handles 必须是非空的实体句柄数组"]
+    if "statement" in source and _cited(source, 10**6) is None:
+        return [f"{where}.source.sentence 必须是从 1 起的句号（或句号数组）"]
     bbox = source.get("bbox")
     if bbox is not None and not (
             isinstance(bbox, list) and len(bbox) == 4
@@ -319,14 +743,35 @@ def validate_evidence(evidence: Any) -> list[str]:
             if "text" not in item:
                 errors.append(f"{where} 缺少 text（照抄图上数字）")
             errors += _source_errors(where, item.get("source"))
+        edges = grid.get("edges") or []
+        if not isinstance(edges, list) or not all(
+                isinstance(item, Mapping) and "text" in item for item in edges):
+            errors.append(f"grids.{family}.edges 必须是数组，每项照抄一段外边距 text")
     levels = evidence.get("levels") or []
     if not isinstance(levels, list):
         errors.append("levels 必须是数组")
         levels = []
+    level_names = set()
     for index, level in enumerate(levels):
-        if not isinstance(level, Mapping) or not _is_text(level.get("name")) \
-                or "text" not in level:
-            errors.append(f"levels[{index}] 需要 name 与 text")
+        if not isinstance(level, Mapping) or not _is_text(level.get("name")):
+            errors.append(f"levels[{index}] 需要 name（图上的层名或标高原文）")
+            continue
+        level_names.add(str(level["name"]).strip())
+    heights = evidence.get("level_heights") or []
+    if not isinstance(heights, list):
+        errors.append("level_heights 必须是数组")
+        heights = []
+    for index, item in enumerate(heights):
+        where = f"level_heights[{index}]"
+        if not isinstance(item, Mapping) or not all(
+                _is_text(item.get(key)) for key in ("from", "to")) or "text" not in item:
+            errors.append(f"{where} 需要 from、to 层名与 text（照抄图上层高）")
+            continue
+        unknown = [str(item[key]).strip() for key in ("from", "to")
+                   if str(item[key]).strip() not in level_names]
+        if unknown:
+            errors.append(f"{where} 引用的层名 {'、'.join(unknown)} 须先在 levels 里列出")
+        errors += _source_errors(where, item.get("source"))
     members = evidence.get("members") or []
     if not isinstance(members, list):
         errors.append("members 必须是数组")

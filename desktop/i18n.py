@@ -96,7 +96,7 @@ ZH_EN: dict[str, str] = {
     "创建载荷": "Create Load", "选择节点": "Node",
     "选择杆件": "Member", "建节点": "+Node", "建杆件": "+Member",
     "删除选中": "Delete", "编号标注": "Labels", "荷载数值": "Load Values",
-    "中 / EN": "EN / 中", "分析步": "Step", "模态": "Modal",
+    "中 / EN": "EN / 中", "减少动效": "Reduce Motion", "分析步": "Step", "模态": "Modal",
     "求解设置": "Procedure", "幅值曲线": "Amplitude",
     "停止任务": "Stop task", "超限": "Exceeded",
     "无法判定": "Undetermined", "结果筛选": "Result filter",

@@ -47,6 +47,7 @@ BRANCH_ICONS = {
 }
 CHILD_ICONS = {"nodes": "node", "members": "member"}
 _EMPTY_COUNT = re.compile(r"（0[^）]*）$")
+_TOP_LEVEL_LOADS = ("nodal_loads", "member_loads", "member_spans", "settlements")
 
 
 def is_empty_branch(item: QTreeWidgetItem) -> bool:
@@ -186,9 +187,11 @@ class ModelTree(QTreeWidget):
             node.setData(0, PAYLOAD, payload)
         return node
 
-    def _feature_branch(self, label: str, kind: str, features: dict):
+    def _feature_branch(self, label: str, kind: str, features: dict, extra: int = 0):
+        # extra：不属于任何对象、直接写在模型里的条目（如「直接定义」的支座），
+        # 也要算进标题计数，否则 6 个支座的模型显示「边界条件（0）」
         items = features.get(kind) or []
-        branch = self._child(self, f"{label}（{len(items)}）", "feature_branch", kind,
+        branch = self._child(self, f"{label}（{len(items) + extra}）", "feature_branch", kind,
                              tip=f"{label}：右键创建或打开管理器；单击对象高亮区域")
         for feature in items:
             self._feature_item(branch, kind, feature)
@@ -344,8 +347,8 @@ class ModelTree(QTreeWidget):
         # Abaqus 模型树里约束（Constraints）排在分析步之后、荷载与边界条件之前
         self._feature_branch("约束", "constraints", features)
 
-        sup = self._feature_branch("边界条件", "bcs", features)
         direct = [s for s in model.get("supports") or [] if not s.get("owners")]
+        sup = self._feature_branch("边界条件", "bcs", features, extra=len(direct))
         if direct:
             sup = self._child(sup, f"直接定义（{len(direct)}）", "supports")
         kinds: dict[str, list[int]] = {}
@@ -364,7 +367,18 @@ class ModelTree(QTreeWidget):
             for node_id in nodes:
                 self._child(group, f"节点 {node_id}", "support_object", node_id)
 
-        cases = model.get("load_cases") or []
+        # 单工况模型把荷载直接写在顶层，求解时等价于名为 default 的工况
+        # （model_io._fill_case）；「规则框架」生成的就是这种。树里也按这个
+        # 工况列出，否则显示「荷载（0 工况）」，荷载在树里找不到。
+        cases = [dict(c) for c in model.get("load_cases") or []]
+        implicit = {key: model[key] for key in _TOP_LEVEL_LOADS if model.get(key)}
+        if implicit:
+            default = next((c for c in cases if c.get("name") == "default"), None)
+            if default is None:
+                cases.insert(0, {"name": "default", **implicit})
+            else:
+                for key, entries in implicit.items():
+                    default[key] = list(entries) + list(default.get(key) or [])
         loads = self._child(self, f"荷载（{len(cases)} 工况）", "feature_branch", "loads")
         for c in cases:
             bits = []

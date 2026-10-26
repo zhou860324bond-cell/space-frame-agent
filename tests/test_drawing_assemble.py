@@ -12,10 +12,10 @@ import pytest
 
 import sections
 from agent import Session
-from drawing_assemble import (CONFIRM, CONFLICT, MISSING, OK, PIXEL_SCALE_ALARM,
+from drawing_assemble import (CONFIRM, CONFLICT, INFO, MISSING, OK, PIXEL_SCALE_ALARM,
                               assemble, resolve)
-from drawing_evidence import (EVIDENCE_FORMAT, parse_designation, parse_material,
-                              parse_number, validate_evidence)
+from drawing_evidence import (EVIDENCE_FORMAT, parse_designation, parse_dimension,
+                              parse_material, parse_number, validate_evidence)
 from model_io import validate_payload
 
 
@@ -455,3 +455,195 @@ def test_validate_evidence_reports_shape_errors_for_repair():
     assert any("levels" in e for e in errors)
     assert any("beam 或 column" in e for e in errors)
     assert any("轴号重复" in e for e in errors)
+
+
+# ---- 真实图纸验收暴露的写法（2026-10-16，FEMA 451 第 5 章图 5.2-1、5.3-1/5.3-2） ----
+
+def _fema_elevation():
+    """仿 FEMA 451 图 5.3-2 立面：7 跨「7 at 25'-0"」、总尺寸量到外边缘（两端各 1'-2"）、
+    只标层高「22'-4"」「6 at 13'-4"」不标标高、梁柱没有编号、图上没有单位说明。"""
+    columns = [{"label": None, "kind": "column", "at": [str(k)], "from_level": "L0",
+                "to_level": "Roof", "source": _src()} for k in range(1, 9)]
+    beams = [{"label": None, "kind": "beam", "from": "1", "to": "8", "levels": [name],
+              "source": _src()} for name in ("L1", "Roof")]
+    return {
+        "format": EVIDENCE_FORMAT,
+        "images": [{"id": "P1", "name": "fig5-3-2.png", "width": 2000, "height": 1000}],
+        "units": {},
+        "grids": {"x": {"axes": _axes([str(k) for k in range(1, 9)],
+                                      [0.1 + 0.1 * k for k in range(8)]),
+                        "spacings": [{"from": "1", "to": "8", "text": "7 at 25'-0\"",
+                                      "source": _src()}],
+                        "total": {"text": "177'-4\"", "source": _src()},
+                        "edges": [{"text": "1'-2\"", "source": _src()},
+                                  {"text": "1'-2\"", "source": _src()}]},
+                  "y": {"axes": [], "spacings": []}},
+        "levels": [{"name": "L0", "text": None, "source": _src()},
+                   {"name": "L1", "text": None, "source": _src()},
+                   {"name": "Roof", "text": None, "source": _src()}],
+        "level_heights": [{"from": "L0", "to": "L1", "text": "22'-4\"", "source": _src()},
+                          {"from": "L1", "to": "Roof", "text": "6 at 13'-4\"",
+                           "source": _src()}],
+        "members": columns + beams,
+        "sections": [],
+        "material": None,
+        "support": None,
+        "notes": [{"text": "2nd floor 字迹不清", "source": _src(0.5)},
+                  {"text": "图上没有标高与构件编号", "source": _src()}],
+    }
+
+
+def _finish_fema(evidence):
+    """用户在核对表里补齐图上确实没有的信息：截面、单位、材料、支座，并确认最低层 ±0。"""
+    for label in ("未编号柱", "未编号梁"):
+        evidence = resolve(evidence, f"sections+{label}", "HN400×200×8×13")
+    for row_id, value in (("units.length", "mm"), ("material", "Q355"),
+                          ("support", "固接"), ("levels.0", None)):
+        evidence = resolve(evidence, row_id, value)
+    return evidence
+
+
+@pytest.mark.parametrize(("text", "value", "count", "inches"), [
+    ("25'-0\"", 300.0, 1, True), ("13'-4\"", 160.0, 1, True), ("1'-2\"", 14.0, 1, True),
+    ("22'-4 1/2\"", 268.5, 1, True), ("25′-0″", 300.0, 1, True), ("25'-0''", 300.0, 1, True),
+    ("7 at 25'-0\"", 300.0, 7, True), ("6 at 13'-4\" = 80'-0\"", 160.0, 6, True),
+    ("6@3600", 3600.0, 6, False), ("3×6000", 6000.0, 3, False),
+    ("3x6000=18000", 6000.0, 3, False), ("6000", 6000.0, 1, False),
+    ("6,000", 6000.0, 1, False),
+])
+def test_parse_dimension_reads_feet_inches_and_repeats(text, value, count, inches):
+    """FEMA 451 验收：`25'-0"`、`7 at 25'-0"` 旧解析器全部读不懂；国内图纸的 `6@3600`、
+    `3×6000` 同属重复写法。读法确定，原文由证据保留。"""
+    dim = parse_dimension(text)
+    assert (dim.value, dim.count, dim.inches) == (value, count, inches)
+
+
+@pytest.mark.parametrize("text", ["7 at 25'-0\" = 170'-0\"", "6@3600=20000", "25'-",
+                                  "6000(估)", "7 at", ""])
+def test_parse_dimension_rejects_inconsistent_or_vague_text(text):
+    """等号两边对不上、写法残缺时不替图纸挑一边，交给用户。"""
+    with pytest.raises(ValueError):
+        parse_dimension(text)
+
+
+def test_repeated_spacing_expands_to_the_same_model_as_written_bays():
+    """「2@6000」从 1 轴到 3 轴，与逐段写「6000、6000」组装出完全相同的模型。"""
+    expanded = _evidence()
+    expanded["grids"]["x"]["spacings"] = [{"from": "1", "to": "3", "text": "2@6000",
+                                           "source": _src()}]
+    reference = assemble(resolve(_evidence(), "material")).model
+    result = assemble(resolve(expanded, "material"))
+    assert result.model == reference
+    row = _row(result, "grids.x.spacings.0")
+    assert row.status == OK and "2 段" in row.value and "展开" in row.message
+
+
+def test_repeat_count_must_match_the_bays_between_its_axes():
+    """FEMA 验收中轴号读全了才可展开：「3@6000」写在只隔两段的 1→3 轴上时报冲突，
+    不猜哪根轴线漏读，也不再为这两段另报缺失。"""
+    evidence = _evidence()
+    evidence["grids"]["x"]["spacings"] = [{"from": "1", "to": "3", "text": "3@6000",
+                                           "source": _src()}]
+    result = assemble(evidence)
+    row = _row(result, "grids.x.spacings.0")
+    assert row.status == CONFLICT and "3 段" in row.message and row.reread
+    assert not any(r.id.startswith("grids.x.spacings+") for r in result.rows)
+    assert result.model is None
+
+
+def test_feet_inches_carry_their_own_unit_and_conflict_with_a_metric_note():
+    """FEMA 451 图 5.3-1 没有单位说明，尺寸全写英尺英寸：不再要求用户选单位；若识别出
+    「mm」单位说明又见英尺英寸，就报冲突让用户对照原图。"""
+    evidence = _fema_elevation()
+    row = _row(assemble(evidence), "units.length")
+    assert row.status == OK and "英尺英寸" in row.value
+    evidence["units"] = {"length": {"value": "mm", "text": "尺寸以毫米计", "source": _src()}}
+    row = _row(assemble(evidence), "units.length")
+    assert row.status == CONFLICT and "25'-0\"" in row.message
+    assert _row(assemble(resolve(evidence, "units.length", "mm")), "units.length").status == OK
+
+
+def test_outer_edge_total_is_checked_with_edges_not_as_axis_total():
+    """FEMA 451 图 5.3-1 的总尺寸 177'-4" 量到外边缘，比轴线总长 175'-0" 多两端各 1'-2"：
+    有外边距证据时核对通过且不改坐标；没有外边距证据时仍报冲突。"""
+    evidence = _fema_elevation()
+    row = _row(assemble(evidence), "grids.x.total")
+    assert row.status == OK and "外边缘" in row.message
+    evidence["grids"]["x"]["edges"] = []
+    row = _row(assemble(evidence), "grids.x.total")
+    assert row.status == CONFLICT and "175'-0\"" in row.message and "177'-4\"" in row.message
+
+
+def test_story_height_chain_builds_levels_from_a_confirmed_zero():
+    """FEMA 451 图 5.3-2 只给层高链「22'-4"」「6 at 13'-4"」：最低层按 ±0 计并要求确认，
+    中间没有层名的五层自动命名，标高逐层累加（屋面 102'-4" = 31.1912 m）。"""
+    evidence = _fema_elevation()
+    result = assemble(evidence)
+    base = _row(result, "levels.0")
+    assert base.status == CONFIRM and "±0.000" in base.message
+    assert _row(result, "level_heights.1").status == OK
+    model = assemble(_finish_fema(evidence)).model
+    assert model is not None and validate_payload(model) == []
+    heights = sorted({n["z"] for n in model["nodes"]})
+    assert len(heights) == 8
+    assert heights[1] == pytest.approx(268 * 0.0254, abs=1e-12)
+    assert heights[-1] == pytest.approx(1228 * 0.0254, abs=1e-12)
+    assert sorted({n["x"] for n in model["nodes"]}) == pytest.approx(
+        [k * 300 * 0.0254 for k in range(8)], abs=1e-12)
+
+
+def test_elevation_text_anchors_the_height_chain_and_is_cross_checked():
+    """立面同时有标高与层高时以标高为基准，不再要求确认 ±0；两者不符报冲突并回喂重读。"""
+    evidence = _fema_elevation()
+    evidence["levels"][2]["text"] = "102'-4\""
+    result = assemble(evidence)
+    assert _row(result, "levels.0").status == OK
+    assert _row(result, "levels.0").value.startswith("0 m")
+    evidence["levels"][1]["text"] = "22'-0\""     # 最低的标高作基准，与之不符的屋面报冲突
+    row = _row(assemble(evidence), "levels.2")
+    assert row.status == CONFLICT and row.reread
+
+
+def test_unnumbered_members_are_assembled_with_one_section_row_per_kind():
+    """FEMA 451 验收：图上梁柱都没有编号，旧代码一根杆件也读不出。按位置抄写后标签取
+    「未编号梁」「未编号柱」，截面缺失进核对表，用户各填一次即可生成。"""
+    evidence = _fema_elevation()
+    result = assemble(evidence)
+    rows = {row.id: row for row in result.rows}
+    assert rows["sections+未编号柱"].status == MISSING
+    assert "没有编号" in rows["sections+未编号梁"].message
+    model = assemble(_finish_fema(evidence)).model
+    assert len(model["members"]) == 8 * 7 + 2 * 7
+    assert set(model["sets"]) == {"未编号柱", "未编号梁"}
+    assert len(model["supports"]) == 8
+
+
+def test_recognition_notes_are_listed_but_never_block_generation():
+    """FEMA 451 验收：识别提示每条都要点「确认」，提示多时操作繁琐。提示改为不阻塞的
+    提示行；低置信度的提示也不要求逐条确认。"""
+    evidence = _finish_fema(_fema_elevation())
+    result = assemble(evidence)
+    notes = [row for row in result.rows if row.id.startswith("notes.")]
+    assert len(notes) == 2 and all(row.status == INFO for row in notes)
+    assert result.ready and "识别提示 2 条" in result.summary()
+
+
+def test_level_heights_must_reference_listed_levels():
+    """层高链引用了没列出的层名是格式错误，交给识别模型重读，而不是在组装时猜层序。"""
+    evidence = _fema_elevation()
+    evidence["level_heights"][1]["to"] = "R"
+    assert any("R" in error for error in validate_evidence(evidence))
+
+
+def test_unit_suffix_is_its_own_unit_evidence():
+    """#52 实图（标高写成 +3.500 m）与 #44 英尺英寸合并后的统一规则：原文自带单位
+    （mm/cm/m 后缀或英尺英寸）就是单位证据，全部标高都带后缀时不再要求标高单位说明；
+    有一个不带后缀的数仍要求（见 test_explicit_length_units_convert_to_declared_units）。"""
+    evidence = _evidence()
+    for level, text in zip(evidence["levels"], ("±0.000 m", "3600 mm", "+7.200 m"),
+                           strict=True):
+        level["text"] = text
+    del evidence["units"]["elevation"]
+    result = assemble(resolve(evidence, "material"))
+    assert not any(row.id == "units.elevation" for row in result.rows)
+    assert {node["z"] for node in result.model["nodes"]} == {0.0, 3.6, 7.2}

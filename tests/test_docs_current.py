@@ -118,6 +118,22 @@ def test_manual_screenshots_are_all_present():
     assert not missing, f"《使用手册》引了这些图但文件不在：{missing}"
 
 
+def test_manual_screenshots_are_not_bloated():
+    """手册截图存成真彩色整窗图时每张 500–650 KB，《使用手册.docx》涨到约 3.7 MB，
+    Word 里却用不上这么多颜色和分辨率。`tools/capture_manual.py` 拍完会缩到
+    1600 px 以内并转 256 色；手工替换的图也要守这条线。"""
+    from PIL import Image
+
+    fat = []
+    for shot in sorted((ROOT / "docs" / "手册图").glob("*.png")):
+        with Image.open(shot) as image:
+            width = image.width
+        size_kb = shot.stat().st_size // 1024
+        if width > 1600 or size_kb > 400:
+            fat.append(f"{shot.name}（{width} px，{size_kb} KB）")
+    assert not fat, "这些手册图过大，用 tools/capture_manual.py 的 shrink() 压一下：" + "、".join(fat)
+
+
 # ---------------------------------------------------------------- 报告
 
 def test_report_exists():

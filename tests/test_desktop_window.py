@@ -128,6 +128,45 @@ def test_export_screenshot_positions_tool_drawers_in_window_coordinates(qt_app, 
     w.close()
 
 
+def test_export_screenshot_keeps_viewport_pixels_on_high_dpi(qt_app, monkeypatch, tmp_path):
+    """150% 缩放下导出的实体云图发虚：VTK 画面按物理像素渲染，回贴时先缩到
+    逻辑尺寸再随整窗放大，标签和网格线全糊。高 DPI 下视口像素必须 1:1 保留。"""
+    import numpy as np
+    from PySide6.QtGui import QImage
+
+    ratio = 2
+    w = MainWindow(built())
+    w.show()
+    qt_app.processEvents()
+    plain = w.grab
+    monkeypatch.setattr(w, "grab", lambda: _hidpi(plain(), ratio))
+    interactor = w.viewport.plotter.interactor
+    height, width = interactor.height() * ratio, interactor.width() * ratio
+    checker = np.zeros((height, width, 3), dtype=np.uint8)
+    checker[(np.indices((height, width)).sum(axis=0) % 2) == 0] = 255
+    monkeypatch.setattr(w.viewport.plotter, "screenshot", lambda **_kw: checker)
+    path = tmp_path / "hidpi.png"
+    w.export_screenshot(str(path))
+    picture = QImage(str(path)).convertToFormat(QImage.Format.Format_RGB888)
+    origin = interactor.mapTo(w, interactor.rect().center()) * ratio
+    x, y = origin.x() - 20, origin.y() - 20
+    rows = [bytes(picture.constScanLine(y + k))[3 * x:3 * (x + 40)] for k in range(40)]
+    patch = np.frombuffer(b"".join(rows), dtype=np.uint8).reshape(40, 40, 3)
+    top = interactor.mapTo(w, interactor.rect().topLeft()) * ratio
+    expected = checker[y - top.y():y - top.y() + 40, x - top.x():x - top.x() + 40]
+    assert np.array_equal(patch, expected), "视口像素被重采样，高 DPI 截图会发虚"
+    w.close()
+
+
+def _hidpi(pixmap, ratio):
+    """把一次 grab 放大成设备像素比为 ratio 的整窗图，模拟高 DPI 屏幕。"""
+    from PySide6.QtCore import Qt
+    big = pixmap.scaled(pixmap.width() * ratio, pixmap.height() * ratio,
+                        Qt.AspectRatioMode.IgnoreAspectRatio)
+    big.setDevicePixelRatio(ratio)
+    return big
+
+
 def test_solving_an_empty_model_is_refused(qt_app, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     shown = []
@@ -1040,6 +1079,14 @@ def test_colour_scale_ticks_keep_both_ends_and_never_overlap(qt_app):
     shown = [t for t in painter_text if t != "σ (MPa)"]
     assert shown[0] == "−40" and shown[-1] == "40"
     assert len(shown) < 25, "160 像素高放不下 25 个刻度，必须隔着标"
+
+
+def test_peak_tag_states_length_unit():
+    """视口峰值标签曾写「杆件 24, x = 3」，读不出是 3 m 还是 3 mm。"""
+    from desktop.viewport import peak_tag
+
+    assert peak_tag("M = ", 128.1, "kN·m", 24, 3.0, "m").endswith("杆件 24, x = 3 m")
+    assert peak_tag("M = ", 128.1, "kN·m", 24, 3000.0, "mm").endswith("x = 3e+03 mm")
 
 
 def test_result_marker_imports_pyvista_itself(qt_app):
